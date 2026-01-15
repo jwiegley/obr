@@ -93,12 +93,23 @@ This tool is a Rust port of the "classic" beads issue tracker (SQLite + JSONL hy
 - **ID format:** Use hash-based short IDs (e.g., `bd-abc123`), not auto-increment integers.
 - **Content hashing:** Issues have deterministic content hashes for deduplication.
 
+### Key Design: Non-Invasive
+
+**`br` is LESS invasive than `bd`:**
+
+- **No automatic git hooks** — Users add hooks manually if desired
+- **No automatic git operations** — No auto-commit, no auto-push
+- **No daemon/RPC** — Simple CLI only, no background processes
+- **Explicit over implicit** — Every git operation requires explicit user command
+
 ### What We're NOT Porting
 
-- **Dolt backend:** The entire `internal/storage/dolt/` package is excluded. We use SQLite only.
-- **RPC daemon:** Initially skip the daemon architecture; we can add it later if needed.
-- **Linear/Jira integration:** External service integrations are deferred.
-- **Claude plugin:** The MCP plugin is separate; port the core CLI first.
+- **Dolt backend:** The entire `internal/storage/dolt/` package is excluded. SQLite only.
+- **RPC daemon:** Non-invasive design means no background processes.
+- **Git hooks:** No automatic hook installation. Users add manually.
+- **Linear/Jira integration:** External service integrations deferred.
+- **Claude plugin:** MCP plugin is separate; port core CLI first.
+- **Gastown features:** All agent/molecule/gate/rig/convoy/HOP features excluded (see PLAN doc for full list).
 
 ---
 

@@ -11,6 +11,16 @@
 
 This document outlines the comprehensive plan to port the "classic" beads issue tracker from Go to hyper-optimized Rust. The Go version (authored by Steve Yegge) is being modified to use Dolt as the primary backend, which fundamentally changes its architecture. This port preserves the elegant SQLite + JSONL hybrid design that integrates seamlessly with git-based workflows.
 
+### Key Design Philosophy: Non-Invasive
+
+**`br` will be LESS invasive than `bd`.** The Go `bd` tool automatically installs git hooks, manipulates git config, and performs various automatic operations. We explicitly choose a simpler approach:
+
+- **No automatic git hook installation** — Users manually add hooks if desired
+- **No automatic git operations** — No auto-commit, no auto-push
+- **No daemon/RPC architecture** — Simple CLI only, no background processes
+- **Explicit over implicit** — Every git operation requires explicit user command
+- **Minimal footprint** — Just a binary and a `.beads/` directory
+
 ### Why Port to Rust?
 
 1. **Preserve the Classic Architecture:** The SQLite + JSONL hybrid design is elegant and integrates perfectly with git. The move to Dolt changes this fundamentally.
@@ -38,20 +48,65 @@ Go beads (classic)                    →    beads_rust (br)
 ├── internal/types/                   →    src/model/
 ├── cmd/bd/                           →    src/cli/ + src/main.rs
 ├── internal/export/                  →    src/export/
-├── internal/git/                     →    src/git/
 ├── internal/config/                  →    src/config/
-└── internal/hooks/                   →    src/hooks/
+└── internal/git/                     →    (MINIMAL: only for repo detection, NOT auto-operations)
 ```
+
+**Note:** We do NOT port `internal/hooks/` (no automatic hook installation) or `internal/rpc/` (no daemon).
 
 ### What We're NOT Porting
 
 | Component | Reason |
 |-----------|--------|
 | `internal/storage/dolt/` | The entire point of this port is to avoid Dolt |
-| `internal/rpc/` | RPC daemon adds complexity; can add later if needed |
+| `internal/rpc/` | RPC daemon adds unnecessary complexity |
 | `internal/linear/` | Linear integration is non-essential |
 | `internal/jira.go` | Jira integration is non-essential |
 | `claude-plugin/` | MCP plugin is separate; port core CLI first |
+| `internal/hooks/` | No automatic hook installation (non-invasive design) |
+| **Gastown features** | See explicit exclusion list below |
+
+### Gastown Features — EXPLICITLY EXCLUDED
+
+Recent additions to `bd` support the "Gastown" multi-agent coordination system. These add significant complexity and are **NOT part of this port**:
+
+#### Excluded Issue Types
+- `gate` — Coordination gates for agent workflows
+- `agent` — Agent identity tracking
+- `role` — Role definitions for agents
+- `molecule` — Work unit groupings
+- `rig` — Agent configuration units
+- `convoy` — Multi-agent coordination groups
+
+#### Excluded Fields (from Issue struct)
+- `agent_id`, `agent_name`, `agent_type` — Agent identity
+- `hop_*` fields — HOP (Handoff Protocol) support
+- `molecule_*` fields — Molecule coordination
+- `gate_*` fields — Gate state tracking
+- `convoy_*` fields — Convoy coordination
+- `rig_*` fields — Rig configuration
+- `external_agent_*` — External agent references
+- `session_id` — Session tracking for agents
+- `workflow_*` fields — Workflow orchestration
+
+#### Excluded Tables
+- `agents` — Agent registry
+- `molecules` — Work molecules
+- `gates` — Coordination gates
+- `rigs` — Agent rigs
+- `convoys` — Multi-agent convoys
+- `workflow_*` tables — Workflow state
+
+#### Excluded Commands
+- `bd gate *` — Gate management
+- `bd agent *` — Agent management
+- `bd molecule *` — Molecule operations
+- `bd rig *` — Rig configuration
+- `bd convoy *` — Convoy orchestration
+- `bd hop *` — Handoff protocol
+- `bd session *` — Session management
+
+**Rationale:** These features add ~40% of the codebase complexity but serve a specific multi-agent orchestration use case (Gastown). The core issue tracking functionality is valuable on its own. Gastown features can be added to a future `br2` or as optional modules if needed.
 
 ### Reference Projects
 
@@ -145,10 +200,9 @@ pub enum IssueType {
     Feature,
     Epic,
     Chore,
-    Message,
-    Gate,
-    Agent,
-    Role,
+    Docs,
+    Question,
+    // NOTE: Gate, Agent, Role, Molecule, Rig, Convoy are Gastown types — EXCLUDED
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -826,10 +880,8 @@ beads_rust/
 │   │   ├── sync.rs
 │   │   ├── doctor.rs
 │   │   └── config.rs
-│   ├── git/
-│   │   └── mod.rs              # Git operations
-│   └── hooks/
-│       └── mod.rs              # Hook execution
+│   └── git/
+│       └── mod.rs              # Minimal git: repo detection, branch name only
 ├── tests/
 │   ├── integration_test.rs     # Full pipeline tests
 │   ├── conformance_test.rs     # bd vs br comparison tests
@@ -963,19 +1015,20 @@ nursery = { level = "warn", priority = -1 }
 
 **Validation:** Comprehensive conformance tests comparing bd and br outputs.
 
-### Phase 3: Sync and Git Integration
+### Phase 3: Sync and Config
 
-**Goal:** Full sync workflow with git operations.
+**Goal:** JSONL sync and configuration management (non-invasive).
 
 **Deliverables:**
-- [ ] sync command (export + optional git commit)
-- [ ] Auto-import on stale detection
-- [ ] Git status integration
+- [ ] sync command (export to JSONL only — NO auto-git operations)
+- [ ] Import from JSONL on explicit command
 - [ ] config command
 - [ ] doctor command (health checks)
-- [ ] Hook support (pre-commit, post-commit)
+- [ ] Repo detection (find .beads/ directory)
 
-**Validation:** Can use br as drop-in replacement for bd in typical workflows.
+**Note:** No automatic git commit/push. No hook installation. User runs `git add/commit` manually.
+
+**Validation:** Can use br alongside bd for core issue tracking workflows.
 
 ### Phase 4: Optimization
 
@@ -1090,18 +1143,24 @@ This is a multi-session project. Rough estimates per phase:
 
 1. **ID format:** Should we generate IDs identically to bd, or is semantic equivalence sufficient?
 2. **Schema version:** How do we handle schema differences if we diverge from bd?
-3. **Daemon:** Do we need the RPC daemon for the flywheel use case?
-4. **Full-text search:** Should we add Tantivy for better search, or stay with SQLite FTS?
+3. **Full-text search:** Should we add Tantivy for better search, or stay with SQLite FTS?
+
+### Resolved Questions
+
+- ~~**Daemon:** Do we need the RPC daemon?~~ **NO** — Non-invasive design, CLI only
+- ~~**Git hooks:** Auto-install hooks?~~ **NO** — Users add manually if desired
+- ~~**Gastown features:** Port agent/molecule/gate/rig/convoy?~~ **NO** — Explicitly excluded
 
 ---
 
 ## References
 
-- **Go beads source:** `./beads/` (this repo)
+- **Go beads source:** `./legacy_beads/` (gitignored, reference only)
 - **xf source:** `/data/projects/xf`
 - **cass source:** `/data/projects/coding_agent_session_search`
 - **Flywheel documentation:** `/data/projects/agentic_coding_flywheel_setup`
 - **beads_viewer (bv):** Companion TUI for beads analysis
+- **Architecture deep dive:** `./EXISTING_BEADS_STRUCTURE_AND_ARCHITECTURE.md`
 
 ---
 
