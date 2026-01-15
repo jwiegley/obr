@@ -536,6 +536,145 @@ pub fn import_issues(storage: &Storage, path: &Path) -> Result<ImportResult> {
 
 ---
 
+## Local History Backup (.br_history/)
+
+### Rationale
+
+Git history captures state at commit time, but commits are episodic — they may miss intermediate states or occur after significant work is done. To protect against data loss, `br` maintains a local history of `issues.jsonl` snapshots that captures every export.
+
+### Design
+
+```
+.beads/
+├── beads.db              # SQLite database
+├── issues.jsonl          # Current JSONL export (tracked in git)
+└── .br_history/          # Local backup history (UNTRACKED)
+    ├── issues.2025-01-15T10-30-00.jsonl
+    ├── issues.2025-01-15T14-45-22.jsonl
+    ├── issues.2025-01-16T09-00-00.jsonl
+    └── ...
+```
+
+### Behavior
+
+1. **On every export:** Before writing `issues.jsonl`, copy the current file to `.br_history/` with a timestamp suffix
+2. **Filename format:** `issues.YYYY-MM-DDTHH-MM-SS.jsonl` (ISO 8601, filesystem-safe)
+3. **Git ignored:** `.br_history/` is automatically added to `.gitignore` during `br init`
+4. **Deduplication:** Skip backup if content hash matches the most recent backup (avoids identical copies from repeated syncs)
+5. **Rotation policy:** Configurable via `br config`, with sensible defaults:
+   - `history.max_count`: Maximum files to keep (default: 100)
+   - `history.max_age_days`: Delete files older than N days (default: 30)
+   - `history.enabled`: Enable/disable history (default: true)
+
+### Implementation
+
+```rust
+// src/export/history.rs
+
+use chrono::Utc;
+use std::fs;
+use std::path::Path;
+
+pub struct HistoryConfig {
+    pub enabled: bool,
+    pub max_count: usize,
+    pub max_age_days: u32,
+}
+
+impl Default for HistoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_count: 100,
+            max_age_days: 30,
+        }
+    }
+}
+
+pub fn backup_before_export(beads_dir: &Path, config: &HistoryConfig) -> Result<()> {
+    if !config.enabled {
+        return Ok(());
+    }
+
+    let history_dir = beads_dir.join(".br_history");
+    fs::create_dir_all(&history_dir)?;
+
+    let current_jsonl = beads_dir.join("issues.jsonl");
+    if !current_jsonl.exists() {
+        return Ok(()); // Nothing to backup yet
+    }
+
+    // Create timestamped backup
+    let timestamp = Utc::now().format("%Y-%m-%dT%H-%M-%S");
+    let backup_name = format!("issues.{}.jsonl", timestamp);
+    let backup_path = history_dir.join(&backup_name);
+
+    fs::copy(&current_jsonl, &backup_path)?;
+
+    // Run rotation
+    rotate_history(&history_dir, config)?;
+
+    Ok(())
+}
+
+fn rotate_history(history_dir: &Path, config: &HistoryConfig) -> Result<()> {
+    let mut entries: Vec<_> = fs::read_dir(history_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
+        .collect();
+
+    // Sort by modification time (newest first)
+    entries.sort_by_key(|e| std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok())));
+
+    let cutoff = Utc::now() - chrono::Duration::days(config.max_age_days as i64);
+
+    for (idx, entry) in entries.iter().enumerate() {
+        let dominated = idx >= config.max_count;
+        let expired = entry
+            .metadata()
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .is_some_and(|t| chrono::DateTime::<Utc>::from(t) < cutoff);
+
+        if dominated || expired {
+            fs::remove_file(entry.path())?;
+        }
+    }
+
+    Ok(())
+}
+```
+
+### Recovery Commands
+
+```bash
+# List available history snapshots
+br history list
+
+# Show diff between current and a snapshot
+br history diff issues.2025-01-15T10-30-00.jsonl
+
+# Restore from a snapshot (imports into DB, re-exports to issues.jsonl)
+br history restore issues.2025-01-15T10-30-00.jsonl
+
+# Prune history manually
+br history prune --keep 50 --older-than 7d
+```
+
+### Why Not Just Git?
+
+| Scenario | Git | .br_history/ |
+|----------|-----|--------------|
+| Work uncommitted when disaster strikes | ❌ Lost | ✅ Preserved |
+| Frequent small changes between commits | ❌ Missed | ✅ Captured |
+| Recovery without git knowledge | ❌ Requires git | ✅ Simple file copy |
+| Disk space | ✅ Compressed | ⚠️ Raw files (but small) |
+| Cross-machine sync | ✅ Push/pull | ❌ Local only |
+
+**Conclusion:** `.br_history/` complements git — it's a local safety net, not a replacement for proper version control.
+
+---
+
 ## CLI Architecture
 
 ### Clap Derive Pattern (from xf)
@@ -862,7 +1001,8 @@ beads_rust/
 │   │   └── config.rs           # Config/metadata storage
 │   ├── export/
 │   │   ├── mod.rs
-│   │   └── jsonl.rs            # JSONL export/import
+│   │   ├── jsonl.rs            # JSONL export/import
+│   │   └── history.rs          # Local backup history (.br_history/)
 │   ├── cli/
 │   │   ├── mod.rs              # CLI definition
 │   │   ├── init.rs
@@ -879,7 +1019,8 @@ beads_rust/
 │   │   ├── stats.rs
 │   │   ├── sync.rs
 │   │   ├── doctor.rs
-│   │   └── config.rs
+│   │   ├── config.rs
+│   │   └── history.rs          # History list/diff/restore/prune
 │   └── git/
 │       └── mod.rs              # Minimal git: repo detection, branch name only
 ├── tests/
@@ -993,6 +1134,7 @@ nursery = { level = "warn", priority = -1 }
 - [ ] Basic migrations
 - [ ] JSONL export (issues.jsonl)
 - [ ] JSONL import
+- [ ] **Local history backup (.br_history/)** — automatic rotation by count/age
 - [ ] CLI commands: init, create, show, list
 - [ ] Error handling framework
 
@@ -1011,6 +1153,7 @@ nursery = { level = "warn", priority = -1 }
 - [ ] label command (add, remove)
 - [ ] stats command
 - [ ] search command (SQLite FTS or basic LIKE)
+- [ ] **history command (list, diff, restore, prune)**
 - [ ] Dirty tracking for incremental export
 
 **Validation:** Comprehensive conformance tests comparing bd and br outputs.
