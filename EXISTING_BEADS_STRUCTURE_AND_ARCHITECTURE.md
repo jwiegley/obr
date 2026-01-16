@@ -52,10 +52,25 @@ Update it as soon as new work is discovered or completed.
 ### Session checklist (expanded deep-dive tasks)
 
 - [x] Add error/exit-code matrix for **core commands** (JSON vs text; stdout vs stderr; exit codes).
+  - [x] Confirm `FatalErrorRespectJSON` output channel (stdout) and prefixing.
+  - [x] Confirm `outputJSONError` output channel (stderr) and optional `code`.
+  - [x] Enumerate per-command fatal error patterns for classic subset.
 - [x] Add **golden text output snapshots** for list/show/dep tree/ready/blocked.
+  - [x] Capture list compact/long/pretty/tree formats.
+  - [x] Capture show header + metadata + section ordering.
+  - [x] Capture dep tree connectors, external nodes, and “shown above”.
 - [x] Expand **non-invasive exclusions** with explicit do-not-port behaviors and commands.
+  - [x] Enumerate git hook/merge-driver installs to exclude.
+  - [x] Enumerate daemon/autostart/auto-sync to exclude.
+  - [x] Enumerate setup/onboard/init git edits to exclude.
 - [x] Add **storage invariants & transactional guarantees** (indexes, constraints, dirty markers).
+  - [x] Capture schema-level constraints (title length, priority range, closed_at check).
+  - [x] Capture transactional mutation steps (event + dirty + cache invalidation).
+  - [x] Capture dependency/label/comment uniqueness + ordering guarantees.
 - [x] Expand **ID/prefix routing edge cases** (validation, rename-prefix, cross-prefix dup rules).
+  - [x] Capture prefix validation + trailing hyphen normalization.
+  - [x] Capture rename-prefix behavior + repair mode + JSONL sync step.
+  - [x] Capture routing resolution + redirects + missing route behavior.
 
 ### Open TODOs (keep granular + current)
 
@@ -4597,8 +4612,10 @@ Porting note:
 - `omitempty` fields are omitted when empty.
 - JSON is pretty-printed with 2-space indent in core CLI (`outputJSON`).
   - `comments` uses `json.MarshalIndent` directly but matches the same indent.
-- JSON errors (when `--json` is active) are emitted to stderr as:
-  `{ "error": "...", "code": "..." }` (code may be omitted).
+- JSON errors (when `--json` is active) are **inconsistent** in legacy:
+  - `FatalErrorRespectJSON` prints `{ "error": "..." }` to **stdout**.
+  - `outputJSONError` prints `{ "error": "...", "code": "..." }` to **stderr**.
+  - Some paths bypass both and print plain text to stderr.
 
 #### 15.41.1 list
 
@@ -4885,6 +4902,128 @@ or (for `--blocks`):
 **Fix mode**:
 - `--fix` prompts for confirmation, then runs `bd close <id> --reason Implemented` per issue.
 - Interactive by design (no JSON batch output for fix path).
+
+#### 15.41.13 Error + Exit-Code Conventions (Core Commands)
+
+**Global behavior**:
+- **Exit code**: non-zero errors exit with **code 1** (no other codes used for CLI errors).
+- **Text errors**: most fatal errors are printed as `Error: <message>` to **stderr**.
+- **JSON errors** (when `--json` active):
+  - `FatalErrorRespectJSON(...)` prints `{"error":"..."}` to **stdout**, then exits 1.
+  - `outputJSONError(err, code)` prints to **stderr** with optional `code`.
+  - Some commands still use `fmt.Fprintf(os.Stderr, ...)` + `os.Exit(1)` even with `--json`
+    (legacy inconsistency). Treat this as part of the compatibility surface.
+
+**Error output matrix (classic core)**:
+| Command | Typical fatal conditions | `--json` error channel | Text error prefix |
+|---|---|---|---|
+| `create` | invalid flags; missing title; invalid priority/type; prefix mismatch (no `--force`) | **stderr only** (uses `FatalError`) | `Error:` |
+| `update` | no ID + no last touched; invalid field/status; invalid parent | **mixed** (FatalErrorRespectJSON + stderr continues) | `Error:` |
+| `close` | no ID + no last touched; `--suggest-next`/`--continue` with multi ID; blocked by open deps without `--force` | **mixed** (stderr on per‑ID failures) | `Error:` |
+| `reopen` | missing/invalid ID; DB not initialized | **stderr only** | `Error:` |
+| `delete` | missing IDs; blocked dependents without `--force`/`--cascade`; invalid ID | **mixed** | `Error:` |
+| `list` | invalid filters; DB open failure | **stderr only** (no JSON fallback) | `Error:` |
+| `show` | unresolved ID; not found | **stderr only** (continues per‑ID) | `Error:` |
+| `ready` | DB freshness errors; invalid flags | **mixed** (stderr in several paths) | `Error:` |
+| `blocked` | DB open failure | **stderr only** | `Error:` |
+| `search` | empty query; invalid date filters | **mixed** (stderr on parse errors) | `Error:` |
+| `status`/`stats` | DB open failure; git activity errors are **warnings** | stdout when `--json`, else stderr for fatal | `Error:` |
+| `count` | multiple `--by-*` flags; invalid date filters | **mixed** (stderr on parse errors) | `Error:` |
+| `stale` | invalid status | **mixed** (stderr on parse errors) | `Error:` |
+| `dep` | invalid args; unknown dep type; cycle/parent-child guard | **mixed** (fatal JSON to stdout; warnings to stderr) | `Error:` |
+| `label` | invalid args; reserved `provides:*` usage | **mixed** (batch errors to stderr) | `Error:` |
+| `comments` | missing text; file read errors | **mixed** (fatal JSON to stdout; warnings to stderr) | `Error:` |
+| `orphans` | git/DB missing returns empty list (not error) | stdout when `--json` | `Error:` |
+
+**Notes**:
+- Fatal errors *always* terminate the command (no partial success output), **except** `show`,
+  which continues for subsequent IDs when a specific ID is missing.
+- Warnings use prefix `Warning:` and do **not** affect exit code.
+
+#### 15.41.14 Golden Text Output Snapshots (Canonical Examples)
+
+These snapshots are **format references**. Colors/emoji may be stripped in agent mode,
+but spacing, punctuation, and field order should remain stable.
+
+**list (compact, default)**:
+```
+○ bd-abc123 [● P2] [task] @alice [backend] - Add cache for search
+◐ bd-def456 [● P1] [bug] - Fix race in importer
+✓ bd-ghi789 [● P3] [task] - Clean up lint warnings
+```
+
+**list (long)**:
+```
+bd-abc123 [● P2] [task] open
+  Add cache for search
+  Assignee: alice
+  Labels: [backend]
+```
+
+**list (pretty/tree)**:
+```
+○ bd-epic1 ● P1 [epic] Shipping v1
+├── ○ bd-epic1.1 ● P2 Build installer
+└── ◐ bd-epic1.2 ● P1 Finalize docs
+
+--------------------------------------------------------------------------------
+Total: 3 issues (2 open, 1 in progress)
+Status: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred
+```
+
+**show (full)**:
+```
+◐ bd-abc123 · Add cache for search   [● P1 · IN_PROGRESS]
+Owner: alice · Assignee: bob · Type: task
+Created: 2026-01-06 · Updated: 2026-01-08
+
+DESCRIPTION
+<markdown-rendered body>
+
+LABELS: backend, perf
+
+DEPENDS ON
+  → bd-dep1: Upgrade sqlite (open)
+
+COMMENTS
+  2026-01-08 alice
+    Looks good; waiting on perf numbers.
+```
+
+**ready**:
+```
+📋 Ready work (2 issues with no blockers):
+
+1. [● P1] [task] bd-abc123: Add cache for search
+   Assignee: alice
+2. [● P2] [bug] bd-def456: Fix race in importer
+```
+
+**blocked**:
+```
+🚫 Blocked issues (1):
+
+[● P1] bd-abc123: Add cache for search
+  Blocked by 2 open dependencies: [bd-dep1 bd-dep2]
+```
+
+**dep tree (down)**:
+```
+🌲 Dependency tree for bd-abc123:
+
+bd-abc123: Add cache [P1] (open) [READY]
+├── bd-dep1: Upgrade sqlite [P1] (in_progress)
+└── ⏳ build-agent (external)
+```
+
+**dep tree (duplicate path)**:
+```
+bd-root: Root [P2] (open)
+├── bd-a: A [P2] (open)
+│   └── bd-shared: Shared [P3] (open)
+└── bd-b: B [P2] (open)
+    └── bd-shared (shown above)
+```
 
 ---
 
@@ -7294,6 +7433,123 @@ external_ref, deps. It then calls the same create path as `bd create`.
 
 **Port note**:
 - Optional in `br` v1. If omitted, document as unsupported.
+
+---
+
+### 15.91 Non-Invasive Boundaries (Explicit Do‑Not‑Port List)
+
+The Rust port must remain **non‑invasive**. The following behaviors are explicitly
+out of scope for `br` v1 (even if they exist in legacy `bd`):
+
+**Git mutations (do NOT perform automatically):**
+- Installing or modifying **git hooks** (pre‑commit, post‑merge, etc.).
+- Installing or updating **merge drivers** (`.gitattributes` entries).
+- Writing to `.git/info/exclude`, `.git/config`, or global git config.
+- Auto‑commit, auto‑push, auto‑pull, or auto‑merge operations.
+- Sync‑branch creation, checkout, or forced resets.
+
+**Daemon/automation (do NOT run):**
+- Global or per‑repo **daemon** processes (no RPC server).
+- Autostart/autostop of background services.
+- File watchers that auto‑import on JSONL changes.
+
+**Setup & onboarding (explicit‑only):**
+- `setup`, `onboard`, `worktree`, `repo` automation commands.
+- Writing `.claude/settings.local.json` or other tool‑specific config.
+- Auto‑seeding routes, redirects, or routing configuration.
+
+**Network integrations (excluded):**
+- Linear/Jira integrations; mail; remote agents; gate/molecule orchestration.
+
+**Allowed**:
+- Reading existing artifacts (hooks, merge drivers, routes.jsonl) for compatibility.
+- Explicit user‑invoked git commands (if ever added) must be **manual** and opt‑in.
+
+Porting note: This list is intentionally redundant with other exclusion sections.
+If a feature conflicts with any item above, it is excluded by default.
+
+---
+
+### 15.92 Storage Invariants & Transactional Guarantees (Classic Subset)
+
+These invariants must be preserved by the Rust storage layer to maintain
+compatibility and avoid subtle sync bugs.
+
+**Schema constraints (core)**:
+- `issues.title` max length **500**, non‑null.
+- `issues.priority` constrained to **0..4** (P0‑P4).
+- `issues.status` + `closed_at` invariant:
+  - `status=closed` ⇒ `closed_at` is **non‑null**
+  - `status` not closed/tombstone ⇒ `closed_at` is **null**
+- Default values: `status=open`, `priority=2`, `issue_type=task`.
+
+**Referential integrity**:
+- `dependencies.issue_id` cascades on delete.
+- `labels`, `comments`, `events`, `dirty_issues`, `export_hashes`, `child_counters`
+  all cascade on delete (issue removal removes these).
+- FK on `dependencies.depends_on_id` is **removed via migration** to allow
+  `external:*` references. Rust should allow external refs with no FK enforcement.
+
+**Uniqueness & ordering**:
+- `dependencies` unique on `(issue_id, depends_on_id)`.
+- `labels` unique on `(issue_id, label)`.
+- `comments` order is **created_at ASC** for display.
+- `events` order is **created_at ASC** when displayed.
+
+**Transactional mutation steps (must be atomic)**:
+- **Create**: insert issue → insert event → mark dirty.
+- **Update**: update issue (+ `updated_at=now`) → insert event → mark dirty.
+- **Close/Reopen**: uses Update flow; `closed_at` auto‑managed by status change.
+- **Dependency add/remove**: insert/delete edge → insert event → mark dirty
+  (both issue_id and depends_on_id, unless external).
+- **Label add/remove**: insert/delete label → insert event → mark dirty.
+
+**Content hash rules**:
+- Recomputed when any **content field** changes:
+  title/description/design/acceptance/notes/status/priority/type/assignee/external_ref.
+- **Not** affected by labels, dependencies, comments, events.
+
+**Blocked cache invalidation**:
+- Any status change or dependency change that affects ready work must invalidate
+  the cached blocked‑issue table before commit.
+
+**Index usage (performance expectations)**:
+- `issues.status`, `issues.priority`, `issues.assignee`, `issues.created_at`
+  are indexed and assumed by list/search paths.
+- `dependencies.issue_id` + `dependencies.depends_on_id` indexed for graph queries.
+- `dirty_issues.marked_at` indexed for incremental export ordering.
+
+---
+
+### 15.93 ID/Prefix Routing Edge Cases (Classic Compatibility)
+
+**Prefix format & normalization**:
+- Prefix must start with a lowercase letter and contain only `[a‑z0‑9-]`.
+- Trailing hyphen is **optional** in CLI input; stored prefix is normalized
+  **without** trailing `-`. IDs always include a hyphen (`<prefix>-<hash>`).
+- `--id` validation rejects prefixes not in `issue_prefix` or `allowed_prefixes`
+  unless `--force` is provided.
+
+**Cross‑prefix duplicates (import behavior)**:
+- Same content + different prefix ⇒ treated as **cross‑project duplicate** and skipped.
+- Same content + same prefix + different ID ⇒ treated as rename (no global text rewrite).
+
+**Routing resolution**:
+- Prefix lookup is strict and includes the trailing hyphen in `routes.jsonl`.
+- If local `routes.jsonl` is absent, walk up to town root and resolve there.
+- `redirect` file (if present) overrides target `.beads` path.
+- If a routed path is missing or invalid, the command fails with `Error: ...`.
+
+**Rename‑prefix (legacy, git‑heavy)**:
+- Requires direct mode and validated prefix.
+- If multiple prefixes exist in DB, **must** use `--repair`.
+- Forces import from JSONL before rename to avoid missing issues.
+- Updates issue IDs and **rewrites text references** across issue fields.
+- Triggers full export after rename.
+
+**Port note**:
+- `br` may exclude `rename-prefix` in v1; if included, it must **omit**
+  git‑sync steps (pull/sync‑branch) and require explicit user confirmation.
 
 ---
 
