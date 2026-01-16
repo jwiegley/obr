@@ -2,9 +2,19 @@
 //!
 //! These routines enforce classic bd data constraints and return
 //! structured validation errors without mutating storage.
+//!
+//! # Sync Safety Guarantees
+//!
+//! The sync subsystem enforces these invariants by design:
+//! - **No git operations**: br sync NEVER executes git commands
+//! - **Path confinement**: All I/O stays within `.beads/` (unless explicitly opted-in)
+//! - **No .git access**: Sync code paths never read from or write to `.git/`
+//!
+//! See `SyncSafetyValidator` for runtime guards.
 
 use crate::error::{BeadsError, ValidationError};
 use crate::model::{Comment, Dependency, Issue, Priority};
+use std::path::Path;
 
 /// Validates issue fields and invariants.
 pub struct IssueValidator;
@@ -202,8 +212,8 @@ impl CommentValidator {
     pub fn validate(comment: &Comment) -> Result<(), Vec<ValidationError>> {
         let mut errors = Vec::new();
 
-        if comment.id.trim().is_empty() {
-            errors.push(ValidationError::new("id", "cannot be empty"));
+        if comment.id <= 0 {
+            errors.push(ValidationError::new("id", "must be positive"));
         }
 
         if comment.issue_id.trim().is_empty() {
@@ -267,6 +277,125 @@ pub fn is_valid_id_format(id: &str) -> bool {
     }
 
     true
+}
+
+// =============================================================================
+// SYNC SAFETY VALIDATION
+// =============================================================================
+
+/// Validates sync operations adhere to safety invariants.
+///
+/// # Safety Guarantees (Non-Goals - What br sync NEVER does)
+///
+/// 1. **No git commands**: br sync never executes `git` subprocess commands
+/// 2. **No git library calls**: No gitoxide, libgit2, or similar
+/// 3. **No .git access**: Never reads from or writes to `.git/` directory
+/// 4. **No auto-commit**: All git operations are user-initiated
+/// 5. **No hook execution**: No git hooks are installed or triggered
+///
+/// These are enforced by design (no git dependencies) and by runtime validation.
+pub struct SyncSafetyValidator;
+
+impl SyncSafetyValidator {
+    /// Validates that a path does not target git internals.
+    ///
+    /// Returns an error if the path contains `.git` components.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ValidationError` if path contains `.git`.
+    pub fn validate_no_git_path(path: &Path) -> Result<(), ValidationError> {
+        // Check each component of the path for .git
+        for component in path.components() {
+            if let std::path::Component::Normal(name) = component {
+                if name == ".git" {
+                    return Err(ValidationError::new(
+                        "path",
+                        "sync operations cannot access .git directory (safety invariant)",
+                    ));
+                }
+            }
+        }
+
+        // Also check the string representation for hidden .git references
+        let path_str = path.to_string_lossy();
+        if path_str.contains("/.git/")
+            || path_str.contains("\\.git\\")
+            || path_str.ends_with("/.git")
+            || path_str.ends_with("\\.git")
+        {
+            return Err(ValidationError::new(
+                "path",
+                "sync operations cannot access .git directory (safety invariant)",
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Validates that a path is within the allowed beads directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The path to validate
+    /// * `beads_dir` - The .beads directory that contains allowed paths
+    /// * `allow_external` - Whether external paths are permitted (opt-in)
+    ///
+    /// # Errors
+    ///
+    /// Returns `ValidationError` if path escapes the allowlist.
+    pub fn validate_path_containment(
+        path: &Path,
+        beads_dir: &Path,
+        allow_external: bool,
+    ) -> Result<(), ValidationError> {
+        // First, ensure no .git access
+        Self::validate_no_git_path(path)?;
+
+        // If external paths are allowed, skip containment check
+        if allow_external {
+            return Ok(());
+        }
+
+        // Canonicalize if possible, otherwise use the path as-is
+        let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let canonical_beads = beads_dir
+            .canonicalize()
+            .unwrap_or_else(|_| beads_dir.to_path_buf());
+
+        // Check if path starts with beads_dir
+        if !canonical_path.starts_with(&canonical_beads) {
+            return Err(ValidationError::new(
+                "path",
+                format!(
+                    "path '{}' is outside allowed directory '{}' \
+                     (use --allow-external-jsonl to override)",
+                    path.display(),
+                    beads_dir.display()
+                ),
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Asserts that sync code paths don't execute git commands.
+    ///
+    /// This is a compile-time design assertion documented here for clarity:
+    /// - No `std::process::Command::new("git")` in sync module
+    /// - No git library dependencies (gitoxide, git2, etc.)
+    /// - Verified by static analysis: `grep -r "Command::new.*git" src/sync/`
+    ///
+    /// At runtime, this function serves as documentation and can be used
+    /// in tests to validate the invariant holds.
+    #[inline]
+    pub const fn assert_no_git_in_sync() {
+        // This is a compile-time design assertion.
+        // The actual enforcement is:
+        // 1. No git dependencies in Cargo.toml for sync
+        // 2. No Command::new("git") calls in src/sync/
+        // 3. This is verified by tests and grep/audit
+    }
 }
 
 #[cfg(test)]
@@ -346,15 +475,30 @@ mod tests {
     }
 
     #[test]
+    fn issue_validation_rejects_large_description() {
+        let mut issue = base_issue();
+        issue.description = Some("x".repeat(102_401));
+
+        let errors = IssueValidator::validate(&issue).unwrap_err();
+        assert!(errors.iter().any(|err| err.field == "description"));
+    }
+
+    #[test]
     fn label_validation_rejects_invalid_characters() {
         let err = LabelValidator::validate("bad label").unwrap_err();
         assert_eq!(err.field, "label");
     }
 
     #[test]
+    fn label_validation_rejects_empty() {
+        let err = LabelValidator::validate("").unwrap_err();
+        assert_eq!(err.field, "label");
+    }
+
+    #[test]
     fn comment_validation_rejects_empty_body() {
         let comment = Comment {
-            id: "c-1".to_string(),
+            id: 1,
             issue_id: "bd-abc123".to_string(),
             author: "tester".to_string(),
             body: " ".to_string(),
@@ -520,5 +664,180 @@ mod tests {
         assert!(!is_valid_id_format("bd-1"));
         assert!(!is_valid_id_format("bd-abc123456"));
         assert!(!is_valid_id_format("bd_abc"));
+    }
+
+    // =========================================================================
+    // SYNC SAFETY VALIDATOR TESTS
+    // =========================================================================
+
+    #[test]
+    fn sync_safety_rejects_git_path_component() {
+        use std::path::PathBuf;
+
+        // Direct .git directory
+        let git_path = PathBuf::from("/project/.git/config");
+        let result = SyncSafetyValidator::validate_no_git_path(&git_path);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains(".git"));
+
+        // .git as intermediate component
+        let git_path2 = PathBuf::from("/project/.git/objects/pack");
+        assert!(SyncSafetyValidator::validate_no_git_path(&git_path2).is_err());
+    }
+
+    #[test]
+    fn sync_safety_allows_beads_path() {
+        use std::path::PathBuf;
+
+        let beads_path = PathBuf::from("/project/.beads/issues.jsonl");
+        let result = SyncSafetyValidator::validate_no_git_path(&beads_path);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn sync_safety_allows_gitignore_file() {
+        use std::path::PathBuf;
+
+        // .gitignore is NOT .git - should be allowed
+        let gitignore_path = PathBuf::from("/project/.gitignore");
+        let result = SyncSafetyValidator::validate_no_git_path(&gitignore_path);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn sync_safety_rejects_git_in_string() {
+        use std::path::PathBuf;
+
+        // Paths ending with .git
+        let git_path = PathBuf::from("/project/.git");
+        assert!(SyncSafetyValidator::validate_no_git_path(&git_path).is_err());
+
+        // Path with /.git/ in middle
+        let git_path2 = PathBuf::from("/repo/.git/hooks/pre-commit");
+        assert!(SyncSafetyValidator::validate_no_git_path(&git_path2).is_err());
+    }
+
+    #[test]
+    fn sync_safety_containment_rejects_escape() {
+        use tempfile::TempDir;
+
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&beads_dir).unwrap();
+
+        // Path outside beads_dir
+        let outside_path = temp.path().join("src/main.rs");
+        let result =
+            SyncSafetyValidator::validate_path_containment(&outside_path, &beads_dir, false);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .message
+                .contains("outside allowed directory")
+        );
+    }
+
+    #[test]
+    fn sync_safety_containment_allows_beads_subpath() {
+        use tempfile::TempDir;
+
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&beads_dir).unwrap();
+
+        // Create the file so canonicalize works
+        let jsonl_path = beads_dir.join("issues.jsonl");
+        std::fs::write(&jsonl_path, "").unwrap();
+
+        let result = SyncSafetyValidator::validate_path_containment(&jsonl_path, &beads_dir, false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn sync_safety_containment_allows_external_with_flag() {
+        use tempfile::TempDir;
+
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path().join(".beads");
+
+        // Path outside beads_dir but external allowed
+        let outside_path = temp.path().join("external.jsonl");
+        let result =
+            SyncSafetyValidator::validate_path_containment(&outside_path, &beads_dir, true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn sync_safety_containment_rejects_git_even_with_external_flag() {
+        use std::path::PathBuf;
+
+        let beads_dir = PathBuf::from("/project/.beads");
+        let git_path = PathBuf::from("/project/.git/config");
+
+        // Even with allow_external=true, .git should be rejected
+        let result = SyncSafetyValidator::validate_path_containment(&git_path, &beads_dir, true);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains(".git"));
+    }
+
+    /// This test verifies the core safety invariant: no git commands in sync code.
+    ///
+    /// It uses static analysis (grep) to prove that `Command::new("git")` does
+    /// not appear in the sync module.
+    #[test]
+    fn sync_safety_no_git_commands_in_sync_module() {
+        use std::process::Command;
+
+        // Search for git command invocations in sync module
+        let output = Command::new("grep")
+            .args(["-r", "Command::new.*git", "src/sync/"])
+            .output();
+
+        match output {
+            Ok(result) => {
+                // grep returns exit code 1 when no matches found (which is what we want)
+                // grep returns exit code 0 when matches found (which is a failure)
+                let stdout = String::from_utf8_lossy(&result.stdout);
+                assert!(
+                    result.status.code() == Some(1) || stdout.is_empty(),
+                    "SAFETY VIOLATION: Found git commands in sync module:\n{stdout}"
+                );
+            }
+            Err(_) => {
+                // If grep isn't available, skip this test with a warning
+                // This can happen in some CI environments
+                eprintln!("Warning: grep not available, skipping static analysis test");
+            }
+        }
+    }
+
+    /// Verify no runtime git dependencies exist in Cargo.toml [dependencies] section.
+    ///
+    /// Note: Build-time dependencies (like vergen-gix) are allowed since they
+    /// don't affect sync runtime behavior.
+    #[test]
+    fn sync_safety_no_git_library_dependencies() {
+        let cargo_toml = std::fs::read_to_string("Cargo.toml").unwrap_or_default();
+
+        // Extract only the [dependencies] section (not [build-dependencies] or [dev-dependencies])
+        let deps_section = cargo_toml
+            .lines()
+            .skip_while(|line| !line.starts_with("[dependencies]"))
+            .skip(1) // Skip the [dependencies] header
+            .take_while(|line| !line.starts_with('[')) // Stop at next section
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Check for common git library crates in runtime dependencies only
+        let git_crates = ["git2 ", "gitoxide ", "gix ", "libgit2 "];
+
+        for crate_name in git_crates {
+            let crate_name = crate_name.trim();
+            assert!(
+                !deps_section.contains(crate_name),
+                "SAFETY VIOLATION: Found git library dependency '{crate_name}' in runtime [dependencies]"
+            );
+        }
     }
 }

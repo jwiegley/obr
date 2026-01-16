@@ -151,6 +151,17 @@ fn validate_sync_paths(
         canonical_parent.join(file_name)
     };
 
+    let extension = jsonl_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase());
+    if extension.as_deref() != Some("jsonl") {
+        return Err(BeadsError::Config(format!(
+            "JSONL path must end with .jsonl: {}",
+            jsonl_path.display()
+        )));
+    }
+
     let is_external = !jsonl_path.starts_with(&canonical_beads);
     if is_external && !allow_external_jsonl {
         warn!(
