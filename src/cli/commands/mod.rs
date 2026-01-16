@@ -1,10 +1,12 @@
+pub mod comments;
 pub mod count;
 pub mod create;
 pub mod delete;
 pub mod doctor;
 pub mod init;
 pub mod list;
-pub mod search;
 pub mod q;
 pub mod show;
+pub mod stale;
+pub mod update;
 pub mod version;
