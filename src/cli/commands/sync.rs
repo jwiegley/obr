@@ -245,17 +245,53 @@ fn execute_status(
         "Computed sync status inputs"
     );
 
-    // Determine staleness
+    // Determine staleness using Lstat (symlink_metadata) to handle symlinks correctly
     let (jsonl_newer, db_newer) = if jsonl_exists {
-        let jsonl_mtime = fs::metadata(jsonl_path)?.modified()?;
+        // Use symlink_metadata (Lstat) instead of metadata (stat) to get the mtime
+        // of the symlink itself, not the target. This is important for detecting
+        // when the JSONL file has been updated via a symlink.
+        let jsonl_mtime = fs::symlink_metadata(jsonl_path)?.modified()?;
 
         // JSONL is newer if it was modified after last import
-        let jsonl_newer = last_import_time.as_ref().is_none_or(|import_time| {
+        let mtime_newer = last_import_time.as_ref().is_none_or(|import_time| {
             chrono::DateTime::parse_from_rfc3339(import_time).is_ok_and(|import_ts| {
                 let import_sys_time = std::time::SystemTime::from(import_ts);
                 jsonl_mtime > import_sys_time
             })
         });
+
+        // Hash check prevents false staleness from `touch` - if mtime is newer but
+        // content hash is the same, the file wasn't actually modified
+        let jsonl_newer = if mtime_newer {
+            // Check if content hash has changed to prevent false positives from touch
+            jsonl_content_hash.as_ref().map_or_else(
+                || {
+                    // No stored hash (cold start), trust mtime
+                    debug!("No stored hash (cold start), trusting mtime for staleness");
+                    true
+                },
+                |stored_hash| match compute_jsonl_hash(jsonl_path) {
+                    Ok(current_hash) => {
+                        let hash_changed = &current_hash != stored_hash;
+                        debug!(
+                            mtime_newer,
+                            hash_changed,
+                            stored_hash,
+                            current_hash,
+                            "Staleness check: mtime newer but verifying hash"
+                        );
+                        hash_changed
+                    }
+                    Err(e) => {
+                        // If we can't compute hash, fall back to mtime-based staleness
+                        debug!(?e, "Failed to compute JSONL hash, falling back to mtime");
+                        true
+                    }
+                },
+            )
+        } else {
+            false
+        };
 
         // DB is newer if there are dirty issues
         let db_newer = dirty_count > 0;

@@ -766,3 +766,161 @@ fn e2e_sync_deterministic_export() {
         ids, artifacts.artifact_dir
     );
 }
+
+/// E2E test: Staleness detection hash check prevents false positives from touch.
+///
+/// Related beads:
+/// - beads_rust-3qi: Auto-import staleness detection (Lstat + content hash + conflict markers)
+#[test]
+fn e2e_staleness_hash_check_prevents_false_touch() {
+    use std::thread;
+    use std::time::Duration;
+
+    let workspace = BrWorkspace::new();
+    let mut artifacts = TestArtifacts::new(&workspace, "staleness_hash_check");
+
+    // Initialize
+    let init = run_br(&workspace, ["init"], "init");
+    assert!(init.status.success(), "init failed: {}", init.stderr);
+
+    // Create an issue
+    let create = run_br(&workspace, ["create", "Test staleness"], "create");
+    assert!(create.status.success(), "create failed: {}", create.stderr);
+
+    // Export to JSONL
+    let export = run_br(&workspace, ["sync", "--flush-only"], "export");
+    assert!(export.status.success(), "export failed: {}", export.stderr);
+
+    // Check status - should be in sync
+    let status1 = run_br(
+        &workspace,
+        ["sync", "--status", "--json"],
+        "status_after_export",
+    );
+    artifacts.record_command(
+        "status_after_export",
+        &status1.stdout,
+        &status1.stderr,
+        status1.status.success(),
+    );
+    assert!(status1.status.success(), "status check failed");
+    let payload1 = common::cli::extract_json_payload(&status1.stdout);
+    let json1: serde_json::Value = serde_json::from_str(&payload1).expect("parse status json");
+    assert!(
+        !json1["jsonl_newer"].as_bool().unwrap_or(true),
+        "JSONL should not be marked newer after export"
+    );
+
+    // Sleep briefly to ensure mtime would differ
+    thread::sleep(Duration::from_millis(100));
+
+    // Touch the JSONL file (updates mtime but not content)
+    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let content = fs::read_to_string(&jsonl_path).expect("read jsonl");
+    fs::write(&jsonl_path, &content).expect("touch jsonl");
+    artifacts.capture_jsonl("after_touch", &jsonl_path);
+
+    // Check status again - should NOT be marked stale due to hash check
+    let status2 = run_br(
+        &workspace,
+        ["sync", "--status", "--json"],
+        "status_after_touch",
+    );
+    artifacts.record_command(
+        "status_after_touch",
+        &status2.stdout,
+        &status2.stderr,
+        status2.status.success(),
+    );
+    assert!(status2.status.success(), "status check failed");
+    let payload2 = common::cli::extract_json_payload(&status2.stdout);
+    let json2: serde_json::Value = serde_json::from_str(&payload2).expect("parse status json");
+
+    // Hash check should prevent false staleness: mtime changed but content didn't
+    assert!(
+        !json2["jsonl_newer"].as_bool().unwrap_or(true),
+        "JSONL should NOT be marked newer after touch (hash unchanged)\n\
+         mtime updated but content hash is the same\n\
+         status output: {}",
+        status2.stdout
+    );
+
+    artifacts.persist();
+
+    eprintln!(
+        "[PASS] e2e_staleness_hash_check_prevents_false_touch\n\
+         - Exported JSONL\n\
+         - Touched file (mtime changed, content unchanged)\n\
+         - Hash check correctly prevented false staleness\n\
+         - Artifacts saved to: {:?}",
+        artifacts.artifact_dir
+    );
+}
+
+/// E2E test: Staleness detection correctly identifies real changes.
+///
+/// Related beads:
+/// - beads_rust-3qi: Auto-import staleness detection (Lstat + content hash + conflict markers)
+#[test]
+fn e2e_staleness_detects_real_content_change() {
+    let workspace = BrWorkspace::new();
+    let mut artifacts = TestArtifacts::new(&workspace, "staleness_real_change");
+
+    // Initialize
+    let init = run_br(&workspace, ["init"], "init");
+    assert!(init.status.success(), "init failed: {}", init.stderr);
+
+    // Create an issue
+    let create = run_br(&workspace, ["create", "Test staleness"], "create");
+    assert!(create.status.success(), "create failed: {}", create.stderr);
+
+    // Export to JSONL
+    let export = run_br(&workspace, ["sync", "--flush-only"], "export");
+    assert!(export.status.success(), "export failed: {}", export.stderr);
+
+    // Modify the JSONL content (simulate external change)
+    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let mut content = fs::read_to_string(&jsonl_path).expect("read jsonl");
+    artifacts.capture_jsonl("before_modify", &jsonl_path);
+
+    // Append a comment to trigger content change
+    content.push_str("# External comment added\n");
+    fs::write(&jsonl_path, &content).expect("write modified jsonl");
+    artifacts.capture_jsonl("after_modify", &jsonl_path);
+
+    // Check status - should be marked stale (jsonl_newer = true)
+    let status = run_br(
+        &workspace,
+        ["sync", "--status", "--json"],
+        "status_after_modify",
+    );
+    artifacts.record_command(
+        "status_after_modify",
+        &status.stdout,
+        &status.stderr,
+        status.status.success(),
+    );
+    assert!(status.status.success(), "status check failed");
+    let payload = common::cli::extract_json_payload(&status.stdout);
+    let json: serde_json::Value = serde_json::from_str(&payload).expect("parse status json");
+
+    // Real content change should trigger staleness
+    assert!(
+        json["jsonl_newer"].as_bool().unwrap_or(false),
+        "JSONL should be marked newer after real content change\n\
+         Content was modified, hash should differ\n\
+         status output: {}",
+        status.stdout
+    );
+
+    artifacts.persist();
+
+    eprintln!(
+        "[PASS] e2e_staleness_detects_real_content_change\n\
+         - Exported JSONL\n\
+         - Modified file content\n\
+         - Staleness correctly detected (hash changed)\n\
+         - Artifacts saved to: {:?}",
+        artifacts.artifact_dir
+    );
+}

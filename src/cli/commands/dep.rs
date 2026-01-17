@@ -36,9 +36,14 @@ pub fn execute(command: &DepCommands, json: bool, cli: &config::CliOverrides) ->
         DepCommands::Remove(args) => {
             dep_remove(args, &mut storage, &resolver, &all_ids, &actor, json)
         }
-        DepCommands::List(args) => {
-            dep_list(args, &storage, &resolver, &all_ids, &external_db_paths, json)
-        }
+        DepCommands::List(args) => dep_list(
+            args,
+            &storage,
+            &resolver,
+            &all_ids,
+            &external_db_paths,
+            json,
+        ),
         DepCommands::Tree(args) => dep_tree(
             args,
             &storage,
@@ -246,7 +251,11 @@ fn dep_list(
         }
     }
 
-    if !items.is_empty() && !external_db_paths.is_empty() {
+    if !items.is_empty()
+        && items.iter().any(|item| {
+            item.depends_on_id.starts_with("external:") || item.issue_id.starts_with("external:")
+        })
+    {
         let external_statuses =
             storage.resolve_external_dependency_statuses(external_db_paths, false)?;
         apply_external_dep_list_metadata(&mut items, &external_statuses);
@@ -319,9 +328,10 @@ fn apply_external_dep_list_metadata(
 
         if item.title.is_empty() {
             let prefix = if satisfied { "✓" } else { "⏳" };
-            item.title = parse_external_dep_id(external_id)
-                .map(|(project, capability)| format!("{prefix} {project}:{capability}"))
-                .unwrap_or_else(|| format!("{prefix} {external_id}"));
+            item.title = parse_external_dep_id(external_id).map_or_else(
+                || format!("{prefix} {external_id}"),
+                |(project, capability)| format!("{prefix} {project}:{capability}"),
+            );
         }
     }
 }
@@ -525,6 +535,7 @@ mod tests {
     use super::*;
     use crate::model::{Issue, IssueType, Priority, Status};
     use chrono::{TimeZone, Utc};
+    use std::collections::HashMap;
 
     fn make_test_issue(id: &str, title: &str) -> Issue {
         Issue {
@@ -826,6 +837,79 @@ mod tests {
     fn test_dep_direction_default() {
         let direction = DepDirection::default();
         assert_eq!(direction, DepDirection::Down);
+    }
+
+    #[test]
+    fn test_apply_external_dep_list_metadata_sets_status_and_title() {
+        let mut items = vec![
+            DepListItem {
+                issue_id: "bd-001".to_string(),
+                depends_on_id: "external:proj:cap".to_string(),
+                dep_type: "blocks".to_string(),
+                title: String::new(),
+                status: "open".to_string(),
+                priority: 2,
+            },
+            DepListItem {
+                issue_id: "bd-002".to_string(),
+                depends_on_id: "external:proj:cap2".to_string(),
+                dep_type: "blocks".to_string(),
+                title: String::new(),
+                status: "open".to_string(),
+                priority: 2,
+            },
+        ];
+
+        let mut statuses = HashMap::new();
+        statuses.insert("external:proj:cap".to_string(), true);
+        statuses.insert("external:proj:cap2".to_string(), false);
+
+        apply_external_dep_list_metadata(&mut items, &statuses);
+
+        assert_eq!(items[0].status, "closed");
+        assert_eq!(items[0].title, "✓ proj:cap");
+        assert_eq!(items[1].status, "blocked");
+        assert_eq!(items[1].title, "⏳ proj:cap2");
+    }
+
+    #[test]
+    fn test_apply_external_dep_list_metadata_preserves_title() {
+        let mut items = vec![DepListItem {
+            issue_id: "bd-001".to_string(),
+            depends_on_id: "external:proj:cap".to_string(),
+            dep_type: "blocks".to_string(),
+            title: "Already set".to_string(),
+            status: "open".to_string(),
+            priority: 2,
+        }];
+
+        let mut statuses = HashMap::new();
+        statuses.insert("external:proj:cap".to_string(), false);
+
+        apply_external_dep_list_metadata(&mut items, &statuses);
+
+        assert_eq!(items[0].status, "blocked");
+        assert_eq!(items[0].title, "Already set");
+    }
+
+    #[test]
+    fn test_apply_external_dep_list_metadata_external_issue_id() {
+        let mut items = vec![DepListItem {
+            issue_id: "external:proj:cap".to_string(),
+            depends_on_id: "bd-001".to_string(),
+            dep_type: "blocks".to_string(),
+            title: String::new(),
+            status: "open".to_string(),
+            priority: 2,
+        }];
+
+        let mut statuses = HashMap::new();
+        statuses.insert("external:proj:cap".to_string(), true);
+
+        apply_external_dep_list_metadata(&mut items, &statuses);
+
+        assert_eq!(items[0].status, "closed");
+        assert_eq!(items[0].title, "✓ proj:cap");
     }
 
     #[test]

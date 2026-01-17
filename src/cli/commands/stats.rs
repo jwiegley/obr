@@ -54,6 +54,8 @@ pub struct RecentActivity {
     pub issues_created: usize,
     pub issues_closed: usize,
     pub issues_updated: usize,
+    pub issues_reopened: usize,
+    pub total_changes: usize,
 }
 
 /// Complete stats output structure.
@@ -106,11 +108,12 @@ pub fn execute(args: &StatsArgs, json: bool, cli: &config::CliOverrides) -> Resu
         breakdowns.push(compute_label_breakdown(&storage, &all_issues)?);
     }
 
-    // Compute recent activity if requested
-    let recent_activity = if args.activity {
-        compute_recent_activity(&beads_dir, args.activity_hours)
-    } else {
+    // Compute recent activity by default (matches bd behavior).
+    // Use --no-activity to skip this (for performance).
+    let recent_activity = if args.no_activity {
         None
+    } else {
+        compute_recent_activity(&beads_dir, args.activity_hours)
     };
 
     let output = StatsOutput {
@@ -147,8 +150,9 @@ fn compute_summary(
     let mut epics = Vec::new();
     let mut lead_times = Vec::new();
 
-    // Use blocked cache to align with ready/blocked command semantics.
-    let blocked_ids = storage.get_blocked_ids()?;
+    // Use only 'blocks' dependency type for stats blocked count (classic bd semantics).
+    // This differs from the ready/blocked commands which use the full blocked cache.
+    let blocked_by_blocks = storage.get_blocked_by_blocks_deps_only()?;
 
     for issue in issues {
         match issue.status {
@@ -179,21 +183,22 @@ fn compute_summary(
         }
     }
 
-    // Ready count: open status, not blocked, not deferred, not pinned, not ephemeral
+    // Ready count: simplified bd semantics - status=open (not in_progress), no open blockers.
+    // This differs from the ready command which uses the full blocked cache.
     let now = Utc::now();
     let ready = issues
         .iter()
         .filter(|i| {
-            matches!(i.status, Status::Open | Status::InProgress)
-                && !blocked_ids.contains(&i.id)
+            i.status == Status::Open
+                && !blocked_by_blocks.contains(&i.id)
                 && !i.ephemeral
                 && !i.pinned
                 && i.defer_until.is_none_or(|d| d <= now)
         })
         .count();
 
-    // Blocked count based on blocked cache.
-    let blocked = blocked_ids.len();
+    // Blocked count based on 'blocks' deps only (classic bd semantics).
+    let blocked = blocked_by_blocks.len();
 
     // Epics eligible for closure: all children closed
     let epics_eligible = count_epics_eligible_for_closure(storage, &epics)?;
@@ -369,10 +374,20 @@ fn compute_recent_activity(beads_dir: &Path, hours: u32) -> Option<RecentActivit
 
     let since = format!("{hours} hours ago");
 
-    // Get commit count
+    // Get the git repo root (parent of .beads)
+    let repo_root = beads_dir.parent().unwrap_or(beads_dir);
+
+    // Get commit count using relative path from repo root
     let commit_output = Command::new("git")
-        .args(["log", "--oneline", "--since", &since, "--", "issues.jsonl"])
-        .current_dir(beads_dir.parent().unwrap_or(beads_dir))
+        .args([
+            "log",
+            "--oneline",
+            "--since",
+            &since,
+            "--",
+            ".beads/issues.jsonl",
+        ])
+        .current_dir(repo_root)
         .output();
 
     let commit_count = match commit_output {
@@ -399,6 +414,8 @@ fn compute_recent_activity(beads_dir: &Path, hours: u32) -> Option<RecentActivit
         issues_created: 0,
         issues_closed: 0,
         issues_updated: 0,
+        issues_reopened: 0,
+        total_changes: 0,
     })
 }
 
@@ -437,17 +454,13 @@ fn print_text_output(output: &StatsOutput) {
     }
 
     if let Some(activity) = &output.recent_activity {
-        println!("\nRecent Activity (last {}h):", activity.hours_tracked);
-        println!("  Commits: {}", activity.commit_count);
-        if activity.issues_created > 0 {
-            println!("  Created: {}", activity.issues_created);
-        }
-        if activity.issues_closed > 0 {
-            println!("  Closed: {}", activity.issues_closed);
-        }
-        if activity.issues_updated > 0 {
-            println!("  Updated: {}", activity.issues_updated);
-        }
+        println!("\nRecent Activity (last {} hours):", activity.hours_tracked);
+        println!("  Commits:         {}", activity.commit_count);
+        println!("  Total Changes:   {}", activity.total_changes);
+        println!("  Issues Created:  {}", activity.issues_created);
+        println!("  Issues Closed:   {}", activity.issues_closed);
+        println!("  Issues Reopened: {}", activity.issues_reopened);
+        println!("  Issues Updated:  {}", activity.issues_updated);
     }
 }
 

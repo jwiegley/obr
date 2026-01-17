@@ -262,7 +262,7 @@ pub fn is_valid_id_format(id: &str) -> bool {
 
     if !prefix
         .chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
     {
         return false;
     }

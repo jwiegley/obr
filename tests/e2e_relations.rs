@@ -303,6 +303,115 @@ fn e2e_dep_tree_external_nodes() {
 }
 
 #[test]
+fn e2e_dep_list_external_nodes() {
+    let workspace = BrWorkspace::new();
+    let external = BrWorkspace::new();
+
+    let init = run_br(&workspace, ["init"], "init_main");
+    assert!(init.status.success(), "init failed: {}", init.stderr);
+    let init_ext = run_br(&external, ["init"], "init_external");
+    assert!(
+        init_ext.status.success(),
+        "external init failed: {}",
+        init_ext.stderr
+    );
+
+    let config_path = workspace.root.join(".beads/config.yaml");
+    let external_path = external.root.display();
+    let config = format!("external_projects:\n  extproj: \"{external_path}\"\n");
+    fs::write(&config_path, config).expect("write config");
+
+    let issue = run_br(&workspace, ["create", "Main issue"], "create_main_issue");
+    assert!(issue.status.success(), "create failed: {}", issue.stderr);
+    let issue_id = parse_created_id(&issue.stdout);
+
+    let dep_add = run_br(
+        &workspace,
+        ["dep", "add", &issue_id, "external:extproj:auth"],
+        "dep_add_external",
+    );
+    assert!(
+        dep_add.status.success(),
+        "dep add failed: {}",
+        dep_add.stderr
+    );
+
+    let list_before = run_br(
+        &workspace,
+        ["dep", "list", &issue_id, "--json"],
+        "dep_list_before",
+    );
+    assert!(
+        list_before.status.success(),
+        "dep list before failed: {}",
+        list_before.stderr
+    );
+    let list_payload = extract_json_payload(&list_before.stdout);
+    let list_json: Vec<Value> = serde_json::from_str(&list_payload).expect("dep list json");
+    let external_entry = list_json
+        .iter()
+        .find(|item| item["depends_on_id"] == "external:extproj:auth")
+        .expect("external dep entry");
+    assert_eq!(external_entry["status"], "blocked");
+    assert!(
+        external_entry["title"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with('⏳'),
+        "external dep should show pending marker"
+    );
+
+    let provider = run_br(&external, ["create", "Provide auth"], "ext_create");
+    assert!(
+        provider.status.success(),
+        "external create failed: {}",
+        provider.stderr
+    );
+    let provider_id = parse_created_id(&provider.stdout);
+    let label = run_br(
+        &external,
+        ["update", &provider_id, "--add-label", "provides:auth"],
+        "ext_label",
+    );
+    assert!(
+        label.status.success(),
+        "external label failed: {}",
+        label.stderr
+    );
+    let close = run_br(&external, ["close", &provider_id], "ext_close");
+    assert!(
+        close.status.success(),
+        "external close failed: {}",
+        close.stderr
+    );
+
+    let list_after = run_br(
+        &workspace,
+        ["dep", "list", &issue_id, "--json"],
+        "dep_list_after",
+    );
+    assert!(
+        list_after.status.success(),
+        "dep list after failed: {}",
+        list_after.stderr
+    );
+    let list_payload = extract_json_payload(&list_after.stdout);
+    let list_json: Vec<Value> = serde_json::from_str(&list_payload).expect("dep list json");
+    let external_entry = list_json
+        .iter()
+        .find(|item| item["depends_on_id"] == "external:extproj:auth")
+        .expect("external dep entry");
+    assert_eq!(external_entry["status"], "closed");
+    assert!(
+        external_entry["title"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with('✓'),
+        "external dep should show satisfied marker"
+    );
+}
+
+#[test]
 fn e2e_close_suggest_next_unblocks() {
     let workspace = BrWorkspace::new();
 

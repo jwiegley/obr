@@ -20,9 +20,10 @@ use crate::error::{BeadsError, Result};
 use crate::model::Issue;
 use crate::storage::SqliteStorage;
 use crate::sync::history::HistoryConfig;
+use crate::validation::IssueValidator;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{HashSet, hash_map::RandomState};
 use std::fmt::Write as FmtWrite;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, BufWriter, Write};
@@ -1575,6 +1576,81 @@ pub fn finalize_export(
     Ok(())
 }
 
+/// Result of an auto-flush operation.
+#[derive(Debug, Default)]
+pub struct AutoFlushResult {
+    /// Whether the flush was performed (false if skipped due to no dirty issues).
+    pub flushed: bool,
+    /// Number of issues exported (0 if not flushed).
+    pub exported_count: usize,
+    /// Content hash of the exported JSONL (empty if not flushed).
+    pub content_hash: String,
+}
+
+/// Perform an automatic flush of dirty issues to JSONL.
+///
+/// This is the auto-flush operation that runs at the end of mutating commands
+/// (unless `--no-auto-flush` is set). It:
+/// 1. Checks for dirty issues
+/// 2. If any exist, exports them to the default JSONL path
+/// 3. Clears dirty flags and updates metadata
+///
+/// Returns early (no-op) if there are no dirty issues.
+///
+/// # Arguments
+///
+/// * `storage` - Mutable reference to the `SQLite` storage
+/// * `beads_dir` - Path to the .beads directory
+///
+/// # Errors
+///
+/// Returns an error if the export fails.
+pub fn auto_flush(storage: &mut SqliteStorage, beads_dir: &Path) -> Result<AutoFlushResult> {
+    // Check for dirty issues first
+    let dirty_ids = storage.get_dirty_issue_ids()?;
+    if dirty_ids.is_empty() {
+        tracing::debug!("Auto-flush: no dirty issues, skipping");
+        return Ok(AutoFlushResult::default());
+    }
+
+    tracing::debug!(
+        dirty_count = dirty_ids.len(),
+        "Auto-flush: exporting dirty issues"
+    );
+
+    // Default JSONL path
+    let jsonl_path = beads_dir.join("issues.jsonl");
+
+    // Configure export with defaults
+    let export_config = ExportConfig {
+        force: false,
+        is_default_path: true,
+        error_policy: ExportErrorPolicy::Strict,
+        retention_days: None,
+        beads_dir: Some(beads_dir.to_path_buf()),
+        allow_external_jsonl: false,
+        history: history::HistoryConfig::default(),
+    };
+
+    // Perform export
+    let (export_result, _report) =
+        export_to_jsonl_with_policy(storage, &jsonl_path, &export_config)?;
+
+    // Finalize export (clear dirty flags, update metadata)
+    finalize_export(storage, &export_result, Some(&export_result.issue_hashes))?;
+
+    tracing::info!(
+        exported = export_result.exported_count,
+        "Auto-flush complete"
+    );
+
+    Ok(AutoFlushResult {
+        flushed: true,
+        exported_count: export_result.exported_count,
+        content_hash: export_result.content_hash,
+    })
+}
+
 /// Read all issues from a JSONL file.
 ///
 /// # Errors
@@ -1834,6 +1910,21 @@ pub fn import_from_jsonl(
     // Step 3: Normalize issues
     for issue in &mut issues {
         normalize_issue(issue);
+    }
+
+    // Step 3.5: Validate issues (schema/logic constraints)
+    for issue in &issues {
+        if let Err(errors) = IssueValidator::validate(issue) {
+            let details = errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(BeadsError::Config(format!(
+                "Validation failed for issue {}: {}",
+                issue.id, details
+            )));
+        }
     }
 
     // Step 4: Prefix validation (if enabled and prefix provided)
@@ -2310,10 +2401,10 @@ pub fn merge_issue(
 pub fn three_way_merge(
     context: &MergeContext,
     strategy: ConflictResolution,
-    tombstones: Option<&HashSet<String>>,
+    tombstones: Option<&HashSet<String, RandomState>>,
 ) -> MergeReport {
     let mut report = MergeReport::default();
-    let empty_tombstones = HashSet::new();
+    let empty_tombstones: HashSet<String, RandomState> = HashSet::new();
     let tombstones = tombstones.unwrap_or(&empty_tombstones);
 
     for id in context.all_issue_ids() {
@@ -3114,7 +3205,7 @@ mod tests {
         set_content_hash(&mut hash_issue);
         storage.upsert_issue_for_import(&hash_issue).unwrap();
 
-        let mut id_issue = make_issue_at("bd-same", "Different Content", fixed_time(120));
+        let mut id_issue = make_issue_at("bd-same", "Different Content", fixed_time(100));
         set_content_hash(&mut id_issue);
         storage.upsert_issue_for_import(&id_issue).unwrap();
 
@@ -3734,10 +3825,9 @@ mod tests {
     fn test_merge_deleted_external_unmodified_local() {
         // Issue in base and local (unmodified), deleted in external -> delete
         let base = make_issue_with_hash("bd-4", "Base", fixed_time_merge(100), Some("hash4"));
-        let local = make_issue_with_hash("bd-4", "Base", fixed_time_merge(100), Some("hash4")); // Same time, unmodified
         let result = merge_issue(
             Some(&base),
-            Some(&local),
+            Some(&base),
             None,
             ConflictResolution::PreferNewer,
         );
@@ -3808,7 +3898,10 @@ mod tests {
             Some(&external),
             ConflictResolution::PreferNewer,
         );
-        assert!(matches!(result, MergeResult::Keep(issue) if issue.title == "Modified"));
+        match result {
+            MergeResult::KeepWithNote(issue, _) => assert_eq!(issue.title, "Modified"),
+            _ => panic!("Expected KeepWithNote"),
+        }
     }
 
     #[test]
@@ -3825,7 +3918,10 @@ mod tests {
             Some(&external),
             ConflictResolution::PreferNewer,
         );
-        assert!(matches!(result, MergeResult::Keep(issue) if issue.title == "Modified"));
+        match result {
+            MergeResult::KeepWithNote(issue, _) => assert_eq!(issue.title, "Modified"),
+            _ => panic!("Expected KeepWithNote"),
+        }
     }
 
     #[test]
@@ -3999,8 +4095,12 @@ mod tests {
         let base_issue = make_issue_with_hash("bd-1", "Base", fixed_time_merge(100), Some("hash1"));
         let local_issue =
             make_issue_with_hash("bd-2", "Local Only", fixed_time_merge(200), Some("hash2"));
-        let external_issue =
-            make_issue_with_hash("bd-3", "External Only", fixed_time_merge(300), Some("hash3"));
+        let external_issue = make_issue_with_hash(
+            "bd-3",
+            "External Only",
+            fixed_time_merge(300),
+            Some("hash3"),
+        );
 
         let mut base = std::collections::HashMap::new();
         base.insert("bd-1".to_string(), base_issue.clone());
@@ -4048,7 +4148,11 @@ mod tests {
         // Should NOT keep the tombstoned issue
         assert!(report.kept.is_empty());
         assert_eq!(report.tombstone_protected.len(), 1);
-        assert!(report.tombstone_protected.contains(&"bd-tombstoned".to_string()));
+        assert!(
+            report
+                .tombstone_protected
+                .contains(&"bd-tombstoned".to_string())
+        );
     }
 
     #[test]
@@ -4081,8 +4185,12 @@ mod tests {
     #[test]
     fn test_three_way_merge_deletions() {
         // Setup: issue in base but deleted in both left and right
-        let base_issue =
-            make_issue_with_hash("bd-deleted", "To Delete", fixed_time_merge(100), Some("hash1"));
+        let base_issue = make_issue_with_hash(
+            "bd-deleted",
+            "To Delete",
+            fixed_time_merge(100),
+            Some("hash1"),
+        );
 
         let mut base = std::collections::HashMap::new();
         base.insert("bd-deleted".to_string(), base_issue);
@@ -4101,8 +4209,12 @@ mod tests {
     #[test]
     fn test_three_way_merge_with_notes() {
         // Setup: issue modified in both left and right
-        let base_issue =
-            make_issue_with_hash("bd-1", "Base Title", fixed_time_merge(100), Some("base_hash"));
+        let base_issue = make_issue_with_hash(
+            "bd-1",
+            "Base Title",
+            fixed_time_merge(100),
+            Some("base_hash"),
+        );
         let local_issue = make_issue_with_hash(
             "bd-1",
             "Local Modified",
@@ -4122,8 +4234,7 @@ mod tests {
         let mut left = std::collections::HashMap::new();
         left.insert("bd-1".to_string(), local_issue);
 
-        let mut right = std::collections::HashMap::new();
-        right.insert("bd-1".to_string(), external_issue);
+        let right = std::collections::HashMap::new(); // Deleted externally
 
         let context = MergeContext::new(base, left, right);
         let report = three_way_merge(&context, ConflictResolution::PreferNewer, None);

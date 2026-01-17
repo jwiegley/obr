@@ -2,9 +2,12 @@ use beads_rust::cli::commands;
 use beads_rust::cli::{Cli, Commands};
 use beads_rust::config;
 use beads_rust::logging::init_logging;
+use beads_rust::sync::auto_flush;
 use beads_rust::{BeadsError, StructuredError};
 use clap::Parser;
 use std::io::{self, IsTerminal};
+use std::path::Path;
+use tracing::debug;
 
 fn main() {
     let cli = Cli::parse();
@@ -16,6 +19,9 @@ fn main() {
     }
 
     let overrides = build_cli_overrides(&cli);
+
+    // Track if this command potentially mutates data (for auto-flush)
+    let is_mutating = is_mutating_command(&cli.command);
 
     let result = match cli.command {
         Commands::Init { prefix, force, .. } => commands::init::execute(prefix, force, None),
@@ -73,8 +79,77 @@ fn main() {
         }
     };
 
+    // Handle command result
     if let Err(e) = result {
         handle_error(&e, cli.json);
+    }
+
+    // Auto-flush after successful mutating commands (unless --no-auto-flush)
+    if is_mutating && !cli.no_auto_flush {
+        run_auto_flush(&overrides);
+    }
+}
+
+/// Determine if a command potentially mutates data.
+const fn is_mutating_command(cmd: &Commands) -> bool {
+    matches!(
+        cmd,
+        Commands::Create(_)
+            | Commands::Update(_)
+            | Commands::Delete(_)
+            | Commands::Close(_)
+            | Commands::Reopen(_)
+            | Commands::Q(_)
+            | Commands::Dep { .. }
+            | Commands::Label { .. }
+            | Commands::Comments(_)
+            | Commands::Defer(_)
+            | Commands::Undefer(_)
+    )
+}
+
+/// Run auto-flush after mutating commands.
+///
+/// This discovers the beads directory, opens a fresh storage connection,
+/// and exports any dirty issues to JSONL.
+fn run_auto_flush(overrides: &config::CliOverrides) {
+    // Try to discover beads directory
+    let beads_dir = match config::discover_beads_dir(Some(Path::new("."))) {
+        Ok(dir) => dir,
+        Err(e) => {
+            debug!(
+                ?e,
+                "Auto-flush skipped: could not discover .beads directory"
+            );
+            return;
+        }
+    };
+
+    // Open storage with fresh connection
+    let (mut storage, _paths) =
+        match config::open_storage(&beads_dir, overrides.db.as_ref(), overrides.lock_timeout) {
+            Ok(result) => result,
+            Err(e) => {
+                debug!(?e, "Auto-flush skipped: could not open storage");
+                return;
+            }
+        };
+
+    // Run auto-flush
+    match auto_flush(&mut storage, &beads_dir) {
+        Ok(result) => {
+            if result.flushed {
+                debug!(
+                    exported = result.exported_count,
+                    hash = %result.content_hash,
+                    "Auto-flush completed"
+                );
+            }
+        }
+        Err(e) => {
+            // Log but don't fail - auto-flush errors shouldn't break the command
+            debug!(?e, "Auto-flush failed (non-fatal)");
+        }
     }
 }
 

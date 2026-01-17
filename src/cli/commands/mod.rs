@@ -23,5 +23,7 @@ pub mod stale;
 pub mod stats;
 pub mod sync;
 pub mod update;
-pub mod upgrade;
 pub mod version;
+
+#[cfg(feature = "self_update")]
+pub mod upgrade;

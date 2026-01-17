@@ -474,3 +474,23 @@ fn import_repopulates_export_hashes() {
     let (restored_hash, _) = storage.get_export_hash("test-hash").unwrap().unwrap();
     assert_eq!(restored_hash, original_hash);
 }
+
+#[test]
+fn import_allows_invalid_id_format_currently() {
+    // CURRENT BEHAVIOR: Import skips IssueValidator, so invalid IDs are accepted.
+    // This test confirms the bug exists.
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("issues.jsonl");
+    let issue = issue_with_id("test-INVALID", "Invalid ID");
+    let json = serde_json::to_string(&issue).unwrap();
+    fs::write(&path, format!("{json}\n")).unwrap();
+
+    let mut storage = SqliteStorage::open_memory().unwrap();
+    let result = import_from_jsonl(&mut storage, &path, &ImportConfig::default(), Some("test-"));
+    
+    assert!(result.is_ok(), "Import currently succeeds for invalid IDs (bug)");
+    
+    // Verify it's in the DB
+    let imported = storage.get_issue("test-INVALID").unwrap().unwrap();
+    assert_eq!(imported.title, "Invalid ID");
+}

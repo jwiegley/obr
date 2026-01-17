@@ -525,7 +525,7 @@ impl SqliteStorage {
                      deleted_at, deleted_by, delete_reason, original_type,
                      compaction_level, compacted_at, compacted_at_commit, original_size,
                      sender, ephemeral, pinned, is_template
-              FROM issues WHERE 1=1",
+            FROM issues WHERE 1=1",
         );
 
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -3018,7 +3018,7 @@ impl SqliteStorage {
         // Add new dependencies
         for dep in dependencies {
             self.conn.execute(
-                "INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by)
+                "INSERT OR IGNORE INTO dependencies (issue_id, depends_on_id, type, created_at, created_by)
                  VALUES (?, ?, ?, CURRENT_TIMESTAMP, 'import')",
                 rusqlite::params![issue_id, dep.depends_on_id, dep.dep_type.as_str()],
             )?;
