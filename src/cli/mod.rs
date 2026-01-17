@@ -212,11 +212,24 @@ EXAMPLES:
     /// Generate shell completions
     Completions(CompletionsArgs),
 
+    /// Record and label agent interactions (append-only JSONL)
+    Audit {
+        #[command(subcommand)]
+        command: AuditCommands,
+    },
+
     /// Manage local history backups
     History(HistoryArgs),
-
-    /// List issues referenced in git commits but still open
+    /// List orphan issues (referenced in commits but open)
     Orphans(OrphansArgs),
+    /// Generate changelog from closed issues
+    Changelog(ChangelogArgs),
+
+    /// Manage saved queries
+    Query {
+        #[command(subcommand)]
+        command: QueryCommands,
+    },
 }
 
 /// Arguments for the completions command.
@@ -787,6 +800,68 @@ pub struct CommentListArgs {
     pub id: String,
 }
 
+#[derive(Subcommand, Debug)]
+pub enum AuditCommands {
+    /// Append an audit interaction entry
+    Record(AuditRecordArgs),
+    /// Append a label entry referencing an existing interaction
+    Label(AuditLabelArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct AuditRecordArgs {
+    /// Entry kind (e.g. `llm_call`, `tool_call`, `label`)
+    #[arg(long)]
+    pub kind: Option<String>,
+
+    /// Related issue ID (bd-...)
+    #[arg(long = "issue-id")]
+    pub issue_id: Option<String>,
+
+    /// Model name (`llm_call`)
+    #[arg(long)]
+    pub model: Option<String>,
+
+    /// Prompt text (`llm_call`)
+    #[arg(long)]
+    pub prompt: Option<String>,
+
+    /// Response text (`llm_call`)
+    #[arg(long)]
+    pub response: Option<String>,
+
+    /// Tool name (`tool_call`)
+    #[arg(long = "tool-name")]
+    pub tool_name: Option<String>,
+
+    /// Exit code (`tool_call`)
+    #[arg(long = "exit-code")]
+    pub exit_code: Option<i32>,
+
+    /// Error string (`llm_call/tool_call`)
+    #[arg(long)]
+    pub error: Option<String>,
+
+    /// Read a JSON object from stdin (must match audit.Entry schema)
+    #[arg(long)]
+    pub stdin: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct AuditLabelArgs {
+    /// Parent entry ID
+    pub entry_id: String,
+
+    /// Label value (e.g. \"good\" or \"bad\")
+    #[arg(long)]
+    pub label: Option<String>,
+
+    /// Reason for label
+    #[arg(long)]
+    pub reason: Option<String>,
+}
+
 #[derive(Args, Debug, Clone)]
 pub struct CountArgs {
     /// Group counts by field
@@ -844,22 +919,6 @@ pub struct StaleArgs {
     /// Filter by status (repeatable or comma-separated)
     #[arg(long, value_delimiter = ',')]
     pub status: Vec<String>,
-}
-
-/// Arguments for the orphans command.
-#[derive(Args, Debug, Clone, Default)]
-pub struct OrphansArgs {
-    /// Show commit details for each orphan
-    #[arg(long)]
-    pub details: bool,
-
-    /// Interactive mode to close orphaned issues
-    #[arg(long)]
-    pub fix: bool,
-
-    /// Machine-readable output (alias for --json)
-    #[arg(long)]
-    pub robot: bool,
 }
 
 #[derive(Args, Debug, Clone, Default)]
@@ -1216,4 +1275,40 @@ pub struct UpgradeArgs {
     /// Show what would happen without making changes
     #[arg(long)]
     pub dry_run: bool,
+}
+
+/// Arguments for the orphans command.
+#[derive(Args, Debug, Clone, Default)]
+pub struct OrphansArgs {
+    /// Show detailed commit info
+    #[arg(long)]
+    pub details: bool,
+
+    /// Prompt to fix orphans
+    #[arg(long)]
+    pub fix: bool,
+
+    /// Machine-readable output (alias for --json)
+    #[arg(long)]
+    pub robot: bool,
+}
+
+/// Arguments for the changelog command.
+#[derive(Args, Debug, Clone, Default)]
+pub struct ChangelogArgs {
+    /// Start date (RFC3339, YYYY-MM-DD, or relative like +7d)
+    #[arg(long)]
+    pub since: Option<String>,
+
+    /// Start from git tag date
+    #[arg(long, conflicts_with = "since")]
+    pub since_tag: Option<String>,
+
+    /// Start from git commit date
+    #[arg(long, conflicts_with_all = ["since", "since_tag"])]
+    pub since_commit: Option<String>,
+
+    /// Machine-readable output (alias for --json)
+    #[arg(long)]
+    pub robot: bool,
 }

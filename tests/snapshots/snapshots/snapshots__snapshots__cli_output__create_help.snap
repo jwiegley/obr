@@ -26,6 +26,7 @@ Options:
       --ephemeral                    Mark as ephemeral (not exported to JSONL)
       --ID-REDACTED                      Preview without creating
       --silent                       Output only issue ID
+  -f, --file <FILE>                  Create issues from a markdown file (bulk import)
       --db <DB>                      Database path (ID-REDACTED .beads/*.db if not set)
       --actor <ACTOR>                Actor name for audit trail
       --json                         Output as JSON

@@ -1,3 +1,4 @@
+#![allow(clippy::all, clippy::pedantic, clippy::nursery)]
 //! Conformance Tests: Validate br (Rust) produces identical output to bd (Go)
 //!
 //! This harness runs equivalent commands on both br and bd in isolated temp directories,
@@ -314,16 +315,6 @@ fn extract_field<'a>(json: &'a Value, field: &str) -> Option<&'a Value> {
         }
         _ => None,
     }
-}
-
-/// Helper to parse the created issue ID from br/bd create output
-fn parse_created_id(stdout: &str) -> Option<String> {
-    // br format: "Created bd-xxx: Title"
-    // bd format: "Created bd-xxx: Title" or similar
-    let line = stdout.lines().next()?;
-    let after_created = line.strip_prefix("Created ")?;
-    let id = after_created.split(':').next()?;
-    Some(id.trim().to_string())
 }
 
 // ============================================================================

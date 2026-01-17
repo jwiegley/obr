@@ -1,7 +1,7 @@
 use crate::cli::CreateArgs;
 use crate::config;
 use crate::error::{BeadsError, Result};
-use crate::model::{Issue, IssueType, Priority, Status};
+use crate::model::{Dependency, DependencyType, Issue, IssueType, Priority, Status};
 use crate::util::id::IdGenerator;
 use crate::util::markdown_import::parse_markdown_file;
 use crate::util::time::parse_flexible_timestamp;
@@ -66,7 +66,7 @@ pub fn execute(args: CreateArgs, cli: &config::CliOverrides) -> Result<()> {
     let issue_type = if let Some(t) = args.type_ {
         IssueType::from_str(&t)?
     } else {
-        default_issue_type.clone()
+        default_issue_type
     };
 
     let due_at = parse_optional_date(args.due.as_deref())?;
@@ -157,6 +157,7 @@ pub fn execute(args: CreateArgs, cli: &config::CliOverrides) -> Result<()> {
             LabelValidator::validate(label)
                 .map_err(|e| BeadsError::validation("label", e.message))?;
             storage.add_label(&id, label, &actor)?;
+            issue.labels.push(label.to_string());
         }
     }
 
@@ -180,6 +181,16 @@ pub fn execute(args: CreateArgs, cli: &config::CliOverrides) -> Result<()> {
             ));
         }
         storage.add_dependency(&id, &parent_id, "parent-child", &actor)?;
+
+        issue.dependencies.push(Dependency {
+            issue_id: id.clone(),
+            depends_on_id: parent_id,
+            dep_type: DependencyType::ParentChild,
+            created_at: now,
+            created_by: Some(actor.clone()),
+            metadata: None,
+            thread_id: None,
+        });
     }
 
     // Dependencies
@@ -194,18 +205,29 @@ pub fn execute(args: CreateArgs, cli: &config::CliOverrides) -> Result<()> {
             return Err(BeadsError::validation("deps", "cannot depend on itself"));
         }
         storage.add_dependency(&id, dep_id, type_str, &actor)?;
+
+        let dep_type = type_str
+            .parse()
+            .unwrap_or_else(|_| DependencyType::Custom(type_str.to_string()));
+        issue.dependencies.push(Dependency {
+            issue_id: id.clone(),
+            depends_on_id: dep_id.to_string(),
+            dep_type,
+            created_at: now,
+            created_by: Some(actor.clone()),
+            metadata: None,
+            thread_id: None,
+        });
     }
 
     // 9. Output
     if args.silent {
         println!("{}", issue.id);
     } else if cli.json.unwrap_or(false) {
-        // Re-fetch to get complete object with labels/deps?
-        // Or just print what we created?
-        // create_issue doesn't return full issue.
-        // Let's just print the struct we made, but with labels/deps field populated manually for display
-        // For now, print simple JSON of created object
-        println!("{}", serde_json::to_string_pretty(&issue)?);
+        let full_issue = storage
+            .get_issue_for_export(&id)?
+            .ok_or_else(|| BeadsError::IssueNotFound { id: id.clone() })?;
+        println!("{}", serde_json::to_string_pretty(&full_issue)?);
     } else {
         println!("Created {}: {}", issue.id, issue.title);
     }
@@ -214,6 +236,7 @@ pub fn execute(args: CreateArgs, cli: &config::CliOverrides) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn execute_import(path: &Path, args: &CreateArgs, cli: &config::CliOverrides) -> Result<()> {
     let parsed_issues = parse_markdown_file(path)?;
     if parsed_issues.is_empty() {

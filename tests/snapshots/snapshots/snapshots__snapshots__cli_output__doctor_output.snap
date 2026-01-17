@@ -9,4 +9,4 @@ OK schema.tables
 OK schema.columns
 OK sqlite.integrity_check
 WARN counts.db_vs_jsonl: JSONL not found; cannot compare counts
-WARN sync.metadata: Sync metadata is stale: JSONL is older and DB is older
+OK sync.metadata: Database and JSONL are in sync

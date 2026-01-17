@@ -1,4 +1,6 @@
+pub mod audit;
 pub mod blocked;
+pub mod changelog;
 pub mod close;
 pub mod comments;
 pub mod completions;
@@ -15,6 +17,7 @@ pub mod init;
 pub mod label;
 pub mod lint;
 pub mod list;
+pub mod orphans;
 pub mod q;
 pub mod ready;
 pub mod reopen;

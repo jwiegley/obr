@@ -6,10 +6,12 @@
 //! - Path handling (.beads discovery)
 //! - ID generation (base36 adaptive)
 //! - Last-touched tracking
+//! - Progress indicators (for long-running operations)
 
 mod hash;
 pub mod id;
 pub mod markdown_import;
+pub mod progress;
 pub mod time;
 
 pub use hash::{ContentHashable, content_hash, content_hash_from_parts};

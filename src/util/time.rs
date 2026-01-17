@@ -93,6 +93,61 @@ pub fn parse_flexible_timestamp(s: &str, field_name: &str) -> Result<DateTime<Ut
     }
 }
 
+/// Parse a relative time expression into a `DateTime<Utc>`.
+///
+/// Supports:
+/// - Relative duration: `+1h`, `+2d`, `+1w`, `+30m`, `-7d`
+/// - Keywords: `tomorrow`, `next-week`
+///
+/// Returns `None` if the input cannot be parsed as a relative time.
+#[must_use]
+pub fn parse_relative_time(s: &str) -> Option<DateTime<Utc>> {
+    let s = s.trim();
+
+    // Try relative duration (+1h, +2d, +1w, +30m, -7d)
+    if let Some(rest) = s.strip_prefix(['+', '-'].as_ref()) {
+        let is_negative = s.starts_with('-');
+        if let Some(unit_char) = rest.chars().last() {
+            let amount_str = &rest[..rest.len() - 1];
+            if let Ok(amount) = amount_str.parse::<i64>() {
+                let amount = if is_negative { -amount } else { amount };
+                let duration = match unit_char {
+                    'm' => Duration::minutes(amount),
+                    'h' => Duration::hours(amount),
+                    'd' => Duration::days(amount),
+                    'w' => Duration::weeks(amount),
+                    _ => return None,
+                };
+                return Some(Utc::now() + duration);
+            }
+        }
+    }
+
+    // Try keywords
+    let now = Local::now();
+    match s.to_lowercase().as_str() {
+        "tomorrow" => {
+            let tomorrow = now.date_naive() + Duration::days(1);
+            let time = NaiveTime::from_hms_opt(9, 0, 0)?;
+            let naive_dt = tomorrow.and_time(time);
+            Local
+                .from_local_datetime(&naive_dt)
+                .single()
+                .map(|dt| dt.with_timezone(&Utc))
+        }
+        "next-week" | "nextweek" => {
+            let next_week = now.date_naive() + Duration::weeks(1);
+            let time = NaiveTime::from_hms_opt(9, 0, 0)?;
+            let naive_dt = next_week.and_time(time);
+            Local
+                .from_local_datetime(&naive_dt)
+                .single()
+                .map(|dt| dt.with_timezone(&Utc))
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,5 +177,23 @@ mod tests {
     fn test_parse_flexible_keywords() {
         let result = parse_flexible_timestamp("tomorrow", "test").unwrap();
         assert!(result > Utc::now());
+    }
+
+    #[test]
+    fn test_parse_relative_time_positive() {
+        let result = parse_relative_time("+1h").unwrap();
+        assert!(result > Utc::now());
+    }
+
+    #[test]
+    fn test_parse_relative_time_negative() {
+        let result = parse_relative_time("-7d").unwrap();
+        assert!(result < Utc::now());
+    }
+
+    #[test]
+    fn test_parse_relative_time_invalid() {
+        assert!(parse_relative_time("invalid").is_none());
+        assert!(parse_relative_time("2025-01-15").is_none());
     }
 }

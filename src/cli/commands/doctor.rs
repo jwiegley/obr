@@ -659,26 +659,45 @@ fn check_sync_metadata(
             ),
             Some(details),
         );
-    } else if jsonl_newer && db_newer {
-        push_check(
-            checks,
-            "sync.metadata",
-            CheckStatus::Ok,
-            Some("Sync metadata is consistent".to_string()),
-            Some(details),
-        );
     } else {
-        push_check(
-            checks,
-            "sync.metadata",
-            CheckStatus::Warn,
-            Some(format!(
-                "Sync metadata is stale: JSONL is {} and DB is {}",
-                if jsonl_newer { "newer" } else { "older" },
-                if db_newer { "newer" } else { "older" }
-            )),
-            Some(details),
-        );
+        match (jsonl_newer, db_newer) {
+            (false, false) => {
+                push_check(
+                    checks,
+                    "sync.metadata",
+                    CheckStatus::Ok,
+                    Some("Database and JSONL are in sync".to_string()),
+                    Some(details),
+                );
+            }
+            (true, false) => {
+                push_check(
+                    checks,
+                    "sync.metadata",
+                    CheckStatus::Ok, // Acceptable state
+                    Some("External changes pending import".to_string()),
+                    Some(details),
+                );
+            }
+            (false, true) => {
+                push_check(
+                    checks,
+                    "sync.metadata",
+                    CheckStatus::Ok, // Acceptable state
+                    Some("Local changes pending export".to_string()),
+                    Some(details),
+                );
+            }
+            (true, true) => {
+                push_check(
+                    checks,
+                    "sync.metadata",
+                    CheckStatus::Warn,
+                    Some("Database and JSONL have diverged (merge required)".to_string()),
+                    Some(details),
+                );
+            }
+        }
     }
 }
 

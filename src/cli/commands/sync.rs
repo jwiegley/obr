@@ -16,6 +16,7 @@ use crate::sync::{
 use serde::Serialize;
 use std::collections::HashSet;
 use std::fs;
+use std::io::IsTerminal;
 use std::path::{Component, Path, PathBuf};
 use tracing::{debug, info, warn};
 
@@ -85,6 +86,8 @@ pub fn execute(args: &SyncArgs, json: bool, cli: &config::CliOverrides) -> Resul
     let jsonl_path = paths.jsonl_path;
     let retention_days = paths.metadata.deletions_retention_days;
     let use_json = json || args.robot;
+    let quiet = cli.quiet.unwrap_or(false);
+    let show_progress = should_show_progress(use_json, quiet);
     let path_policy = validate_sync_paths(&beads_dir, &jsonl_path, args.allow_external_jsonl)?;
     debug!(
         jsonl_path = %path_policy.jsonl_path.display(),
@@ -113,10 +116,11 @@ pub fn execute(args: &SyncArgs, json: bool, cli: &config::CliOverrides) -> Resul
             &path_policy,
             args,
             use_json,
+            show_progress,
             retention_days,
         )
     } else {
-        execute_import(&mut storage, &path_policy, args, use_json)
+        execute_import(&mut storage, &path_policy, args, use_json, show_progress)
     }
 }
 
@@ -346,6 +350,7 @@ fn execute_flush(
     path_policy: &SyncPathPolicy,
     args: &SyncArgs,
     json: bool,
+    show_progress: bool,
     retention_days: Option<u64>,
 ) -> Result<()> {
     info!("Starting JSONL export");
@@ -452,6 +457,7 @@ fn execute_flush(
         retention_days,
         beads_dir: Some(path_policy.beads_dir.clone()),
         allow_external_jsonl: args.allow_external_jsonl,
+        show_progress,
         history: HistoryConfig::default(),
     };
 
@@ -600,6 +606,10 @@ fn format_error_suffix(errors: &[ExportError], entity: ExportEntityType) -> Stri
     }
 }
 
+fn should_show_progress(json: bool, quiet: bool) -> bool {
+    !json && !quiet && std::io::stderr().is_terminal()
+}
+
 /// Execute the --import-only operation.
 #[allow(clippy::too_many_lines)]
 fn execute_import(
@@ -607,6 +617,7 @@ fn execute_import(
     path_policy: &SyncPathPolicy,
     args: &SyncArgs,
     json: bool,
+    show_progress: bool,
 ) -> Result<()> {
     info!("Starting JSONL import");
     let jsonl_path = &path_policy.jsonl_path;
@@ -693,6 +704,7 @@ fn execute_import(
         force_upsert: args.force,
         beads_dir: Some(path_policy.beads_dir.clone()),
         allow_external_jsonl: args.allow_external_jsonl,
+        show_progress,
     };
 
     // Get expected prefix from config

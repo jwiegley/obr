@@ -94,7 +94,7 @@ pub fn parse_markdown_file(path: &Path) -> Result<Vec<ParsedIssue>> {
     let extension = path
         .extension()
         .and_then(|e| e.to_str())
-        .map(|e| e.to_lowercase());
+        .map(str::to_lowercase);
 
     match extension.as_deref() {
         Some("md" | "markdown") => {}
@@ -130,6 +130,10 @@ pub fn parse_markdown_file(path: &Path) -> Result<Vec<ParsedIssue>> {
 /// Parse markdown content string into a list of issues.
 ///
 /// This is the core parsing logic, separated for testability.
+///
+/// # Errors
+///
+/// Returns an error if the content cannot be parsed into issues.
 pub fn parse_markdown_content(content: &str) -> Result<Vec<ParsedIssue>> {
     let mut issues = Vec::new();
     let mut current_issue: Option<ParsedIssue> = None;
@@ -159,13 +163,13 @@ pub fn parse_markdown_content(content: &str) -> Result<Vec<ParsedIssue>> {
         }
 
         // Check for H3 (section header)
-        if line.starts_with("### ") {
+        if let Some(stripped) = line.strip_prefix("### ") {
             if let Some(ref mut issue) = current_issue {
                 // Apply previous section
                 apply_section_to_issue(issue, current_section, &section_lines);
 
                 // Start new section
-                let header = line[4..].trim();
+                let header = stripped.trim();
                 current_section = Section::from_header(header);
                 section_lines.clear();
             }
@@ -200,7 +204,7 @@ pub fn parse_markdown_content(content: &str) -> Result<Vec<ParsedIssue>> {
 fn apply_section_to_issue(issue: &mut ParsedIssue, section: Section, lines: &[String]) {
     let content = lines
         .iter()
-        .map(|s| s.as_str())
+        .map(String::as_str)
         .collect::<Vec<_>>()
         .join("\n")
         .trim()
@@ -260,7 +264,7 @@ fn split_list_content(content: &str) -> Vec<String> {
         // Otherwise split on whitespace
         content
             .split_whitespace()
-            .map(|s| s.to_string())
+            .map(str::to_string)
             .filter(|s| !s.is_empty())
             .collect()
     }
@@ -269,6 +273,7 @@ fn split_list_content(content: &str) -> Vec<String> {
 /// Validate a dependency type string.
 ///
 /// Returns the dependency type if valid, or None if invalid.
+#[must_use]
 pub fn validate_dependency_type(dep_type: &str) -> Option<&str> {
     match dep_type.to_lowercase().as_str() {
         "blocks" | "blocked-by" | "parent-child" | "related" | "duplicates" => Some(dep_type),
@@ -280,8 +285,9 @@ pub fn validate_dependency_type(dep_type: &str) -> Option<&str> {
 ///
 /// Accepts "type:id" or bare "id" (defaults to "blocks").
 ///
-/// Returns (dep_type, dep_id, is_valid_type) where is_valid_type indicates
+/// Returns (`dep_type`, `dep_id`, `is_valid_type`) where `is_valid_type` indicates
 /// whether the type was recognized.
+#[must_use]
 pub fn parse_dependency(dep_str: &str) -> (String, String, bool) {
     if let Some((type_part, id_part)) = dep_str.split_once(':') {
         let is_valid = validate_dependency_type(type_part).is_some();

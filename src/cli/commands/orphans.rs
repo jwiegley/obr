@@ -1,7 +1,7 @@
 //! orphans command implementation.
 //!
 //! Scans git commits for issue ID references and identifies issues
-//! that are still open/in_progress but referenced in commits.
+//! that are still `open/in_progress` but referenced in commits.
 
 use crate::cli::OrphansArgs;
 use crate::config;
@@ -26,30 +26,25 @@ pub struct OrphanIssue {
 
 /// Execute the orphans command.
 ///
-/// Scans git log for issue ID references and returns open/in_progress
+/// Scans git log for issue ID references and returns `open/in_progress`
 /// issues that have been referenced in commits.
 ///
 /// # Errors
 ///
 /// Returns an error only for unexpected failures. Returns empty list
 /// (not error) when git/DB is unavailable.
+#[allow(clippy::too_many_lines)]
 pub fn execute(args: &OrphansArgs, json: bool, cli: &config::CliOverrides) -> Result<()> {
     // Try to discover beads directory - return empty if not found
-    let beads_dir = match config::discover_beads_dir(None) {
-        Ok(dir) => dir,
-        Err(_) => {
-            output_empty(json)?;
-            return Ok(());
-        }
+    let Ok(beads_dir) = config::discover_beads_dir(None) else {
+        output_empty(json);
+        return Ok(());
     };
 
     // Try to open storage - return empty if not found
-    let storage_ctx = match config::open_storage_with_cli(&beads_dir, cli) {
-        Ok(ctx) => ctx,
-        Err(_) => {
-            output_empty(json)?;
-            return Ok(());
-        }
+    let Ok(storage_ctx) = config::open_storage_with_cli(&beads_dir, cli) else {
+        output_empty(json);
+        return Ok(());
     };
     let storage = &storage_ctx.storage;
 
@@ -59,21 +54,18 @@ pub fn execute(args: &OrphansArgs, json: bool, cli: &config::CliOverrides) -> Re
 
     // Check if we're in a git repo by running git rev-parse
     if !is_git_repo() {
-        output_empty(json)?;
+        output_empty(json);
         return Ok(());
     }
 
     // Get git log and extract issue references
-    let commit_refs = match get_git_commit_refs(&prefix) {
-        Ok(refs) => refs,
-        Err(_) => {
-            output_empty(json)?;
-            return Ok(());
-        }
+    let Ok(commit_refs) = get_git_commit_refs(&prefix) else {
+        output_empty(json);
+        return Ok(());
     };
 
     if commit_refs.is_empty() {
-        output_empty(json)?;
+        output_empty(json);
         return Ok(());
     }
 
@@ -186,7 +178,7 @@ fn is_git_repo() -> bool {
 
 /// Get git commit references containing issue IDs.
 ///
-/// Returns Vec of (commit_hash, commit_message, issue_id) tuples.
+/// Returns Vec of (`commit_hash`, `commit_message`, `issue_id`) tuples.
 /// The list is ordered from most recent to oldest commit.
 fn get_git_commit_refs(prefix: &str) -> Result<Vec<(String, String, String)>> {
     let output = Command::new("git")
@@ -208,7 +200,8 @@ fn parse_git_log(log_output: &str, prefix: &str) -> Result<Vec<(String, String, 
     // Pattern matches (prefix-id) including hierarchical IDs like bd-abc.1
     // The prefix can be any word characters, ID is alphanumeric with optional .N suffix
     let pattern = format!(r"\(({}-[a-zA-Z0-9]+(?:\.[0-9]+)?)\)", regex::escape(prefix));
-    let re = Regex::new(&pattern).map_err(|e| crate::error::BeadsError::Config(format!("Invalid regex pattern: {}", e)))?;
+    let re = Regex::new(&pattern)
+        .map_err(|e| crate::error::BeadsError::Config(format!("Invalid regex pattern: {e}")))?;
 
     let mut results = Vec::new();
 
@@ -238,13 +231,12 @@ fn parse_git_log(log_output: &str, prefix: &str) -> Result<Vec<(String, String, 
 }
 
 /// Output empty result in appropriate format.
-fn output_empty(json: bool) -> Result<()> {
+fn output_empty(json: bool) {
     if json {
         println!("[]");
     } else {
         println!("No orphan issues found");
     }
-    Ok(())
 }
 
 #[cfg(test)]

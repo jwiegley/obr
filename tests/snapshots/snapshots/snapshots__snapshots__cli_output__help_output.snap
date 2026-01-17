@@ -36,7 +36,10 @@ Commands:
   version      Show version information
   upgrade      Upgrade br to the latest version
   completions  Generate shell completions
+  audit        Record and label agent interactions (ID-REDACTED JSONL)
   history      Manage local history backups
+  orphans      List orphan issues (referenced in commits but open)
+  changelog    Generate changelog from closed issues
   help         Print this message or the help of the given subcommand(s)
 
 Options:

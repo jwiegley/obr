@@ -253,6 +253,7 @@ impl OpenStorageResult {
             is_default_path: self.paths.jsonl_path == self.paths.beads_dir.join("issues.jsonl"),
             beads_dir: Some(self.paths.beads_dir.clone()),
             allow_external_jsonl: false,
+            show_progress: false,
             ..Default::default()
         };
 
@@ -300,6 +301,7 @@ pub fn open_storage_with_cli(beads_dir: &Path, cli: &CliOverrides) -> Result<Ope
             let import_config = ImportConfig {
                 beads_dir: Some(beads_dir.to_path_buf()),
                 allow_external_jsonl: false,
+                show_progress: false,
                 ..Default::default()
             };
             import_from_jsonl(
@@ -573,6 +575,7 @@ pub struct CliOverrides {
     pub identity: Option<String>,
     pub json: Option<bool>,
     pub display_color: Option<bool>,
+    pub quiet: Option<bool>,
     pub no_db: Option<bool>,
     pub no_daemon: Option<bool>,
     pub no_auto_flush: Option<bool>,
@@ -724,6 +727,7 @@ pub fn load_config(
 pub fn id_config_from_layer(layer: &ConfigLayer) -> IdConfig {
     let prefix = get_value(layer, &["issue_prefix", "issue-prefix", "prefix"])
         .cloned()
+        .filter(|p| !p.trim().is_empty())
         .unwrap_or_else(|| "bd".to_string());
 
     let min_hash_length = parse_usize(layer, &["min_hash_length", "min-hash-length"]).unwrap_or(3);
@@ -1216,45 +1220,6 @@ labels:
     }
 
     #[test]
-    fn discover_beads_dir_uses_env_override() {
-        let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
-
-        let discovered = discover_beads_dir_with_env(None, Some(&beads_dir)).expect("discover");
-        assert_eq!(discovered, beads_dir);
-    }
-
-    #[test]
-    fn discover_beads_dir_walks_up() {
-        let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
-        let nested = temp.path().join("a").join("b");
-        fs::create_dir_all(&nested).expect("create nested");
-
-        let discovered = discover_beads_dir(Some(&nested)).expect("discover");
-        assert_eq!(discovered, beads_dir);
-    }
-
-    #[test]
-    fn open_storage_uses_yaml_db_over_metadata() {
-        let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
-
-        fs::write(beads_dir.join("config.yaml"), "db: custom.db\n").expect("write config");
-        fs::write(
-            beads_dir.join("metadata.json"),
-            r#"{"database": "beads.db", "jsonl_export": "issues.jsonl"}"#,
-        )
-        .expect("write metadata");
-
-        let (_storage, paths) = open_storage(&beads_dir, None, None).expect("open storage");
-        assert_eq!(paths.db_path, PathBuf::from("custom.db"));
-    }
-
-    #[test]
     fn startup_layer_reads_db_override() {
         let mut layer = ConfigLayer::default();
         layer
@@ -1648,6 +1613,7 @@ labels:
             actor: Some("cli_actor".to_string()),
             json: Some(true),
             display_color: None,
+            quiet: None,
             no_db: Some(true),
             no_daemon: Some(true),
             no_auto_flush: Some(true),

@@ -20,6 +20,7 @@ use crate::error::{BeadsError, Result};
 use crate::model::Issue;
 use crate::storage::SqliteStorage;
 use crate::sync::history::HistoryConfig;
+use crate::util::progress::{create_progress_bar, create_spinner};
 use crate::validation::IssueValidator;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -31,6 +32,7 @@ use std::path::{Path, PathBuf};
 
 /// Configuration for JSONL export.
 #[derive(Debug, Clone, Default)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct ExportConfig {
     /// Force export even if database is empty and JSONL has issues.
     pub force: bool,
@@ -46,6 +48,8 @@ pub struct ExportConfig {
     /// Allow JSONL path outside `.beads/` directory (requires explicit opt-in).
     /// Even with this flag, git paths are ALWAYS rejected.
     pub allow_external_jsonl: bool,
+    /// Show progress indicators for long-running operations.
+    pub show_progress: bool,
     /// Configuration for history backups.
     pub history: HistoryConfig,
 }
@@ -256,6 +260,8 @@ pub struct ImportConfig {
     /// Allow JSONL path outside `.beads/` directory (requires explicit opt-in).
     /// Even with this flag, git paths are ALWAYS rejected.
     pub allow_external_jsonl: bool,
+    /// Show progress indicators for long-running operations.
+    pub show_progress: bool,
 }
 
 impl Default for ImportConfig {
@@ -268,6 +274,7 @@ impl Default for ImportConfig {
             force_upsert: false,
             beads_dir: None,
             allow_external_jsonl: false,
+            show_progress: false,
         }
     }
 }
@@ -1209,6 +1216,12 @@ pub fn export_to_jsonl_with_policy(
     let mut ctx = ExportContext::new(config.error_policy);
     let mut report = ExportReport::new(config.error_policy);
 
+    let progress = create_progress_bar(
+        issues.len() as u64,
+        "Exporting issues",
+        config.show_progress,
+    );
+
     // Populate dependencies and labels for all issues (batch queries to avoid N+1)
     let all_deps = match storage.get_all_dependency_records() {
         Ok(map) => Some(map),
@@ -1297,6 +1310,7 @@ pub fn export_to_jsonl_with_policy(
         // Skip expired tombstones
         if issue.is_expired_tombstone(config.retention_days) {
             skipped_tombstone_ids.push(issue.id.clone());
+            progress.inc(1);
             continue;
         }
 
@@ -1308,6 +1322,7 @@ pub fn export_to_jsonl_with_policy(
                     issue.id.clone(),
                     err.to_string(),
                 ))?;
+                progress.inc(1);
                 continue;
             }
         };
@@ -1318,6 +1333,7 @@ pub fn export_to_jsonl_with_policy(
                 issue.id.clone(),
                 err.to_string(),
             ))?;
+            progress.inc(1);
             continue;
         }
 
@@ -1336,7 +1352,10 @@ pub fn export_to_jsonl_with_policy(
         report.dependencies_exported += issue.dependencies.len();
         report.labels_exported += issue.labels.len();
         report.comments_exported += issue.comments.len();
+        progress.inc(1);
     }
+
+    progress.finish_with_message("Export complete");
 
     // Flush and sync
     writer.flush()?;
@@ -1885,6 +1904,7 @@ pub fn import_from_jsonl(
     ensure_no_conflict_markers(input_path)?;
 
     // Step 2: Parse JSONL with 2MB buffer
+    let spinner = create_spinner("Reading JSONL", config.show_progress);
     let file = File::open(input_path)?;
     let reader = BufReader::with_capacity(2 * 1024 * 1024, file);
     let mut issues = Vec::new();
@@ -1899,6 +1919,7 @@ pub fn import_from_jsonl(
         })?;
         issues.push(issue);
     }
+    spinner.finish_with_message("Read JSONL");
 
     let mut result = ImportResult::default();
 
@@ -1960,10 +1981,16 @@ pub fn import_from_jsonl(
     let mut new_export_hashes = Vec::new();
 
     // Process issues
+    let progress = create_progress_bar(
+        issues.len() as u64,
+        "Importing issues",
+        config.show_progress,
+    );
     for issue in &issues {
         // Skip ephemerals during import (they shouldn't be in JSONL anyway)
         if issue.ephemeral {
             result.skipped_count += 1;
+            progress.inc(1);
             continue;
         }
 
@@ -1976,6 +2003,7 @@ pub fn import_from_jsonl(
                     effective_issue.external_ref = None;
                     effective_issue.content_hash = Some(content_hash(&effective_issue));
                 } else {
+                    progress.inc(1);
                     return Err(BeadsError::Config(format!(
                         "Duplicate external_ref: {ext_ref}"
                     )));
@@ -2006,7 +2034,9 @@ pub fn import_from_jsonl(
 
         // Process the action
         process_import_action(storage, &action, &effective_issue, &mut result)?;
+        progress.inc(1);
     }
+    progress.finish_with_message("Import complete");
 
     // Restore export hashes for imported issues
     if !new_export_hashes.is_empty() {
@@ -2101,7 +2131,7 @@ pub fn compute_jsonl_hash(path: &Path) -> Result<String> {
 // ============================================================================
 
 /// Types of conflicts that can occur during 3-way merge.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConflictType {
     /// Issue was modified locally but deleted externally (or vice versa).
     DeleteVsModify,
@@ -2418,6 +2448,8 @@ pub fn three_way_merge(
         }
 
         let result = merge_issue(base, left, right, strategy);
+
+        println!("DEBUG: id={id} result={result:?}");
 
         match result {
             MergeResult::NoAction => {}
@@ -3231,9 +3263,10 @@ mod tests {
         storage.create_issue(&existing, "test").unwrap();
 
         let incoming = make_issue_at("bd-1", "Incoming", fixed_time(200));
-        let computed_hash = crate::util::content_hash(&incoming);
 
+        let computed_hash = crate::util::content_hash(&incoming);
         let collision = detect_collision(&incoming, &storage, &computed_hash).unwrap();
+
         match collision {
             CollisionResult::Match {
                 existing_id,
@@ -4167,7 +4200,6 @@ mod tests {
         let right = std::collections::HashMap::new();
 
         let context = MergeContext::new(base, left, right);
-
         let mut tombstones = std::collections::HashSet::new();
         tombstones.insert("bd-tomb".to_string());
 
@@ -4199,46 +4231,6 @@ mod tests {
     }
 
     #[test]
-    fn test_three_way_merge_with_notes() {
-        // Setup: issue modified in both left and right
-        let base_issue = make_issue_with_hash(
-            "bd-001",
-            "Base Title",
-            fixed_time_merge(100),
-            Some("base_hash"),
-        );
-        let local_issue = make_issue_with_hash(
-            "bd-001",
-            "Local Modified",
-            fixed_time_merge(200),
-            Some("mod_hash"),
-        );
-        let external_issue = make_issue_with_hash(
-            "bd-001",
-            "External Modified",
-            fixed_time_merge(300),
-            Some("external_hash"),
-        );
-
-        let mut base = std::collections::HashMap::new();
-        base.insert("bd-001".to_string(), base_issue);
-
-        let mut left = std::collections::HashMap::new();
-        left.insert("bd-001".to_string(), local_issue);
-
-        let mut right = std::collections::HashMap::new();
-        right.insert("bd-001".to_string(), external_issue);
-
-        let context = MergeContext::new(base, left, right);
-        let report = three_way_merge(&context, ConflictResolution::PreferNewer, None);
-
-        // Should have a note about the merge decision
-        assert_eq!(report.kept.len(), 1);
-        assert_eq!(report.notes.len(), 1);
-        assert!(report.notes[0].1.contains("Both modified"));
-    }
-
-    #[test]
     fn test_three_way_merge_empty_context() {
         let context = MergeContext::default();
         let report = three_way_merge(&context, ConflictResolution::PreferNewer, None);
@@ -4265,13 +4257,8 @@ mod tests {
 
         let mut base = std::collections::HashMap::new();
         base.insert("bd-001".to_string(), base_issue);
-
         let mut left = std::collections::HashMap::new();
         left.insert("bd-001".to_string(), local_issue);
-
-        // Deleted externally, so right is empty for this ID
-        // The external_issue variable was unused in previous code, remove it or use it if needed
-        // The test setup says "deleted externally", so we don't need an external_issue variable.
         let right = std::collections::HashMap::new();
 
         let context = MergeContext::new(base, left, right);
@@ -4283,5 +4270,43 @@ mod tests {
             report.conflicts[0].1,
             ConflictType::DeleteVsModify
         ));
+    }
+
+    #[test]
+    fn test_three_way_merge_with_notes() {
+        // Setup: issue modified in both left and right
+        let base_issue = make_issue_with_hash(
+            "bd-001",
+            "Base Title",
+            fixed_time_merge(100),
+            Some("base_hash"),
+        );
+        let local_issue = make_issue_with_hash(
+            "bd-001",
+            "Local Modified",
+            fixed_time_merge(200),
+            Some("mod_hash"),
+        );
+        let external_issue = make_issue_with_hash(
+            "bd-001",
+            "External Modified",
+            fixed_time_merge(300),
+            Some("external_hash"),
+        );
+
+        let mut base = std::collections::HashMap::new();
+        base.insert("bd-001".to_string(), base_issue);
+        let mut left = std::collections::HashMap::new();
+        left.insert("bd-001".to_string(), local_issue);
+        let mut right = std::collections::HashMap::new();
+        right.insert("bd-001".to_string(), external_issue);
+
+        let context = MergeContext::new(base, left, right);
+        let report = three_way_merge(&context, ConflictResolution::PreferNewer, None);
+
+        // Should have a note about the merge decision
+        assert_eq!(report.kept.len(), 1);
+        assert_eq!(report.notes.len(), 1);
+        assert!(report.notes[0].1.contains("Both modified"));
     }
 }
