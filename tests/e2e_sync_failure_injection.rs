@@ -189,7 +189,10 @@ fn export_failure_readonly_dir_preserves_original() {
         "Original content should be preserved"
     );
 
-    artifacts.log("verification", "PASSED: Original JSONL preserved after export failure");
+    artifacts.log(
+        "verification",
+        "PASSED: Original JSONL preserved after export failure",
+    );
     artifacts.save();
 }
 
@@ -315,11 +318,17 @@ fn import_failure_malformed_json_no_db_changes() {
     assert!(result.is_err(), "Import should fail on malformed JSON");
     let err_msg = result.unwrap_err().to_string();
     artifacts.log("error", &err_msg);
-    assert!(err_msg.contains("Invalid JSON"), "Error should mention invalid JSON");
+    assert!(
+        err_msg.contains("Invalid JSON"),
+        "Error should mention invalid JSON"
+    );
 
     // DB unchanged
     let final_count = storage.list_issues(&ListFilters::default()).unwrap().len();
-    assert_eq!(initial_count, final_count, "DB unchanged after malformed JSON");
+    assert_eq!(
+        initial_count, final_count,
+        "DB unchanged after malformed JSON"
+    );
 
     artifacts.log("verification", "PASSED");
     artifacts.save();
@@ -399,7 +408,10 @@ fn import_failure_prefix_mismatch_no_db_changes() {
     assert!(result.is_err(), "Import should fail on prefix mismatch");
     let err_msg = result.unwrap_err().to_string();
     artifacts.log("error", &err_msg);
-    assert!(err_msg.contains("Prefix mismatch"), "Error should mention prefix");
+    assert!(
+        err_msg.contains("Prefix mismatch"),
+        "Error should mention prefix"
+    );
 
     // DB unchanged
     let final_count = storage.list_issues(&ListFilters::default()).unwrap().len();
@@ -421,19 +433,31 @@ fn cli_export_readonly_preserves_state() {
     let init_run = run_br(&workspace, ["init"], "init");
     artifacts.log("init_stdout", &init_run.stdout);
     artifacts.log("init_stderr", &init_run.stderr);
-    assert!(init_run.status.success(), "init failed: {}", init_run.stderr);
+    assert!(
+        init_run.status.success(),
+        "init failed: {}",
+        init_run.stderr
+    );
 
     // Create issue
     let create_run = run_br(&workspace, ["create", "Test Issue"], "create");
     artifacts.log("create_stdout", &create_run.stdout);
     artifacts.log("create_stderr", &create_run.stderr);
-    assert!(create_run.status.success(), "create failed: {}", create_run.stderr);
+    assert!(
+        create_run.status.success(),
+        "create failed: {}",
+        create_run.stderr
+    );
 
     // First export to establish baseline
     let export1_run = run_br(&workspace, ["sync", "--flush-only"], "export1");
     artifacts.log("export1_stdout", &export1_run.stdout);
     artifacts.log("export1_stderr", &export1_run.stderr);
-    assert!(export1_run.status.success(), "first export failed: {}", export1_run.stderr);
+    assert!(
+        export1_run.status.success(),
+        "first export failed: {}",
+        export1_run.stderr
+    );
 
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
     let initial_hash = compute_file_hash(&jsonl_path);
@@ -483,13 +507,21 @@ fn cli_import_malformed_preserves_db() {
     let init_run = run_br(&workspace, ["init"], "init");
     artifacts.log("init_stdout", &init_run.stdout);
     artifacts.log("init_stderr", &init_run.stderr);
-    assert!(init_run.status.success(), "init failed: {}", init_run.stderr);
+    assert!(
+        init_run.status.success(),
+        "init failed: {}",
+        init_run.stderr
+    );
 
     // Create issue
     let create_run = run_br(&workspace, ["create", "Original Issue"], "create");
     artifacts.log("create_stdout", &create_run.stdout);
     artifacts.log("create_stderr", &create_run.stderr);
-    assert!(create_run.status.success(), "create failed: {}", create_run.stderr);
+    assert!(
+        create_run.status.success(),
+        "create failed: {}",
+        create_run.stderr
+    );
 
     // List before import attempt
     let list1_run = run_br(&workspace, ["list", "--json"], "list_before");
@@ -669,10 +701,14 @@ fn multiple_export_failures_no_accumulation() {
         let current_hash = compute_file_hash(&jsonl_path).unwrap();
         assert_eq!(
             initial_hash, current_hash,
-            "Hash unchanged after attempt {}", i
+            "Hash unchanged after attempt {}",
+            i
         );
 
-        artifacts.log(&format!("attempt_{}", i), "failed as expected, JSONL intact");
+        artifacts.log(
+            &format!("attempt_{}", i),
+            "failed as expected, JSONL intact",
+        );
     }
 
     artifacts.log("verification", "PASSED: Multiple failures don't accumulate");

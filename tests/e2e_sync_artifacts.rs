@@ -81,7 +81,9 @@ impl TestArtifacts {
     /// Write all artifacts to disk for postmortem analysis.
     fn persist(&self) {
         // Write snapshot comparison
-        let snapshot_path = self.artifact_dir.join(format!("{}_snapshots.txt", self.test_name));
+        let snapshot_path = self
+            .artifact_dir
+            .join(format!("{}_snapshots.txt", self.test_name));
         let mut snapshot_content = String::new();
         for (label, snapshot) in &self.snapshots {
             snapshot_content.push_str(&format!("\n=== Snapshot: {label} ===\n"));
@@ -101,8 +103,14 @@ impl TestArtifacts {
         }
 
         // Write command logs
-        let logs_path = self.artifact_dir.join(format!("{}_commands.log", self.test_name));
-        let logs_content: String = self.command_logs.iter().map(|(_, log)| log.as_str()).collect();
+        let logs_path = self
+            .artifact_dir
+            .join(format!("{}_commands.log", self.test_name));
+        let logs_content: String = self
+            .command_logs
+            .iter()
+            .map(|(_, log)| log.as_str())
+            .collect();
         fs::write(&logs_path, logs_content).expect("write command logs");
     }
 
@@ -282,11 +290,7 @@ fn e2e_sync_export_with_artifacts() {
     // Run sync export
     let sync = run_br(&workspace, ["sync", "--flush-only", "--manifest"], "export");
     artifacts.record_command("export", &sync.stdout, &sync.stderr, sync.status.success());
-    assert!(
-        sync.status.success(),
-        "sync export failed: {}",
-        sync.stderr
-    );
+    assert!(sync.status.success(), "sync export failed: {}", sync.stderr);
 
     // Capture JSONL output
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
@@ -369,11 +373,7 @@ fn e2e_sync_import_with_artifacts() {
     artifacts.capture_snapshot("after_modification", &workspace.root);
 
     // Run sync import
-    let import = run_br(
-        &workspace,
-        ["sync", "--import-only", "--force"],
-        "import",
-    );
+    let import = run_br(&workspace, ["sync", "--import-only", "--force"], "import");
     artifacts.record_command(
         "import",
         &import.stdout,
@@ -481,11 +481,7 @@ fn e2e_sync_full_cycle_with_artifacts() {
     artifacts.capture_jsonl("phase2_modified", &jsonl_path);
 
     // Phase 3: Import
-    let import = run_br(
-        &workspace,
-        ["sync", "--import-only", "--force"],
-        "import",
-    );
+    let import = run_br(&workspace, ["sync", "--import-only", "--force"], "import");
     artifacts.record_command(
         "import",
         &import.stdout,

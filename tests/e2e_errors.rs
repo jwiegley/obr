@@ -283,7 +283,11 @@ fn e2e_structured_error_issue_not_found() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let result = run_br(&workspace, ["show", "bd-nonexistent", "--json"], "show_missing_json");
+    let result = run_br(
+        &workspace,
+        ["show", "bd-nonexistent", "--json"],
+        "show_missing_json",
+    );
     assert!(!result.status.success());
     assert_eq!(result.status.code(), Some(3), "exit code should be 3");
 
@@ -417,7 +421,10 @@ fn e2e_structured_error_ambiguous_id() {
             for j in (i + 1)..ids.len() {
                 let hash_i = ids[i].split('-').nth(1).unwrap_or("");
                 let hash_j = ids[j].split('-').nth(1).unwrap_or("");
-                if !hash_i.is_empty() && !hash_j.is_empty() && hash_i.chars().next() == hash_j.chars().next() {
+                if !hash_i.is_empty()
+                    && !hash_j.is_empty()
+                    && hash_i.chars().next() == hash_j.chars().next()
+                {
                     let common_char = hash_i.chars().next().unwrap();
                     ambiguous_prefix = Some(common_char.to_string());
                     break;
@@ -432,7 +439,11 @@ fn e2e_structured_error_ambiguous_id() {
 
     let prefix = ambiguous_prefix.expect("failed to create ambiguous IDs");
 
-    let result = run_br(&workspace, ["show", &prefix, "--json"], "show_ambiguous_json");
+    let result = run_br(
+        &workspace,
+        ["show", &prefix, "--json"],
+        "show_ambiguous_json",
+    );
     assert!(!result.status.success());
     assert_eq!(result.status.code(), Some(3), "exit code should be 3");
 
@@ -465,7 +476,10 @@ fn e2e_structured_error_jsonl_parse() {
     assert!(!result.status.success());
     // JSONL parse errors should be exit code 6 (sync errors) or 7 (config)
     let exit_code = result.status.code().unwrap_or(0);
-    assert!(exit_code == 6 || exit_code == 7, "unexpected exit code: {exit_code}");
+    assert!(
+        exit_code == 6 || exit_code == 7,
+        "unexpected exit code: {exit_code}"
+    );
 
     // The error output should be valid JSON
     let json = parse_error_json(&result.stderr);

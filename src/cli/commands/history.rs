@@ -54,26 +54,39 @@ fn list_backups(history_dir: &Path) -> Result<()> {
 fn diff_backup(beads_dir: &Path, history_dir: &Path, filename: &str) -> Result<()> {
     let backup_path = history_dir.join(filename);
     if !backup_path.exists() {
-        return Err(BeadsError::Config(format!("Backup file not found: {filename}")));
+        return Err(BeadsError::Config(format!(
+            "Backup file not found: {filename}"
+        )));
     }
 
     let current_path = beads_dir.join("issues.jsonl");
     if !current_path.exists() {
-        return Err(BeadsError::Config("Current issues.jsonl not found".to_string()));
+        return Err(BeadsError::Config(
+            "Current issues.jsonl not found".to_string(),
+        ));
     }
 
-    println!("Diffing {} vs {}...", "current issues.jsonl".green(), filename.red());
-    
+    println!(
+        "Diffing {} vs {}...",
+        "current issues.jsonl".green(),
+        filename.red()
+    );
+
     // Simple diff by reading both files and comparing lines?
     // Or just shelling out to `diff`?
     // Since we are a CLI, shelling out to `diff` is often better for UX if available.
     // But let's do a simple internal diff to avoid dependencies.
     // Or better, use `bv --robot-diff` if possible? No, br should be standalone.
-    
+
     // Let's shell out to `diff -u` for now as it's standard on linux/mac.
     // If it fails, we fallback or error.
     let status = std::process::Command::new("diff")
-        .args(["-u", "--color=always", current_path.to_str().unwrap(), backup_path.to_str().unwrap()])
+        .args([
+            "-u",
+            "--color=always",
+            current_path.to_str().unwrap(),
+            backup_path.to_str().unwrap(),
+        ])
         .status();
 
     if let Ok(s) = status {
@@ -93,22 +106,19 @@ fn diff_backup(beads_dir: &Path, history_dir: &Path, filename: &str) -> Result<(
 }
 
 /// Restore a backup.
-fn restore_backup(
-    beads_dir: &Path,
-    history_dir: &Path,
-    filename: &str,
-    force: bool,
-) -> Result<()> {
+fn restore_backup(beads_dir: &Path, history_dir: &Path, filename: &str, force: bool) -> Result<()> {
     let backup_path = history_dir.join(filename);
     if !backup_path.exists() {
-        return Err(BeadsError::Config(format!("Backup file not found: {filename}")));
+        return Err(BeadsError::Config(format!(
+            "Backup file not found: {filename}"
+        )));
     }
 
     let target_path = beads_dir.join("issues.jsonl");
-    
+
     if target_path.exists() && !force {
         return Err(BeadsError::Config(
-            "Current issues.jsonl exists. Use --force to overwrite.".to_string()
+            "Current issues.jsonl exists. Use --force to overwrite.".to_string(),
         ));
     }
 

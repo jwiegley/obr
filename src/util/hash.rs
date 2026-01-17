@@ -38,8 +38,14 @@ pub fn content_hash(issue: &Issue) -> String {
     let mut hasher = Sha256::new();
 
     // Helper to add field with null separator
+    // Sanitizes input by replacing null bytes to prevent collision attacks
     let mut add_field = |value: &str| {
-        hasher.update(value.as_bytes());
+        if value.contains('\0') {
+            // Replace null with space to preserve length approx and prevent separator confusion
+            hasher.update(value.replace('\0', " ").as_bytes());
+        } else {
+            hasher.update(value.as_bytes());
+        }
         hasher.update(b"\x00");
     };
 
@@ -93,7 +99,11 @@ pub fn content_hash_from_parts(
     let mut hasher = Sha256::new();
 
     let mut add_field = |value: &str| {
-        hasher.update(value.as_bytes());
+        if value.contains('\0') {
+            hasher.update(value.replace('\0', " ").as_bytes());
+        } else {
+            hasher.update(value.as_bytes());
+        }
         hasher.update(b"\x00");
     };
 

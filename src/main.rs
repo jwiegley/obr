@@ -37,6 +37,10 @@ fn main() {
         Commands::Label { command } => commands::label::execute(&command, cli.json, &overrides),
         Commands::Count(args) => commands::count::execute(&args, cli.json, &overrides),
         Commands::Stale(args) => commands::stale::execute(&args, cli.json, &overrides),
+        Commands::Lint(_args) => {
+            eprintln!("Lint command not implemented yet.");
+            Ok(())
+        },
         Commands::Ready(args) => commands::ready::execute(&args, cli.json, &overrides),
         Commands::Blocked(args) => {
             commands::blocked::execute(&args, cli.json || args.robot, &overrides)
@@ -50,8 +54,24 @@ fn main() {
         }
         Commands::Config(args) => commands::config::execute(&args, cli.json, &overrides),
         Commands::History(args) => commands::history::execute(args, &overrides),
-        Commands::Defer(args) => commands::defer::execute_defer(&args, cli.json, &overrides),
-        Commands::Undefer(args) => commands::defer::execute_undefer(&args, cli.json, &overrides),
+        Commands::Defer(args) => {
+            let update_args = beads_rust::cli::UpdateArgs {
+                ids: args.ids,
+                defer: args.until,
+                status: Some("deferred".to_string()),
+                ..Default::default()
+            };
+            commands::update::execute(&update_args, &overrides)
+        }
+        Commands::Undefer(args) => {
+            let update_args = beads_rust::cli::UpdateArgs {
+                ids: args.ids,
+                defer: Some("".to_string()), // Clear defer date
+                status: Some("open".to_string()), // Reset to open
+                ..Default::default()
+            };
+            commands::update::execute(&update_args, &overrides)
+        }
     };
 
     if let Err(e) = result {

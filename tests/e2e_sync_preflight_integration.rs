@@ -27,7 +27,7 @@ mod common;
 
 use beads_rust::storage::SqliteStorage;
 use beads_rust::sync::{
-    preflight_export, preflight_import, ExportConfig, ImportConfig, PreflightCheckStatus,
+    ExportConfig, ImportConfig, PreflightCheckStatus, preflight_export, preflight_import,
 };
 use common::cli::{BrWorkspace, run_br};
 use std::collections::HashMap;
@@ -60,11 +60,7 @@ fn snapshot_directory(dir: &Path) -> HashMap<String, Vec<u8>> {
 }
 
 #[allow(dead_code)]
-fn assert_directory_unchanged(
-    before: &HashMap<String, Vec<u8>>,
-    dir: &Path,
-    context: &str,
-) {
+fn assert_directory_unchanged(before: &HashMap<String, Vec<u8>>, dir: &Path, context: &str) {
     let after = snapshot_directory(dir);
 
     // Check no new files
@@ -112,8 +108,16 @@ fn setup_workspace_with_issues() -> BrWorkspace {
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create a few issues for export
-    let _ = run_br(&workspace, ["create", "Test issue 1", "-t", "task"], "create1");
-    let _ = run_br(&workspace, ["create", "Test issue 2", "-t", "bug"], "create2");
+    let _ = run_br(
+        &workspace,
+        ["create", "Test issue 1", "-t", "task"],
+        "create1",
+    );
+    let _ = run_br(
+        &workspace,
+        ["create", "Test issue 2", "-t", "bug"],
+        "create2",
+    );
 
     // Export to JSONL
     let export = run_br(&workspace, ["sync", "--flush-only"], "export");
@@ -185,9 +189,7 @@ fn preflight_import_rejects_conflict_markers() {
 
     // ASSERTION: Failure should be about conflict markers
     let failures = preflight_result.failures();
-    let conflict_failure = failures
-        .iter()
-        .find(|c| c.name == "no_conflict_markers");
+    let conflict_failure = failures.iter().find(|c| c.name == "no_conflict_markers");
     assert!(
         conflict_failure.is_some(),
         "Preflight should fail on 'no_conflict_markers' check.\nFailures: {:?}",
@@ -197,7 +199,10 @@ fn preflight_import_rejects_conflict_markers() {
     // ASSERTION: Remediation should mention resolving conflicts
     let check = conflict_failure.unwrap();
     assert!(
-        check.remediation.as_ref().map_or(false, |r| r.to_lowercase().contains("resolve")),
+        check
+            .remediation
+            .as_ref()
+            .map_or(false, |r| r.to_lowercase().contains("resolve")),
         "Remediation should mention resolving conflicts. Got: {:?}",
         check.remediation
     );
@@ -486,9 +491,9 @@ fn preflight_export_warns_empty_db_over_nonempty_jsonl() {
 
     // ASSERTION: Should mention data loss
     let failures = result.failures();
-    let safety_failure = failures.iter().find(|c| {
-        c.name.contains("empty") || c.name.contains("safety") || c.name.contains("data")
-    });
+    let safety_failure = failures
+        .iter()
+        .find(|c| c.name.contains("empty") || c.name.contains("safety") || c.name.contains("data"));
     assert!(
         safety_failure.is_some(),
         "Preflight should fail on empty database safety check"
@@ -571,7 +576,11 @@ fn cli_import_shows_preflight_failure() {
     fs::write(&jsonl_path, &modified).expect("write modified jsonl");
 
     // Try CLI import - should fail with clear error
-    let import = run_br(&workspace, ["sync", "--import-only", "--force"], "import_preflight");
+    let import = run_br(
+        &workspace,
+        ["sync", "--import-only", "--force"],
+        "import_preflight",
+    );
 
     // ASSERTION: Should fail
     assert!(
@@ -582,7 +591,9 @@ fn cli_import_shows_preflight_failure() {
     // ASSERTION: Error should mention conflict markers
     let stderr_lower = import.stderr.to_lowercase();
     assert!(
-        stderr_lower.contains("conflict") || stderr_lower.contains("marker") || stderr_lower.contains("<<<<"),
+        stderr_lower.contains("conflict")
+            || stderr_lower.contains("marker")
+            || stderr_lower.contains("<<<<"),
         "CLI error should mention conflict markers. Got: {}",
         import.stderr
     );

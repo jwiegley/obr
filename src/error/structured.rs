@@ -20,7 +20,7 @@
 
 use crate::error::BeadsError;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -279,10 +279,7 @@ impl StructuredError {
         } else if similar.len() == 1 {
             Some(format!("Did you mean '{}'?", similar[0]))
         } else {
-            Some(format!(
-                "Did you mean one of: {}?",
-                similar.join(", ")
-            ))
+            Some(format!("Did you mean one of: {}?", similar.join(", ")))
         };
 
         let context = json!({
@@ -315,7 +312,11 @@ impl StructuredError {
 
         Self {
             code: ErrorCode::AmbiguousId,
-            message: format!("Ambiguous ID '{}': matches {} issues", partial, matches.len()),
+            message: format!(
+                "Ambiguous ID '{}': matches {} issues",
+                partial,
+                matches.len()
+            ),
             hint,
             retryable: true,
             context: Some(context),
@@ -361,7 +362,10 @@ impl StructuredError {
                 "Did you mean --priority {detected}? Priority must be 0-4 (or P0-P4): 0=critical, 1=high, 2=medium, 3=low, 4=backlog"
             ))
         } else {
-            Some("Priority must be 0-4 (or P0-P4): 0=critical, 1=high, 2=medium, 3=low, 4=backlog".to_string())
+            Some(
+                "Priority must be 0-4 (or P0-P4): 0=critical, 1=high, 2=medium, 3=low, 4=backlog"
+                    .to_string(),
+            )
         };
 
         let context = json!({
@@ -495,22 +499,15 @@ impl StructuredError {
                 ErrorCode::AlreadyInitialized,
                 Some(json!({"path": path.display().to_string()})),
             ),
-            BeadsError::IssueNotFound { id } => (
-                ErrorCode::IssueNotFound,
-                Some(json!({"searched_id": id})),
-            ),
+            BeadsError::IssueNotFound { id } => {
+                (ErrorCode::IssueNotFound, Some(json!({"searched_id": id})))
+            }
             BeadsError::AmbiguousId { partial, matches } => (
                 ErrorCode::AmbiguousId,
                 Some(json!({"partial_id": partial, "matches": matches})),
             ),
-            BeadsError::IdCollision { id } => (
-                ErrorCode::IdCollision,
-                Some(json!({"id": id})),
-            ),
-            BeadsError::InvalidId { id } => (
-                ErrorCode::InvalidId,
-                Some(json!({"id": id})),
-            ),
+            BeadsError::IdCollision { id } => (ErrorCode::IdCollision, Some(json!({"id": id}))),
+            BeadsError::InvalidId { id } => (ErrorCode::InvalidId, Some(json!({"id": id}))),
             BeadsError::Validation { field, reason } => (
                 ErrorCode::ValidationFailed,
                 Some(json!({"field": field, "reason": reason})),
@@ -534,7 +531,7 @@ impl StructuredError {
                         "hint": hint
                     })),
                 )
-            },
+            }
             BeadsError::InvalidType { issue_type } => {
                 let hint = detect_type_intent(issue_type)
                     .map(|detected| format!("Did you mean --type {detected}?"));
@@ -546,7 +543,7 @@ impl StructuredError {
                         "hint": hint
                     })),
                 )
-            },
+            }
             BeadsError::InvalidPriority { priority } => {
                 let hint = detect_priority_intent(&priority.to_string()).map_or_else(
                     || Some("Priority must be 0-4 (0=critical, 4=backlog).".to_string()),
@@ -560,7 +557,7 @@ impl StructuredError {
                         "hint": hint
                     })),
                 )
-            },
+            }
             BeadsError::JsonlParse { line, reason } => (
                 ErrorCode::JsonlParseError,
                 Some(json!({"line": line, "reason": reason})),
@@ -573,22 +570,19 @@ impl StructuredError {
                 ErrorCode::ImportCollision,
                 Some(json!({"collision_count": count})),
             ),
-            BeadsError::DependencyCycle { path } => (
-                ErrorCode::CycleDetected,
-                Some(json!({"cycle_path": path})),
-            ),
+            BeadsError::DependencyCycle { path } => {
+                (ErrorCode::CycleDetected, Some(json!({"cycle_path": path})))
+            }
             BeadsError::HasDependents { id, count } => (
                 ErrorCode::HasDependents,
                 Some(json!({"id": id, "dependent_count": count})),
             ),
-            BeadsError::SelfDependency { id } => (
-                ErrorCode::SelfDependency,
-                Some(json!({"id": id})),
-            ),
-            BeadsError::DependencyNotFound { id } => (
-                ErrorCode::DependencyNotFound,
-                Some(json!({"id": id})),
-            ),
+            BeadsError::SelfDependency { id } => {
+                (ErrorCode::SelfDependency, Some(json!({"id": id})))
+            }
+            BeadsError::DependencyNotFound { id } => {
+                (ErrorCode::DependencyNotFound, Some(json!({"id": id})))
+            }
             BeadsError::DuplicateDependency { from, to } => (
                 ErrorCode::DuplicateDependency,
                 Some(json!({"from": from, "to": to})),
@@ -597,10 +591,9 @@ impl StructuredError {
             BeadsError::Io(_) => (ErrorCode::IoError, None),
             BeadsError::Json(_) => (ErrorCode::JsonError, None),
             BeadsError::Yaml(_) => (ErrorCode::YamlError, None),
-            BeadsError::WithContext { context, .. } => (
-                ErrorCode::InternalError,
-                Some(json!({"context": context})),
-            ),
+            BeadsError::WithContext { context, .. } => {
+                (ErrorCode::InternalError, Some(json!({"context": context})))
+            }
             BeadsError::Other(_) => (ErrorCode::InternalError, None),
         }
     }
@@ -648,9 +641,9 @@ impl StructuredError {
                 }
                 Some(format!("Use --force to delete '{id}' anyway."))
             }
-            BeadsError::JsonlParse { line, .. } => {
-                Some(format!("Check line {line} of the JSONL file for syntax errors."))
-            }
+            BeadsError::JsonlParse { line, .. } => Some(format!(
+                "Check line {line} of the JSONL file for syntax errors."
+            )),
             _ => None,
         }
     }
@@ -660,16 +653,25 @@ impl StructuredError {
 
 /// Valid status values.
 static VALID_STATUSES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    ["open", "in_progress", "blocked", "deferred", "closed", "tombstone"]
-        .into_iter()
-        .collect()
+    [
+        "open",
+        "in_progress",
+        "blocked",
+        "deferred",
+        "closed",
+        "tombstone",
+    ]
+    .into_iter()
+    .collect()
 });
 
 /// Valid issue type values.
 static VALID_TYPES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    ["task", "bug", "feature", "epic", "chore", "docs", "question"]
-        .into_iter()
-        .collect()
+    [
+        "task", "bug", "feature", "epic", "chore", "docs", "question",
+    ]
+    .into_iter()
+    .collect()
 });
 
 /// Status synonyms for intent detection.
@@ -879,7 +881,11 @@ fn levenshtein_distance(a: &str, b: &str) -> usize {
 /// Find IDs similar to the searched ID using Levenshtein distance.
 ///
 /// Returns up to `max_suggestions` IDs with distance <= 3.
-pub fn find_similar_ids(searched: &str, existing: &[String], max_suggestions: usize) -> Vec<String> {
+pub fn find_similar_ids(
+    searched: &str,
+    existing: &[String],
+    max_suggestions: usize,
+) -> Vec<String> {
     let mut candidates: Vec<(usize, &str)> = existing
         .iter()
         .map(|id| (levenshtein_distance(searched, id), id.as_str()))

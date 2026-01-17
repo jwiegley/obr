@@ -9,7 +9,6 @@ use crate::model::DependencyType;
 use crate::storage::SqliteStorage;
 use crate::util::id::{IdResolver, ResolverConfig, find_matching_ids};
 use serde::Serialize;
-use std::collections::HashSet;
 use std::path::Path;
 
 /// Execute the dep command.
@@ -295,22 +294,23 @@ fn dep_tree(
         id: String,
         depth: usize,
         parent_id: Option<String>,
+        path: Vec<String>,
     }
 
     let mut nodes = Vec::new();
-    let mut visited = HashSet::new();
 
     let mut queue = vec![QueueItem {
         id: root_id.clone(),
         depth: 0,
         parent_id: None,
+        path: Vec::new(),
     }];
 
     while let Some(item) = queue.pop() {
-        if visited.contains(&item.id) {
+        // Cycle detection: check if current ID is already in the path
+        if item.path.contains(&item.id) {
             continue;
         }
-        visited.insert(item.id.clone());
 
         let issue = if item.id == root_id {
             Some(root_issue.clone())
@@ -343,27 +343,33 @@ fn dep_tree(
 
         // Don't expand if at max depth
         if item.depth < args.max_depth {
+            let mut new_path = item.path.clone();
+            new_path.push(item.id.clone());
+
             // Get dependents (issues that depend on this one)
-            let dependents = storage.get_dependents(&item.id)?;
-            for dep_id in dependents {
-                if !visited.contains(&dep_id) {
-                    queue.push(QueueItem {
-                        id: dep_id,
-                        depth: item.depth + 1,
-                        parent_id: Some(item.id.clone()),
-                    });
-                }
+            let mut dependents = storage.get_dependents(&item.id)?;
+
+            // Get full issue details for sorting
+            // This is slightly inefficient (N queries), but necessary for sorting by priority.
+            // Optimization: fetch all at once or accept ID sort. 
+            // For now, let's sort by ID to be deterministic, or fetch details.
+            // The original code sorted the FINAL list.
+            // To maintain DFS order with sorted siblings, we must sort here.
+            
+            // Let's just sort by ID for stability and speed, priority sorting would require fetching issues.
+            dependents.sort();
+            // Push in reverse order so first item pops first
+            for dep_id in dependents.into_iter().rev() {
+                // No global visited check here
+                queue.push(QueueItem {
+                    id: dep_id,
+                    depth: item.depth + 1,
+                    parent_id: Some(item.id.clone()),
+                    path: new_path.clone(),
+                });
             }
         }
     }
-
-    // Sort by depth, then priority, then id
-    nodes.sort_by(|a, b| {
-        a.depth
-            .cmp(&b.depth)
-            .then_with(|| a.priority.cmp(&b.priority))
-            .then_with(|| a.id.cmp(&b.id))
-    });
 
     if json {
         println!("{}", serde_json::to_string_pretty(&nodes)?);

@@ -45,7 +45,7 @@ pub fn execute(args: &UpdateArgs, cli: &config::CliOverrides) -> Result<()> {
 
     let config_layer = config::load_config(&beads_dir, Some(&storage), cli)?;
     let actor = config::resolve_actor(&config_layer);
-    let resolver = build_resolver(&config_layer, &storage)?;
+    let resolver = build_resolver(&config_layer, &storage);
     let resolved_ids = resolve_target_ids(args, &beads_dir, &resolver, &storage)?;
 
     let update = build_update(args, &actor)?;
@@ -102,13 +102,7 @@ pub fn execute(args: &UpdateArgs, cli: &config::CliOverrides) -> Result<()> {
         }
 
         // Apply parent
-        apply_parent_update(
-            &mut storage,
-            id,
-            args.parent.as_deref(),
-            &resolver,
-            &actor,
-        )?;
+        apply_parent_update(&mut storage, id, args.parent.as_deref(), &resolver, &actor)?;
 
         // Update last touched
         crate::util::set_last_touched_id(&beads_dir, id);
@@ -175,14 +169,9 @@ fn print_update_summary(id: &str, title: &str, before: Option<&Issue>, after: &I
     }
 }
 
-fn build_resolver(
-    config_layer: &config::ConfigLayer,
-    _storage: &SqliteStorage,
-) -> Result<IdResolver> {
+fn build_resolver(config_layer: &config::ConfigLayer, _storage: &SqliteStorage) -> IdResolver {
     let id_config = config::id_config_from_layer(config_layer);
-    Ok(IdResolver::new(ResolverConfig::with_prefix(
-        id_config.prefix,
-    )))
+    IdResolver::new(ResolverConfig::with_prefix(id_config.prefix))
 }
 
 fn resolve_target_ids(
@@ -284,11 +273,7 @@ fn optional_date_field(value: Option<&str>) -> Result<Option<Option<DateTime<Utc
         .transpose()
 }
 
-fn resolve_issue_id(
-    resolver: &IdResolver,
-    storage: &SqliteStorage,
-    input: &str,
-) -> Result<String> {
+fn resolve_issue_id(resolver: &IdResolver, storage: &SqliteStorage, input: &str) -> Result<String> {
     resolver
         .resolve(
             input,

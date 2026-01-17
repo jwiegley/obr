@@ -66,7 +66,10 @@ pub fn backup_before_export(beads_dir: &Path, config: &HistoryConfig) -> Result<
     // Check if the content is identical to the most recent backup (deduplication)
     if let Some(latest) = get_latest_backup(&history_dir)? {
         if files_are_identical(&current_jsonl, &latest.path)? {
-            tracing::debug!("Skipping backup: identical to latest {}", latest.path.display());
+            tracing::debug!(
+                "Skipping backup: identical to latest {}",
+                latest.path.display()
+            );
             return Ok(());
         }
     }
@@ -135,11 +138,14 @@ pub fn list_backups(history_dir: &Path) -> Result<Vec<BackupEntry>> {
         if path.is_file() {
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                 if name.starts_with("issues.")
-                    && Path::new(name).extension().is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
+                    && Path::new(name)
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
                 {
                     // Parse timestamp from filename: issues.YYYYMMDD_HHMMSS.jsonl
                     if let Ok(metadata) = fs::metadata(&path) {
-                        let timestamp = DateTime::<Utc>::from(metadata.modified().map_err(BeadsError::Io)?);
+                        let timestamp =
+                            DateTime::<Utc>::from(metadata.modified().map_err(BeadsError::Io)?);
                         backups.push(BackupEntry {
                             path,
                             timestamp,
@@ -174,7 +180,11 @@ fn files_are_identical(p1: &Path, p2: &Path) -> Result<bool> {
 /// # Errors
 ///
 /// Returns an error if listing or deleting backups fails.
-pub fn prune_backups(history_dir: &Path, keep: usize, older_than_days: Option<u32>) -> Result<usize> {
+pub fn prune_backups(
+    history_dir: &Path,
+    keep: usize,
+    older_than_days: Option<u32>,
+) -> Result<usize> {
     let mut backups = list_backups(history_dir)?;
 
     // Sort by timestamp descending (newest first)

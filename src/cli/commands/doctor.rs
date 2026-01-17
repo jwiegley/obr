@@ -5,7 +5,7 @@
 use crate::config;
 use crate::error::Result;
 use crate::sync::{
-    scan_conflict_markers, validate_no_git_path, validate_sync_path, PathValidation,
+    PathValidation, scan_conflict_markers, validate_no_git_path, validate_sync_path,
 };
 use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
@@ -371,11 +371,7 @@ fn check_db_count(
 /// 2. Is within the .beads directory (or has explicit external opt-in)
 /// 3. Has an allowed extension
 #[allow(clippy::too_many_lines)]
-fn check_sync_jsonl_path(
-    jsonl_path: &Path,
-    beads_dir: &Path,
-    checks: &mut Vec<CheckResult>,
-) {
+fn check_sync_jsonl_path(jsonl_path: &Path, beads_dir: &Path, checks: &mut Vec<CheckResult>) {
     let check_name = "sync_jsonl_path";
 
     // 1. Check if path is valid UTF-8
@@ -413,7 +409,10 @@ fn check_sync_jsonl_path(
                     })),
                 );
             }
-            PathValidation::OutsideBeadsDir { path, beads_dir: bd } => {
+            PathValidation::OutsideBeadsDir {
+                path,
+                beads_dir: bd,
+            } => {
                 push_check(
                     checks,
                     check_name,
@@ -631,15 +630,12 @@ fn check_sync_metadata(
             let jsonl_mtime = fs::metadata(p).and_then(|m| m.modified()).ok();
 
             // JSONL is newer if it was modified after last import
-            let j_newer = last_import
-                .as_ref()
-                .is_none_or(|import_time| {
-                    chrono::DateTime::parse_from_rfc3339(import_time)
-                        .is_ok_and(|import_ts| {
-                            let import_sys_time = std::time::SystemTime::from(import_ts);
-                            jsonl_mtime.is_some_and(|m| m > import_sys_time)
-                        })
-                });
+            let j_newer = last_import.as_ref().is_none_or(|import_time| {
+                chrono::DateTime::parse_from_rfc3339(import_time).is_ok_and(|import_ts| {
+                    let import_sys_time = std::time::SystemTime::from(import_ts);
+                    jsonl_mtime.is_some_and(|m| m > import_sys_time)
+                })
+            });
 
             // DB is newer if there are dirty issues
             let d_newer = dirty_count > 0;
@@ -657,7 +653,10 @@ fn check_sync_metadata(
             checks,
             "sync.metadata",
             CheckStatus::Warn,
-            Some("JSONL exists but no export recorded; consider running sync --flush-only".to_string()),
+            Some(
+                "JSONL exists but no export recorded; consider running sync --flush-only"
+                    .to_string(),
+            ),
             Some(details),
         );
     } else if jsonl_newer && db_newer {

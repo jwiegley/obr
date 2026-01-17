@@ -561,10 +561,8 @@ pub fn id_config_from_layer(layer: &ConfigLayer) -> IdConfig {
 ///
 /// Returns an error if the configured value is not a valid priority (0-4).
 pub fn default_priority_from_layer(layer: &ConfigLayer) -> Result<Priority> {
-    get_value(layer, &["default_priority", "default-priority"]).map_or_else(
-        || Ok(Priority::MEDIUM),
-        |value| Priority::from_str(value),
-    )
+    get_value(layer, &["default_priority", "default-priority"])
+        .map_or_else(|| Ok(Priority::MEDIUM), |value| Priority::from_str(value))
 }
 
 /// Resolve default issue type for new issues from config.
@@ -573,10 +571,8 @@ pub fn default_priority_from_layer(layer: &ConfigLayer) -> Result<Priority> {
 ///
 /// Returns an error only if parsing fails (custom types are allowed).
 pub fn default_issue_type_from_layer(layer: &ConfigLayer) -> Result<IssueType> {
-    get_value(layer, &["default_type", "default-type"]).map_or_else(
-        || Ok(IssueType::Task),
-        |value| IssueType::from_str(value),
-    )
+    get_value(layer, &["default_type", "default-type"])
+        .map_or_else(|| Ok(IssueType::Task), |value| IssueType::from_str(value))
 }
 
 /// Resolve actor from a merged config layer.
@@ -602,7 +598,11 @@ pub fn resolve_actor(layer: &ConfigLayer) -> String {
 }
 
 /// Determine if a key is startup-only.
-fn is_startup_key(key: &str) -> bool {
+///
+/// Startup-only keys can only be set in YAML config files, not in the database.
+/// These include path settings, behavior flags, and git-related options.
+#[must_use]
+pub fn is_startup_key(key: &str) -> bool {
     let normalized = normalize_key(key);
 
     if normalized.starts_with("git.")

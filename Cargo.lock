@@ -151,6 +151,7 @@ dependencies = [
  "once_cell",
  "predicates",
  "rayon",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",

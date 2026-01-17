@@ -33,9 +33,21 @@ fn setup_workspace_with_issues() -> BrWorkspace {
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create a few issues for export
-    let _ = run_br(&workspace, ["create", "Test issue 1", "-t", "task"], "create1");
-    let _ = run_br(&workspace, ["create", "Test issue 2", "-t", "bug"], "create2");
-    let _ = run_br(&workspace, ["create", "Test issue 3", "-t", "feature"], "create3");
+    let _ = run_br(
+        &workspace,
+        ["create", "Test issue 1", "-t", "task"],
+        "create1",
+    );
+    let _ = run_br(
+        &workspace,
+        ["create", "Test issue 2", "-t", "bug"],
+        "create2",
+    );
+    let _ = run_br(
+        &workspace,
+        ["create", "Test issue 3", "-t", "feature"],
+        "create3",
+    );
 
     // Export to JSONL
     let export = run_br(&workspace, ["sync", "--flush-only"], "export");
@@ -66,7 +78,11 @@ fn edge_case_import_rejects_partial_lines() {
     fs::write(&jsonl_path, &malformed).expect("write malformed jsonl");
 
     // Attempt import - should fail
-    let import = run_br(&workspace, ["sync", "--import-only", "--force"], "import_partial");
+    let import = run_br(
+        &workspace,
+        ["sync", "--import-only", "--force"],
+        "import_partial",
+    );
 
     // Log for postmortem
     let log = format!(
@@ -76,11 +92,7 @@ fn edge_case_import_rejects_partial_lines() {
          Import stdout: {}\n\
          Import stderr: {}\n\
          Exit status: {}",
-        first_line,
-        truncated,
-        import.stdout,
-        import.stderr,
-        import.status
+        first_line, truncated, import.stdout, import.stderr, import.status
     );
     let log_path = workspace.log_dir.join("partial_line_test.log");
     fs::write(&log_path, &log).expect("write log");
@@ -120,7 +132,10 @@ fn edge_case_import_rejects_invalid_json() {
     let invalid_json_cases = [
         ("{\"id\": \"test\", \"title\": ", "Missing closing brace"),
         ("{invalid json here}", "Not valid JSON"),
-        ("{\"id\": \"test\", \"title\": \"unclosed string}", "Unclosed string"),
+        (
+            "{\"id\": \"test\", \"title\": \"unclosed string}",
+            "Unclosed string",
+        ),
         ("{\"id\": \"test\", trailing: garbage}", "Trailing garbage"),
         ("not json at all", "Plain text"),
     ];
@@ -145,9 +160,10 @@ fn edge_case_import_rejects_invalid_json() {
              Exit status: {}",
             description, invalid_line, import.stdout, import.stderr, import.status
         );
-        let log_path = workspace
-            .log_dir
-            .join(format!("invalid_json_{}.log", description.replace(' ', "_")));
+        let log_path = workspace.log_dir.join(format!(
+            "invalid_json_{}.log",
+            description.replace(' ', "_")
+        ));
         fs::write(&log_path, &log).expect("write log");
 
         // ASSERTION: Import should fail
@@ -330,8 +346,20 @@ fn edge_case_path_traversal_blocked() {
     // Try to export to a path with traversal
     let traversal_paths = [
         workspace.root.join(".beads").join("..").join("secret.txt"),
-        workspace.root.join(".beads").join("..").join("..").join("etc").join("passwd"),
-        workspace.root.join(".beads").join("foo").join("..").join("..").join("secret.txt"),
+        workspace
+            .root
+            .join(".beads")
+            .join("..")
+            .join("..")
+            .join("etc")
+            .join("passwd"),
+        workspace
+            .root
+            .join(".beads")
+            .join("foo")
+            .join("..")
+            .join("..")
+            .join("secret.txt"),
     ];
 
     for traversal_path in &traversal_paths {
@@ -378,7 +406,11 @@ fn edge_case_symlink_escape_blocked() {
 
     // Try to create a symlink (may fail on some systems)
     if symlink(&outside_file, &symlink_path).is_ok() {
-        eprintln!("[INFO] Created symlink: {} -> {}", symlink_path.display(), outside_file.display());
+        eprintln!(
+            "[INFO] Created symlink: {} -> {}",
+            symlink_path.display(),
+            outside_file.display()
+        );
 
         // Verify symlink exists
         assert!(symlink_path.exists() || symlink_path.is_symlink());
@@ -430,8 +462,7 @@ fn edge_case_huge_line() {
     let first_line = original.lines().next().expect("at least one line");
 
     // Parse and modify to add huge title
-    let mut issue: serde_json::Value =
-        serde_json::from_str(first_line).expect("parse first line");
+    let mut issue: serde_json::Value = serde_json::from_str(first_line).expect("parse first line");
 
     // Create a title that's ~1MB
     let huge_title = "X".repeat(1_000_000);
@@ -443,7 +474,11 @@ fn edge_case_huge_line() {
     fs::write(&jsonl_path, format!("{huge_line}\n")).expect("write huge line");
 
     // Attempt import
-    let import = run_br(&workspace, ["sync", "--import-only", "--force"], "import_huge");
+    let import = run_br(
+        &workspace,
+        ["sync", "--import-only", "--force"],
+        "import_huge",
+    );
 
     // Log for postmortem
     let log = format!(
@@ -502,7 +537,11 @@ fn edge_case_invalid_utf8() {
     fs::write(&jsonl_path, &invalid_bytes).expect("write invalid utf8");
 
     // Attempt import
-    let import = run_br(&workspace, ["sync", "--import-only", "--force"], "import_invalid_utf8");
+    let import = run_br(
+        &workspace,
+        ["sync", "--import-only", "--force"],
+        "import_invalid_utf8",
+    );
 
     // Log for postmortem
     let log = format!(
@@ -550,7 +589,11 @@ fn edge_case_whitespace_only() {
     fs::write(&jsonl_path, "   \n\t\n   \n\n").expect("write whitespace");
 
     // Attempt import - should succeed with 0 issues imported
-    let import = run_br(&workspace, ["sync", "--import-only", "--force"], "import_whitespace");
+    let import = run_br(
+        &workspace,
+        ["sync", "--import-only", "--force"],
+        "import_whitespace",
+    );
 
     let log = format!(
         "=== WHITESPACE ONLY TEST ===\n\
@@ -583,7 +626,11 @@ fn edge_case_empty_file() {
     fs::write(&jsonl_path, "").expect("write empty file");
 
     // Attempt import
-    let import = run_br(&workspace, ["sync", "--import-only", "--force"], "import_empty");
+    let import = run_br(
+        &workspace,
+        ["sync", "--import-only", "--force"],
+        "import_empty",
+    );
 
     let log = format!(
         "=== EMPTY FILE TEST ===\n\
@@ -633,7 +680,11 @@ fn edge_case_deeply_nested_json() {
     fs::write(&jsonl_path, format!("{deep_json}\n")).expect("write deeply nested");
 
     // Attempt import
-    let import = run_br(&workspace, ["sync", "--import-only", "--force"], "import_nested");
+    let import = run_br(
+        &workspace,
+        ["sync", "--import-only", "--force"],
+        "import_nested",
+    );
 
     let log = format!(
         "=== DEEPLY NESTED JSON TEST ===\n\
@@ -681,7 +732,11 @@ fn edge_case_no_partial_writes_on_failure() {
     fs::write(&jsonl_path, &malformed).expect("write malformed");
 
     // Attempt import - should fail
-    let import = run_br(&workspace, ["sync", "--import-only", "--force"], "import_partial_fail");
+    let import = run_br(
+        &workspace,
+        ["sync", "--import-only", "--force"],
+        "import_partial_fail",
+    );
 
     // Check final state
     let list_after = run_br(&workspace, ["list", "--json"], "list_after");

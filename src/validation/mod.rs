@@ -146,7 +146,9 @@ impl DependencyValidator {
             ));
         }
 
-        if dep.dep_type.is_blocking() && store.would_create_cycle(&dep.issue_id, &dep.depends_on_id)? {
+        if dep.dep_type.is_blocking()
+            && store.would_create_cycle(&dep.issue_id, &dep.depends_on_id)?
+        {
             errors.push(ValidationError::new(
                 "depends_on_id",
                 "would create dependency cycle",

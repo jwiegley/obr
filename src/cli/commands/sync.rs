@@ -6,13 +6,13 @@
 use crate::cli::SyncArgs;
 use crate::config;
 use crate::error::{BeadsError, Result};
+use crate::sync::history::HistoryConfig;
 use crate::sync::{
     ExportConfig, ExportEntityType, ExportError, ExportErrorPolicy, ImportConfig,
     METADATA_JSONL_CONTENT_HASH, METADATA_LAST_EXPORT_TIME, METADATA_LAST_IMPORT_TIME, OrphanMode,
     compute_jsonl_hash, count_issues_in_jsonl, export_to_jsonl_with_policy, finalize_export,
     get_issue_ids_from_jsonl, import_from_jsonl, require_safe_sync_overwrite_path,
 };
-use crate::sync::history::HistoryConfig;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::fs;

@@ -145,13 +145,13 @@ impl IdGenerator {
                     let seed = generate_id_seed(title, description, creator, created_at, nonce);
                     let hash_str = compute_id_hash(&seed, 12);
                     let id = format!("{}-{hash_str}", self.config.prefix);
-                    
+
                     if !exists(&id) {
                         return id;
                     }
-                    
+
                     nonce += 1;
-                    
+
                     // Safety break (unlikely to hit unless DB is full of collisions or checking is broken)
                     if nonce > 1000 {
                         // Desperate fallback: append large number to guarantee uniqueness

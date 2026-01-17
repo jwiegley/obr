@@ -11,8 +11,8 @@
 
 use crate::cli::ConfigArgs;
 use crate::config::{
-    discover_beads_dir, id_config_from_layer, load_config, load_project_config, load_user_config,
-    resolve_actor, CliOverrides, ConfigLayer,
+    CliOverrides, ConfigLayer, discover_beads_dir, id_config_from_layer, load_config,
+    load_project_config, load_user_config, resolve_actor,
 };
 use crate::error::Result;
 use serde_json::json;
@@ -46,6 +46,11 @@ pub fn execute(args: &ConfigArgs, json_mode: bool, overrides: &CliOverrides) -> 
     // Handle set (modifies user config)
     if let Some(ref kv) = args.set {
         return set_config_value(kv, json_mode);
+    }
+
+    // Handle delete (removes from DB config only)
+    if let Some(ref key) = args.delete {
+        return delete_config_value(key, json_mode, overrides);
     }
 
     // Try to discover beads dir for merged config
@@ -186,9 +191,10 @@ fn get_config_value(
 ) -> Result<()> {
     let layer = if let Some(dir) = beads_dir {
         // Try to open storage for DB config
-        let storage = crate::config::open_storage(dir, overrides.db.as_ref(), overrides.lock_timeout)
-            .ok()
-            .map(|(s, _)| s);
+        let storage =
+            crate::config::open_storage(dir, overrides.db.as_ref(), overrides.lock_timeout)
+                .ok()
+                .map(|(s, _)| s);
         load_config(dir, storage.as_ref(), overrides)?
     } else {
         // No beads dir, just use env and user configs
@@ -226,12 +232,12 @@ fn get_config_value(
 
 /// Set a config value in user config.
 fn set_config_value(kv: &str, json_mode: bool) -> Result<()> {
-    let (key, value) = kv.split_once('=').ok_or_else(|| {
-        crate::error::BeadsError::Validation {
+    let (key, value) = kv
+        .split_once('=')
+        .ok_or_else(|| crate::error::BeadsError::Validation {
             field: "config".to_string(),
             reason: "Invalid format. Use: --set key=value".to_string(),
-        }
-    })?;
+        })?;
 
     let config_path = get_user_config_path().ok_or_else(|| {
         crate::error::BeadsError::Config("HOME environment variable not set".to_string())
@@ -303,6 +309,46 @@ fn set_config_value(kv: &str, json_mode: bool) -> Result<()> {
     Ok(())
 }
 
+/// Delete a config value from the database.
+///
+/// This only removes DB-stored config values, not YAML config.
+fn delete_config_value(key: &str, json_mode: bool, overrides: &CliOverrides) -> Result<()> {
+    // Need beads dir for database access
+    let beads_dir = discover_beads_dir(None)?;
+
+    // Open storage
+    let (mut storage, _) =
+        crate::config::open_storage(&beads_dir, overrides.db.as_ref(), overrides.lock_timeout)?;
+
+    // Check if this is a startup-only key (can't be stored in DB)
+    if crate::config::is_startup_key(key) {
+        return Err(crate::error::BeadsError::Validation {
+            field: "config".to_string(),
+            reason: format!(
+                "Key '{key}' is a startup-only key stored in YAML config, not the database. \
+                 Edit the config file directly with 'br config --edit'."
+            ),
+        });
+    }
+
+    // Delete from DB
+    let deleted = storage.delete_config(key)?;
+
+    if json_mode {
+        let output = json!({
+            "key": key,
+            "deleted": deleted,
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else if deleted {
+        println!("Deleted config key: {key}");
+    } else {
+        println!("Config key not found in database: {key}");
+    }
+
+    Ok(())
+}
+
 /// Show merged configuration.
 fn show_config(
     beads_dir: Option<&PathBuf>,
@@ -332,9 +378,10 @@ fn show_config(
 
     // Show merged config
     let layer = if let Some(dir) = beads_dir {
-        let storage = crate::config::open_storage(dir, overrides.db.as_ref(), overrides.lock_timeout)
-            .ok()
-            .map(|(s, _)| s);
+        let storage =
+            crate::config::open_storage(dir, overrides.db.as_ref(), overrides.lock_timeout)
+                .ok()
+                .map(|(s, _)| s);
         load_config(dir, storage.as_ref(), overrides)?
     } else {
         let mut layer = ConfigLayer::default();
@@ -429,11 +476,7 @@ fn output_layer(layer: &ConfigLayer, source: &str, json_mode: bool) -> Result<()
         println!("{source} configuration:");
         println!();
 
-        let mut all_keys: Vec<_> = layer
-            .runtime
-            .keys()
-            .chain(layer.startup.keys())
-            .collect();
+        let mut all_keys: Vec<_> = layer.runtime.keys().chain(layer.startup.keys()).collect();
         all_keys.sort();
         all_keys.dedup();
 

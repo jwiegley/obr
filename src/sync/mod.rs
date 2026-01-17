@@ -7,8 +7,8 @@
 //! - Collision detection during imports
 //! - Path validation and allowlist enforcement
 
-pub mod path;
 pub mod history;
+pub mod path;
 
 pub use path::{
     ALLOWED_EXACT_NAMES, ALLOWED_EXTENSIONS, PathValidation, is_sync_path_allowed,
@@ -328,7 +328,11 @@ pub struct PreflightCheck {
 }
 
 impl PreflightCheck {
-    fn pass(name: impl Into<String>, description: impl Into<String>, message: impl Into<String>) -> Self {
+    fn pass(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
             name: name.into(),
             description: description.into(),
@@ -512,10 +516,11 @@ pub fn preflight_export(
         let canonical_beads = beads_dir
             .canonicalize()
             .unwrap_or_else(|_| beads_dir.clone());
-        let is_external = !output_path.starts_with(beads_dir)
-            && !output_path.starts_with(&canonical_beads);
+        let is_external =
+            !output_path.starts_with(beads_dir) && !output_path.starts_with(&canonical_beads);
 
-        match validate_sync_path_with_external(output_path, beads_dir, config.allow_external_jsonl) {
+        match validate_sync_path_with_external(output_path, beads_dir, config.allow_external_jsonl)
+        {
             Ok(()) => {
                 let msg = format!(
                     "Path {} validated (external={})",
@@ -624,7 +629,11 @@ pub fn preflight_export(
                                 "Export won't lose JSONL issues",
                                 format!(
                                     "Database is missing {total_missing} issue(s) from JSONL: {}{}",
-                                    missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "),
+                                    missing
+                                        .iter()
+                                        .map(|s| s.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join(", "),
                                     if total_missing > 5 { " ..." } else { "" }
                                 ),
                                 "Import the JSONL first to sync, or use --force to override.",
@@ -733,8 +742,8 @@ pub fn preflight_import(input_path: &Path, config: &ImportConfig) -> Result<Pref
         let canonical_beads = beads_dir
             .canonicalize()
             .unwrap_or_else(|_| beads_dir.clone());
-        let is_external = !input_path.starts_with(beads_dir)
-            && !input_path.starts_with(&canonical_beads);
+        let is_external =
+            !input_path.starts_with(beads_dir) && !input_path.starts_with(&canonical_beads);
 
         match validate_sync_path_with_external(input_path, beads_dir, config.allow_external_jsonl) {
             Ok(()) => {
@@ -823,7 +832,9 @@ pub fn preflight_import(input_path: &Path, config: &ImportConfig) -> Result<Pref
                         "line {}: {:?}{}",
                         m.line,
                         m.marker_type,
-                        m.branch.as_ref().map_or(String::new(), |b| format!(" ({b})"))
+                        m.branch
+                            .as_ref()
+                            .map_or(String::new(), |b| format!(" ({b})"))
                     )
                 })
                 .collect();
@@ -1137,7 +1148,7 @@ pub fn export_to_jsonl_with_policy(
         // It implies backing up the canonical JSONL.
         // If output_path == beads_dir.join("issues.jsonl"), we back it up.
         if output_path == beads_dir.join("issues.jsonl") {
-             history::backup_before_export(beads_dir, &config.history)?;
+            history::backup_before_export(beads_dir, &config.history)?;
         }
     }
 
@@ -1860,6 +1871,7 @@ pub fn import_from_jsonl(
 
     // Track external refs to detect duplicates
     let mut seen_external_refs: HashSet<String> = HashSet::new();
+    let mut new_export_hashes = Vec::new();
 
     // Process issues
     for issue in &issues {
@@ -1896,8 +1908,25 @@ pub fn import_from_jsonl(
         // Determine action
         let action = determine_action(&collision, &effective_issue, storage, config.force_upsert)?;
 
+        // Collect hash if we are importing
+        if matches!(
+            action,
+            CollisionAction::Insert | CollisionAction::Update { .. }
+        ) {
+            let final_id = match &action {
+                CollisionAction::Update { existing_id } => existing_id.clone(),
+                _ => effective_issue.id.clone(),
+            };
+            new_export_hashes.push((final_id, computed_hash.clone()));
+        }
+
         // Process the action
         process_import_action(storage, &action, &effective_issue, &mut result)?;
+    }
+
+    // Restore export hashes for imported issues
+    if !new_export_hashes.is_empty() {
+        storage.set_export_hashes(&new_export_hashes)?;
     }
 
     // Step 10: Refresh blocked cache
@@ -2433,8 +2462,7 @@ mod tests {
 
         // Import should update since incoming is newer
         let config = ImportConfig::default();
-        let result = import_from_jsonl(&mut storage, &path, &config, Some("test-"))
-            .unwrap();
+        let result = import_from_jsonl(&mut storage, &path, &config, Some("test-")).unwrap();
         assert_eq!(result.imported_count, 1);
 
         // The existing issue should be updated
@@ -2461,8 +2489,7 @@ mod tests {
 
         // Import should skip since existing is newer
         let config = ImportConfig::default();
-        let result = import_from_jsonl(&mut storage, &path, &config, Some("test-"))
-            .unwrap();
+        let result = import_from_jsonl(&mut storage, &path, &config, Some("test-")).unwrap();
         assert_eq!(result.skipped_count, 1);
 
         let unchanged = storage.get_issue("test-001").unwrap().unwrap();
@@ -2490,8 +2517,7 @@ mod tests {
 
         // Import should update since incoming is newer (matched by external_ref in phase 1)
         let config = ImportConfig::default();
-        let result = import_from_jsonl(&mut storage, &path, &config, Some("test-"))
-            .unwrap();
+        let result = import_from_jsonl(&mut storage, &path, &config, Some("test-")).unwrap();
         assert_eq!(result.imported_count, 1);
 
         // The existing issue should be updated
@@ -2553,8 +2579,7 @@ mod tests {
 
         // Import should skip due to tombstone protection
         let config = ImportConfig::default();
-        let result = import_from_jsonl(&mut storage, &path, &config, Some("test-"))
-            .unwrap();
+        let result = import_from_jsonl(&mut storage, &path, &config, Some("test-")).unwrap();
         assert_eq!(result.tombstone_skipped, 1);
 
         let still_tombstone = storage.get_issue("test-001").unwrap().unwrap();
@@ -2573,8 +2598,7 @@ mod tests {
         fs::write(&path, format!("{json}\n")).unwrap();
 
         let config = ImportConfig::default();
-        let result = import_from_jsonl(&mut storage, &path, &config, Some("test-"))
-            .unwrap();
+        let result = import_from_jsonl(&mut storage, &path, &config, Some("test-")).unwrap();
 
         // New issue should be imported
         assert_eq!(result.imported_count, 1);
@@ -2652,8 +2676,7 @@ mod tests {
         fs::write(&path, format!("{json}\n")).unwrap();
 
         let config = ImportConfig::default();
-        let result = import_from_jsonl(&mut storage, &path, &config, Some("test-"))
-            .unwrap();
+        let result = import_from_jsonl(&mut storage, &path, &config, Some("test-")).unwrap();
 
         // Ephemeral should be skipped
         assert_eq!(result.skipped_count, 1);
@@ -2677,8 +2700,7 @@ mod tests {
             skip_prefix_validation: true,
             ..Default::default()
         };
-        let result = import_from_jsonl(&mut storage, &path, &config, Some("test-"))
-            .unwrap();
+        let result = import_from_jsonl(&mut storage, &path, &config, Some("test-")).unwrap();
         assert_eq!(result.imported_count, 1);
     }
 
@@ -2695,8 +2717,7 @@ mod tests {
         fs::write(&path, content).unwrap();
 
         let config = ImportConfig::default();
-        let result = import_from_jsonl(&mut storage, &path, &config, Some("test-"))
-            .unwrap();
+        let result = import_from_jsonl(&mut storage, &path, &config, Some("test-")).unwrap();
         assert_eq!(result.imported_count, 1);
     }
 
@@ -3148,10 +3169,7 @@ mod tests {
         let result = preflight_import(&jsonl_path, &config).unwrap();
 
         assert_eq!(result.overall_status, PreflightCheckStatus::Fail);
-        assert!(result
-            .failures()
-            .iter()
-            .any(|c| c.name == "file_readable"));
+        assert!(result.failures().iter().any(|c| c.name == "file_readable"));
     }
 
     #[test]
@@ -3167,7 +3185,8 @@ mod tests {
         file.write_all(br#"{"id":"bd-1","title":"Test"}"#).unwrap();
         writeln!(file).unwrap();
         writeln!(file, "=======").unwrap();
-        file.write_all(br#"{"id":"bd-1","title":"Test Modified"}"#).unwrap();
+        file.write_all(br#"{"id":"bd-1","title":"Test Modified"}"#)
+            .unwrap();
         writeln!(file).unwrap();
         writeln!(file, ">>>>>>> branch").unwrap();
 
@@ -3179,10 +3198,12 @@ mod tests {
         let result = preflight_import(&jsonl_path, &config).unwrap();
 
         assert_eq!(result.overall_status, PreflightCheckStatus::Fail);
-        assert!(result
-            .failures()
-            .iter()
-            .any(|c| c.name == "no_conflict_markers"));
+        assert!(
+            result
+                .failures()
+                .iter()
+                .any(|c| c.name == "no_conflict_markers")
+        );
     }
 
     #[test]
@@ -3203,10 +3224,12 @@ mod tests {
         let result = preflight_import(&jsonl_path, &config).unwrap();
 
         assert_eq!(result.overall_status, PreflightCheckStatus::Fail);
-        assert!(result
-            .failures()
-            .iter()
-            .any(|c| c.name == "jsonl_parseable"));
+        assert!(
+            result
+                .failures()
+                .iter()
+                .any(|c| c.name == "jsonl_parseable")
+        );
     }
 
     #[test]
@@ -3266,9 +3289,11 @@ mod tests {
         let result = preflight_export(&storage, &jsonl_path, &config).unwrap();
 
         assert_eq!(result.overall_status, PreflightCheckStatus::Fail);
-        assert!(result
-            .failures()
-            .iter()
-            .any(|c| c.name == "beads_dir_exists"));
+        assert!(
+            result
+                .failures()
+                .iter()
+                .any(|c| c.name == "beads_dir_exists")
+        );
     }
 }

@@ -1144,7 +1144,9 @@ impl SqliteStorage {
         if let Ok(dt) = dep_type.parse::<DependencyType>() {
             if dt.is_blocking() && self.would_create_cycle(issue_id, depends_on_id)? {
                 return Err(BeadsError::DependencyCycle {
-                    path: format!("Adding dependency {issue_id} -> {depends_on_id} would create a cycle"),
+                    path: format!(
+                        "Adding dependency {issue_id} -> {depends_on_id} would create a cycle"
+                    ),
                 });
             }
         }
@@ -1796,6 +1798,20 @@ impl SqliteStorage {
         Ok(())
     }
 
+    /// Delete a config value.
+    ///
+    /// Returns `true` if a value was deleted, `false` if the key didn't exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database delete fails.
+    pub fn delete_config(&mut self, key: &str) -> Result<bool> {
+        let deleted = self
+            .conn
+            .execute("DELETE FROM config WHERE key = ?", rusqlite::params![key])?;
+        Ok(deleted > 0)
+    }
+
     // ========================================================================
     // Export-related methods
     // ========================================================================
@@ -2307,7 +2323,10 @@ pub enum ReadySortPolicy {
 }
 
 fn parse_status(s: Option<&str>) -> Status {
-    s.and_then(|s| s.parse().ok()).unwrap_or_default()
+    s.map_or_else(Status::default, |val| {
+        val.parse()
+            .unwrap_or_else(|_| Status::Custom(val.to_string()))
+    })
 }
 
 fn parse_issue_type(s: Option<&str>) -> IssueType {
@@ -3231,7 +3250,7 @@ mod tests {
         );
         let pinned = make_issue("bd-ready-4", "Pinned", Status::Open, 2, None, base, None);
         let ephemeral = make_issue("bd-ready-5", "Ephemeral", Status::Open, 2, None, base, None);
-        let wisp = make_issue("bd-ready-6", "Wisp", Status::Open, 2, None, base, None);
+        let wisp = make_issue("bd-wisp-6", "Wisp", Status::Open, 2, None, base, None);
 
         for issue in [
             ready,
@@ -3276,7 +3295,7 @@ mod tests {
         assert!(!ids.contains(&"bd-ready-2"));
         assert!(!ids.contains(&"bd-ready-4"));
         assert!(!ids.contains(&"bd-ready-5"));
-        assert!(!ids.contains(&"bd-ready-6"));
+        assert!(!ids.contains(&"bd-wisp-6"));
     }
 
     #[test]
@@ -3828,6 +3847,30 @@ mod tests {
         let updated = storage.get_issue("bd-hash").unwrap().unwrap();
         let updated_hash = updated.content_hash.unwrap();
 
-        assert_ne!(initial_hash, updated_hash, "Hash should change when title changes");
+        assert_ne!(
+            initial_hash, updated_hash,
+            "Hash should change when title changes"
+        );
+    }
+
+    #[test]
+    fn test_delete_config() {
+        let mut storage = SqliteStorage::open_memory().unwrap();
+
+        // Set a config value
+        storage.set_config("test_key", "test_value").unwrap();
+        assert_eq!(
+            storage.get_config("test_key").unwrap(),
+            Some("test_value".to_string())
+        );
+
+        // Delete it
+        let deleted = storage.delete_config("test_key").unwrap();
+        assert!(deleted, "Should return true when key existed");
+        assert_eq!(storage.get_config("test_key").unwrap(), None);
+
+        // Delete non-existent key
+        let deleted_again = storage.delete_config("nonexistent").unwrap();
+        assert!(!deleted_again, "Should return false when key doesn't exist");
     }
 }

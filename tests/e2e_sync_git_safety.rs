@@ -842,7 +842,10 @@ impl FileTreeDiff {
         let mut log = String::new();
 
         if !self.created.is_empty() {
-            log.push_str(&format!("\n=== CREATED FILES ({}) ===\n", self.created.len()));
+            log.push_str(&format!(
+                "\n=== CREATED FILES ({}) ===\n",
+                self.created.len()
+            ));
             for change in &self.created {
                 log.push_str(&change.format_detail());
                 log.push('\n');
@@ -861,7 +864,10 @@ impl FileTreeDiff {
         }
 
         if !self.deleted.is_empty() {
-            log.push_str(&format!("\n=== DELETED FILES ({}) ===\n", self.deleted.len()));
+            log.push_str(&format!(
+                "\n=== DELETED FILES ({}) ===\n",
+                self.deleted.len()
+            ));
             for change in &self.deleted {
                 log.push_str(&change.format_detail());
                 log.push('\n');
@@ -911,12 +917,26 @@ fn integration_sync_only_touches_allowed_files() {
     // Create several issues to ensure JSONL has content
     let _ = run_br(
         &workspace,
-        ["create", "Feature: User authentication", "-t", "feature", "-p", "1"],
+        [
+            "create",
+            "Feature: User authentication",
+            "-t",
+            "feature",
+            "-p",
+            "1",
+        ],
         "create_feature",
     );
     let _ = run_br(
         &workspace,
-        ["create", "Bug: Login fails on mobile", "-t", "bug", "-p", "0"],
+        [
+            "create",
+            "Bug: Login fails on mobile",
+            "-t",
+            "bug",
+            "-p",
+            "0",
+        ],
         "create_bug",
     );
     let _ = run_br(
@@ -1229,11 +1249,7 @@ fn create_realistic_project(workspace: &BrWorkspace) {
         "fn main() {\n    println!(\"Hello, world!\");\n}\n",
     )
     .expect("write main.rs");
-    fs::write(
-        src_dir.join("lib.rs"),
-        "pub mod utils;\npub mod models;\n",
-    )
-    .expect("write lib.rs");
+    fs::write(src_dir.join("lib.rs"), "pub mod utils;\npub mod models;\n").expect("write lib.rs");
 
     // Nested source directories
     let utils_dir = src_dir.join("utils");
@@ -1247,8 +1263,11 @@ fn create_realistic_project(workspace: &BrWorkspace) {
 
     let models_dir = src_dir.join("models");
     fs::create_dir_all(&models_dir).expect("create models dir");
-    fs::write(models_dir.join("mod.rs"), "pub struct User { name: String }\n")
-        .expect("write models/mod.rs");
+    fs::write(
+        models_dir.join("mod.rs"),
+        "pub struct User { name: String }\n",
+    )
+    .expect("write models/mod.rs");
 
     // Test files
     let tests_dir = workspace.root.join("tests");
@@ -1271,8 +1290,11 @@ fn create_realistic_project(workspace: &BrWorkspace) {
     // Documentation
     let docs_dir = workspace.root.join("docs");
     fs::create_dir_all(&docs_dir).expect("create docs dir");
-    fs::write(docs_dir.join("README.md"), "# Test Project\n\nThis is a test.\n")
-        .expect("write docs/README.md");
+    fs::write(
+        docs_dir.join("README.md"),
+        "# Test Project\n\nThis is a test.\n",
+    )
+    .expect("write docs/README.md");
     fs::write(
         docs_dir.join("API.md"),
         "# API Reference\n\n## Functions\n\n- `helper()`: Returns 42\n",
@@ -1351,7 +1373,11 @@ fn integration_sync_manifest_only_touches_allowed_files() {
         ["sync", "--flush-only", "--manifest"],
         "sync_manifest",
     );
-    assert!(sync.status.success(), "sync manifest failed: {}", sync.stderr);
+    assert!(
+        sync.status.success(),
+        "sync manifest failed: {}",
+        sync.stderr
+    );
 
     // Take snapshot after
     let snapshot_after = FileTreeSnapshot::new(&workspace.root);
@@ -1361,10 +1387,7 @@ fn integration_sync_manifest_only_touches_allowed_files() {
     let (violations, allowed) = diff.check_allowed_changes();
 
     // Log details
-    let log = format!(
-        "=== SYNC MANIFEST TEST ===\n\n{}\n",
-        diff.format_log()
-    );
+    let log = format!("=== SYNC MANIFEST TEST ===\n\n{}\n", diff.format_log());
     let log_path = workspace.log_dir.join("sync_manifest_diff.log");
     fs::write(&log_path, &log).expect("write log");
 
@@ -1382,7 +1405,11 @@ fn integration_sync_manifest_only_touches_allowed_files() {
     );
 
     // Verify manifest was actually created
-    let manifest_exists = workspace.root.join(".beads").join(".manifest.json").exists();
+    let manifest_exists = workspace
+        .root
+        .join(".beads")
+        .join(".manifest.json")
+        .exists();
     assert!(manifest_exists, "Manifest file should have been created");
 
     eprintln!(

@@ -18,7 +18,7 @@
 use crate::cli::{Cli, CompletionsArgs, ShellType};
 use crate::error::Result;
 use clap::CommandFactory;
-use clap_complete::{generate, Shell};
+use clap_complete::{Shell, generate};
 use std::io;
 use tracing::info;
 
@@ -38,7 +38,11 @@ pub fn execute(args: &CompletionsArgs) -> Result<()> {
         let mut file = std::fs::File::create(output_path)?;
         generate(shell, &mut cmd, "br", &mut file);
         info!(path = %output_path.display(), "Wrote completion script");
-        eprintln!("Generated {} completions to {}", shell_name(args.shell), output_path.display());
+        eprintln!(
+            "Generated {} completions to {}",
+            shell_name(args.shell),
+            output_path.display()
+        );
     } else {
         // Generate to stdout
         generate(shell, &mut cmd, "br", &mut io::stdout());
@@ -132,7 +136,10 @@ mod tests {
         let script = String::from_utf8(output).unwrap();
 
         // Verify basic structure
-        assert!(script.contains("complete"), "should contain complete command");
+        assert!(
+            script.contains("complete"),
+            "should contain complete command"
+        );
         assert!(script.contains("br"), "should reference br command");
         assert!(script.contains("_br"), "should define _br function");
     }
@@ -155,7 +162,10 @@ mod tests {
         generate(Shell::Fish, &mut cmd, "br", &mut output);
         let script = String::from_utf8(output).unwrap();
 
-        assert!(script.contains("complete -c br"), "should use fish complete syntax");
+        assert!(
+            script.contains("complete -c br"),
+            "should use fish complete syntax"
+        );
     }
 
     #[test]
@@ -182,6 +192,9 @@ mod tests {
 
         // Verify global flags are in completions
         assert!(script.contains("--json"), "should include --json flag");
-        assert!(script.contains("--verbose"), "should include --verbose flag");
+        assert!(
+            script.contains("--verbose"),
+            "should include --verbose flag"
+        );
     }
 }

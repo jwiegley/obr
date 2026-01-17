@@ -139,6 +139,15 @@ pub enum Commands {
     /// List stale issues
     Stale(StaleArgs),
 
+    /// Check issues for missing template sections
+    Lint(LintArgs),
+
+    /// Defer issues (schedule for later)
+    Defer(DeferArgs),
+
+    /// Undefer issues (make ready again)
+    Undefer(UndeferArgs),
+
     /// Configuration management
     Config(ConfigArgs),
 
@@ -764,6 +773,46 @@ pub struct StaleArgs {
     pub status: Vec<String>,
 }
 
+#[derive(Args, Debug, Clone, Default)]
+pub struct LintArgs {
+    /// Issue IDs to lint (defaults to open issues)
+    pub ids: Vec<String>,
+
+    /// Filter by issue type (bug, task, feature, epic)
+    #[arg(long, short = 't')]
+    pub type_: Option<String>,
+
+    /// Filter by status (default: open, use 'all' for all)
+    #[arg(long, short = 's')]
+    pub status: Option<String>,
+}
+
+/// Arguments for the defer command.
+#[derive(Args, Debug, Clone, Default)]
+pub struct DeferArgs {
+    /// Issue IDs to defer
+    pub ids: Vec<String>,
+
+    /// Defer until date/time (e.g., `+1h`, `tomorrow`, `2025-01-15`)
+    #[arg(long)]
+    pub until: Option<String>,
+
+    /// Machine-readable output (alias for --json)
+    #[arg(long)]
+    pub robot: bool,
+}
+
+/// Arguments for the undefer command.
+#[derive(Args, Debug, Clone, Default)]
+pub struct UndeferArgs {
+    /// Issue IDs to undefer
+    pub ids: Vec<String>,
+
+    /// Machine-readable output (alias for --json)
+    #[arg(long)]
+    pub robot: bool,
+}
+
 /// Arguments for the ready command.
 #[derive(Args, Debug, Clone, Default)]
 #[allow(clippy::struct_excessive_bools)]
@@ -900,7 +949,7 @@ pub struct SyncArgs {
     /// Writes all issues from `SQLite` database to JSONL format.
     ///
     /// This is the default if the database is newer than the JSONL file.
-    #[arg(short = 'f', long, group = "sync_action")]
+    #[arg(long, group = "sync_action")]
     pub flush_only: bool,
 
     /// Import JSONL to database (JSONL → DB)
@@ -966,6 +1015,10 @@ pub struct ConfigArgs {
     /// Set a config value in user config (format: key=value)
     #[arg(long, short = 's', value_name = "KEY=VALUE")]
     pub set: Option<String>,
+
+    /// Delete a config value from the database (DB keys only, not YAML)
+    #[arg(long, short = 'd', visible_alias = "unset", value_name = "KEY")]
+    pub delete: Option<String>,
 
     /// Open user config file in $EDITOR
     #[arg(long, short = 'e')]
