@@ -472,7 +472,7 @@ fn delete_issue_creates_tombstone() {
 
     storage.create_issue(&issue, "tester").unwrap();
     storage
-        .delete_issue(&issue.id, "deleter", "No longer needed")
+        .delete_issue(&issue.id, "deleter", "No longer needed", None)
         .unwrap();
 
     let deleted = storage.get_issue(&issue.id).unwrap().expect("issue exists");
@@ -490,7 +490,7 @@ fn delete_issue_records_event() {
 
     storage.create_issue(&issue, "tester").unwrap();
     storage
-        .delete_issue(&issue.id, "deleter", "Test deletion")
+        .delete_issue(&issue.id, "deleter", "Test deletion", None)
         .unwrap();
 
     let details = storage
@@ -518,7 +518,7 @@ fn delete_issue_marks_dirty() {
     storage.clear_dirty_flags(&dirty).unwrap();
 
     storage
-        .delete_issue(&issue.id, "deleter", "Cleanup")
+        .delete_issue(&issue.id, "deleter", "Cleanup", None)
         .unwrap();
 
     let dirty_ids = storage.get_dirty_issue_ids().unwrap();
@@ -529,7 +529,7 @@ fn delete_issue_marks_dirty() {
 fn delete_nonexistent_issue_fails() {
     let mut storage = test_db();
 
-    let result = storage.delete_issue("nonexistent", "deleter", "reason");
+    let result = storage.delete_issue("nonexistent", "deleter", "reason", None);
     assert!(result.is_err());
 }
 
@@ -543,7 +543,7 @@ fn deleted_issues_excluded_from_list() {
     storage.create_issue(&issue1, "tester").unwrap();
     storage.create_issue(&issue2, "tester").unwrap();
     storage
-        .delete_issue(&issue2.id, "deleter", "removed")
+        .delete_issue(&issue2.id, "deleter", "removed", None)
         .unwrap();
 
     let filters = beads_rust::storage::ListFilters::default();

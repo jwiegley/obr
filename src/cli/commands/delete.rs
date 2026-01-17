@@ -166,7 +166,7 @@ pub fn execute(args: &DeleteArgs, cli: &config::CliOverrides) -> Result<()> {
     // Delete each issue (create tombstone)
     let final_ids: Vec<String> = final_delete_set.into_iter().collect();
     for id in &final_ids {
-        storage.delete_issue(id, &actor, &args.reason)?;
+        storage.delete_issue(id, &actor, &args.reason, None)?;
         result.deleted.push(id.clone());
     }
     result.deleted_count = result.deleted.len();
@@ -318,7 +318,7 @@ mod tests {
 
         // Delete it
         let deleted = storage
-            .delete_issue("bd-del1", "tester", "test deletion")
+            .delete_issue("bd-del1", "tester", "test deletion", None)
             .unwrap();
         assert_eq!(deleted.status, Status::Tombstone);
         assert!(deleted.deleted_at.is_some());
@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn test_delete_nonexistent_fails() {
         let mut storage = SqliteStorage::open_memory().unwrap();
-        let result = storage.delete_issue("bd-nope", "tester", "reason");
+        let result = storage.delete_issue("bd-nope", "tester", "reason", None);
         assert!(result.is_err());
     }
 

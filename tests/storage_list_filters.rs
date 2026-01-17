@@ -623,7 +623,7 @@ fn tombstone_excluded_by_default() {
 
     // Delete to create tombstone
     storage
-        .delete_issue(&deleted_issue.id, "deleter", "test cleanup")
+        .delete_issue(&deleted_issue.id, "deleter", "test cleanup", None)
         .unwrap();
 
     let filters = ListFilters::default();
