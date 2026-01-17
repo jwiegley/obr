@@ -1666,6 +1666,78 @@ fn conformance_ready_filter_type() {
 }
 
 #[test]
+fn conformance_ready_filter_assignee() {
+    common::init_test_logging();
+    info!("Starting conformance_ready_filter_assignee test");
+
+    let workspace = ConformanceWorkspace::new();
+    workspace.init_both();
+
+    let br_assigned =
+        workspace.run_br(["create", "Assigned issue", "--assignee", "alice", "--json"], "assignee");
+    let bd_assigned =
+        workspace.run_bd(["create", "Assigned issue", "--assignee", "alice", "--json"], "assignee");
+    let _br_unassigned = workspace.run_br(["create", "Unassigned issue"], "unassigned");
+    let _bd_unassigned = workspace.run_bd(["create", "Unassigned issue"], "unassigned");
+
+    let br_assigned_id =
+        serde_json::from_str::<Value>(&extract_json_payload(&br_assigned.stdout))
+            .ok()
+            .and_then(|v| v.get("id").and_then(|id| id.as_str()).map(str::to_string))
+            .expect("br assigned id");
+    let bd_assigned_id =
+        serde_json::from_str::<Value>(&extract_json_payload(&bd_assigned.stdout))
+            .ok()
+            .and_then(|v| v.get("id").and_then(|id| id.as_str()).map(str::to_string))
+            .expect("bd assigned id");
+
+    let br_ready =
+        workspace.run_br(["ready", "--json", "--assignee", "alice"], "ready_assignee");
+    let bd_ready =
+        workspace.run_bd(["ready", "--json", "--assignee", "alice"], "ready_assignee");
+
+    assert!(
+        br_ready.status.success(),
+        "br ready failed: {}",
+        br_ready.stderr
+    );
+    assert!(
+        bd_ready.status.success(),
+        "bd ready failed: {}",
+        bd_ready.stderr
+    );
+
+    let br_val: Value = serde_json::from_str(&extract_json_payload(&br_ready.stdout))
+        .unwrap_or(Value::Array(vec![]));
+    let bd_val: Value = serde_json::from_str(&extract_json_payload(&bd_ready.stdout))
+        .unwrap_or(Value::Array(vec![]));
+
+    let br_ids: Vec<&str> = br_val
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.get("id").and_then(|id| id.as_str()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let bd_ids: Vec<&str> = bd_val
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.get("id").and_then(|id| id.as_str()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    assert_eq!(br_ids.len(), 1, "br ready should filter to 1 assignee");
+    assert_eq!(bd_ids.len(), 1, "bd ready should filter to 1 assignee");
+    assert_eq!(br_ids[0], br_assigned_id);
+    assert_eq!(bd_ids[0], bd_assigned_id);
+
+    info!("conformance_ready_filter_assignee passed");
+}
+
+#[test]
 fn conformance_blocked_empty() {
     common::init_test_logging();
     info!("Starting conformance_blocked_empty test");
