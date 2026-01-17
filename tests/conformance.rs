@@ -1600,6 +1600,72 @@ fn conformance_ready_limit() {
 }
 
 #[test]
+fn conformance_ready_filter_type() {
+    common::init_test_logging();
+    info!("Starting conformance_ready_filter_type test");
+
+    let workspace = ConformanceWorkspace::new();
+    workspace.init_both();
+
+    let br_bug = workspace.run_br(["create", "Bug issue", "--type", "bug", "--json"], "ready_bug");
+    let bd_bug = workspace.run_bd(["create", "Bug issue", "--type", "bug", "--json"], "ready_bug");
+    let _br_task = workspace.run_br(["create", "Task issue", "--json"], "ready_task");
+    let _bd_task = workspace.run_bd(["create", "Task issue", "--json"], "ready_task");
+
+    let br_bug_id = serde_json::from_str::<Value>(&extract_json_payload(&br_bug.stdout))
+        .ok()
+        .and_then(|v| v.get("id").and_then(|id| id.as_str()).map(str::to_string))
+        .expect("br bug id");
+    let bd_bug_id = serde_json::from_str::<Value>(&extract_json_payload(&bd_bug.stdout))
+        .ok()
+        .and_then(|v| v.get("id").and_then(|id| id.as_str()).map(str::to_string))
+        .expect("bd bug id");
+
+    let br_ready = workspace.run_br(["ready", "--json", "--type", "bug"], "ready_type");
+    let bd_ready = workspace.run_bd(["ready", "--json", "--type", "bug"], "ready_type");
+
+    assert!(
+        br_ready.status.success(),
+        "br ready failed: {}",
+        br_ready.stderr
+    );
+    assert!(
+        bd_ready.status.success(),
+        "bd ready failed: {}",
+        bd_ready.stderr
+    );
+
+    let br_val: Value = serde_json::from_str(&extract_json_payload(&br_ready.stdout))
+        .unwrap_or(Value::Array(vec![]));
+    let bd_val: Value = serde_json::from_str(&extract_json_payload(&bd_ready.stdout))
+        .unwrap_or(Value::Array(vec![]));
+
+    let br_ids: Vec<&str> = br_val
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.get("id").and_then(|id| id.as_str()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let bd_ids: Vec<&str> = bd_val
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.get("id").and_then(|id| id.as_str()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    assert_eq!(br_ids.len(), 1, "br ready should filter to 1 bug");
+    assert_eq!(bd_ids.len(), 1, "bd ready should filter to 1 bug");
+    assert_eq!(br_ids[0], br_bug_id);
+    assert_eq!(bd_ids[0], bd_bug_id);
+
+    info!("conformance_ready_filter_type passed");
+}
+
+#[test]
 fn conformance_blocked_empty() {
     common::init_test_logging();
     info!("Starting conformance_blocked_empty test");
