@@ -1,5 +1,5 @@
-use beads_rust::storage::SqliteStorage;
 use beads_rust::model::{Issue, IssueType, Priority, Status};
+use beads_rust::storage::SqliteStorage;
 use chrono::Utc;
 
 fn create_issue(id: &str, title: &str, issue_type: IssueType) -> Issue {
@@ -56,13 +56,18 @@ fn test_epic_does_not_block_task() {
     storage.create_issue(&task, "user").unwrap();
 
     // Task depends on Epic (parent-child)
-    storage.add_dependency("bd-task", "bd-epic", "parent-child", "user").unwrap();
+    storage
+        .add_dependency("bd-task", "bd-epic", "parent-child", "user")
+        .unwrap();
 
     // Rebuild cache
     storage.rebuild_blocked_cache(true).unwrap();
 
     // Task should NOT be blocked just because Epic is Open
-    assert!(!storage.is_blocked("bd-task").unwrap(), "Task should not be blocked by Open Epic");
+    assert!(
+        !storage.is_blocked("bd-task").unwrap(),
+        "Task should not be blocked by Open Epic"
+    );
 }
 
 #[test]
@@ -79,17 +84,27 @@ fn test_epic_blocking_propagates_to_task() {
     storage.create_issue(&blocker, "user").unwrap();
 
     // Task depends on Epic (parent-child)
-    storage.add_dependency("bd-task", "bd-epic", "parent-child", "user").unwrap();
+    storage
+        .add_dependency("bd-task", "bd-epic", "parent-child", "user")
+        .unwrap();
 
     // Epic depends on Blocker (blocks)
-    storage.add_dependency("bd-epic", "bd-blocker", "blocks", "user").unwrap();
+    storage
+        .add_dependency("bd-epic", "bd-blocker", "blocks", "user")
+        .unwrap();
 
     // Rebuild cache
     storage.rebuild_blocked_cache(true).unwrap();
 
     // Epic should be blocked
-    assert!(storage.is_blocked("bd-epic").unwrap(), "Epic should be blocked by Blocker");
+    assert!(
+        storage.is_blocked("bd-epic").unwrap(),
+        "Epic should be blocked by Blocker"
+    );
 
     // Task should be blocked (transitively)
-    assert!(storage.is_blocked("bd-task").unwrap(), "Task should be blocked by blocked Epic");
+    assert!(
+        storage.is_blocked("bd-task").unwrap(),
+        "Task should be blocked by blocked Epic"
+    );
 }

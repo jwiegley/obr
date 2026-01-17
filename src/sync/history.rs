@@ -147,50 +147,47 @@ pub fn list_backups(history_dir: &Path) -> Result<Vec<BackupEntry>> {
         let entry = entry?;
         let path = entry.path();
 
-        if path.is_file() {
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if Path::new(name)
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
-                {
-                    // Parse timestamp from filename: <stem>.YYYYMMDD_HHMMSS.jsonl
-                    // We look for the pattern .YYYYMMDD_HHMMSS. at the end of the stem
-                    // name format: stem.timestamp.jsonl
-                    // timestamp length: 15 chars
-                    // .jsonl length: 6 chars
-                    // minimum length: 1 (stem) + 1 (.) + 15 (ts) + 6 (.jsonl) = 23 chars?
-                    // actually stem can be 1 char.
-                    
-                    // simpler: split by dot, verify second to last part is timestamp
-                    // This handles my.custom.file.YYYYMMDD...jsonl correctly if we assume
-                    // the timestamp is always the second to last component.
-                    
-                    let parts: Vec<&str> = name.split('.').collect();
-                    if parts.len() < 3 {
-                        continue;
-                    }
-                    
-                    let ts_str = parts[parts.len() - 2];
-                    if ts_str.len() != 15 {
-                        continue;
-                    }
-                    
-                    match NaiveDateTime::parse_from_str(ts_str, "%Y%m%d_%H%M%S") {
-                        Ok(dt) => {
-                             let timestamp = Utc.from_utc_datetime(&dt);
-                             if let Ok(metadata) = fs::metadata(&path) {
-                                backups.push(BackupEntry {
-                                    path,
-                                    timestamp,
-                                    size: metadata.len(),
-                                });
-                            }
-                        },
-                        Err(_) => continue,
-                    }
-                }
-            }
+        if !path.is_file() {
+            continue;
         }
+
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+
+        let is_jsonl = path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"));
+        if !is_jsonl {
+            continue;
+        }
+
+        // Parse timestamp from filename: <stem>.YYYYMMDD_HHMMSS.jsonl
+        // We split by dot and treat the second-to-last component as the timestamp.
+        let parts: Vec<&str> = name.split('.').collect();
+        if parts.len() < 3 {
+            continue;
+        }
+
+        let ts_str = parts[parts.len() - 2];
+        if ts_str.len() != 15 {
+            continue;
+        }
+
+        let Ok(dt) = NaiveDateTime::parse_from_str(ts_str, "%Y%m%d_%H%M%S") else {
+            continue;
+        };
+
+        let Ok(metadata) = fs::metadata(&path) else {
+            continue;
+        };
+
+        let timestamp = Utc.from_utc_datetime(&dt);
+        backups.push(BackupEntry {
+            path,
+            timestamp,
+            size: metadata.len(),
+        });
     }
 
     // Sort newest first
@@ -201,13 +198,14 @@ pub fn list_backups(history_dir: &Path) -> Result<Vec<BackupEntry>> {
 
 fn get_latest_backup(history_dir: &Path, filter_stem: Option<&str>) -> Result<Option<BackupEntry>> {
     let backups = list_backups(history_dir)?;
-    
+
     if let Some(stem) = filter_stem {
-         Ok(backups.into_iter().find(|b| {
-             b.path.file_name()
+        Ok(backups.into_iter().find(|b| {
+            b.path
+                .file_name()
                 .and_then(|n| n.to_str())
                 .is_some_and(|n| n.starts_with(stem))
-         }))
+        }))
     } else {
         Ok(backups.into_iter().next())
     }

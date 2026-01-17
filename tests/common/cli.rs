@@ -39,9 +39,32 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
+    // Reuse run_br_with_env with empty env vars
+    run_br_with_env(
+        workspace,
+        args,
+        std::iter::empty::<(String, String)>(),
+        label,
+    )
+}
+
+pub fn run_br_with_env<I, S, E, K, V>(
+    workspace: &BrWorkspace,
+    args: I,
+    env_vars: E,
+    label: &str,
+) -> BrRun
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+    E: IntoIterator<Item = (K, V)>,
+    K: AsRef<OsStr>,
+    V: AsRef<OsStr>,
+{
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("br"));
     cmd.current_dir(&workspace.root);
     cmd.args(args);
+    cmd.envs(env_vars);
     cmd.env("NO_COLOR", "1");
     cmd.env("RUST_LOG", "beads_rust=debug");
     cmd.env("RUST_BACKTRACE", "1");

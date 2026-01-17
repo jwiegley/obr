@@ -2059,11 +2059,8 @@ pub fn import_from_jsonl(
     let mut import_ops = Vec::new();
     let mut new_export_hashes = Vec::new();
 
-    let progress = create_progress_bar(
-        issues.len() as u64,
-        "Scanning issues",
-        config.show_progress,
-    );
+    let progress =
+        create_progress_bar(issues.len() as u64, "Scanning issues", config.show_progress);
 
     for issue in &issues {
         // Skip ephemerals during import (they shouldn't be in JSONL anyway)
@@ -2113,7 +2110,7 @@ pub fn import_from_jsonl(
 
         // Collect hash for export_hashes table
         new_export_hashes.push((target_id, computed_hash));
-        
+
         import_ops.push((effective_issue, action));
         progress.inc(1);
     }

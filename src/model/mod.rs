@@ -481,6 +481,51 @@ pub struct Issue {
     pub comments: Vec<Comment>,
 }
 
+impl Default for Issue {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            content_hash: None,
+            title: String::new(),
+            description: None,
+            design: None,
+            acceptance_criteria: None,
+            notes: None,
+            status: Status::default(),
+            priority: Priority::default(),
+            issue_type: IssueType::default(),
+            assignee: None,
+            owner: None,
+            estimated_minutes: None,
+            created_at: Utc::now(),
+            created_by: None,
+            updated_at: Utc::now(),
+            closed_at: None,
+            close_reason: None,
+            closed_by_session: None,
+            due_at: None,
+            defer_until: None,
+            external_ref: None,
+            source_system: None,
+            deleted_at: None,
+            deleted_by: None,
+            delete_reason: None,
+            original_type: None,
+            compaction_level: None,
+            compacted_at: None,
+            compacted_at_commit: None,
+            original_size: None,
+            sender: None,
+            ephemeral: false,
+            pinned: false,
+            is_template: false,
+            labels: Vec::new(),
+            dependencies: Vec::new(),
+            comments: Vec::new(),
+        }
+    }
+}
+
 impl Issue {
     /// Compute the deterministic content hash for this issue.
     ///

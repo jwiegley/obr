@@ -1,5 +1,5 @@
+use beads_rust::model::{Dependency, DependencyType, Issue, IssueType, Priority, Status};
 use beads_rust::storage::SqliteStorage;
-use beads_rust::model::{Issue, IssueType, Priority, Status, Dependency, DependencyType};
 use beads_rust::sync::{ImportConfig, import_from_jsonl};
 use chrono::Utc;
 use std::fs;
@@ -88,7 +88,7 @@ fn test_import_collision_remaps_dependencies() {
 
     // 3. Import
     let config = ImportConfig::default();
-    let result = import_from_jsonl(&mut storage, &jsonl_path, &config, None).unwrap();
+    let _result = import_from_jsonl(&mut storage, &jsonl_path, &config, None).unwrap();
 
     // 4. Verify
     // bd-1 should be updated
@@ -96,7 +96,10 @@ fn test_import_collision_remaps_dependencies() {
     assert_eq!(bd1.title, "Updated via Import");
 
     // bd-2 should NOT exist
-    assert!(storage.get_issue("bd-2").unwrap().is_none(), "bd-2 should have been merged into bd-1");
+    assert!(
+        storage.get_issue("bd-2").unwrap().is_none(),
+        "bd-2 should have been merged into bd-1"
+    );
 
     // bd-3 should exist
     let bd3 = storage.get_issue("bd-3").unwrap().unwrap();
@@ -104,6 +107,12 @@ fn test_import_collision_remaps_dependencies() {
 
     // bd-3 should depend on bd-1 (NOT bd-2)
     let deps = storage.get_dependencies("bd-3").unwrap();
-    assert!(deps.contains(&"bd-1".to_string()), "bd-3 should depend on bd-1");
-    assert!(!deps.contains(&"bd-2".to_string()), "bd-3 should not depend on bd-2");
+    assert!(
+        deps.contains(&"bd-1".to_string()),
+        "bd-3 should depend on bd-1"
+    );
+    assert!(
+        !deps.contains(&"bd-2".to_string()),
+        "bd-3 should not depend on bd-2"
+    );
 }
