@@ -60,6 +60,7 @@ pub fn execute(args: &SearchArgs, json: bool, cli: &config::CliOverrides) -> Res
         issues
     };
 
+    // Batch count dependencies/dependents
     let issue_ids: Vec<String> = issues.iter().map(|i| i.id.clone()).collect();
     let dep_counts = storage.count_dependencies_for_issues(&issue_ids)?;
     let dependent_counts = storage.count_dependents_for_issues(&issue_ids)?;
@@ -67,8 +68,8 @@ pub fn execute(args: &SearchArgs, json: bool, cli: &config::CliOverrides) -> Res
     let mut issues_with_counts: Vec<IssueWithCounts> = issues
         .into_iter()
         .map(|issue| {
-            let dependency_count = dep_counts.get(&issue.id).copied().unwrap_or(0);
-            let dependent_count = dependent_counts.get(&issue.id).copied().unwrap_or(0);
+            let dependency_count = *dep_counts.get(&issue.id).unwrap_or(&0);
+            let dependent_count = *dependent_counts.get(&issue.id).unwrap_or(&0);
             IssueWithCounts {
                 issue,
                 dependency_count,
