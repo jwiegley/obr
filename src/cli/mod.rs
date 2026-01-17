@@ -846,6 +846,22 @@ pub struct StaleArgs {
     pub status: Vec<String>,
 }
 
+/// Arguments for the orphans command.
+#[derive(Args, Debug, Clone, Default)]
+pub struct OrphansArgs {
+    /// Show commit details for each orphan
+    #[arg(long)]
+    pub details: bool,
+
+    /// Interactive mode to close orphaned issues
+    #[arg(long)]
+    pub fix: bool,
+
+    /// Machine-readable output (alias for --json)
+    #[arg(long)]
+    pub robot: bool,
+}
+
 #[derive(Args, Debug, Clone, Default)]
 pub struct LintArgs {
     /// Issue IDs to lint (defaults to open issues)
@@ -1179,21 +1195,6 @@ pub enum HistoryCommands {
         #[arg(long)]
         older_than: Option<u32>,
     },
-}
-
-#[derive(Args, Debug, Clone, Default)]
-pub struct OrphansArgs {
-    /// Show commit details
-    #[arg(long)]
-    pub details: bool,
-
-    /// Interactive fix mode (close referenced issues)
-    #[arg(long)]
-    pub fix: bool,
-
-    /// Machine-readable output (alias for --json)
-    #[arg(long)]
-    pub robot: bool,
 }
 
 /// Arguments for the upgrade command.

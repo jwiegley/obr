@@ -79,9 +79,6 @@ fn main() {
             };
             commands::update::execute(&update_args, &overrides)
         }
-        Commands::Orphans(args) => {
-            commands::orphans::execute(&args, cli.json || args.robot, &overrides)
-        }
     };
 
     // Handle command result
