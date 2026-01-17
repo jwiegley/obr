@@ -3,15 +3,6 @@ source: tests/snapshots/json_output.rs
 expression: normalize_json(&json)
 ---
 {
-  "recent_activity": {
-    "commit_count": 0,
-    "hours_tracked": 24,
-    "issues_closed": 0,
-    "issues_created": 0,
-    "issues_reopened": 0,
-    "issues_updated": 0,
-    "total_changes": 0
-  },
   "summary": {
     "blocked_issues": 0,
     "closed_issues": 0,
