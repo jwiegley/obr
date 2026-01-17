@@ -12,21 +12,26 @@ fn test_create_json_output_includes_labels_and_deps() {
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create blocking issue first
-    let blocker = run_br(&workspace, ["create", "Blocker", "--json"], "create_blocker");
+    let blocker = run_br(
+        &workspace,
+        ["create", "Blocker", "--json"],
+        "create_blocker",
+    );
     assert!(
         blocker.status.success(),
         "Failed to create blocking issue: {}",
         blocker.stderr
     );
 
-    let blocker_json: Value =
-        serde_json::from_str(&extract_json_payload(&blocker.stdout)).unwrap();
+    let blocker_json: Value = serde_json::from_str(&extract_json_payload(&blocker.stdout)).unwrap();
     let blocker_id = blocker_json["id"].as_str().unwrap();
 
     // Create issue with label and dep
     let issue = run_br(
         &workspace,
-        ["create", "My Issue", "--labels", "bug", "--deps", blocker_id, "--json"],
+        [
+            "create", "My Issue", "--labels", "bug", "--deps", blocker_id, "--json",
+        ],
         "create_issue",
     );
     assert!(
