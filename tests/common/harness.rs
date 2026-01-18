@@ -676,6 +676,24 @@ impl TestWorkspace {
         self.run_binary_stdin("br", args, input, label)
     }
 
+    /// Run br command with environment variables and stdin input
+    pub fn run_br_env_stdin<I, S, E, K, V>(
+        &mut self,
+        args: I,
+        env_vars: E,
+        input: &str,
+        label: &str,
+    ) -> CommandResult
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+        E: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        self.run_binary_full("br", args, env_vars, Some(input), label)
+    }
+
     /// Run bd (Go beads) command
     pub fn run_bd<I, S>(&mut self, args: I, label: &str) -> CommandResult
     where
@@ -954,6 +972,126 @@ impl ConformanceWorkspace {
         self.run_in_workspace_system("bd", &self.bd_workspace.clone(), args, &format!("bd_{}", label))
     }
 
+    /// Run br command with environment variables
+    pub fn run_br_env<I, S, E, K, V>(&mut self, args: I, env_vars: E, label: &str) -> CommandResult
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+        E: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        self.run_in_workspace_env(
+            "br",
+            &self.br_workspace.clone(),
+            args,
+            env_vars,
+            None,
+            &format!("br_{}", label),
+        )
+    }
+
+    /// Run br command with stdin input
+    pub fn run_br_stdin<I, S>(&mut self, args: I, input: &str, label: &str) -> CommandResult
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        self.run_in_workspace_env(
+            "br",
+            &self.br_workspace.clone(),
+            args,
+            std::iter::empty::<(String, String)>(),
+            Some(input),
+            &format!("br_{}", label),
+        )
+    }
+
+    /// Run br command with env vars and stdin
+    pub fn run_br_env_stdin<I, S, E, K, V>(
+        &mut self,
+        args: I,
+        env_vars: E,
+        input: &str,
+        label: &str,
+    ) -> CommandResult
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+        E: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        self.run_in_workspace_env(
+            "br",
+            &self.br_workspace.clone(),
+            args,
+            env_vars,
+            Some(input),
+            &format!("br_{}", label),
+        )
+    }
+
+    /// Run bd command with environment variables
+    pub fn run_bd_env<I, S, E, K, V>(&mut self, args: I, env_vars: E, label: &str) -> CommandResult
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+        E: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        self.run_in_workspace_system_env(
+            "bd",
+            &self.bd_workspace.clone(),
+            args,
+            env_vars,
+            None,
+            &format!("bd_{}", label),
+        )
+    }
+
+    /// Run bd command with stdin input
+    pub fn run_bd_stdin<I, S>(&mut self, args: I, input: &str, label: &str) -> CommandResult
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        self.run_in_workspace_system_env(
+            "bd",
+            &self.bd_workspace.clone(),
+            args,
+            std::iter::empty::<(String, String)>(),
+            Some(input),
+            &format!("bd_{}", label),
+        )
+    }
+
+    /// Run bd command with env vars and stdin
+    pub fn run_bd_env_stdin<I, S, E, K, V>(
+        &mut self,
+        args: I,
+        env_vars: E,
+        input: &str,
+        label: &str,
+    ) -> CommandResult
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+        E: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        self.run_in_workspace_system_env(
+            "bd",
+            &self.bd_workspace.clone(),
+            args,
+            env_vars,
+            Some(input),
+            &format!("bd_{}", label),
+        )
+    }
+
     #[allow(clippy::ptr_arg)]
     fn run_in_workspace<I, S>(
         &mut self,
@@ -980,6 +1118,75 @@ impl ConformanceWorkspace {
         cmd.env("RUST_LOG", "beads_rust=debug");
         cmd.env("RUST_BACKTRACE", "1");
         cmd.env("HOME", cwd);
+
+        let start = Instant::now();
+        let output = cmd.output().expect("run command");
+        let duration = start.elapsed();
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let exit_code = output.status.code().unwrap_or(-1);
+
+        let log_path = self.log_dir.join(format!("{}.log", label));
+        let log_content = format!(
+            "label: {}\nbinary: {}\nargs: {:?}\ncwd: {}\nexit_code: {}\nduration: {:?}\n\n--- stdout ---\n{}\n\n--- stderr ---\n{}",
+            label, binary, args_vec, cwd.display(), exit_code, duration, stdout, stderr
+        );
+        fs::write(&log_path, &log_content).ok();
+
+        let result = CommandResult {
+            stdout,
+            stderr,
+            exit_code,
+            success: output.status.success(),
+            duration,
+            log_path,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            timed_out: false,
+        };
+
+        self.logger.log_command(label, binary, &args_vec, cwd, &result);
+
+        result
+    }
+
+    #[allow(clippy::ptr_arg)]
+    fn run_in_workspace_env<I, S, E, K, V>(
+        &mut self,
+        binary: &str,
+        cwd: &PathBuf,
+        args: I,
+        env_vars: E,
+        stdin_input: Option<&str>,
+        label: &str,
+    ) -> CommandResult
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+        E: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        let bin_path = br_binary_path();
+        let mut cmd = Command::new(&bin_path);
+        cmd.current_dir(cwd);
+
+        let args_vec: Vec<String> = args
+            .into_iter()
+            .map(|a| a.as_ref().to_string_lossy().to_string())
+            .collect();
+        cmd.args(&args_vec);
+
+        cmd.envs(env_vars);
+        cmd.env("NO_COLOR", "1");
+        cmd.env("RUST_LOG", "beads_rust=debug");
+        cmd.env("RUST_BACKTRACE", "1");
+        cmd.env("HOME", cwd);
+
+        if let Some(input) = stdin_input {
+            cmd.write_stdin(input);
+        }
 
         let start = Instant::now();
         let output = cmd.output().expect("run command");
@@ -1067,6 +1274,84 @@ impl ConformanceWorkspace {
         self.logger.log_command(label, binary, &args_vec, cwd, &result);
 
         result
+    }
+
+    #[allow(clippy::ptr_arg)]
+    fn run_in_workspace_system_env<I, S, E, K, V>(
+        &mut self,
+        binary: &str,
+        cwd: &PathBuf,
+        args: I,
+        env_vars: E,
+        stdin_input: Option<&str>,
+        label: &str,
+    ) -> CommandResult
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+        E: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        let mut cmd = std::process::Command::new(binary);
+        cmd.current_dir(cwd);
+
+        let args_vec: Vec<String> = args
+            .into_iter()
+            .map(|a| a.as_ref().to_string_lossy().to_string())
+            .collect();
+        cmd.args(&args_vec);
+
+        cmd.envs(env_vars);
+        cmd.env("NO_COLOR", "1");
+        cmd.env("HOME", cwd);
+
+        let mut build_result = |output: std::process::Output, duration: Duration| {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let exit_code = output.status.code().unwrap_or(-1);
+
+            let log_path = self.log_dir.join(format!("{}.log", label));
+            let log_content = format!(
+                "label: {}\nbinary: {}\nargs: {:?}\ncwd: {}\nexit_code: {}\nduration: {:?}\n\n--- stdout ---\n{}\n\n--- stderr ---\n{}",
+                label, binary, args_vec, cwd.display(), exit_code, duration, stdout, stderr
+            );
+            fs::write(&log_path, &log_content).ok();
+
+            let result = CommandResult {
+                stdout,
+                stderr,
+                exit_code,
+                success: output.status.success(),
+                duration,
+                log_path,
+                stdout_truncated: false,
+                stderr_truncated: false,
+                timed_out: false,
+            };
+
+            self.logger.log_command(label, binary, &args_vec, cwd, &result);
+
+            result
+        };
+
+        if let Some(input) = stdin_input {
+            use std::io::Write as _;
+            cmd.stdin(std::process::Stdio::piped());
+            let start = Instant::now();
+            let mut child = cmd.spawn().expect("run command");
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(input.as_bytes());
+            }
+            let output = child.wait_with_output().expect("run command");
+            let duration = start.elapsed();
+            return build_result(output, duration);
+        }
+
+        let start = Instant::now();
+        let output = cmd.output().expect(&format!("run {}", binary));
+        let duration = start.elapsed();
+        build_result(output, duration)
     }
 
     /// Finalize the test

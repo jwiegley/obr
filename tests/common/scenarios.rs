@@ -12,12 +12,15 @@
 #![allow(dead_code)]
 
 use super::*;
-use super::harness::{CommandResult, TestWorkspace, ConformanceWorkspace as HarnessConformanceWorkspace};
 use super::dataset_registry::{IsolatedDataset, KnownDataset};
+use super::harness::{CommandResult, ConformanceWorkspace as HarnessConformanceWorkspace, TestWorkspace};
+use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashSet;
-use std::time::Duration;
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+use std::time::{Duration, SystemTime};
+use walkdir::WalkDir;
 
 /// Execution mode for a scenario.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,7 +124,12 @@ impl NormalizationRules {
                 // Remove fields
                 for field in &self.remove_fields {
                     if map.remove(field).is_some() && self.log_normalization {
-                        log.push(format!("Removed field: {path}.{field}"));
+                        let removed_path = if path.is_empty() {
+                            field.clone()
+                        } else {
+                            format!("{path}.{field}")
+                        };
+                        log.push(format!("Removed field: {removed_path}"));
                     }
                 }
 
@@ -142,7 +150,7 @@ impl NormalizationRules {
                         *val = Value::String("NORMALIZED_TIMESTAMP".to_string());
                     } else if self.normalize_ids && (key == "id" || key.ends_with("_id")) {
                         if let Some(s) = val.as_str() {
-                            if let Some(dash_pos) = s.find('-') {
+                            if let Some(dash_pos) = s.rfind('-') {
                                 let prefix = &s[..dash_pos];
                                 *val = Value::String(format!("{prefix}-HASH"));
                                 if self.log_normalization {
@@ -1109,6 +1117,27 @@ impl ScenarioRunner {
 
     fn run_e2e(&self, scenario: &Scenario) -> ScenarioResult {
         let mut workspace = TestWorkspace::new("e2e", &scenario.name);
+
+        if let ScenarioSetup::Dataset(dataset) = scenario.setup {
+            if let Err(err) = populate_workspace_with_dataset(&mut workspace, dataset) {
+                return ScenarioResult {
+                    passed: false,
+                    mode: self.mode,
+                    br_result: None,
+                    bd_result: None,
+                    comparison_result: None,
+                    invariant_failures: vec![format!("Dataset setup failed: {err}")],
+                    normalization_log: Vec::new(),
+                    benchmark_metrics: None,
+                };
+            }
+        }
+
+        let baseline_snapshot = if scenario.invariants.path_confinement {
+            Some(snapshot_workspace(&workspace.root))
+        } else {
+            None
+        };
         
         // Setup
         if matches!(scenario.setup, ScenarioSetup::Fresh) {
@@ -1128,8 +1157,9 @@ impl ScenarioRunner {
         }
 
         // Run setup commands
-        for cmd in &scenario.setup_commands {
-            let result = workspace.run_br(&cmd.args, &cmd.label);
+        let setup_commands = collect_setup_commands(scenario);
+        for cmd in &setup_commands {
+            let result = run_scenario_command(&mut workspace, cmd, None);
             if !result.success && scenario.invariants.expect_success {
                 return ScenarioResult {
                     passed: false,
@@ -1145,10 +1175,15 @@ impl ScenarioRunner {
         }
 
         // Run test command
-        let br_result = workspace.run_br(&scenario.test_command.args, &scenario.test_command.label);
+        let br_result = run_scenario_command(&mut workspace, &scenario.test_command, None);
 
         // Check invariants
-        let invariant_failures = check_invariants(&scenario.invariants, &br_result);
+        let mut invariant_failures = check_invariants(&scenario.invariants, &br_result);
+        if let (true, Some(before)) = (scenario.invariants.path_confinement, baseline_snapshot) {
+            let after = snapshot_workspace(&workspace.root);
+            let violations = detect_path_confinement_violations(&before, &after);
+            invariant_failures.extend(violations);
+        }
 
         let passed = invariant_failures.is_empty();
         workspace.finish(passed);
@@ -1168,25 +1203,57 @@ impl ScenarioRunner {
     fn run_conformance(&self, scenario: &Scenario) -> ScenarioResult {
         let mut workspace = HarnessConformanceWorkspace::new("conformance", &scenario.name);
         
-        // Initialize both
-        let (br_init, bd_init) = workspace.init_both();
-        if !br_init.success || !bd_init.success {
-            return ScenarioResult {
-                passed: false,
-                mode: self.mode,
-                br_result: Some(br_init),
-                bd_result: Some(bd_init),
-                comparison_result: None,
-                invariant_failures: vec!["Init failed".to_string()],
-                normalization_log: Vec::new(),
-                benchmark_metrics: None,
-            };
+        // Initialize both (unless using a dataset)
+        if matches!(scenario.setup, ScenarioSetup::Fresh) {
+            let (br_init, bd_init) = workspace.init_both();
+            if !br_init.success || !bd_init.success {
+                return ScenarioResult {
+                    passed: false,
+                    mode: self.mode,
+                    br_result: Some(br_init),
+                    bd_result: Some(bd_init),
+                    comparison_result: None,
+                    invariant_failures: vec!["Init failed".to_string()],
+                    normalization_log: Vec::new(),
+                    benchmark_metrics: None,
+                };
+            }
+        } else if let ScenarioSetup::Dataset(dataset) = scenario.setup {
+            if let Err(err) = populate_conformance_with_dataset(&mut workspace, dataset) {
+                return ScenarioResult {
+                    passed: false,
+                    mode: self.mode,
+                    br_result: None,
+                    bd_result: None,
+                    comparison_result: None,
+                    invariant_failures: vec![format!("Dataset setup failed: {err}")],
+                    normalization_log: Vec::new(),
+                    benchmark_metrics: None,
+                };
+            }
         }
 
+        let baseline_snapshot = if scenario.invariants.path_confinement {
+            Some(snapshot_workspace(&workspace.br_workspace))
+        } else {
+            None
+        };
+
         // Run setup commands on both
-        for cmd in &scenario.setup_commands {
-            let br_setup = workspace.run_br(&cmd.args, &format!("{}_setup", cmd.label));
-            let bd_setup = workspace.run_bd(&cmd.args, &format!("{}_setup", cmd.label));
+        let setup_commands = collect_setup_commands(scenario);
+        for cmd in &setup_commands {
+            let br_setup = run_conformance_command(
+                &mut workspace,
+                cmd,
+                &format!("{}_setup", cmd.label),
+                BinaryTarget::Br,
+            );
+            let bd_setup = run_conformance_command(
+                &mut workspace,
+                cmd,
+                &format!("{}_setup", cmd.label),
+                BinaryTarget::Bd,
+            );
             if !br_setup.success || !bd_setup.success {
                 return ScenarioResult {
                     passed: false,
@@ -1202,8 +1269,18 @@ impl ScenarioRunner {
         }
 
         // Run test command on both
-        let br_result = workspace.run_br(&scenario.test_command.args, &scenario.test_command.label);
-        let bd_result = workspace.run_bd(&scenario.test_command.args, &scenario.test_command.label);
+        let br_result = run_conformance_command(
+            &mut workspace,
+            &scenario.test_command,
+            &scenario.test_command.label,
+            BinaryTarget::Br,
+        );
+        let bd_result = run_conformance_command(
+            &mut workspace,
+            &scenario.test_command,
+            &scenario.test_command.label,
+            BinaryTarget::Bd,
+        );
 
         // Compare outputs
         let (comparison_result, normalization_log) =
@@ -1211,6 +1288,11 @@ impl ScenarioRunner {
 
         // Check invariants (on br only)
         let mut invariant_failures = check_invariants(&scenario.invariants, &br_result);
+        if let (true, Some(before)) = (scenario.invariants.path_confinement, baseline_snapshot) {
+            let after = snapshot_workspace(&workspace.br_workspace);
+            let violations = detect_path_confinement_violations(&before, &after);
+            invariant_failures.extend(violations);
+        }
 
         // Add comparison failure if any
         if !comparison_result.matched {
@@ -1240,16 +1322,32 @@ impl ScenarioRunner {
     fn run_benchmark(&self, scenario: &Scenario) -> ScenarioResult {
         // For now, benchmark mode is like E2E but captures timing metrics
         let mut workspace = TestWorkspace::new("benchmark", &scenario.name);
+
+        if let ScenarioSetup::Dataset(dataset) = scenario.setup {
+            if let Err(err) = populate_workspace_with_dataset(&mut workspace, dataset) {
+                return ScenarioResult {
+                    passed: false,
+                    mode: self.mode,
+                    br_result: None,
+                    bd_result: None,
+                    comparison_result: None,
+                    invariant_failures: vec![format!("Dataset setup failed: {err}")],
+                    normalization_log: Vec::new(),
+                    benchmark_metrics: None,
+                };
+            }
+        }
         
         if matches!(scenario.setup, ScenarioSetup::Fresh) {
             let _ = workspace.init_br();
         }
 
-        for cmd in &scenario.setup_commands {
-            workspace.run_br(&cmd.args, &cmd.label);
+        let setup_commands = collect_setup_commands(scenario);
+        for cmd in &setup_commands {
+            let _ = run_scenario_command(&mut workspace, cmd, None);
         }
 
-        let br_result = workspace.run_br(&scenario.test_command.args, &scenario.test_command.label);
+        let br_result = run_scenario_command(&mut workspace, &scenario.test_command, None);
 
         let benchmark_metrics = Some(BenchmarkMetrics {
             br_duration_ms: br_result.duration.as_millis(),
@@ -1319,6 +1417,20 @@ fn check_invariants(invariants: &Invariants, result: &CommandResult) -> Vec<Stri
     for needle in &invariants.stdout_excludes {
         if result.stdout.contains(needle) {
             failures.push(format!("stdout should not contain: {needle}"));
+        }
+    }
+
+    if !invariants.json_schema_fields.is_empty() {
+        let payload = extract_json_payload(&result.stdout);
+        match serde_json::from_str::<Value>(&payload) {
+            Ok(value) => {
+                for field in &invariants.json_schema_fields {
+                    if value.get(field).is_none() {
+                        failures.push(format!("json missing field: {field}"));
+                    }
+                }
+            }
+            Err(err) => failures.push(format!("json parse error: {err}")),
         }
     }
 
@@ -1409,19 +1521,34 @@ fn compare_outputs(
                 );
             };
 
+            let mut tolerance_issues = Vec::new();
+            if normalization.timestamp_tolerance.is_some() {
+                tolerance_issues = check_timestamp_tolerance(&br, &bd, normalization);
+                normalization_log.extend(tolerance_issues.iter().cloned());
+            }
+
             // Apply normalization
             let br_log = normalization.apply(&mut br);
             let bd_log = normalization.apply(&mut bd);
             normalization_log.extend(br_log.into_iter().map(|s| format!("br: {s}")));
             normalization_log.extend(bd_log.into_iter().map(|s| format!("bd: {s}")));
 
-            let matched = br == bd;
+            let matched = br == bd && tolerance_issues.is_empty();
             (
                 ComparisonResult {
                     matched,
                     br_json: Some(br.clone()),
                     bd_json: Some(bd.clone()),
-                    diff_description: if matched { None } else { Some("Normalized JSON mismatch".to_string()) },
+                    diff_description: if matched {
+                        None
+                    } else if !tolerance_issues.is_empty() {
+                        Some(format!(
+                            "Timestamp tolerance exceeded: {}",
+                            tolerance_issues.join("; ")
+                        ))
+                    } else {
+                        Some("Normalized JSON mismatch".to_string())
+                    },
                 },
                 normalization_log,
             )
@@ -1464,8 +1591,7 @@ fn compare_outputs(
             )
         }
 
-        _ => {
-            // For other modes, default to normalized comparison
+        CompareMode::ArrayUnordered => {
             let (Ok(mut br), Ok(mut bd)) = (br_json, bd_json) else {
                 return (
                     ComparisonResult {
@@ -1477,15 +1603,83 @@ fn compare_outputs(
                     normalization_log,
                 );
             };
-            normalization.apply(&mut br);
-            normalization.apply(&mut bd);
+            let _ = normalization.apply(&mut br);
+            let _ = normalization.apply(&mut bd);
+            sort_arrays_recursively(&mut br);
+            sort_arrays_recursively(&mut bd);
             let matched = br == bd;
             (
                 ComparisonResult {
                     matched,
                     br_json: Some(br),
                     bd_json: Some(bd),
-                    diff_description: if matched { None } else { Some("Mismatch".to_string()) },
+                    diff_description: if matched {
+                        None
+                    } else {
+                        Some("Array-unordered JSON mismatch".to_string())
+                    },
+                },
+                normalization_log,
+            )
+        }
+
+        CompareMode::FieldsExcluded(fields) => {
+            let (Ok(mut br), Ok(mut bd)) = (br_json, bd_json) else {
+                return (
+                    ComparisonResult {
+                        matched: false,
+                        br_json: None,
+                        bd_json: None,
+                        diff_description: Some("JSON parse error".to_string()),
+                    },
+                    normalization_log,
+                );
+            };
+            for field in fields {
+                remove_field_path(&mut br, field);
+                remove_field_path(&mut bd, field);
+            }
+            let matched = br == bd;
+            (
+                ComparisonResult {
+                    matched,
+                    br_json: Some(br),
+                    bd_json: Some(bd),
+                    diff_description: if matched {
+                        None
+                    } else {
+                        Some("Fields-excluded JSON mismatch".to_string())
+                    },
+                },
+                normalization_log,
+            )
+        }
+
+        CompareMode::StructureOnly => {
+            let (Ok(br), Ok(bd)) = (br_json, bd_json) else {
+                return (
+                    ComparisonResult {
+                        matched: false,
+                        br_json: None,
+                        bd_json: None,
+                        diff_description: Some("JSON parse error".to_string()),
+                    },
+                    normalization_log,
+                );
+            };
+            let br_shape = structure_only(&br);
+            let bd_shape = structure_only(&bd);
+            let matched = br_shape == bd_shape;
+            (
+                ComparisonResult {
+                    matched,
+                    br_json: Some(br_shape),
+                    bd_json: Some(bd_shape),
+                    diff_description: if matched {
+                        None
+                    } else {
+                        Some("Structure mismatch".to_string())
+                    },
                 },
                 normalization_log,
             )
@@ -1508,6 +1702,322 @@ fn extract_json_payload(stdout: &str) -> String {
         }
     }
     stdout.trim().to_string()
+}
+
+#[derive(Debug, Clone)]
+struct FileFingerprint {
+    size: u64,
+    modified: Option<SystemTime>,
+    is_dir: bool,
+}
+
+fn snapshot_workspace(root: &Path) -> HashMap<String, FileFingerprint> {
+    let mut entries = HashMap::new();
+    for entry in WalkDir::new(root).max_depth(6).into_iter().filter_map(Result::ok) {
+        let path = entry.path();
+        if let Ok(rel) = path.strip_prefix(root) {
+            let rel_str = rel.display().to_string();
+            if rel_str.is_empty() {
+                continue;
+            }
+            let metadata = entry.metadata().ok();
+            let is_dir = entry.file_type().is_dir();
+            let size = metadata.as_ref().map_or(0, |m| m.len());
+            let modified = metadata.and_then(|m| m.modified().ok());
+            entries.insert(
+                rel_str,
+                FileFingerprint {
+                    size,
+                    modified,
+                    is_dir,
+                },
+            );
+        }
+    }
+    entries
+}
+
+fn detect_path_confinement_violations(
+    before: &HashMap<String, FileFingerprint>,
+    after: &HashMap<String, FileFingerprint>,
+) -> Vec<String> {
+    let allowed_prefixes = [".beads/", "logs/"];
+    let mut violations = Vec::new();
+
+    let mut all_paths: HashSet<String> = HashSet::new();
+    all_paths.extend(before.keys().cloned());
+    all_paths.extend(after.keys().cloned());
+
+    for path in all_paths {
+        if allowed_prefixes.iter().any(|p| path.starts_with(p)) {
+            continue;
+        }
+        match (before.get(&path), after.get(&path)) {
+            (None, Some(_)) => violations.push(format!("Unexpected path created: {path}")),
+            (Some(_), None) => violations.push(format!("Unexpected path removed: {path}")),
+            (Some(before_meta), Some(after_meta)) => {
+                if before_meta.is_dir || after_meta.is_dir {
+                    continue;
+                }
+                if before_meta.size != after_meta.size
+                    || before_meta.modified != after_meta.modified
+                {
+                    violations.push(format!("Unexpected path modified: {path}"));
+                }
+            }
+            (None, None) => {}
+        }
+    }
+
+    violations
+}
+
+fn collect_setup_commands(scenario: &Scenario) -> Vec<ScenarioCommand> {
+    let mut commands = Vec::new();
+    if let ScenarioSetup::Commands(cmds) = &scenario.setup {
+        commands.extend(cmds.clone());
+    }
+    commands.extend(scenario.setup_commands.clone());
+    commands
+}
+
+fn run_scenario_command(
+    workspace: &mut TestWorkspace,
+    command: &ScenarioCommand,
+    label_suffix: Option<&str>,
+) -> CommandResult {
+    let label = if let Some(suffix) = label_suffix {
+        format!("{}_{}", command.label, suffix)
+    } else {
+        command.label.clone()
+    };
+
+    match (command.env.is_empty(), command.stdin.as_ref()) {
+        (true, None) => workspace.run_br(&command.args, &label),
+        (false, None) => workspace.run_br_env(&command.args, command.env.clone(), &label),
+        (true, Some(input)) => workspace.run_br_stdin(&command.args, input, &label),
+        (false, Some(input)) => workspace.run_br_env_stdin(&command.args, command.env.clone(), input, &label),
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum BinaryTarget {
+    Br,
+    Bd,
+}
+
+fn run_conformance_command(
+    workspace: &mut HarnessConformanceWorkspace,
+    command: &ScenarioCommand,
+    label: &str,
+    target: BinaryTarget,
+) -> CommandResult {
+    match (target, command.env.is_empty(), command.stdin.as_ref()) {
+        (BinaryTarget::Br, true, None) => workspace.run_br(&command.args, label),
+        (BinaryTarget::Br, false, None) => workspace.run_br_env(&command.args, command.env.clone(), label),
+        (BinaryTarget::Br, true, Some(input)) => {
+            workspace.run_br_stdin(&command.args, input, label)
+        }
+        (BinaryTarget::Br, false, Some(input)) => {
+            workspace.run_br_env_stdin(&command.args, command.env.clone(), input, label)
+        }
+        (BinaryTarget::Bd, true, None) => workspace.run_bd(&command.args, label),
+        (BinaryTarget::Bd, false, None) => workspace.run_bd_env(&command.args, command.env.clone(), label),
+        (BinaryTarget::Bd, true, Some(input)) => {
+            workspace.run_bd_stdin(&command.args, input, label)
+        }
+        (BinaryTarget::Bd, false, Some(input)) => {
+            workspace.run_bd_env_stdin(&command.args, command.env.clone(), input, label)
+        }
+    }
+}
+
+fn populate_workspace_with_dataset(
+    workspace: &mut TestWorkspace,
+    dataset: KnownDataset,
+) -> std::io::Result<()> {
+    let isolated = IsolatedDataset::from_dataset(dataset)?;
+    copy_dir_contents(isolated.root.join(".beads"), workspace.root.join(".beads"))?;
+    copy_dir_contents(isolated.root.join(".git"), workspace.root.join(".git"))?;
+    Ok(())
+}
+
+fn populate_conformance_with_dataset(
+    workspace: &mut HarnessConformanceWorkspace,
+    dataset: KnownDataset,
+) -> std::io::Result<()> {
+    let isolated = IsolatedDataset::from_dataset(dataset)?;
+    copy_dir_contents(isolated.root.join(".beads"), workspace.br_workspace.join(".beads"))?;
+    copy_dir_contents(isolated.root.join(".git"), workspace.br_workspace.join(".git"))?;
+    copy_dir_contents(isolated.root.join(".beads"), workspace.bd_workspace.join(".beads"))?;
+    copy_dir_contents(isolated.root.join(".git"), workspace.bd_workspace.join(".git"))?;
+    Ok(())
+}
+
+fn copy_dir_contents(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
+    let src = src.as_ref();
+    let dst = dst.as_ref();
+    if !src.exists() {
+        return Ok(());
+    }
+    for entry in WalkDir::new(src).into_iter().filter_map(Result::ok) {
+        let path = entry.path();
+        let rel = path.strip_prefix(src).unwrap_or(path);
+        if rel.as_os_str().is_empty() {
+            continue;
+        }
+        let target = dst.join(rel);
+        if entry.file_type().is_dir() {
+            std::fs::create_dir_all(&target)?;
+        } else if entry.file_type().is_file() {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::copy(path, &target)?;
+        }
+    }
+    Ok(())
+}
+
+fn sort_arrays_recursively(value: &mut Value) {
+    match value {
+        Value::Array(arr) => {
+            for item in arr.iter_mut() {
+                sort_arrays_recursively(item);
+            }
+            arr.sort_by(|a, b| {
+                serde_json::to_string(a)
+                    .unwrap_or_default()
+                    .cmp(&serde_json::to_string(b).unwrap_or_default())
+            });
+        }
+        Value::Object(map) => {
+            for val in map.values_mut() {
+                sort_arrays_recursively(val);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn remove_field_path(value: &mut Value, path: &str) {
+    let segments: Vec<&str> = path.split('.').collect();
+    remove_field_segments(value, &segments);
+}
+
+fn remove_field_segments(value: &mut Value, segments: &[&str]) {
+    if segments.is_empty() {
+        return;
+    }
+    match value {
+        Value::Object(map) => {
+            if segments.len() == 1 {
+                map.remove(segments[0]);
+            } else if let Some(next) = map.get_mut(segments[0]) {
+                remove_field_segments(next, &segments[1..]);
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr.iter_mut() {
+                remove_field_segments(item, segments);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn structure_only(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (k, v) in map {
+                out.insert(k.clone(), structure_only(v));
+            }
+            Value::Object(out)
+        }
+        Value::Array(arr) => Value::Array(arr.iter().map(structure_only).collect()),
+        _ => Value::Null,
+    }
+}
+
+fn check_timestamp_tolerance(
+    br: &Value,
+    bd: &Value,
+    normalization: &NormalizationRules,
+) -> Vec<String> {
+    let Some(tolerance) = normalization.timestamp_tolerance else {
+        return Vec::new();
+    };
+
+    let mut issues = Vec::new();
+    check_timestamp_tolerance_inner(br, bd, normalization, "", tolerance, &mut issues);
+    issues
+}
+
+fn check_timestamp_tolerance_inner(
+    br: &Value,
+    bd: &Value,
+    normalization: &NormalizationRules,
+    path: &str,
+    tolerance: Duration,
+    issues: &mut Vec<String>,
+) {
+    match (br, bd) {
+        (Value::Object(br_map), Value::Object(bd_map)) => {
+            for (key, br_val) in br_map {
+                let bd_val = bd_map.get(key);
+                let field_path = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                if normalization.mask_fields.contains(key) {
+                    if let (Some(br_str), Some(bd_str)) =
+                        (br_val.as_str(), bd_val.and_then(Value::as_str))
+                    {
+                        if let (Ok(br_dt), Ok(bd_dt)) =
+                            (parse_timestamp(br_str), parse_timestamp(bd_str))
+                        {
+                            let diff = (br_dt - bd_dt).num_seconds().abs() as u64;
+                            if diff > tolerance.as_secs() {
+                                issues.push(format!(
+                                    "timestamp drift at {field_path}: br={br_str} bd={bd_str} diff={diff}s"
+                                ));
+                            }
+                        }
+                    }
+                }
+                if let Some(bd_val) = bd_val {
+                    check_timestamp_tolerance_inner(
+                        br_val,
+                        bd_val,
+                        normalization,
+                        &field_path,
+                        tolerance,
+                        issues,
+                    );
+                }
+            }
+        }
+        (Value::Array(br_arr), Value::Array(bd_arr)) => {
+            for (idx, (br_val, bd_val)) in br_arr.iter().zip(bd_arr.iter()).enumerate() {
+                let field_path = format!("{path}[{idx}]");
+                check_timestamp_tolerance_inner(
+                    br_val,
+                    bd_val,
+                    normalization,
+                    &field_path,
+                    tolerance,
+                    issues,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn parse_timestamp(value: &str) -> Result<DateTime<FixedOffset>, chrono::ParseError> {
+    DateTime::parse_from_rfc3339(value)
 }
 
 // ============================================================================
@@ -1577,6 +2087,8 @@ pub mod catalog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+    use std::time::Duration;
 
     #[test]
     fn test_normalization_rules_apply() {
@@ -1619,6 +2131,84 @@ mod tests {
         let stdout = "Created bd-abc: Test\n[{\"id\": \"bd-abc\"}]";
         let json = extract_json_payload(stdout);
         assert!(json.starts_with('['));
+    }
+
+    #[test]
+    fn compare_mode_array_unordered_matches() {
+        let br_result = CommandResult {
+            stdout: "[{\"id\":1},{\"id\":2}]".to_string(),
+            stderr: String::new(),
+            exit_code: 0,
+            success: true,
+            duration: Duration::from_secs(0),
+            log_path: Path::new(".").join("noop"),
+            stdout_truncated: false,
+            stderr_truncated: false,
+            timed_out: false,
+        };
+        let bd_result = CommandResult {
+            stdout: "[{\"id\":2},{\"id\":1}]".to_string(),
+            ..br_result.clone()
+        };
+        let (comparison, _) = compare_outputs(
+            &br_result,
+            &bd_result,
+            &CompareMode::ArrayUnordered,
+            &NormalizationRules::strict(),
+        );
+        assert!(comparison.matched);
+    }
+
+    #[test]
+    fn compare_mode_fields_excluded_matches() {
+        let br_result = CommandResult {
+            stdout: "{\"id\":1,\"ts\":123}".to_string(),
+            stderr: String::new(),
+            exit_code: 0,
+            success: true,
+            duration: Duration::from_secs(0),
+            log_path: Path::new(".").join("noop"),
+            stdout_truncated: false,
+            stderr_truncated: false,
+            timed_out: false,
+        };
+        let bd_result = CommandResult {
+            stdout: "{\"id\":1,\"ts\":999}".to_string(),
+            ..br_result.clone()
+        };
+        let (comparison, _) = compare_outputs(
+            &br_result,
+            &bd_result,
+            &CompareMode::FieldsExcluded(vec!["ts".to_string()]),
+            &NormalizationRules::strict(),
+        );
+        assert!(comparison.matched);
+    }
+
+    #[test]
+    fn compare_mode_structure_only_matches() {
+        let br_result = CommandResult {
+            stdout: "{\"id\":1,\"nested\":{\"a\":true}}".to_string(),
+            stderr: String::new(),
+            exit_code: 0,
+            success: true,
+            duration: Duration::from_secs(0),
+            log_path: Path::new(".").join("noop"),
+            stdout_truncated: false,
+            stderr_truncated: false,
+            timed_out: false,
+        };
+        let bd_result = CommandResult {
+            stdout: "{\"id\":2,\"nested\":{\"a\":false}}".to_string(),
+            ..br_result.clone()
+        };
+        let (comparison, _) = compare_outputs(
+            &br_result,
+            &bd_result,
+            &CompareMode::StructureOnly,
+            &NormalizationRules::strict(),
+        );
+        assert!(comparison.matched);
     }
 
     // ========================================================================
