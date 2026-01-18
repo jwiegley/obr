@@ -139,14 +139,12 @@ fn e2e_json_flag_stats() {
     // Stats output has a "summary" object with count fields
     assert!(
         json.get("summary").is_some(),
-        "stats should have summary field: {}",
-        json
+        "stats should have summary field: {json}"
     );
     let summary = &json["summary"];
     assert!(
         summary.get("total_issues").is_some() || summary.get("open_issues").is_some(),
-        "stats summary should have count fields: {}",
-        summary
+        "stats summary should have count fields: {summary}"
     );
 }
 
