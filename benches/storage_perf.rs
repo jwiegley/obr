@@ -175,7 +175,6 @@ fn bench_create_single(c: &mut Criterion) {
     });
 
     group.finish();
-    drop(group);
     log_group_end(group_name);
 }
 
@@ -212,7 +211,6 @@ fn bench_create_batch(c: &mut Criterion) {
     }
 
     group.finish();
-    drop(group);
     log_group_end(group_name);
 }
 
@@ -346,7 +344,6 @@ fn bench_delete_issue(c: &mut Criterion) {
     });
 
     group.finish();
-    drop(group);
     log_group_end(group_name);
 }
 
@@ -378,7 +375,6 @@ fn bench_list_issues(c: &mut Criterion) {
     }
 
     group.finish();
-    drop(group);
     log_group_end(group_name);
 }
 
@@ -409,7 +405,6 @@ fn bench_list_issues_filtered(c: &mut Criterion) {
     });
 
     group.finish();
-    drop(group);
     log_group_end(group_name);
 }
 
@@ -443,7 +438,6 @@ fn bench_ready_query(c: &mut Criterion) {
     }
 
     group.finish();
-    drop(group);
     log_group_end(group_name);
 }
 
@@ -474,7 +468,6 @@ fn bench_blocked_query(c: &mut Criterion) {
     }
 
     group.finish();
-    drop(group);
     log_group_end(group_name);
 }
 
@@ -506,7 +499,6 @@ fn bench_export(c: &mut Criterion) {
     }
 
     group.finish();
-    drop(group);
     log_group_end(group_name);
 }
 
@@ -551,7 +543,6 @@ fn bench_import(c: &mut Criterion) {
     }
 
     group.finish();
-    drop(group);
     log_group_end(group_name);
 }
 
@@ -678,7 +669,6 @@ fn bench_add_dependency(c: &mut Criterion) {
     });
 
     group.finish();
-    drop(group);
     log_group_end(group_name);
 }
 
@@ -797,7 +787,6 @@ fn bench_generate_id(c: &mut Criterion) {
     });
 
     group.finish();
-    drop(group);
     log_group_end(group_name);
 }
 
@@ -836,7 +825,6 @@ fn bench_resolve_id_prefix(c: &mut Criterion) {
     });
 
     group.finish();
-    drop(group);
     log_group_end(group_name);
 }
 
@@ -863,7 +851,6 @@ fn bench_id_hash(c: &mut Criterion) {
     }
 
     group.finish();
-    drop(group);
     log_group_end(group_name);
 }
 
@@ -904,7 +891,6 @@ fn bench_content_hash(c: &mut Criterion) {
     }
 
     group.finish();
-    drop(group);
     log_group_end(group_name);
 }
 
@@ -957,7 +943,6 @@ fn bench_search(c: &mut Criterion) {
     }
 
     group.finish();
-    drop(group);
     log_group_end(group_name);
 }
 

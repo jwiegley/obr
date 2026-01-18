@@ -75,22 +75,10 @@ fn main() {
         Commands::Config { command } => commands::config::execute(&command, cli.json, &overrides),
         Commands::History(args) => commands::history::execute(args, &overrides),
         Commands::Defer(args) => {
-            let update_args = beads_rust::cli::UpdateArgs {
-                ids: args.ids,
-                defer: args.until,
-                status: Some("deferred".to_string()),
-                ..Default::default()
-            };
-            commands::update::execute(&update_args, &overrides)
+            commands::defer::execute_defer(&args, cli.json || args.robot, &overrides)
         }
         Commands::Undefer(args) => {
-            let update_args = beads_rust::cli::UpdateArgs {
-                ids: args.ids,
-                defer: Some(String::new()),       // Clear defer date
-                status: Some("open".to_string()), // Reset to open
-                ..Default::default()
-            };
-            commands::update::execute(&update_args, &overrides)
+            commands::defer::execute_undefer(&args, cli.json || args.robot, &overrides)
         }
         Commands::Orphans(args) => {
             commands::orphans::execute(&args, cli.json || args.robot, &overrides)

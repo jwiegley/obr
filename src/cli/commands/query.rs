@@ -10,7 +10,6 @@ use crate::error::{BeadsError, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::str::FromStr;
 use tracing::{debug, info};
 
 /// Prefix for saved query keys in the config table.

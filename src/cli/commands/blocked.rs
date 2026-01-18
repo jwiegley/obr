@@ -452,7 +452,7 @@ mod tests {
             make_blocked_issue("c", "P4", 4, 1),
         ];
 
-        filter_by_priority(&mut issues, &[2]);
+        filter_by_priority(&mut issues, &["2".to_string()]);
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].issue.id, "b");
         info!("test_filter_by_priority_single: assertions passed");
@@ -468,7 +468,7 @@ mod tests {
             make_blocked_issue("c", "P4", 4, 1),
         ];
 
-        filter_by_priority(&mut issues, &[0, 4]);
+        filter_by_priority(&mut issues, &["0".to_string(), "4".to_string()]);
         assert_eq!(issues.len(), 2);
         let ids: Vec<_> = issues.iter().map(|i| i.issue.id.as_str()).collect();
         assert!(ids.contains(&"a"));

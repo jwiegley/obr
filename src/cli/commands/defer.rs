@@ -220,8 +220,8 @@ pub fn execute_undefer(args: &UndeferArgs, json: bool, cli: &config::CliOverride
             continue;
         };
 
-        // Check if actually deferred
-        if issue.status != Status::Deferred {
+        // Check if actually deferred (status or date)
+        if issue.status != Status::Deferred && issue.defer_until.is_none() {
             tracing::debug!(id = %id, status = ?issue.status, "Issue is not deferred");
             skipped_issues.push(SkippedIssue {
                 id: id.clone(),

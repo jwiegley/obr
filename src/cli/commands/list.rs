@@ -14,7 +14,6 @@ use chrono::Utc;
 use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::path::Path;
-use std::str::FromStr;
 
 /// Execute the list command.
 ///
@@ -360,7 +359,7 @@ mod tests {
         init_logging();
         info!("test_build_filters_parses_priorities: starting");
         let args = cli::ListArgs {
-            priority: vec![0, 2],
+            priority: vec!["0".to_string(), "2".to_string()],
             ..Default::default()
         };
 
