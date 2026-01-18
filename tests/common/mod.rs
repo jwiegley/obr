@@ -16,10 +16,11 @@ pub mod harness;
 pub mod scenarios;
 
 pub use artifact_validator::ArtifactValidator;
-pub use binary_discovery::{discover_binaries, BinaryVersion, DiscoveredBinaries};
+pub use binary_discovery::{BinaryVersion, DiscoveredBinaries, discover_binaries};
 pub use dataset_registry::{
     DatasetIntegrityGuard, DatasetMetadata, DatasetOverride, DatasetProvenance, DatasetRegistry,
-    IntegrityCheckResult, IsolatedDataset, KnownDataset, isolated_from_override, run_with_integrity,
+    IntegrityCheckResult, IsolatedDataset, KnownDataset, isolated_from_override,
+    run_with_integrity,
 };
 pub use harness::{ParallelismMode, ResourceGuardrails, RunnerPolicy};
 pub use scenarios::{

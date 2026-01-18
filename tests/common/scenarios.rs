@@ -11,9 +11,11 @@
 
 #![allow(dead_code)]
 
-use super::*;
 use super::dataset_registry::{IsolatedDataset, KnownDataset};
-use super::harness::{CommandResult, ConformanceWorkspace as HarnessConformanceWorkspace, TestWorkspace};
+use super::harness::{
+    CommandResult, ConformanceWorkspace as HarnessConformanceWorkspace, TestWorkspace,
+};
+use super::*;
 use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -501,13 +503,11 @@ pub fn measure_io_sizes(workspace_root: &std::path::Path) -> (Option<u64>, Optio
     let beads_dir = workspace_root.join(".beads");
 
     // Database size
-    let db_size = beads_dir.join("beads.db")
-        .metadata()
-        .ok()
-        .map(|m| m.len());
+    let db_size = beads_dir.join("beads.db").metadata().ok().map(|m| m.len());
 
     // JSONL size (issues.jsonl)
-    let jsonl_size = beads_dir.join("issues.jsonl")
+    let jsonl_size = beads_dir
+        .join("issues.jsonl")
         .metadata()
         .ok()
         .map(|m| m.len());
@@ -547,16 +547,22 @@ pub fn compute_statistics(durations: &[u128], rss_values: &[Option<u64>]) -> Run
     let mean_ms = sum as f64 / n as f64;
 
     // Standard deviation
-    let variance: f64 = sorted.iter()
+    let variance: f64 = sorted
+        .iter()
         .map(|&x| {
             let diff = x as f64 - mean_ms;
             diff * diff
         })
-        .sum::<f64>() / n as f64;
+        .sum::<f64>()
+        / n as f64;
     let stddev_ms = variance.sqrt();
 
     // Coefficient of variation
-    let cv = if mean_ms > 0.0 { stddev_ms / mean_ms } else { 0.0 };
+    let cv = if mean_ms > 0.0 {
+        stddev_ms / mean_ms
+    } else {
+        0.0
+    };
 
     // Median RSS
     let median_rss_bytes = {
@@ -606,7 +612,10 @@ impl BenchmarkRunner {
             .ok()
             .map(std::path::PathBuf::from);
 
-        Self { config, artifacts_dir }
+        Self {
+            config,
+            artifacts_dir,
+        }
     }
 
     /// Create a runner with default configuration.
@@ -640,7 +649,8 @@ impl BenchmarkRunner {
             let iteration = i + 1;
 
             // Create fresh workspace for each iteration
-            let mut workspace = TestWorkspace::new("benchmark", &format!("{}_{}", scenario.name, iteration));
+            let mut workspace =
+                TestWorkspace::new("benchmark", &format!("{}_{}", scenario.name, iteration));
 
             // Setup
             if matches!(scenario.setup, ScenarioSetup::Fresh) {
@@ -654,7 +664,8 @@ impl BenchmarkRunner {
 
             // Run the benchmark command and measure
             let br_start = std::time::Instant::now();
-            let br_result = workspace.run_br(&scenario.test_command.args, &scenario.test_command.label);
+            let br_result =
+                workspace.run_br(&scenario.test_command.args, &scenario.test_command.label);
             let br_duration = br_start.elapsed();
 
             // Measure IO sizes
@@ -686,9 +697,8 @@ impl BenchmarkRunner {
         }
 
         // Separate warmup from measured runs
-        let measured_runs: Vec<&BenchmarkMetrics> = all_runs.iter()
-            .filter(|m| !m.is_warmup)
-            .collect();
+        let measured_runs: Vec<&BenchmarkMetrics> =
+            all_runs.iter().filter(|m| !m.is_warmup).collect();
 
         // Compute statistics for measured runs only
         let br_durations: Vec<u128> = measured_runs.iter().map(|m| m.br_duration_ms).collect();
@@ -918,12 +928,22 @@ impl ScenarioFilter {
     pub fn from_env() -> Self {
         let include_tags = std::env::var("HARNESS_TAGS")
             .ok()
-            .map(|s| s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect())
+            .map(|s| {
+                s.split(',')
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty())
+                    .collect()
+            })
             .unwrap_or_default();
 
         let exclude_tags = std::env::var("HARNESS_EXCLUDE_TAGS")
             .ok()
-            .map(|s| s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect())
+            .map(|s| {
+                s.split(',')
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty())
+                    .collect()
+            })
             .unwrap_or_default();
 
         let match_mode = std::env::var("HARNESS_TAG_MATCH")
@@ -1007,7 +1027,11 @@ impl ScenarioFilter {
                 TagMatchMode::Any => "any of",
                 TagMatchMode::All => "all of",
             };
-            parts.push(format!("include {} [{}]", mode, self.include_tags.join(", ")));
+            parts.push(format!(
+                "include {} [{}]",
+                mode,
+                self.include_tags.join(", ")
+            ));
         }
 
         if !self.exclude_tags.is_empty() {
@@ -1138,7 +1162,7 @@ impl ScenarioRunner {
         } else {
             None
         };
-        
+
         // Setup
         if matches!(scenario.setup, ScenarioSetup::Fresh) {
             let init = workspace.init_br();
@@ -1202,7 +1226,7 @@ impl ScenarioRunner {
 
     fn run_conformance(&self, scenario: &Scenario) -> ScenarioResult {
         let mut workspace = HarnessConformanceWorkspace::new("conformance", &scenario.name);
-        
+
         // Initialize both (unless using a dataset)
         if matches!(scenario.setup, ScenarioSetup::Fresh) {
             let (br_init, bd_init) = workspace.init_both();
@@ -1283,8 +1307,12 @@ impl ScenarioRunner {
         );
 
         // Compare outputs
-        let (comparison_result, normalization_log) =
-            compare_outputs(&br_result, &bd_result, &scenario.compare_mode, &scenario.normalization);
+        let (comparison_result, normalization_log) = compare_outputs(
+            &br_result,
+            &bd_result,
+            &scenario.compare_mode,
+            &scenario.normalization,
+        );
 
         // Check invariants (on br only)
         let mut invariant_failures = check_invariants(&scenario.invariants, &br_result);
@@ -1337,7 +1365,7 @@ impl ScenarioRunner {
                 };
             }
         }
-        
+
         if matches!(scenario.setup, ScenarioSetup::Fresh) {
             let _ = workspace.init_br();
         }
@@ -1502,7 +1530,11 @@ fn compare_outputs(
                     matched,
                     br_json: Some(br.clone()),
                     bd_json: Some(bd.clone()),
-                    diff_description: if matched { None } else { Some("JSON mismatch".to_string()) },
+                    diff_description: if matched {
+                        None
+                    } else {
+                        Some("JSON mismatch".to_string())
+                    },
                 },
                 normalization_log,
             )
@@ -1585,7 +1617,11 @@ fn compare_outputs(
                     matched,
                     br_json: Some(br),
                     bd_json: Some(bd),
-                    diff_description: if matched { None } else { Some(mismatches.join("; ")) },
+                    diff_description: if matched {
+                        None
+                    } else {
+                        Some(mismatches.join("; "))
+                    },
                 },
                 normalization_log,
             )
@@ -1713,7 +1749,11 @@ struct FileFingerprint {
 
 fn snapshot_workspace(root: &Path) -> HashMap<String, FileFingerprint> {
     let mut entries = HashMap::new();
-    for entry in WalkDir::new(root).max_depth(6).into_iter().filter_map(Result::ok) {
+    for entry in WalkDir::new(root)
+        .max_depth(6)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
         let path = entry.path();
         if let Ok(rel) = path.strip_prefix(root) {
             let rel_str = rel.display().to_string();
@@ -1796,7 +1836,9 @@ fn run_scenario_command(
         (true, None) => workspace.run_br(&command.args, &label),
         (false, None) => workspace.run_br_env(&command.args, command.env.clone(), &label),
         (true, Some(input)) => workspace.run_br_stdin(&command.args, input, &label),
-        (false, Some(input)) => workspace.run_br_env_stdin(&command.args, command.env.clone(), input, &label),
+        (false, Some(input)) => {
+            workspace.run_br_env_stdin(&command.args, command.env.clone(), input, &label)
+        }
     }
 }
 
@@ -1814,7 +1856,9 @@ fn run_conformance_command(
 ) -> CommandResult {
     match (target, command.env.is_empty(), command.stdin.as_ref()) {
         (BinaryTarget::Br, true, None) => workspace.run_br(&command.args, label),
-        (BinaryTarget::Br, false, None) => workspace.run_br_env(&command.args, command.env.clone(), label),
+        (BinaryTarget::Br, false, None) => {
+            workspace.run_br_env(&command.args, command.env.clone(), label)
+        }
         (BinaryTarget::Br, true, Some(input)) => {
             workspace.run_br_stdin(&command.args, input, label)
         }
@@ -1822,7 +1866,9 @@ fn run_conformance_command(
             workspace.run_br_env_stdin(&command.args, command.env.clone(), input, label)
         }
         (BinaryTarget::Bd, true, None) => workspace.run_bd(&command.args, label),
-        (BinaryTarget::Bd, false, None) => workspace.run_bd_env(&command.args, command.env.clone(), label),
+        (BinaryTarget::Bd, false, None) => {
+            workspace.run_bd_env(&command.args, command.env.clone(), label)
+        }
         (BinaryTarget::Bd, true, Some(input)) => {
             workspace.run_bd_stdin(&command.args, input, label)
         }
@@ -1847,10 +1893,22 @@ fn populate_conformance_with_dataset(
     dataset: KnownDataset,
 ) -> std::io::Result<()> {
     let isolated = IsolatedDataset::from_dataset(dataset)?;
-    copy_dir_contents(isolated.root.join(".beads"), workspace.br_workspace.join(".beads"))?;
-    copy_dir_contents(isolated.root.join(".git"), workspace.br_workspace.join(".git"))?;
-    copy_dir_contents(isolated.root.join(".beads"), workspace.bd_workspace.join(".beads"))?;
-    copy_dir_contents(isolated.root.join(".git"), workspace.bd_workspace.join(".git"))?;
+    copy_dir_contents(
+        isolated.root.join(".beads"),
+        workspace.br_workspace.join(".beads"),
+    )?;
+    copy_dir_contents(
+        isolated.root.join(".git"),
+        workspace.br_workspace.join(".git"),
+    )?;
+    copy_dir_contents(
+        isolated.root.join(".beads"),
+        workspace.bd_workspace.join(".beads"),
+    )?;
+    copy_dir_contents(
+        isolated.root.join(".git"),
+        workspace.bd_workspace.join(".git"),
+    )?;
     Ok(())
 }
 
@@ -2030,20 +2088,17 @@ pub mod catalog {
 
     /// Create a CRUD scenario: create, list, show, update, close.
     pub fn crud_lifecycle() -> Scenario {
-        Scenario::new(
-            "crud_lifecycle",
-            ScenarioCommand::new(["list", "--json"]),
-        )
-        .with_description("Full CRUD lifecycle: create, update, close, verify list")
-        .with_tags(["crud", "quick"])
-        .with_setup_commands(vec![
-            ScenarioCommand::new(["create", "Test issue"]).with_label("create"),
-            ScenarioCommand::new(["update", "--status", "in_progress"]).with_label("update"),
-        ])
-        .with_compare_mode(CompareMode::ContainsFields(vec![
-            "title".into(),
-            "status".into(),
-        ]))
+        Scenario::new("crud_lifecycle", ScenarioCommand::new(["list", "--json"]))
+            .with_description("Full CRUD lifecycle: create, update, close, verify list")
+            .with_tags(["crud", "quick"])
+            .with_setup_commands(vec![
+                ScenarioCommand::new(["create", "Test issue"]).with_label("create"),
+                ScenarioCommand::new(["update", "--status", "in_progress"]).with_label("update"),
+            ])
+            .with_compare_mode(CompareMode::ContainsFields(vec![
+                "title".into(),
+                "status".into(),
+            ]))
     }
 
     /// Empty list scenario.
@@ -2075,7 +2130,11 @@ pub mod catalog {
         .with_description("Verify sync does not execute git commands")
         .with_tags(["sync", "safety"])
         .with_setup_commands(vec![ScenarioCommand::new(["create", "Test issue"])])
-        .with_invariants(Invariants::success().with_no_git_ops().with_path_confinement())
+        .with_invariants(
+            Invariants::success()
+                .with_no_git_ops()
+                .with_path_confinement(),
+        )
         .with_compare_mode(CompareMode::ExitCodeOnly)
     }
 }
@@ -2218,8 +2277,8 @@ mod tests {
     #[test]
     fn test_scenario_filter_empty_matches_all() {
         let filter = ScenarioFilter::new();
-        let scenario = Scenario::new("test", ScenarioCommand::new(["list"]))
-            .with_tags(["quick", "crud"]);
+        let scenario =
+            Scenario::new("test", ScenarioCommand::new(["list"])).with_tags(["quick", "crud"]);
 
         assert!(filter.matches(&scenario));
         assert!(filter.is_empty());
@@ -2231,12 +2290,12 @@ mod tests {
             .with_include_tags(["quick", "sync"])
             .with_match_mode(TagMatchMode::Any);
 
-        let quick_scenario = Scenario::new("quick_test", ScenarioCommand::new(["list"]))
-            .with_tags(["quick"]);
-        let sync_scenario = Scenario::new("sync_test", ScenarioCommand::new(["sync"]))
-            .with_tags(["sync"]);
-        let slow_scenario = Scenario::new("slow_test", ScenarioCommand::new(["bench"]))
-            .with_tags(["slow"]);
+        let quick_scenario =
+            Scenario::new("quick_test", ScenarioCommand::new(["list"])).with_tags(["quick"]);
+        let sync_scenario =
+            Scenario::new("sync_test", ScenarioCommand::new(["sync"])).with_tags(["sync"]);
+        let slow_scenario =
+            Scenario::new("slow_test", ScenarioCommand::new(["bench"])).with_tags(["slow"]);
 
         assert!(filter.matches(&quick_scenario));
         assert!(filter.matches(&sync_scenario));
@@ -2251,8 +2310,7 @@ mod tests {
 
         let both_tags = Scenario::new("both", ScenarioCommand::new(["list"]))
             .with_tags(["quick", "crud", "extra"]);
-        let one_tag = Scenario::new("one", ScenarioCommand::new(["list"]))
-            .with_tags(["quick"]);
+        let one_tag = Scenario::new("one", ScenarioCommand::new(["list"])).with_tags(["quick"]);
 
         assert!(filter.matches(&both_tags));
         assert!(!filter.matches(&one_tag));
@@ -2260,13 +2318,10 @@ mod tests {
 
     #[test]
     fn test_scenario_filter_exclude() {
-        let filter = ScenarioFilter::new()
-            .with_exclude_tags(["slow", "stress"]);
+        let filter = ScenarioFilter::new().with_exclude_tags(["slow", "stress"]);
 
-        let quick = Scenario::new("quick", ScenarioCommand::new(["list"]))
-            .with_tags(["quick"]);
-        let slow = Scenario::new("slow", ScenarioCommand::new(["bench"]))
-            .with_tags(["slow"]);
+        let quick = Scenario::new("quick", ScenarioCommand::new(["list"])).with_tags(["quick"]);
+        let slow = Scenario::new("slow", ScenarioCommand::new(["bench"])).with_tags(["slow"]);
         let stress = Scenario::new("stress", ScenarioCommand::new(["stress"]))
             .with_tags(["quick", "stress"]);
 
@@ -2281,10 +2336,10 @@ mod tests {
             .with_include_tags(["test"])
             .with_exclude_tags(["slow"]);
 
-        let quick_test = Scenario::new("quick", ScenarioCommand::new(["list"]))
-            .with_tags(["test", "quick"]);
-        let slow_test = Scenario::new("slow", ScenarioCommand::new(["list"]))
-            .with_tags(["test", "slow"]);
+        let quick_test =
+            Scenario::new("quick", ScenarioCommand::new(["list"])).with_tags(["test", "quick"]);
+        let slow_test =
+            Scenario::new("slow", ScenarioCommand::new(["list"])).with_tags(["test", "slow"]);
 
         assert!(filter.matches(&quick_test));
         assert!(!filter.matches(&slow_test)); // excluded takes precedence
@@ -2295,13 +2350,11 @@ mod tests {
         let empty = ScenarioFilter::new();
         assert_eq!(empty.description(), "all scenarios");
 
-        let include = ScenarioFilter::new()
-            .with_include_tags(["quick", "crud"]);
+        let include = ScenarioFilter::new().with_include_tags(["quick", "crud"]);
         assert!(include.description().contains("quick"));
         assert!(include.description().contains("crud"));
 
-        let exclude = ScenarioFilter::new()
-            .with_exclude_tags(["slow"]);
+        let exclude = ScenarioFilter::new().with_exclude_tags(["slow"]);
         assert!(exclude.description().contains("exclude"));
         assert!(exclude.description().contains("slow"));
     }
@@ -2344,8 +2397,8 @@ mod tests {
 
     #[test]
     fn test_scenario_has_any_tag() {
-        let scenario = Scenario::new("test", ScenarioCommand::new(["list"]))
-            .with_tags(["quick", "crud"]);
+        let scenario =
+            Scenario::new("test", ScenarioCommand::new(["list"])).with_tags(["quick", "crud"]);
 
         assert!(scenario.has_any_tag(&["quick".to_string(), "slow".to_string()]));
         assert!(!scenario.has_any_tag(&["slow".to_string(), "stress".to_string()]));
