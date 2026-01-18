@@ -3,8 +3,8 @@
 # https://github.com/Dicklesworthstone/beads_rust
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/beads_rust/main/install.sh | bash
-#   wget -qO- https://raw.githubusercontent.com/Dicklesworthstone/beads_rust/main/install.sh | bash
+#   curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/beads_rust/main/install.sh?$(date +%s)" | bash
+#   wget -qO- "https://raw.githubusercontent.com/Dicklesworthstone/beads_rust/main/install.sh?$(date +%s)" | bash
 #
 # Options:
 #   --prefix=DIR       Install to DIR (default: ~/.local/bin)

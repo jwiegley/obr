@@ -219,7 +219,7 @@ br show bd-abc123 --json
 
 ```bash
 # Linux/macOS
-curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/beads_rust/main/install.sh | bash
+curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/beads_rust/main/install.sh?$(date +%s)" | bash
 ```
 
 ### From Source
