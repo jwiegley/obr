@@ -6,14 +6,23 @@ use std::time::Instant;
 use tempfile::TempDir;
 use tracing::info;
 
+pub mod artifact_validator;
 pub mod assertions;
+pub mod binary_discovery;
 pub mod cli;
 pub mod dataset_registry;
 pub mod fixtures;
 pub mod harness;
 pub mod scenarios;
 
+pub use artifact_validator::ArtifactValidator;
+pub use binary_discovery::{discover_binaries, BinaryVersion, DiscoveredBinaries};
 pub use dataset_registry::{DatasetMetadata, DatasetRegistry, IsolatedDataset, KnownDataset};
+pub use harness::{ParallelismMode, ResourceGuardrails, RunnerPolicy};
+pub use scenarios::{
+    CompareMode, ExecutionMode, Invariants, NormalizationRules, Scenario, ScenarioCommand,
+    ScenarioResult, ScenarioRunner, ScenarioSetup,
+};
 
 static INIT: Once = Once::new();
 
