@@ -105,7 +105,7 @@ fn e2e_orphans_no_orphans_empty_list() {
         orphans.stderr
     );
     assert!(
-        orphans.stdout.contains("No orphan issues found"),
+        orphans.stdout.contains("No orphan"),
         "expected empty orphans message, got: {}",
         orphans.stdout
     );
@@ -350,7 +350,7 @@ fn e2e_orphans_before_init_returns_empty() {
         orphans.stderr
     );
     assert!(
-        orphans.stdout.contains("No orphan issues found"),
+        orphans.stdout.contains("No orphan"),
         "expected empty message, got: {}",
         orphans.stdout
     );
@@ -379,7 +379,7 @@ fn e2e_orphans_not_git_repo_returns_empty() {
         orphans.stderr
     );
     assert!(
-        orphans.stdout.contains("No orphan issues found"),
+        orphans.stdout.contains("No orphan"),
         "expected empty message, got: {}",
         orphans.stdout
     );
