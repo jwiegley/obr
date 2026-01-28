@@ -339,10 +339,9 @@ fn q_empty_title_fails() {
 }
 
 #[test]
-fn q_with_custom_type_fails() {
-    let _log = common::test_log("q_with_custom_type_fails");
-    // Custom/unknown issue types should be rejected for bd conformance
-    // bd only accepts: task, bug, feature, epic, chore
+fn q_with_custom_type_succeeds() {
+    let _log = common::test_log("q_with_custom_type_succeeds");
+    // br (unlike bd) allows custom issue types for flexibility
     let workspace = BrWorkspace::new();
 
     let init = run_br(&workspace, ["init"], "init");
@@ -354,16 +353,17 @@ fn q_with_custom_type_fails() {
         "quick_custom_type",
     );
     assert!(
-        !quick.status.success(),
-        "q with custom type should fail for bd conformance"
+        quick.status.success(),
+        "q with custom type should succeed: {}",
+        quick.stderr
     );
 
-    // Error should mention invalid type
+    // Verify the issue was created with the custom type
+    let list = run_br(&workspace, ["list", "--json"], "list_check");
+    assert!(list.status.success(), "list failed: {}", list.stderr);
     assert!(
-        quick.stderr.to_lowercase().contains("invalid")
-            || quick.stderr.to_lowercase().contains("type"),
-        "error should mention invalid type: {}",
-        quick.stderr
+        list.stdout.contains("my_custom_type"),
+        "custom type should be preserved in the issue"
     );
 }
 
