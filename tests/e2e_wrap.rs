@@ -308,15 +308,11 @@ fn e2e_blocked_with_dependencies() {
         // Skip if not enough issues
         return;
     }
-    let blocker_id = issues[0]["id"].as_str().unwrap();
-    let blocked_id = issues[1]["id"].as_str().unwrap();
+    let parent_id = issues[0]["id"].as_str().unwrap();
+    let child_id = issues[1]["id"].as_str().unwrap();
 
-    // Add dependency
-    let output = run_br(
-        &workspace,
-        ["dep", "add", blocked_id, blocker_id],
-        "add_dep",
-    );
+    // Add dependency (child depends on parent)
+    let output = run_br(&workspace, ["dep", "add", child_id, parent_id], "add_dep");
     assert!(output.status.success(), "dep add failed: {}", output.stderr);
 
     // Test blocked with --wrap

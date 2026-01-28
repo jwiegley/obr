@@ -1263,6 +1263,7 @@ pub struct ReadyArgs {
 }
 
 /// Arguments for the blocked command.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Args, Debug, Clone, Default)]
 pub struct BlockedArgs {
     /// Maximum number of issues to return (default: 50, 0 = unlimited)

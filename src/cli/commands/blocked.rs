@@ -271,17 +271,12 @@ fn print_text_output(
         // Calculate prefix length for title truncation
         // "[● P2] id: " prefix - estimate ~20 chars for priority badge and ID
         let prefix_len = 10 + bi.issue.id.len();
-        let title = if max_width > 0 {
-            // Wrap enabled - don't truncate
-            bi.issue.title.clone()
-        } else {
-            bi.issue.title.clone()
-        };
         let title = if max_width == 0 {
-            title
+            // No wrap - use full title
+            bi.issue.title.clone()
         } else {
-            // When wrapping, we still want to fit initial display
-            truncate_title(&title, max_width.saturating_sub(prefix_len))
+            // When wrapping, truncate for initial display
+            truncate_title(&bi.issue.title, max_width.saturating_sub(prefix_len))
         };
         // Match bd format: [● P2] ID: Title
         println!("[● P{}] {}: {}", priority, bi.issue.id, title);
