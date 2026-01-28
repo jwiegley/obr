@@ -8,7 +8,7 @@
 
 mod common;
 
-use common::cli::{run_br, run_br_with_env, BrWorkspace};
+use common::cli::{BrWorkspace, run_br, run_br_with_env};
 
 fn init_workspace_with_long_issues(workspace: &BrWorkspace) {
     // Initialize
@@ -52,12 +52,7 @@ fn e2e_list_without_wrap_truncates() {
     init_workspace_with_long_issues(&workspace);
 
     // List without --wrap at narrow width
-    let output = run_br_with_env(
-        &workspace,
-        ["list"],
-        [("COLUMNS", "60")],
-        "list_no_wrap",
-    );
+    let output = run_br_with_env(&workspace, ["list"], [("COLUMNS", "60")], "list_no_wrap");
     assert!(output.status.success(), "list failed");
 
     // Should contain truncation indicator (...)
@@ -183,12 +178,7 @@ fn e2e_ready_without_wrap() {
     let workspace = BrWorkspace::new();
     init_workspace_with_long_issues(&workspace);
 
-    let output = run_br_with_env(
-        &workspace,
-        ["ready"],
-        [("COLUMNS", "60")],
-        "ready_no_wrap",
-    );
+    let output = run_br_with_env(&workspace, ["ready"], [("COLUMNS", "60")], "ready_no_wrap");
     assert!(output.status.success(), "ready failed");
 }
 
@@ -420,6 +410,10 @@ fn e2e_wrap_empty_database() {
     let output = run_br(&workspace, ["blocked", "--wrap"], "blocked_empty_wrap");
     assert!(output.status.success());
 
-    let output = run_br(&workspace, ["search", "nothing", "--wrap"], "search_empty_wrap");
+    let output = run_br(
+        &workspace,
+        ["search", "nothing", "--wrap"],
+        "search_empty_wrap",
+    );
     assert!(output.status.success());
 }
