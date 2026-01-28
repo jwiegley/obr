@@ -1011,3 +1011,307 @@ fn e2e_error_exit_code_categories() {
         "SELF_DEPENDENCY should be exit 5"
     );
 }
+
+// === Additional Validation + Error Parity Tests ===
+
+#[test]
+fn e2e_structured_error_label_validation() {
+    let _log = common::test_log("e2e_structured_error_label_validation");
+    let workspace = BrWorkspace::new();
+
+    let init = run_br(&workspace, ["init"], "init");
+    assert!(init.status.success());
+
+    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    assert!(create.status.success());
+    let id = parse_created_id(&create.stdout);
+
+    // Test label with invalid characters (spaces not allowed)
+    let result = run_br(
+        &workspace,
+        ["update", &id, "--add-label", "bad label", "--json"],
+        "update_bad_label_json",
+    );
+    assert!(!result.status.success());
+    assert_eq!(result.status.code(), Some(4), "exit code should be 4");
+
+    let json = parse_error_json(&result.stderr).expect("should be valid JSON");
+    assert!(verify_error_structure(&json), "missing required fields");
+
+    let error = &json["error"];
+    assert_eq!(error["code"], "VALIDATION_FAILED");
+    assert!(error["retryable"].as_bool().unwrap());
+    assert!(
+        error["message"].as_str().unwrap().contains("label")
+            || error["hint"].as_str().unwrap_or("").contains("label"),
+        "error should mention label"
+    );
+}
+
+#[test]
+fn e2e_structured_error_label_too_long() {
+    let _log = common::test_log("e2e_structured_error_label_too_long");
+    let workspace = BrWorkspace::new();
+
+    let init = run_br(&workspace, ["init"], "init");
+    assert!(init.status.success());
+
+    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    assert!(create.status.success());
+    let id = parse_created_id(&create.stdout);
+
+    // Create a label that exceeds 50 characters
+    let long_label = "a".repeat(60);
+    let result = run_br(
+        &workspace,
+        ["update", &id, "--add-label", &long_label, "--json"],
+        "update_long_label_json",
+    );
+    assert!(!result.status.success());
+    assert_eq!(result.status.code(), Some(4), "exit code should be 4");
+
+    let json = parse_error_json(&result.stderr).expect("should be valid JSON");
+    assert!(verify_error_structure(&json), "missing required fields");
+
+    let error = &json["error"];
+    assert_eq!(error["code"], "VALIDATION_FAILED");
+}
+
+#[test]
+fn e2e_structured_error_dependency_target_not_found() {
+    let _log = common::test_log("e2e_structured_error_dependency_target_not_found");
+    let workspace = BrWorkspace::new();
+
+    let init = run_br(&workspace, ["init"], "init");
+    assert!(init.status.success());
+
+    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    assert!(create.status.success());
+    let id = parse_created_id(&create.stdout);
+
+    // Try to add dependency on non-existent issue
+    // The implementation returns ISSUE_NOT_FOUND for missing dependency targets
+    let result = run_br(
+        &workspace,
+        ["dep", "add", &id, "bd-nonexistent", "--json"],
+        "dep_missing_target_json",
+    );
+    assert!(!result.status.success());
+    assert_eq!(result.status.code(), Some(3), "exit code should be 3 (issue not found)");
+
+    let json = parse_error_json(&result.stderr).expect("should be valid JSON");
+    assert!(verify_error_structure(&json), "missing required fields");
+
+    let error = &json["error"];
+    // Returns ISSUE_NOT_FOUND since the target issue doesn't exist
+    assert_eq!(error["code"], "ISSUE_NOT_FOUND");
+    assert!(!error["retryable"].as_bool().unwrap());
+    assert!(error["context"]["searched_id"].as_str().unwrap().contains("nonexistent"));
+}
+
+#[test]
+fn e2e_dependency_idempotent_duplicate() {
+    let _log = common::test_log("e2e_dependency_idempotent_duplicate");
+    let workspace = BrWorkspace::new();
+
+    let init = run_br(&workspace, ["init"], "init");
+    assert!(init.status.success());
+
+    let create_a = run_br(&workspace, ["create", "Issue A"], "create_a");
+    assert!(create_a.status.success());
+    let id_a = parse_created_id(&create_a.stdout);
+
+    let create_b = run_br(&workspace, ["create", "Issue B"], "create_b");
+    assert!(create_b.status.success());
+    let id_b = parse_created_id(&create_b.stdout);
+
+    // Add dependency first time - should succeed
+    let dep_add = run_br(&workspace, ["dep", "add", &id_a, &id_b], "dep_add_first");
+    assert!(dep_add.status.success());
+
+    // Add same dependency again - should succeed (idempotent) with status "exists"
+    let result = run_br(
+        &workspace,
+        ["dep", "add", &id_a, &id_b, "--json"],
+        "dep_add_duplicate_json",
+    );
+    assert!(
+        result.status.success(),
+        "duplicate dependency should be idempotent"
+    );
+
+    // Parse output as success JSON (not error)
+    let json: Value = serde_json::from_str(&result.stdout).expect("should be valid JSON");
+    assert_eq!(
+        json["status"].as_str().unwrap_or(""),
+        "exists",
+        "status should be 'exists'"
+    );
+    assert_eq!(
+        json["action"].as_str().unwrap_or(""),
+        "already_exists",
+        "action should be 'already_exists'"
+    );
+}
+
+#[test]
+fn e2e_delete_with_dependents_preview() {
+    let _log = common::test_log("e2e_delete_with_dependents_preview");
+    let workspace = BrWorkspace::new();
+
+    let init = run_br(&workspace, ["init"], "init");
+    assert!(init.status.success());
+
+    let create_a = run_br(&workspace, ["create", "Issue A"], "create_a");
+    assert!(create_a.status.success());
+    let id_a = parse_created_id(&create_a.stdout);
+
+    let create_b = run_br(&workspace, ["create", "Issue B"], "create_b");
+    assert!(create_b.status.success());
+    let id_b = parse_created_id(&create_b.stdout);
+
+    // B depends on A
+    let dep_add = run_br(&workspace, ["dep", "add", &id_b, &id_a], "dep_add");
+    assert!(dep_add.status.success());
+
+    // Delete A (which has B as dependent) - shows preview mode warning
+    // The command exits 0 (preview mode) but warns about dependents
+    let result = run_br(
+        &workspace,
+        ["delete", &id_a],
+        "delete_with_deps",
+    );
+    assert!(result.status.success(), "delete with dependents should show preview");
+    assert!(
+        result.stdout.contains("depend on") || result.stdout.contains("dependents"),
+        "should mention dependents in output"
+    );
+    assert!(
+        result.stdout.contains("--force") || result.stdout.contains("--cascade"),
+        "should suggest force or cascade options"
+    );
+
+    // Issue should still exist after preview
+    let show = run_br(&workspace, ["show", &id_a], "show_after_preview");
+    assert!(
+        show.status.success(),
+        "issue should still exist after preview"
+    );
+}
+
+#[test]
+fn e2e_validation_error_empty_label() {
+    let _log = common::test_log("e2e_validation_error_empty_label");
+    let workspace = BrWorkspace::new();
+
+    let init = run_br(&workspace, ["init"], "init");
+    assert!(init.status.success());
+
+    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    assert!(create.status.success());
+    let id = parse_created_id(&create.stdout);
+
+    // Empty label should fail validation
+    let result = run_br(
+        &workspace,
+        ["update", &id, "--add-label", "", "--json"],
+        "update_empty_label_json",
+    );
+    assert!(!result.status.success());
+    assert_eq!(result.status.code(), Some(4), "exit code should be 4");
+}
+
+#[test]
+fn e2e_validation_special_characters_in_label() {
+    let _log = common::test_log("e2e_validation_special_characters_in_label");
+    let workspace = BrWorkspace::new();
+
+    let init = run_br(&workspace, ["init"], "init");
+    assert!(init.status.success());
+
+    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    assert!(create.status.success());
+    let id = parse_created_id(&create.stdout);
+
+    // Valid labels (alphanumeric, hyphen, underscore, colon)
+    let valid_labels = ["bug", "feat-1", "scope:subsystem", "test_case"];
+    for label in valid_labels {
+        let result = run_br(
+            &workspace,
+            ["update", &id, "--add-label", label],
+            &format!("add_label_{}", label.replace(':', "_")),
+        );
+        assert!(
+            result.status.success(),
+            "label '{}' should be valid: {}",
+            label,
+            result.stderr
+        );
+    }
+
+    // Remove labels for next test
+    let clear = run_br(
+        &workspace,
+        ["update", &id, "--clear-labels"],
+        "clear_labels",
+    );
+    assert!(clear.status.success());
+
+    // Invalid labels (special characters not allowed)
+    let invalid_labels = ["@mention", "has/slash", "with.dot", "emoji🎉"];
+    for label in invalid_labels {
+        let result = run_br(
+            &workspace,
+            ["update", &id, "--add-label", label, "--json"],
+            &format!("add_invalid_label_{}", label.len()),
+        );
+        assert!(
+            !result.status.success(),
+            "label '{}' should be invalid",
+            label
+        );
+    }
+}
+
+#[test]
+fn e2e_error_text_json_parity_validation() {
+    let _log = common::test_log("e2e_error_text_json_parity_validation");
+    let workspace = BrWorkspace::new();
+
+    let init = run_br(&workspace, ["init"], "init");
+    assert!(init.status.success());
+
+    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    assert!(create.status.success());
+    let id = parse_created_id(&create.stdout);
+
+    // Same validation error in text mode
+    let text_result = run_br(
+        &workspace,
+        ["update", &id, "--add-label", "bad label", "--no-color"],
+        "label_error_text",
+    );
+    assert!(!text_result.status.success());
+
+    // Same validation error in JSON mode
+    let json_result = run_br(
+        &workspace,
+        ["update", &id, "--add-label", "bad label", "--json"],
+        "label_error_json",
+    );
+    assert!(!json_result.status.success());
+
+    // Both should have same exit code
+    assert_eq!(
+        text_result.status.code(),
+        json_result.status.code(),
+        "text and JSON mode should have same exit code for validation errors"
+    );
+
+    // JSON mode should produce valid structured error
+    let json = parse_error_json(&json_result.stderr).expect("JSON mode should produce valid JSON");
+    assert!(
+        verify_error_structure(&json),
+        "JSON error should have required fields"
+    );
+}
