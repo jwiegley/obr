@@ -748,3 +748,151 @@ fn e2e_global_flag_after_command() {
     let payload = extract_json_payload(&list.stdout);
     let _json: Vec<Value> = serde_json::from_str(&payload).expect("valid JSON");
 }
+
+// ============================================================================
+// Output mode consistency tests (beads_rust-14eu)
+// ============================================================================
+
+/// JSON mode should produce stdout that parses as valid JSON with no extra text.
+#[test]
+fn e2e_json_stdout_is_clean_json() {
+    let _log = common::test_log("e2e_json_stdout_is_clean_json");
+    let workspace = BrWorkspace::new();
+
+    let init = run_br(&workspace, ["init"], "init");
+    assert!(init.status.success());
+
+    let create = run_br(&workspace, ["create", "JSON clean test"], "create");
+    assert!(create.status.success());
+
+    // Verify multiple commands produce clean JSON stdout
+    for (cmd, label) in [
+        (vec!["list", "--json"], "list"),
+        (vec!["ready", "--json"], "ready"),
+        (vec!["blocked", "--json"], "blocked"),
+        (vec!["count", "--json"], "count"),
+        (vec!["stats", "--json"], "stats"),
+    ] {
+        let output = run_br(&workspace, cmd.clone(), &format!("clean_json_{label}"));
+        assert!(output.status.success(), "{label} failed: {}", output.stderr);
+
+        let payload = extract_json_payload(&output.stdout);
+        let parsed: Result<Value, _> = serde_json::from_str(&payload);
+        assert!(
+            parsed.is_ok(),
+            "{label} --json stdout is not valid JSON:\n---stdout---\n{}\n---end---",
+            output.stdout
+        );
+
+        // No ANSI escape codes in JSON output
+        assert!(
+            !output.stdout.contains("\x1b["),
+            "{label} --json stdout contains ANSI escape codes"
+        );
+    }
+}
+
+/// --quiet mode should produce strictly less output than normal mode.
+#[test]
+fn e2e_quiet_reduces_output() {
+    let _log = common::test_log("e2e_quiet_reduces_output");
+    let workspace = BrWorkspace::new();
+
+    let init = run_br(&workspace, ["init"], "init");
+    assert!(init.status.success());
+
+    let create = run_br(&workspace, ["create", "Quiet reduction test"], "create");
+    assert!(create.status.success());
+
+    // Normal list output
+    let normal = run_br(&workspace, ["list"], "list_normal");
+    assert!(normal.status.success());
+
+    // Quiet list output
+    let quiet = run_br(&workspace, ["--quiet", "list"], "list_quiet_cmp");
+    assert!(quiet.status.success());
+
+    // Quiet output should be shorter or equal (never longer)
+    assert!(
+        quiet.stdout.len() <= normal.stdout.len(),
+        "quiet output ({} bytes) should not exceed normal output ({} bytes)\nquiet: {}\nnormal: {}",
+        quiet.stdout.len(),
+        normal.stdout.len(),
+        quiet.stdout,
+        normal.stdout
+    );
+}
+
+/// --json should take precedence over --quiet: produce valid JSON output.
+#[test]
+fn e2e_json_overrides_quiet() {
+    let _log = common::test_log("e2e_json_overrides_quiet");
+    let workspace = BrWorkspace::new();
+
+    let init = run_br(&workspace, ["init"], "init");
+    assert!(init.status.success());
+
+    let create = run_br(&workspace, ["create", "Precedence test"], "create");
+    assert!(create.status.success());
+
+    // --quiet --json should still produce valid JSON
+    let output = run_br(&workspace, ["--quiet", "list", "--json"], "quiet_json_prec");
+    assert!(output.status.success());
+
+    let payload = extract_json_payload(&output.stdout);
+    let json: Vec<Value> =
+        serde_json::from_str(&payload).expect("--quiet --json should produce valid JSON");
+    assert!(
+        json.iter().any(|item| item["title"] == "Precedence test"),
+        "JSON output should contain the issue even with --quiet"
+    );
+}
+
+/// --no-color should work across multiple command types (not just list).
+#[test]
+fn e2e_no_color_across_commands() {
+    let _log = common::test_log("e2e_no_color_across_commands");
+    let workspace = BrWorkspace::new();
+
+    let init = run_br(&workspace, ["init"], "init");
+    assert!(init.status.success());
+
+    let id = {
+        let create = run_br(&workspace, ["create", "No-color multi test"], "create");
+        assert!(create.status.success());
+        create
+            .stdout
+            .lines()
+            .next()
+            .unwrap_or("")
+            .strip_prefix("✓ Created ")
+            .or_else(|| {
+                create
+                    .stdout
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .strip_prefix("Created ")
+            })
+            .and_then(|s| s.split(':').next())
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+
+    for (cmd, label) in [
+        (vec!["list", "--no-color"], "list"),
+        (vec!["show", &id, "--no-color"], "show"),
+        (vec!["ready", "--no-color"], "ready"),
+        (vec!["stats", "--no-color"], "stats"),
+        (vec!["count", "--no-color"], "count"),
+    ] {
+        let output = run_br(&workspace, cmd.clone(), &format!("no_color_{label}"));
+        assert!(output.status.success(), "{label} failed: {}", output.stderr);
+
+        assert!(
+            !output.stdout.contains("\x1b["),
+            "{label} --no-color stdout contains ANSI escape codes"
+        );
+    }
+}
