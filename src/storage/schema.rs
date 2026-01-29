@@ -283,6 +283,7 @@ const ISSUE_COLUMNS: &[(&str, &str)] = &[
 ];
 
 const DEPENDENCY_COLUMNS: &[(&str, &str)] = &[
+    ("type", "TEXT NOT NULL DEFAULT 'blocks'"),
     ("created_at", "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"),
     ("created_by", "TEXT NOT NULL DEFAULT ''"),
     ("metadata", "TEXT DEFAULT '{}'"),
@@ -1032,5 +1033,41 @@ mod tests {
                 "missing column {column}"
             );
         }
+    }
+
+    /// Migration: add missing dependency type column for older schemas.
+    #[test]
+    fn test_migration_adds_missing_dependency_type() {
+        let conn = Connection::open_in_memory().unwrap();
+
+        conn.execute_batch(
+            r"
+            CREATE TABLE issues (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL
+            );
+            CREATE TABLE dependencies (
+                issue_id TEXT NOT NULL,
+                depends_on_id TEXT NOT NULL,
+                PRIMARY KEY (issue_id, depends_on_id)
+            );
+        ",
+        )
+        .unwrap();
+
+        apply_schema(&conn).unwrap();
+
+        let cols: Vec<String> = conn
+            .prepare("PRAGMA table_info('dependencies')")
+            .unwrap()
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert!(
+            cols.contains(&"type".to_string()),
+            "missing dependency type column"
+        );
     }
 }
