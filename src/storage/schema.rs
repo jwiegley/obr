@@ -271,6 +271,11 @@ fn run_pre_schema_migrations(conn: &Connection) -> Result<()> {
         )?;
     }
 
+    // Always drop idx_issues_ready so SCHEMA_SQL recreates it with the
+    // current definition (including is_template filter). DROP INDEX is O(1)
+    // and SCHEMA_SQL's CREATE INDEX is fast for typical issue counts.
+    conn.execute("DROP INDEX IF EXISTS idx_issues_ready", [])?;
+
     Ok(())
 }
 
@@ -340,6 +345,14 @@ fn run_migrations(conn: &Connection) -> Result<()> {
         )?;
     }
 
+    // Migration: ensure is_template column exists (needed for idx_issues_ready)
+    if !column_exists(conn, "issues", "is_template") {
+        conn.execute(
+            "ALTER TABLE issues ADD COLUMN is_template INTEGER DEFAULT 0",
+            [],
+        )?;
+    }
+
     // Migration: Add missing indexes for bd parity
     // These use IF NOT EXISTS so they're safe to run multiple times
     conn.execute_batch(
@@ -363,7 +376,8 @@ fn run_migrations(conn: &Connection) -> Result<()> {
             ON issues(status, priority, created_at)
             WHERE status IN ('open', 'in_progress')
             AND ephemeral = 0
-            AND pinned = 0;
+            AND pinned = 0
+            AND (is_template = 0 OR is_template IS NULL);
 
     ",
     )?;
