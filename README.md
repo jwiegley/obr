@@ -573,6 +573,9 @@ br config --get id.prefix
 br sync --import-only --skip-prefix-validation
 ```
 
+If this appears during auto-import on read-only commands, re-run with
+`--allow-stale` or `--no-auto-import` to proceed without importing.
+
 ### Error: "Stale database"
 
 **Cause:** JSONL has issues that don't exist in database.
