@@ -34,7 +34,7 @@ impl IssueCompletionFilter {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct CompletionIssue {
     id: String,
     title: String,
@@ -136,10 +136,8 @@ const SORT_KEY_CANDIDATES: &[(&str, &str)] = &[
     ("updated", "Alias for updated_at"),
 ];
 
-const DEP_TREE_FORMAT_CANDIDATES: &[(&str, &str)] = &[
-    ("text", "Text output"),
-    ("mermaid", "Mermaid graph"),
-];
+const DEP_TREE_FORMAT_CANDIDATES: &[(&str, &str)] =
+    &[("text", "Text output"), ("mermaid", "Mermaid graph")];
 
 const CSV_FIELD_CANDIDATES: &[(&str, &str)] = &[
     ("id", "Issue ID"),
@@ -157,6 +155,26 @@ const CSV_FIELD_CANDIDATES: &[(&str, &str)] = &[
     ("defer_until", "Defer until"),
     ("notes", "Notes"),
     ("external_ref", "External ref"),
+];
+
+const EXPORT_ERROR_POLICY_CANDIDATES: &[(&str, &str)] = &[
+    ("strict", "Abort export on any error (default)"),
+    (
+        "best-effort",
+        "Skip problematic records, export what we can",
+    ),
+    ("partial", "Export valid records, report failures"),
+    (
+        "required-core",
+        "Only export core issues, tolerate non-core errors",
+    ),
+];
+
+const ORPHAN_MODE_CANDIDATES: &[(&str, &str)] = &[
+    ("strict", "Fail if any issue references a missing parent"),
+    ("resurrect", "Attempt to resurrect missing parents if found"),
+    ("skip", "Skip orphaned issues"),
+    ("allow", "Allow orphans (no parent validation)"),
 ];
 
 fn completion_index() -> &'static CompletionIndex {
@@ -240,11 +258,28 @@ fn matches_prefix_case_insensitive(value: &str, prefix: &str) -> bool {
         .starts_with(&prefix.to_ascii_lowercase())
 }
 
-fn static_candidates(prefix: &str, values: &[(&str, &str)]) -> Vec<CompletionCandidate> {
+fn static_candidates(
+    prefix: &str,
+    values: &[(&'static str, &'static str)],
+) -> Vec<CompletionCandidate> {
     values
         .iter()
         .filter(|(value, _)| matches_prefix_case_insensitive(value, prefix))
         .map(|(value, help)| CompletionCandidate::new(*value).help(Some(StyledStr::from(*help))))
+        .collect()
+}
+
+fn static_candidates_with_suffix(
+    prefix: &str,
+    values: &[(&'static str, &'static str)],
+    suffix: &str,
+) -> Vec<CompletionCandidate> {
+    values
+        .iter()
+        .filter(|(value, _)| matches_prefix_case_insensitive(value, prefix))
+        .map(|(value, help)| {
+            CompletionCandidate::new(format!("{value}{suffix}")).help(Some(StyledStr::from(*help)))
+        })
         .collect()
 }
 
@@ -257,23 +292,35 @@ fn dynamic_candidates(prefix: &str, values: &[String]) -> Vec<CompletionCandidat
 }
 
 fn split_delimited_prefix(current: &str, delimiter: char) -> (String, &str) {
-    if let Some(idx) = current.rfind(delimiter) {
-        let (head, tail) = current.split_at(idx + delimiter.len_utf8());
-        let trimmed_tail = tail.trim_start();
-        let ws_len = tail.len().saturating_sub(trimmed_tail.len());
-        let mut prefix = String::with_capacity(head.len() + ws_len);
-        prefix.push_str(head);
-        prefix.push_str(&tail[..ws_len]);
-        (prefix, trimmed_tail)
-    } else {
-        (String::new(), current.trim_start())
-    }
+    current.rfind(delimiter).map_or_else(
+        || (String::new(), current.trim_start()),
+        |idx| {
+            let (head, tail) = current.split_at(idx + delimiter.len_utf8());
+            let trimmed_tail = tail.trim_start();
+            let ws_len = tail.len().saturating_sub(trimmed_tail.len());
+            let mut prefix = String::with_capacity(head.len() + ws_len);
+            prefix.push_str(head);
+            prefix.push_str(&tail[..ws_len]);
+            (prefix, trimmed_tail)
+        },
+    )
+}
+
+fn split_key_prefix(current: &str, delimiter: char) -> Option<(String, &str)> {
+    let idx = current.find(delimiter)?;
+    let (head, tail) = current.split_at(idx + delimiter.len_utf8());
+    let trimmed_tail = tail.trim_start();
+    let ws_len = tail.len().saturating_sub(trimmed_tail.len());
+    let mut prefix = String::with_capacity(head.len() + ws_len);
+    prefix.push_str(head);
+    prefix.push_str(&tail[..ws_len]);
+    Some((prefix, trimmed_tail))
 }
 
 fn static_candidates_delimited(
     current: &OsStr,
     delimiter: char,
-    values: &[(&str, &str)],
+    values: &[(&'static str, &'static str)],
 ) -> Vec<CompletionCandidate> {
     let Some(current) = current.to_str() else {
         return Vec::new();
@@ -320,6 +367,10 @@ fn issue_id_completer_with_filter(
         return Vec::new();
     };
 
+    issue_id_candidates(prefix, filter)
+}
+
+fn issue_id_candidates(prefix: &str, filter: IssueCompletionFilter) -> Vec<CompletionCandidate> {
     let mut candidates = Vec::new();
     for issue in &completion_index().issues {
         if !prefix.is_empty() && !issue.id.starts_with(prefix) {
@@ -328,9 +379,7 @@ fn issue_id_completer_with_filter(
         if filter.matches(&issue.status) {
             let title = truncate_title(&issue.title, 60);
             let help = format!("{} | {}", issue.status.as_str(), title);
-            candidates.push(
-                CompletionCandidate::new(&issue.id).help(Some(StyledStr::from(help))),
-            );
+            candidates.push(CompletionCandidate::new(&issue.id).help(Some(StyledStr::from(help))));
         }
     }
 
@@ -405,10 +454,6 @@ fn issue_type_standard_completer(current: &OsStr) -> Vec<CompletionCandidate> {
     static_candidates(prefix, ISSUE_TYPE_CANDIDATES)
 }
 
-fn issue_type_standard_completer_delimited(current: &OsStr) -> Vec<CompletionCandidate> {
-    static_candidates_delimited(current, ',', ISSUE_TYPE_CANDIDATES)
-}
-
 fn priority_completer(current: &OsStr) -> Vec<CompletionCandidate> {
     let Some(prefix) = current.to_str() else {
         return Vec::new();
@@ -459,11 +504,45 @@ fn dep_type_completer(current: &OsStr) -> Vec<CompletionCandidate> {
     static_candidates(prefix, DEP_TYPE_CANDIDATES)
 }
 
+fn deps_completer(current: &OsStr) -> Vec<CompletionCandidate> {
+    let Some(current) = current.to_str() else {
+        return Vec::new();
+    };
+    let (outer_prefix, tail) = split_delimited_prefix(current, ',');
+    if let Some((type_prefix, id_prefix)) = split_key_prefix(tail, ':') {
+        let mut prefix = outer_prefix;
+        prefix.push_str(&type_prefix);
+        return issue_id_candidates(id_prefix, IssueCompletionFilter::Any)
+            .into_iter()
+            .map(|candidate| candidate.add_prefix(prefix.clone()))
+            .collect();
+    }
+
+    static_candidates_with_suffix(tail, DEP_TYPE_CANDIDATES, ":")
+        .into_iter()
+        .map(|candidate| candidate.add_prefix(outer_prefix.clone()))
+        .collect()
+}
+
 fn dep_tree_format_completer(current: &OsStr) -> Vec<CompletionCandidate> {
     let Some(prefix) = current.to_str() else {
         return Vec::new();
     };
     static_candidates(prefix, DEP_TREE_FORMAT_CANDIDATES)
+}
+
+fn export_error_policy_completer(current: &OsStr) -> Vec<CompletionCandidate> {
+    let Some(prefix) = current.to_str() else {
+        return Vec::new();
+    };
+    static_candidates(prefix, EXPORT_ERROR_POLICY_CANDIDATES)
+}
+
+fn orphan_mode_completer(current: &OsStr) -> Vec<CompletionCandidate> {
+    let Some(prefix) = current.to_str() else {
+        return Vec::new();
+    };
+    static_candidates(prefix, ORPHAN_MODE_CANDIDATES)
 }
 
 fn sort_key_completer(current: &OsStr) -> Vec<CompletionCandidate> {
@@ -787,7 +866,7 @@ pub struct CreateArgs {
     pub parent: Option<String>,
 
     /// Dependencies (format: type:id,type:id)
-    #[arg(long, value_delimiter = ',')]
+    #[arg(long, value_delimiter = ',', add = ArgValueCompleter::new(deps_completer))]
     pub deps: Vec<String>,
 
     /// Time estimate in minutes
@@ -1771,15 +1850,15 @@ pub struct BlockedArgs {
     pub wrap: bool,
 
     /// Filter by issue type (can be repeated)
-    #[arg(long = "type", short = 't')]
+    #[arg(long = "type", short = 't', add = ArgValueCompleter::new(issue_type_completer))]
     pub type_: Vec<String>,
 
     /// Filter by priority (can be repeated, 0-4)
-    #[arg(long, short = 'p')]
+    #[arg(long, short = 'p', add = ArgValueCompleter::new(priority_completer))]
     pub priority: Vec<String>,
 
     /// Filter by label (AND logic, can be repeated)
-    #[arg(long, short = 'l')]
+    #[arg(long, short = 'l', add = ArgValueCompleter::new(label_completer))]
     pub label: Vec<String>,
 
     /// Output format (text, json, toon). Env: BR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
@@ -1904,13 +1983,13 @@ pub struct SyncArgs {
     /// Export error policy: strict (default), best-effort, partial, required-core
     ///
     /// Controls how export handles serialization errors for individual issues.
-    #[arg(long = "error-policy")]
+    #[arg(long = "error-policy", add = ArgValueCompleter::new(export_error_policy_completer))]
     pub error_policy: Option<String>,
 
     /// Orphan handling mode: strict (default), resurrect, skip, allow
     ///
     /// Controls how import handles orphaned dependencies (refs to deleted issues).
-    #[arg(long)]
+    #[arg(long, add = ArgValueCompleter::new(orphan_mode_completer))]
     pub orphans: Option<String>,
 
     /// Machine-readable output (alias for --json)
