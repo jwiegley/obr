@@ -69,3 +69,6 @@ test_screenshot.png
 result
 result-*
 .direnv/
+
+# Private keys and certificates
+*.pem
