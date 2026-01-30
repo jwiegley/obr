@@ -111,14 +111,8 @@ jobs:
           toolchain: nightly
           targets: ${{ matrix.target }}
 
-      - name: Install musl tools (Linux musl x86_64)
-        if: matrix.musl && matrix.target == 'x86_64-unknown-linux-musl'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools
-
-      - name: Install musl tools (Linux musl aarch64)
-        if: matrix.musl && matrix.target == 'aarch64-unknown-linux-musl'
+      - name: Install musl tools (Linux musl)
+        if: matrix.musl
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
