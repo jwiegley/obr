@@ -1132,13 +1132,16 @@ impl SqliteStorage {
         // Filter by parent (--parent flag)
         if let Some(ref parent_id) = filters.parent {
             if filters.recursive {
-                // Recursive: include all descendants using CTE
+                // Recursive: include all descendants using CTE.
+                // UNION (not UNION ALL) is required here for cycle safety:
+                // if parent-child dependencies form a cycle, UNION ALL would
+                // loop infinitely, while UNION deduplicates and terminates.
                 sql.push_str(
                     " AND id IN (
                         WITH RECURSIVE descendants AS (
                             SELECT issue_id FROM dependencies
                             WHERE depends_on_id = ? AND type = 'parent-child'
-                            UNION ALL
+                            UNION
                             SELECT d.issue_id FROM dependencies d
                             INNER JOIN descendants desc ON d.depends_on_id = desc.issue_id
                             WHERE d.type = 'parent-child'
