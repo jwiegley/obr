@@ -4975,11 +4975,18 @@ mod tests {
         let res = storage
             .get_ready_issues(&filters_direct, ReadySortPolicy::Oldest)
             .unwrap();
-        assert_eq!(res.len(), 2, "Non-recursive should return only direct children");
+        assert_eq!(
+            res.len(),
+            2,
+            "Non-recursive should return only direct children"
+        );
         let ids: Vec<&str> = res.iter().map(|i| i.id.as_str()).collect();
         assert!(ids.contains(&"bd-epic.1"), "Should contain child1");
         assert!(ids.contains(&"bd-epic.2"), "Should contain child2");
-        assert!(!ids.contains(&"bd-epic.1.1"), "Should NOT contain grandchild");
+        assert!(
+            !ids.contains(&"bd-epic.1.1"),
+            "Should NOT contain grandchild"
+        );
 
         // Test: --parent bd-epic --recursive should return all descendants
         let filters_recursive = ReadyFilters {
@@ -4995,8 +5002,14 @@ mod tests {
         assert!(ids.contains(&"bd-epic.1"), "Should contain child1");
         assert!(ids.contains(&"bd-epic.2"), "Should contain child2");
         assert!(ids.contains(&"bd-epic.1.1"), "Should contain grandchild");
-        assert!(!ids.contains(&"bd-epic"), "Should NOT contain the parent itself");
-        assert!(!ids.contains(&"bd-other"), "Should NOT contain unrelated issue");
+        assert!(
+            !ids.contains(&"bd-epic"),
+            "Should NOT contain the parent itself"
+        );
+        assert!(
+            !ids.contains(&"bd-other"),
+            "Should NOT contain unrelated issue"
+        );
 
         // Test: --parent with non-existent parent should return empty
         let filters_nonexistent = ReadyFilters {
