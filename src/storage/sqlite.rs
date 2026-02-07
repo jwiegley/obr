@@ -1268,7 +1268,13 @@ impl SqliteStorage {
 
         match json_opt {
             Some(json) => {
-                let blockers: Vec<String> = serde_json::from_str(&json).unwrap_or_default();
+                let blockers: Vec<String> = match serde_json::from_str(&json) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("warn: malformed blocked_by JSON for {issue_id}: {e}");
+                        return Ok(Vec::new());
+                    }
+                };
                 // Extract just the issue IDs (strip status annotations like ":open")
                 Ok(blockers
                     .into_iter()
