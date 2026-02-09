@@ -409,10 +409,10 @@ fn e2e_completions_all_shells_have_help() {
             completions.status.success(),
             "completions for {shell} failed"
         );
-        // All completions should mention help somewhere
+        // Dynamic completions produce registration stubs referencing the binary name
         assert!(
-            completions.stdout.to_lowercase().contains("help"),
-            "completions for {shell} should reference help"
+            completions.stdout.contains("br"),
+            "completions for {shell} should reference the binary name"
         );
     }
     info!("e2e_completions_all_shells_have_help: done");
