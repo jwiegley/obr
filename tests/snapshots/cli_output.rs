@@ -12,6 +12,25 @@ fn snapshot_help_output() {
 }
 
 #[test]
+#[cfg(not(feature = "self_update"))]
+fn snapshot_help_output_no_upgrade() {
+    let workspace = BrWorkspace::new();
+    let output = run_br(&workspace, ["--help"], "help");
+    assert!(output.status.success(), "help failed: {}", output.stderr);
+    let stdout = &output.stdout;
+    assert!(
+        !stdout.contains("upgrade"),
+        "help should not list upgrade subcommand without self_update feature"
+    );
+    for cmd in ["create", "list", "show", "close", "search"] {
+        assert!(
+            stdout.contains(cmd),
+            "help should list core subcommand '{cmd}'"
+        );
+    }
+}
+
+#[test]
 fn snapshot_create_help() {
     let workspace = BrWorkspace::new();
     let output = run_br(&workspace, ["create", "--help"], "create_help");

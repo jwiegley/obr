@@ -58,6 +58,11 @@ fn e2e_version_json_flag() {
     // The features field is only present when self_update feature is enabled
     #[cfg(feature = "self_update")]
     assert!(json.get("features").is_some(), "missing features field");
+    #[cfg(not(feature = "self_update"))]
+    assert!(
+        json.get("features").is_none(),
+        "features field should be absent without self_update"
+    );
 }
 
 #[test]
