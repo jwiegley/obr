@@ -163,10 +163,7 @@ fn format_issue_details(details: &crate::format::IssueDetails, use_color: bool) 
     }
 
     if let Some(closed) = &issue.closed_at {
-        let reason_str = issue
-            .close_reason
-            .as_deref()
-            .unwrap_or("closed");
+        let reason_str = issue.close_reason.as_deref().unwrap_or("closed");
         let _ = writeln!(
             output,
             "Closed: {} ({})",

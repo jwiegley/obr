@@ -720,7 +720,7 @@ pub fn preflight_export(
 pub fn preflight_import(
     input_path: &Path,
     config: &ImportConfig,
-    _expected_prefix: Option<&str>,
+    expected_prefix: Option<&str>,
 ) -> Result<PreflightResult> {
     let mut result = PreflightResult::new();
 
@@ -877,6 +877,143 @@ pub fn preflight_import(
                 "Verify file is readable and not corrupted.",
             ));
             tracing::debug!(path = %input_path.display(), error = %e, "Conflict marker check: WARN");
+        }
+    }
+
+    // Check 5: Per-line JSON validation
+    {
+        let file = File::open(input_path);
+        match file {
+            Ok(f) => {
+                let reader = BufReader::new(f);
+                let mut invalid_lines: Vec<(usize, String)> = Vec::new();
+                for (line_num, line_result) in reader.lines().enumerate() {
+                    let line = match line_result {
+                        Ok(l) => l,
+                        Err(e) => {
+                            invalid_lines.push((line_num + 1, format!("IO error: {e}")));
+                            continue;
+                        }
+                    };
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    if let Err(e) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                        invalid_lines.push((line_num + 1, e.to_string()));
+                    }
+                }
+                if invalid_lines.is_empty() {
+                    result.add(PreflightCheck::pass(
+                        "json_valid",
+                        "All JSONL lines are valid JSON",
+                        "Every non-empty line parses as valid JSON.",
+                    ));
+                    tracing::debug!(path = %input_path.display(), "JSON validation check: PASS");
+                } else {
+                    let preview: Vec<String> = invalid_lines
+                        .iter()
+                        .take(5)
+                        .map(|(ln, msg)| format!("line {ln}: {msg}"))
+                        .collect();
+                    result.add(PreflightCheck::fail(
+                        "json_valid",
+                        "All JSONL lines are valid JSON",
+                        format!(
+                            "Found {} invalid line(s): {}{}",
+                            invalid_lines.len(),
+                            preview.join("; "),
+                            if invalid_lines.len() > 5 { " ..." } else { "" }
+                        ),
+                        "Fix or remove invalid JSON lines before importing.",
+                    ));
+                    tracing::debug!(
+                        path = %input_path.display(),
+                        invalid_count = invalid_lines.len(),
+                        "JSON validation check: FAIL"
+                    );
+                }
+            }
+            Err(e) => {
+                result.add(PreflightCheck::warn(
+                    "json_valid",
+                    "All JSONL lines are valid JSON",
+                    format!("Could not open file for JSON validation: {e}"),
+                    "Verify file is readable.",
+                ));
+            }
+        }
+    }
+
+    // Check 6: Prefix mismatch guard
+    if !config.skip_prefix_validation {
+        if let Some(prefix) = expected_prefix {
+            let file = File::open(input_path);
+            match file {
+                Ok(f) => {
+                    let reader = BufReader::new(f);
+                    let mut mismatched_ids: Vec<String> = Vec::new();
+                    for line_result in reader.lines() {
+                        let Ok(line) = line_result else { continue };
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        if let Ok(partial) = serde_json::from_str::<PartialId>(trimmed) {
+                            // Skip tombstones — they may retain a foreign prefix legitimately
+                            #[derive(Deserialize)]
+                            struct StatusProbe {
+                                status: Option<String>,
+                            }
+                            let is_tombstone = serde_json::from_str::<StatusProbe>(trimmed)
+                                .ok()
+                                .and_then(|p| p.status)
+                                .is_some_and(|s| s == "tombstone");
+                            if is_tombstone {
+                                continue;
+                            }
+                            if !partial.id.starts_with(prefix) {
+                                mismatched_ids.push(partial.id);
+                            }
+                        }
+                    }
+                    if mismatched_ids.is_empty() {
+                        result.add(PreflightCheck::pass(
+                            "prefix_match",
+                            "Issue IDs match expected prefix",
+                            format!("All issue IDs start with '{prefix}'."),
+                        ));
+                        tracing::debug!(prefix = prefix, "Prefix match check: PASS");
+                    } else {
+                        let preview: Vec<String> = mismatched_ids.iter().take(5).cloned().collect();
+                        result.add(PreflightCheck::fail(
+                            "prefix_match",
+                            "Issue IDs match expected prefix",
+                            format!(
+                                "Expected prefix '{}', found {} mismatched ID(s): {}{}",
+                                prefix,
+                                mismatched_ids.len(),
+                                preview.join(", "),
+                                if mismatched_ids.len() > 5 { " ..." } else { "" }
+                            ),
+                            "Use --force to skip prefix validation or --rename-prefix to remap IDs.",
+                        ));
+                        tracing::debug!(
+                            prefix = prefix,
+                            mismatch_count = mismatched_ids.len(),
+                            "Prefix match check: FAIL"
+                        );
+                    }
+                }
+                Err(e) => {
+                    result.add(PreflightCheck::warn(
+                        "prefix_match",
+                        "Issue IDs match expected prefix",
+                        format!("Could not open file for prefix validation: {e}"),
+                        "Verify file is readable.",
+                    ));
+                }
+            }
         }
     }
 
@@ -3949,6 +4086,411 @@ mod tests {
             result.failures()
         );
         assert!(result.failures().is_empty());
+    }
+
+    // ========================================================================
+    // Preflight Guardrail Tests (beads_rust-1quj)
+    // ========================================================================
+
+    #[test]
+    fn test_preflight_import_rejects_invalid_json_lines() {
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&beads_dir).unwrap();
+        let jsonl_path = beads_dir.join("issues.jsonl");
+
+        // Write JSONL with invalid lines
+        let issue = make_test_issue("bd-001", "Good issue");
+        let good_json = serde_json::to_string(&issue).unwrap();
+        let content = format!("{good_json}\nNOT VALID JSON\n{good_json}\n{{\"broken: true}}\n");
+        std::fs::write(&jsonl_path, content).unwrap();
+
+        let config = ImportConfig {
+            beads_dir: Some(beads_dir),
+            ..Default::default()
+        };
+
+        let result = preflight_import(&jsonl_path, &config, None).unwrap();
+
+        assert_eq!(result.overall_status, PreflightCheckStatus::Fail);
+        let failures = result.failures();
+        let json_check = failures.iter().find(|c| c.name == "json_valid");
+        assert!(json_check.is_some(), "Expected json_valid failure");
+        let msg = &json_check.unwrap().message;
+        assert!(msg.contains("2 invalid line(s)"), "Message was: {msg}");
+        assert!(msg.contains("line 2"), "Should mention line 2: {msg}");
+        assert!(msg.contains("line 4"), "Should mention line 4: {msg}");
+    }
+
+    #[test]
+    fn test_preflight_import_passes_valid_json_lines() {
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&beads_dir).unwrap();
+        let jsonl_path = beads_dir.join("issues.jsonl");
+
+        let issue1 = make_test_issue("bd-001", "First");
+        let issue2 = make_test_issue("bd-002", "Second");
+        let content = format!(
+            "{}\n\n{}\n",
+            serde_json::to_string(&issue1).unwrap(),
+            serde_json::to_string(&issue2).unwrap()
+        );
+        std::fs::write(&jsonl_path, content).unwrap();
+
+        let config = ImportConfig {
+            beads_dir: Some(beads_dir),
+            ..Default::default()
+        };
+
+        let result = preflight_import(&jsonl_path, &config, None).unwrap();
+
+        // json_valid should pass
+        let json_check = result.checks.iter().find(|c| c.name == "json_valid");
+        assert!(json_check.is_some());
+        assert_eq!(json_check.unwrap().status, PreflightCheckStatus::Pass);
+    }
+
+    #[test]
+    fn test_preflight_import_rejects_prefix_mismatch() {
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&beads_dir).unwrap();
+        let jsonl_path = beads_dir.join("issues.jsonl");
+
+        // Write issues with wrong prefix
+        let issue1 = make_test_issue("xx-001", "Wrong prefix 1");
+        let issue2 = make_test_issue("xx-002", "Wrong prefix 2");
+        let content = format!(
+            "{}\n{}\n",
+            serde_json::to_string(&issue1).unwrap(),
+            serde_json::to_string(&issue2).unwrap()
+        );
+        std::fs::write(&jsonl_path, content).unwrap();
+
+        let config = ImportConfig {
+            beads_dir: Some(beads_dir),
+            ..Default::default()
+        };
+
+        let result = preflight_import(&jsonl_path, &config, Some("bd")).unwrap();
+
+        assert_eq!(result.overall_status, PreflightCheckStatus::Fail);
+        let failures = result.failures();
+        let prefix_check = failures.iter().find(|c| c.name == "prefix_match");
+        assert!(prefix_check.is_some(), "Expected prefix_match failure");
+        let msg = &prefix_check.unwrap().message;
+        assert!(msg.contains("xx-001"), "Should list mismatched ID: {msg}");
+        assert!(msg.contains("xx-002"), "Should list mismatched ID: {msg}");
+        assert!(msg.contains("2 mismatched"), "Should show count: {msg}");
+    }
+
+    #[test]
+    fn test_preflight_import_prefix_check_skipped_when_override() {
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&beads_dir).unwrap();
+        let jsonl_path = beads_dir.join("issues.jsonl");
+
+        // Write issues with wrong prefix
+        let issue = make_test_issue("xx-001", "Wrong prefix");
+        let json = serde_json::to_string(&issue).unwrap();
+        std::fs::write(&jsonl_path, format!("{json}\n")).unwrap();
+
+        let config = ImportConfig {
+            skip_prefix_validation: true,
+            beads_dir: Some(beads_dir),
+            ..Default::default()
+        };
+
+        let result = preflight_import(&jsonl_path, &config, Some("bd")).unwrap();
+
+        // prefix_match check should NOT be present when skip_prefix_validation is true
+        let prefix_check = result.checks.iter().find(|c| c.name == "prefix_match");
+        assert!(
+            prefix_check.is_none(),
+            "prefix_match check should be skipped when skip_prefix_validation is true"
+        );
+        // Overall should pass (or at least not fail on prefix)
+        assert!(
+            result.failures().iter().all(|c| c.name != "prefix_match"),
+            "No prefix_match failures expected with override"
+        );
+    }
+
+    #[test]
+    fn test_preflight_import_prefix_passes_matching_prefix() {
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&beads_dir).unwrap();
+        let jsonl_path = beads_dir.join("issues.jsonl");
+
+        let issue1 = make_test_issue("bd-001", "Correct prefix 1");
+        let issue2 = make_test_issue("bd-002", "Correct prefix 2");
+        let content = format!(
+            "{}\n{}\n",
+            serde_json::to_string(&issue1).unwrap(),
+            serde_json::to_string(&issue2).unwrap()
+        );
+        std::fs::write(&jsonl_path, content).unwrap();
+
+        let config = ImportConfig {
+            beads_dir: Some(beads_dir),
+            ..Default::default()
+        };
+
+        let result = preflight_import(&jsonl_path, &config, Some("bd")).unwrap();
+
+        let prefix_check = result.checks.iter().find(|c| c.name == "prefix_match");
+        assert!(
+            prefix_check.is_some(),
+            "prefix_match check should be present"
+        );
+        assert_eq!(
+            prefix_check.unwrap().status,
+            PreflightCheckStatus::Pass,
+            "prefix_match should pass for matching prefix"
+        );
+    }
+
+    #[test]
+    fn test_preflight_import_prefix_no_check_without_expected() {
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&beads_dir).unwrap();
+        let jsonl_path = beads_dir.join("issues.jsonl");
+
+        let issue = make_test_issue("xx-001", "Any prefix");
+        let json = serde_json::to_string(&issue).unwrap();
+        std::fs::write(&jsonl_path, format!("{json}\n")).unwrap();
+
+        let config = ImportConfig {
+            beads_dir: Some(beads_dir),
+            ..Default::default()
+        };
+
+        // No expected_prefix passed — prefix check should not be added
+        let result = preflight_import(&jsonl_path, &config, None).unwrap();
+
+        let prefix_check = result.checks.iter().find(|c| c.name == "prefix_match");
+        assert!(
+            prefix_check.is_none(),
+            "prefix_match check should not run without expected_prefix"
+        );
+    }
+
+    #[test]
+    fn test_preflight_import_conflict_markers_mixed_content() {
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&beads_dir).unwrap();
+        let jsonl_path = beads_dir.join("issues.jsonl");
+
+        // Valid JSONL with embedded conflict markers
+        let issue = make_test_issue("bd-001", "Good issue");
+        let good_json = serde_json::to_string(&issue).unwrap();
+        let content = format!(
+            "{good_json}\n<<<<<<< HEAD\n{good_json}\n=======\n{good_json}\n>>>>>>> other\n"
+        );
+        std::fs::write(&jsonl_path, content).unwrap();
+
+        let config = ImportConfig {
+            beads_dir: Some(beads_dir),
+            ..Default::default()
+        };
+
+        let result = preflight_import(&jsonl_path, &config, None).unwrap();
+
+        assert_eq!(result.overall_status, PreflightCheckStatus::Fail);
+        // Should have both conflict marker AND json validation failures
+        assert!(
+            result
+                .failures()
+                .iter()
+                .any(|c| c.name == "no_conflict_markers"),
+            "Should detect conflict markers"
+        );
+        assert!(
+            result.failures().iter().any(|c| c.name == "json_valid"),
+            "Conflict marker lines should also fail JSON validation"
+        );
+    }
+
+    #[test]
+    fn test_preflight_import_success_path_all_checks() {
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&beads_dir).unwrap();
+        let jsonl_path = beads_dir.join("issues.jsonl");
+
+        // Write valid JSONL with correct prefix
+        let issue1 = make_test_issue("bd-001", "Issue One");
+        let issue2 = make_test_issue("bd-002", "Issue Two");
+        let content = format!(
+            "{}\n{}\n",
+            serde_json::to_string(&issue1).unwrap(),
+            serde_json::to_string(&issue2).unwrap()
+        );
+        std::fs::write(&jsonl_path, content).unwrap();
+
+        let config = ImportConfig {
+            beads_dir: Some(beads_dir),
+            ..Default::default()
+        };
+
+        let result = preflight_import(&jsonl_path, &config, Some("bd")).unwrap();
+
+        // All checks should pass
+        assert_eq!(
+            result.overall_status,
+            PreflightCheckStatus::Pass,
+            "All checks should pass. Failures: {:?}",
+            result
+                .failures()
+                .iter()
+                .map(|c| format!("{}: {}", c.name, c.message))
+                .collect::<Vec<_>>()
+        );
+        assert!(result.failures().is_empty());
+
+        // Verify all expected checks ran
+        let check_names: Vec<&str> = result.checks.iter().map(|c| c.name.as_str()).collect();
+        assert!(
+            check_names.contains(&"beads_dir_exists"),
+            "Should check beads dir: {check_names:?}"
+        );
+        assert!(
+            check_names.contains(&"file_readable"),
+            "Should check file readable: {check_names:?}"
+        );
+        assert!(
+            check_names.contains(&"no_conflict_markers"),
+            "Should check conflict markers: {check_names:?}"
+        );
+        assert!(
+            check_names.contains(&"json_valid"),
+            "Should check JSON validity: {check_names:?}"
+        );
+        assert!(
+            check_names.contains(&"prefix_match"),
+            "Should check prefix match: {check_names:?}"
+        );
+    }
+
+    #[test]
+    fn test_preflight_import_mixed_prefix_partial_mismatch() {
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&beads_dir).unwrap();
+        let jsonl_path = beads_dir.join("issues.jsonl");
+
+        // Mix of correct and incorrect prefix
+        let good_issue = make_test_issue("bd-001", "Good prefix");
+        let bad_issue = make_test_issue("xx-002", "Bad prefix");
+        let content = format!(
+            "{}\n{}\n",
+            serde_json::to_string(&good_issue).unwrap(),
+            serde_json::to_string(&bad_issue).unwrap()
+        );
+        std::fs::write(&jsonl_path, content).unwrap();
+
+        let config = ImportConfig {
+            beads_dir: Some(beads_dir),
+            ..Default::default()
+        };
+
+        let result = preflight_import(&jsonl_path, &config, Some("bd")).unwrap();
+
+        assert_eq!(result.overall_status, PreflightCheckStatus::Fail);
+        let failures = result.failures();
+        let prefix_check = failures.iter().find(|c| c.name == "prefix_match");
+        assert!(prefix_check.is_some());
+        let msg = &prefix_check.unwrap().message;
+        assert!(
+            msg.contains("1 mismatched"),
+            "Should show count of 1: {msg}"
+        );
+        assert!(msg.contains("xx-002"), "Should list the bad ID: {msg}");
+    }
+
+    #[test]
+    fn test_preflight_import_prefix_skips_tombstones() {
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&beads_dir).unwrap();
+        let jsonl_path = beads_dir.join("issues.jsonl");
+
+        // Create a tombstone with wrong prefix — should be silently ignored
+        let mut tombstone = make_test_issue("xx-001", "Foreign tombstone");
+        tombstone.status = Status::Tombstone;
+        let good_issue = make_test_issue("bd-001", "Good issue");
+        let content = format!(
+            "{}\n{}\n",
+            serde_json::to_string(&tombstone).unwrap(),
+            serde_json::to_string(&good_issue).unwrap()
+        );
+        std::fs::write(&jsonl_path, content).unwrap();
+
+        let config = ImportConfig {
+            beads_dir: Some(beads_dir),
+            ..Default::default()
+        };
+
+        let result = preflight_import(&jsonl_path, &config, Some("bd")).unwrap();
+
+        // Tombstone with wrong prefix should not cause failure
+        let prefix_check = result.checks.iter().find(|c| c.name == "prefix_match");
+        assert!(prefix_check.is_some());
+        assert_eq!(
+            prefix_check.unwrap().status,
+            PreflightCheckStatus::Pass,
+            "Tombstones with wrong prefix should be ignored"
+        );
+    }
+
+    #[test]
+    fn test_preflight_import_empty_file_passes_json_check() {
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&beads_dir).unwrap();
+        let jsonl_path = beads_dir.join("issues.jsonl");
+
+        // Empty file
+        std::fs::write(&jsonl_path, "").unwrap();
+
+        let config = ImportConfig {
+            beads_dir: Some(beads_dir),
+            ..Default::default()
+        };
+
+        let result = preflight_import(&jsonl_path, &config, None).unwrap();
+
+        // An empty file should pass JSON validation (no invalid lines)
+        let json_check = result.checks.iter().find(|c| c.name == "json_valid");
+        assert!(json_check.is_some());
+        assert_eq!(json_check.unwrap().status, PreflightCheckStatus::Pass);
+    }
+
+    #[test]
+    fn test_preflight_import_only_blank_lines_passes_json_check() {
+        let temp = TempDir::new().unwrap();
+        let beads_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&beads_dir).unwrap();
+        let jsonl_path = beads_dir.join("issues.jsonl");
+
+        // Only whitespace/blank lines
+        std::fs::write(&jsonl_path, "\n\n  \n\t\n").unwrap();
+
+        let config = ImportConfig {
+            beads_dir: Some(beads_dir),
+            ..Default::default()
+        };
+
+        let result = preflight_import(&jsonl_path, &config, None).unwrap();
+
+        let json_check = result.checks.iter().find(|c| c.name == "json_valid");
+        assert!(json_check.is_some());
+        assert_eq!(json_check.unwrap().status, PreflightCheckStatus::Pass);
     }
 
     // ========================================================================

@@ -595,10 +595,9 @@ impl StructuredError {
                 ErrorCode::DuplicateDependency,
                 Some(json!({"from": from, "to": to})),
             ),
-            BeadsError::NothingToDo { reason } => (
-                ErrorCode::NothingToDo,
-                Some(json!({"reason": reason})),
-            ),
+            BeadsError::NothingToDo { reason } => {
+                (ErrorCode::NothingToDo, Some(json!({"reason": reason})))
+            }
             BeadsError::Config(_) => (ErrorCode::ConfigError, None),
             BeadsError::Io(_) => (ErrorCode::IoError, None),
             BeadsError::Json(_) => (ErrorCode::JsonError, None),
