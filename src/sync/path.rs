@@ -516,7 +516,8 @@ pub fn require_safe_sync_overwrite_path(
     allow_external: bool,
     operation: &str,
 ) -> Result<()> {
-    let canonical_beads = dunce::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
+    let canonical_beads =
+        dunce::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
     let is_internal = path.starts_with(beads_dir) || path.starts_with(&canonical_beads);
 
     if is_internal {
@@ -633,8 +634,7 @@ pub fn validate_temp_file_path(
         dunce::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
 
     if let Some(parent) = temp_parent {
-        let canonical_parent =
-            dunce::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+        let canonical_parent = dunce::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
         if !canonical_parent.starts_with(&canonical_beads) {
             return Err(BeadsError::Config(format!(
                 "Temp file '{}' is outside allowed directory '{}'",
