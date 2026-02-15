@@ -225,6 +225,8 @@ pub fn apply_schema(conn: &Connection) -> Result<()> {
     conn.pragma_update(None, "temp_store", "MEMORY")?;
     // 8MB page cache (default is ~2MB), improves read-heavy workloads
     conn.pragma_update(None, "cache_size", "-8000")?;
+    // Mark schema as applied so future opens can skip DDL/migration work.
+    conn.pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION)?;
 
     Ok(())
 }

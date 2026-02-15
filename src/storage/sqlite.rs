@@ -4,7 +4,7 @@ use crate::error::{BeadsError, Result};
 use crate::format::{IssueDetails, IssueWithDependencyMetadata};
 use crate::model::{Comment, DependencyType, Event, EventType, Issue, IssueType, Priority, Status};
 use crate::storage::events::get_events;
-use crate::storage::schema::apply_schema;
+use crate::storage::schema::{CURRENT_SCHEMA_VERSION, apply_schema};
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction};
 use std::collections::{HashMap, HashSet};
@@ -103,7 +103,12 @@ impl SqliteStorage {
         if let Some(timeout) = lock_timeout_ms {
             conn.busy_timeout(Duration::from_millis(timeout))?;
         }
-        apply_schema(&conn)?;
+        let user_version: i32 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap_or(0);
+        if user_version < CURRENT_SCHEMA_VERSION {
+            apply_schema(&conn)?;
+        }
         Ok(Self { conn })
     }
 
@@ -4606,6 +4611,25 @@ mod tests {
         let _storage = SqliteStorage::open(&db_path).unwrap();
 
         assert!(db_path.exists(), "Database file should be created");
+    }
+
+    #[test]
+    fn test_open_with_timeout_does_not_require_write_lock_when_schema_current() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("lock_read_open.db");
+
+        let _ = SqliteStorage::open(&db_path).unwrap();
+
+        let lock_conn = Connection::open(&db_path).unwrap();
+        lock_conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+        let opened = SqliteStorage::open_with_timeout(&db_path, Some(50));
+        assert!(
+            opened.is_ok(),
+            "opening an existing DB should succeed for read paths under a concurrent write lock"
+        );
+
+        lock_conn.execute_batch("COMMIT").unwrap();
     }
 
     #[test]
