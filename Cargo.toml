@@ -47,7 +47,7 @@ crossterm = "0.28"
 
 # Rich terminal output (sibling project)
 # Pinned to commit with let_chains fix for Rust 1.88+ compatibility
-rich_rust = { git = "https://github.com/Dicklesworthstone/rich_rust.git", rev = "dd3dcdb", features = ["full"] }
+rich_rust = { version = "0.2.0", features = ["full"] }
 
 # TOON format support (sibling project)
 toon_rust = { git = "https://github.com/Dicklesworthstone/toon_rust.git", rev = "788589d" }
