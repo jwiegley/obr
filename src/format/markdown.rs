@@ -278,7 +278,7 @@ fn skip_parentheses(chars: &[char], start: usize) -> usize {
 
 /// Render markdown using rich_rust's Markdown component.
 fn render_rich_markdown(content: &str, width: usize) -> String {
-    let md = Markdown::new(content).show_links(true);
+    let md = Markdown::new(content).hyperlinks(true);
 
     let segments = md.render(width);
 
