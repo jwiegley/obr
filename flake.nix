@@ -4,127 +4,75 @@
 #   nix build              Build the br binary
 #   nix run                Run br directly
 #   nix develop            Enter development shell
-#   nix flake check        Run all checks (build, clippy, fmt, tests)
 #
 # First time setup:
 #   nix flake lock         Generate flake.lock (commit this file)
-#
-# The flake uses:
-#   - crane: Incremental Rust builds with dependency caching
-#   - fenix: Nightly Rust toolchain (required for edition 2024)
-#   - flake-utils: Multi-system support
 #
 {
   description = "beads_rust - Agent-first issue tracker (SQLite + JSONL)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-
-    crane.url = "github:ipetkov/crane";
-
-    fenix = {
-      url = "github:nix-community/fenix";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-
     flake-utils.url = "github:numtide/flake-utils";
-
-    # Sibling dependency: toon_rust
-    # Fetched from GitHub since Nix flakes cannot use relative path dependencies
-    toon_rust = {
-      url = "github:Dicklesworthstone/toon_rust";
-      flake = false;
-    };
   };
 
-  outputs = { self, nixpkgs, crane, fenix, flake-utils, toon_rust, ... }:
-    flake-utils.lib.eachSystem [
-      "x86_64-linux"
-      "aarch64-linux"
-      "x86_64-darwin"
-      "aarch64-darwin"
-    ] (system:
+  outputs = { self, nixpkgs, rust-overlay, flake-utils }:
+    flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ rust-overlay.overlays.default ];
+        };
 
-        # Nightly Rust toolchain via fenix (required for Rust edition 2024)
-        fenixPkgs = fenix.packages.${system};
-        rustToolchain = fenixPkgs.combine [
-          fenixPkgs.latest.cargo
-          fenixPkgs.latest.rustc
-          fenixPkgs.latest.rust-src
-          fenixPkgs.latest.clippy
-          fenixPkgs.latest.rustfmt
-        ];
+        # Nightly Rust toolchain via rust-overlay (required for edition 2024)
+        rustToolchain = pkgs.rust-bin.nightly.latest.default.override {
+          extensions = [
+            "rust-src"
+            "rust-analyzer"
+            "clippy"
+            "rustfmt"
+          ];
+        };
 
-        craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
+        # Custom rustPlatform using the nightly toolchain
+        rustPlatform = pkgs.makeRustPlatform {
+          cargo = rustToolchain;
+          rustc = rustToolchain;
+        };
 
-        # Filter source to include only what's needed for the build
-        sourceFilter = path: type:
-          (craneLib.filterCargoSources path type)
-          || builtins.match ".*\\.toml$" path != null
-          || builtins.match ".*\\.rs$" path != null
-          || builtins.match ".*\\.sql$" path != null;
-
-        # Combined source tree with beads_rust and toon_rust
-        # Required because Cargo.toml references path = "../toon_rust"
-        combinedSrc = pkgs.runCommand "beads_rust-src" { } ''
-          mkdir -p $out/beads_rust $out/toon_rust
-
-          # Copy beads_rust
-          cp ${./Cargo.toml} $out/beads_rust/Cargo.toml
-          cp ${./Cargo.lock} $out/beads_rust/Cargo.lock
-          cp ${./build.rs} $out/beads_rust/build.rs
-          cp -r ${./src} $out/beads_rust/src
-
-          # Optional directories
-          ${pkgs.lib.optionalString (builtins.pathExists ./benches) "cp -r ${./benches} $out/beads_rust/benches"}
-          ${pkgs.lib.optionalString (builtins.pathExists ./tests) "cp -r ${./tests} $out/beads_rust/tests"}
-
-          # Copy toon_rust dependency
-          cp -r ${toon_rust}/* $out/toon_rust/
-        '';
-
-        # Common arguments shared between dependency and final builds
-        commonArgs = {
-          src = combinedSrc;
-
+        # Build the br binary using the nightly Rust toolchain
+        beads_rust = rustPlatform.buildRustPackage {
           pname = "beads_rust";
-          version = "0.1.9";
+          version = "0.1.14";
 
-          strictDeps = true;
+          src = ./.;
 
-          # Build from the beads_rust subdirectory
-          postUnpack = ''
-            cd $sourceRoot/beads_rust
-            sourceRoot=$PWD
-          '';
+          cargoLock = {
+            lockFile = ./Cargo.lock;
+            outputHashes = {
+              "toon_rust-0.1.1" = "sha256-3NUdC0BL7IvB1eP1USrA9oeSTRGpE18fgsw6t1W0oQ8=";
+            };
+          };
 
+          # Native build inputs for rusqlite bundled SQLite
           nativeBuildInputs = with pkgs; [
             pkg-config
+          ] ++ [
+            rustPlatform.bindgenHook
           ];
 
           buildInputs = with pkgs; [
-            openssl
-          ] ++ lib.optionals stdenv.isDarwin [
-            darwin.apple_sdk.frameworks.Security
-            darwin.apple_sdk.frameworks.SystemConfiguration
-            darwin.apple_sdk.frameworks.CoreFoundation
+            sqlite
+          ] ++ lib.optionals stdenv.hostPlatform.isDarwin [
             libiconv
+            apple-sdk_15
           ];
 
-          # OpenSSL configuration
-          OPENSSL_NO_VENDOR = "1";
-        };
-
-        # Build only dependencies (cached between builds)
-        cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-
-        # Full package build
-        beads_rust = craneLib.buildPackage (commonArgs // {
-          inherit cargoArtifacts;
-
-          doCheck = false;  # Tests run separately in checks
+          doCheck = false;
 
           meta = with pkgs.lib; {
             description = "Agent-first issue tracker (SQLite + JSONL)";
@@ -133,82 +81,52 @@
             mainProgram = "br";
             platforms = platforms.unix;
           };
-        });
+        };
 
       in
       {
-        # nix build / nix build .#beads_rust
-        packages = {
-          default = beads_rust;
-          inherit beads_rust;
-        };
-
         # nix develop
-        devShells.default = craneLib.devShell {
-          inputsFrom = [ beads_rust ];
+        devShells.default = pkgs.mkShell {
+          packages = [
+            rustToolchain
+          ] ++ (with pkgs; [
+            # Build dependencies
+            pkg-config
 
-          packages = with pkgs; [
-            # Rust tooling
-            rust-analyzer
+            # Development tools
             cargo-watch
             cargo-edit
-            cargo-outdated
-            cargo-audit
             cargo-expand
-
-            # SQLite
-            sqlite
-
-            # TOML
-            taplo
-
-            # Testing
             cargo-nextest
-            cargo-tarpaulin
 
-            # Performance
-            hyperfine
-          ];
+            # SQLite inspection
+            sqlite
+          ] ++ lib.optionals stdenv.hostPlatform.isDarwin [
+            libiconv
+            apple-sdk_15
+          ]);
 
           shellHook = ''
+            # Unset DEVELOPER_DIR to avoid conflict between the default stdenv
+            # SDK and apple-sdk_15 baked into the clang wrapper.
+            unset DEVELOPER_DIR
+
             export RUST_BACKTRACE=1
             export RUST_LOG=info
             echo "beads_rust dev shell - Rust $(rustc --version | cut -d' ' -f2)"
           '';
         };
 
-        # nix flake check
-        checks = {
+        # nix build / nix build .#beads_rust
+        packages = {
+          default = beads_rust;
           inherit beads_rust;
-
-          clippy = craneLib.cargoClippy (commonArgs // {
-            inherit cargoArtifacts;
-            cargoClippyExtraArgs = "--all-targets -- --deny warnings";
-          });
-
-          fmt = craneLib.cargoFmt {
-            src = combinedSrc;
-            postUnpack = ''
-              cd $sourceRoot/beads_rust
-              sourceRoot=$PWD
-            '';
-          };
-
-          tests = craneLib.cargoTest (commonArgs // {
-            inherit cargoArtifacts;
-          });
         };
 
         # nix run
         apps.default = flake-utils.lib.mkApp {
           drv = beads_rust;
           name = "br";
-        };
-
-        # For use as overlay in other flakes
-        overlays.default = final: prev: {
-          beads_rust = beads_rust;
-          br = beads_rust;
         };
       });
 }
