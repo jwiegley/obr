@@ -11,7 +11,6 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tracing::warn;
 
 /// SQLite-based storage backend.
 #[derive(Debug)]
@@ -104,8 +103,7 @@ impl SqliteStorage {
             conn.busy_timeout(Duration::from_millis(timeout))?;
         }
         let user_version: i32 = conn
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .unwrap_or(0);
+            .query_row("PRAGMA user_version", [], |row| row.get(0))?;
         if user_version < CURRENT_SCHEMA_VERSION {
             apply_schema(&conn)?;
         }
@@ -2317,7 +2315,7 @@ impl SqliteStorage {
                     issue_id: row.get(1)?,
                     author: row.get(2)?,
                     body: row.get(3)?,
-                    created_at: parse_datetime(&row.get::<_, String>(4)?),
+                    created_at: parse_datetime(&row.get::<_, String>(4)?)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -2739,7 +2737,7 @@ impl SqliteStorage {
                         .get::<_, Option<String>>(2)?
                         .and_then(|s| s.parse().ok())
                         .unwrap_or(DependencyType::Blocks),
-                    created_at: parse_datetime(&row.get::<_, String>(3)?),
+                    created_at: parse_datetime(&row.get::<_, String>(3)?)?,
                     created_by: row.get(4)?,
                     metadata: row.get(5)?,
                     thread_id: row.get(6)?,
@@ -2776,7 +2774,7 @@ impl SqliteStorage {
                 issue_id: row.get(1)?,
                 author: row.get(2)?,
                 body: row.get(3)?,
-                created_at: parse_datetime(&row.get::<_, String>(4)?),
+                created_at: parse_datetime(&row.get::<_, String>(4)?)?,
             })
         })?;
 
@@ -3089,30 +3087,34 @@ impl SqliteStorage {
             assignee: Self::empty_to_none(row.get::<_, Option<String>>(10)?),
             owner: Self::empty_to_none(row.get::<_, Option<String>>(11)?),
             estimated_minutes: row.get::<_, Option<i32>>(12)?,
-            created_at: parse_datetime(&row.get::<_, String>(13)?),
+            created_at: parse_datetime(&row.get::<_, String>(13)?)?,
             created_by: Self::empty_to_none(row.get::<_, Option<String>>(14)?),
-            updated_at: parse_datetime(&row.get::<_, String>(15)?),
+            updated_at: parse_datetime(&row.get::<_, String>(15)?)?,
             closed_at: row
                 .get::<_, Option<String>>(16)?
                 .as_deref()
-                .map(parse_datetime),
+                .map(parse_datetime)
+                .transpose()?,
             close_reason: Self::empty_to_none(row.get::<_, Option<String>>(17)?),
             closed_by_session: Self::empty_to_none(row.get::<_, Option<String>>(18)?),
             due_at: row
                 .get::<_, Option<String>>(19)?
                 .as_deref()
-                .map(parse_datetime),
+                .map(parse_datetime)
+                .transpose()?,
             defer_until: row
                 .get::<_, Option<String>>(20)?
                 .as_deref()
-                .map(parse_datetime),
+                .map(parse_datetime)
+                .transpose()?,
             external_ref: row.get::<_, Option<String>>(21)?,
             source_system: Self::empty_to_none(row.get::<_, Option<String>>(22)?),
             source_repo: Self::empty_to_none(row.get::<_, Option<String>>(23)?),
             deleted_at: row
                 .get::<_, Option<String>>(24)?
                 .as_deref()
-                .map(parse_datetime),
+                .map(parse_datetime)
+                .transpose()?,
             deleted_by: Self::empty_to_none(row.get::<_, Option<String>>(25)?),
             delete_reason: Self::empty_to_none(row.get::<_, Option<String>>(26)?),
             original_type: Self::empty_to_none(row.get::<_, Option<String>>(27)?),
@@ -3120,7 +3122,8 @@ impl SqliteStorage {
             compacted_at: row
                 .get::<_, Option<String>>(29)?
                 .as_deref()
-                .map(parse_datetime),
+                .map(parse_datetime)
+                .transpose()?,
             compacted_at_commit: row.get::<_, Option<String>>(30)?,
             original_size: row.get::<_, Option<i32>>(31)?,
             sender: Self::empty_to_none(row.get::<_, Option<String>>(32)?),
@@ -3346,21 +3349,20 @@ fn query_external_project_capabilities(
     Ok(satisfied)
 }
 
-fn parse_datetime(s: &str) -> DateTime<Utc> {
+fn parse_datetime(s: &str) -> rusqlite::Result<DateTime<Utc>> {
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
-        return dt.with_timezone(&Utc);
+        return Ok(dt.with_timezone(&Utc));
     }
 
     if let Ok(naive) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
-        return Utc.from_utc_datetime(&naive);
+        return Ok(Utc.from_utc_datetime(&naive));
     }
 
-    // Log warning for unparseable dates - helps detect data corruption
-    warn!(
-        datetime_string = %s,
-        "Failed to parse datetime, falling back to current time"
-    );
-    Utc::now()
+    Err(rusqlite::Error::FromSqlConversionFailure(
+        0,
+        rusqlite::types::Type::Text,
+        format!("Failed to parse datetime: {s}").into(),
+    ))
 }
 
 /// Escape special LIKE pattern characters (%, _, \) for literal matching.
@@ -3420,7 +3422,7 @@ impl SqliteStorage {
                         .get::<_, Option<String>>(2)?
                         .and_then(|s| s.parse().ok())
                         .unwrap_or(crate::model::DependencyType::Blocks),
-                    created_at: parse_datetime(&created_at_str),
+                    created_at: parse_datetime(&created_at_str)?,
                     created_by: row.get(4)?,
                     metadata: row.get(5)?,
                     thread_id: row.get(6)?,
@@ -3871,7 +3873,7 @@ fn fetch_comment(tx: &Transaction<'_>, comment_id: i64) -> Result<Comment> {
                 issue_id: row.get(1)?,
                 author: row.get(2)?,
                 body: row.get(3)?,
-                created_at: parse_datetime(&row.get::<_, String>(4)?),
+                created_at: parse_datetime(&row.get::<_, String>(4)?)?,
             })
         },
     )

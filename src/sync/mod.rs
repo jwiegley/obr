@@ -2219,6 +2219,11 @@ pub fn import_from_jsonl(
                 let generator = IdGenerator::new(IdConfig::with_prefix(prefix));
                 let mut renames = std::collections::HashMap::new();
 
+                // Pre-fetch all existing IDs to avoid fallible calls inside
+                // the infallible closure passed to generate()
+                let existing_ids: HashSet<String> =
+                    storage.get_all_ids()?.into_iter().collect();
+
                 for (old_id, title, desc, creator, created_at) in to_rename {
                     let new_id = generator.generate(
                         &title,
@@ -2227,7 +2232,7 @@ pub fn import_from_jsonl(
                         created_at,
                         issues.len(),
                         |candidate| {
-                            storage.id_exists(candidate).unwrap_or(false)
+                            existing_ids.contains(candidate)
                                 || issues.iter().any(|i| i.id == candidate)
                                 || renames.values().any(|v| *v == candidate)
                         },
