@@ -310,14 +310,14 @@ fn e2e_sync_export_with_artifacts() {
     artifacts.record_command("export", &sync.stdout, &sync.stderr, sync.status.success());
     assert!(sync.status.success(), "sync export failed: {}", sync.stderr);
 
-    // Capture JSONL output
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    artifacts.capture_jsonl("after_export", &jsonl_path);
+    // Capture Org output
+    let org_path = workspace.root.join(".beads").join("issues.org");
+    artifacts.capture_jsonl("after_export", &org_path);
 
     artifacts.capture_snapshot("after_export", &workspace.root);
 
-    // Verify JSONL was created
-    assert!(jsonl_path.exists(), "JSONL file should exist after export");
+    // Verify Org file was created
+    assert!(org_path.exists(), "Org file should exist after export");
 
     // Verify manifest was created
     let manifest_path = workspace.root.join(".beads").join(".manifest.json");
@@ -355,10 +355,10 @@ fn e2e_sync_export_with_artifacts() {
     eprintln!(
         "[PASS] e2e_sync_export_with_artifacts\n\
          - Artifacts saved to: {:?}\n\
-         - JSONL size: {} bytes\n\
+         - Org file size: {} bytes\n\
          - Files in .beads/: {}",
         artifacts.artifact_dir,
-        fs::metadata(&jsonl_path).map(|m| m.len()).unwrap_or(0),
+        fs::metadata(&org_path).map(|m| m.len()).unwrap_or(0),
         artifacts
             .snapshots
             .last()
@@ -389,16 +389,16 @@ fn e2e_sync_import_with_artifacts() {
     let flush = run_br(&workspace, ["sync", "--flush-only"], "flush");
     assert!(flush.status.success(), "flush failed");
 
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    artifacts.capture_jsonl("before_modification", &jsonl_path);
+    let org_path = workspace.root.join(".beads").join("issues.org");
+    artifacts.capture_jsonl("before_modification", &org_path);
     artifacts.capture_snapshot("before_modification", &workspace.root);
 
-    // Modify JSONL externally (simulate incoming changes)
-    let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
-    let modified = original.replace("Original issue", "Modified via JSONL");
-    fs::write(&jsonl_path, &modified).expect("write modified jsonl");
+    // Modify Org file externally (simulate incoming changes)
+    let original = fs::read_to_string(&org_path).expect("read org");
+    let modified = original.replace("Original issue", "Modified via Org");
+    fs::write(&org_path, &modified).expect("write modified org");
 
-    artifacts.capture_jsonl("after_modification", &jsonl_path);
+    artifacts.capture_jsonl("after_modification", &org_path);
     artifacts.capture_snapshot("after_modification", &workspace.root);
 
     // Run sync import
@@ -421,7 +421,7 @@ fn e2e_sync_import_with_artifacts() {
     let list = run_br(&workspace, ["list", "--json"], "list_verify");
     assert!(list.status.success(), "list failed");
     assert!(
-        list.stdout.contains("Modified via JSONL"),
+        list.stdout.contains("Modified via Org"),
         "Import should have updated the issue title\n\
          stdout: {}",
         list.stdout
@@ -500,15 +500,15 @@ fn e2e_sync_full_cycle_with_artifacts() {
     );
     assert!(export1.status.success(), "export1 failed");
 
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    artifacts.capture_jsonl("phase1_export", &jsonl_path);
+    let org_path = workspace.root.join(".beads").join("issues.org");
+    artifacts.capture_jsonl("phase1_export", &org_path);
     artifacts.capture_snapshot("after_export1", &workspace.root);
 
     // Phase 2: External modification (simulate git pull with changes)
-    let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
+    let original = fs::read_to_string(&org_path).expect("read org");
     let modified = original.replace("Bug: Login fails", "Bug: Login fails (critical)");
-    fs::write(&jsonl_path, &modified).expect("write modified");
-    artifacts.capture_jsonl("phase2_modified", &jsonl_path);
+    fs::write(&org_path, &modified).expect("write modified");
+    artifacts.capture_jsonl("phase2_modified", &org_path);
 
     // Phase 3: Import
     let import = run_br(&workspace, ["sync", "--import-only", "--force"], "import");
@@ -531,7 +531,7 @@ fn e2e_sync_full_cycle_with_artifacts() {
     );
     assert!(export2.status.success(), "export2 failed");
 
-    artifacts.capture_jsonl("phase4_reexport", &jsonl_path);
+    artifacts.capture_jsonl("phase4_reexport", &org_path);
     artifacts.capture_snapshot("after_export2", &workspace.root);
 
     // Verify the modification persisted
@@ -637,12 +637,12 @@ fn e2e_sync_error_conflict_markers() {
     let export = run_br(&workspace, ["sync", "--flush-only"], "export");
     assert!(export.status.success(), "export failed");
 
-    // Inject conflict markers into JSONL
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
+    // Inject conflict markers into Org file
+    let org_path = workspace.root.join(".beads").join("issues.org");
+    let original = fs::read_to_string(&org_path).expect("read org");
     let corrupted = format!("<<<<<<< HEAD\n{original}=======\n{original}>>>>>>> branch\n");
-    fs::write(&jsonl_path, &corrupted).expect("write corrupted");
-    artifacts.capture_jsonl("corrupted", &jsonl_path);
+    fs::write(&org_path, &corrupted).expect("write corrupted");
+    artifacts.capture_jsonl("corrupted", &org_path);
 
     // Attempt import (should fail)
     let import = run_br(
@@ -673,7 +673,7 @@ fn e2e_sync_error_conflict_markers() {
 
     eprintln!(
         "[PASS] e2e_sync_error_conflict_markers\n\
-         - Correctly rejected JSONL with conflict markers\n\
+         - Correctly rejected Org file with conflict markers\n\
          - Artifacts saved to: {:?}",
         artifacts.artifact_dir
     );
@@ -722,9 +722,9 @@ fn e2e_sync_export_empty_db() {
 
     artifacts.capture_snapshot("after_export", &workspace.root);
 
-    // Verify JSONL exists (may be empty)
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    artifacts.capture_jsonl("empty_export", &jsonl_path);
+    // Verify Org file exists (may be empty)
+    let org_path = workspace.root.join(".beads").join("issues.org");
+    artifacts.capture_jsonl("empty_export", &org_path);
 
     artifacts.persist();
 
@@ -754,7 +754,7 @@ fn e2e_sync_deterministic_export() {
     }
 
     // Export multiple times
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let org_path = workspace.root.join(".beads").join("issues.org");
     let mut exports = Vec::new();
 
     for i in 0..3 {
@@ -765,30 +765,29 @@ fn e2e_sync_deterministic_export() {
         );
         assert!(export.status.success(), "export{i} failed");
 
-        let content = fs::read_to_string(&jsonl_path).expect("read jsonl");
-        artifacts.capture_jsonl(&format!("export{i}"), &jsonl_path);
+        let content = fs::read_to_string(&org_path).expect("read org");
+        artifacts.capture_jsonl(&format!("export{i}"), &org_path);
         exports.push(content);
     }
 
     // Verify all exports are identical
     assert!(
         exports.windows(2).all(|w| w[0] == w[1]),
-        "Multiple exports should produce identical JSONL"
+        "Multiple exports should produce identical Org output"
     );
 
-    // Verify issues are sorted (by ID)
-    let lines: Vec<&str> = exports[0].lines().collect();
+    // Verify issues are present and ordered (extract IDs from :ID: properties)
     let mut ids: Vec<String> = Vec::new();
-    for line in lines {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
-            if let Some(id) = json.get("id").and_then(|v| v.as_str()) {
+    for line in exports[0].lines() {
+        if line.starts_with(":ID:") {
+            if let Some(id) = line.split_whitespace().nth(1) {
                 ids.push(id.to_string());
             }
         }
     }
     let mut sorted_ids = ids.clone();
     sorted_ids.sort();
-    assert_eq!(ids, sorted_ids, "JSONL should be sorted by ID");
+    assert_eq!(ids, sorted_ids, "Org file should be sorted by ID");
 
     artifacts.persist();
 
@@ -854,11 +853,11 @@ fn e2e_staleness_hash_check_prevents_false_touch() {
     // Sleep briefly to ensure mtime would differ
     thread::sleep(Duration::from_millis(100));
 
-    // Touch the JSONL file (updates mtime but not content)
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    let content = fs::read_to_string(&jsonl_path).expect("read jsonl");
-    fs::write(&jsonl_path, &content).expect("touch jsonl");
-    artifacts.capture_jsonl("after_touch", &jsonl_path);
+    // Touch the Org file (updates mtime but not content)
+    let org_path = workspace.root.join(".beads").join("issues.org");
+    let content = fs::read_to_string(&org_path).expect("read org");
+    fs::write(&org_path, &content).expect("touch org");
+    artifacts.capture_jsonl("after_touch", &org_path);
 
     // Check status again - should NOT be marked stale due to hash check
     let status2 = run_br(
@@ -879,7 +878,7 @@ fn e2e_staleness_hash_check_prevents_false_touch() {
     // Hash check should prevent false staleness: mtime changed but content didn't
     assert!(
         !json2["jsonl_newer"].as_bool().unwrap_or(true),
-        "JSONL should NOT be marked newer after touch (hash unchanged)\n\
+        "Org file should NOT be marked newer after touch (hash unchanged)\n\
          mtime updated but content hash is the same\n\
          status output: {}",
         status2.stdout
@@ -889,7 +888,7 @@ fn e2e_staleness_hash_check_prevents_false_touch() {
 
     eprintln!(
         "[PASS] e2e_staleness_hash_check_prevents_false_touch\n\
-         - Exported JSONL\n\
+         - Exported Org file\n\
          - Touched file (mtime changed, content unchanged)\n\
          - Hash check correctly prevented false staleness\n\
          - Artifacts saved to: {:?}",
@@ -915,19 +914,19 @@ fn e2e_staleness_detects_real_content_change() {
     let create = run_br(&workspace, ["create", "Test staleness"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Export to JSONL
+    // Export to Org
     let export = run_br(&workspace, ["sync", "--flush-only"], "export");
     assert!(export.status.success(), "export failed: {}", export.stderr);
 
-    // Modify the JSONL content (simulate external change)
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    let mut content = fs::read_to_string(&jsonl_path).expect("read jsonl");
-    artifacts.capture_jsonl("before_modify", &jsonl_path);
+    // Modify the Org content (simulate external change)
+    let org_path = workspace.root.join(".beads").join("issues.org");
+    let mut content = fs::read_to_string(&org_path).expect("read org");
+    artifacts.capture_jsonl("before_modify", &org_path);
 
     // Append a comment to trigger content change
     content.push_str("# External comment added\n");
-    fs::write(&jsonl_path, &content).expect("write modified jsonl");
-    artifacts.capture_jsonl("after_modify", &jsonl_path);
+    fs::write(&org_path, &content).expect("write modified org");
+    artifacts.capture_jsonl("after_modify", &org_path);
 
     // Check status - should be marked stale (jsonl_newer = true)
     let status = run_br(
@@ -953,7 +952,7 @@ fn e2e_staleness_detects_real_content_change() {
     // Real content change should trigger staleness
     assert!(
         json["jsonl_newer"].as_bool().unwrap_or(false),
-        "JSONL should be marked newer after real content change\n\
+        "Org file should be marked newer after real content change\n\
          Content was modified, hash should differ\n\
          status output: {}",
         status.stdout
@@ -963,7 +962,7 @@ fn e2e_staleness_detects_real_content_change() {
 
     eprintln!(
         "[PASS] e2e_staleness_detects_real_content_change\n\
-         - Exported JSONL\n\
+         - Exported Org file\n\
          - Modified file content\n\
          - Staleness correctly detected (hash changed)\n\
          - Artifacts saved to: {:?}",

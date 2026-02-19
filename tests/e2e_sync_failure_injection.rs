@@ -539,9 +539,17 @@ fn cli_import_malformed_preserves_db() {
         "Issue should exist before import attempt"
     );
 
-    // Corrupt the JSONL file
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    fs::write(&jsonl_path, "totally not json {{{\n").unwrap();
+    // Corrupt the export file with a heading that has no :ID: property,
+    // which causes a parse error during import.
+    let export_path = workspace.root.join(".beads").join("issues.org");
+    // Fall back to issues.jsonl if issues.org doesn't exist yet
+    let target = if export_path.exists() {
+        export_path
+    } else {
+        workspace.root.join(".beads").join("issues.jsonl")
+    };
+    let corrupt_org = "* OPEN Corrupt heading with no ID property\n:PROPERTIES:\n:END:\n";
+    fs::write(&target, corrupt_org).unwrap();
 
     // Attempt import
     let import_run = run_br(&workspace, ["sync", "--import-only"], "import_fail");

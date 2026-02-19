@@ -1,17 +1,17 @@
-//! Fuzz and edge-case tests for JSONL corruption and path traversal.
+//! Fuzz and edge-case tests for Org-mode file corruption and path traversal.
 //!
 //! These tests implement beads_rust-0v1.3.4:
-//! - Malformed JSONL is rejected safely
+//! - Malformed Org (headings without :ID:) is rejected safely
 //! - Path traversal attempts are blocked
 //! - Conflict markers are detected and rejected
 //! - No crashes or partial writes
 //! - Logs include reason for rejection
 //!
 //! Test categories:
-//! 1. Malformed JSONL: partial lines, invalid JSON, missing fields
+//! 1. Malformed Org: headings without :ID: property, incomplete properties
 //! 2. Path traversal: `../` attempts, symlink escapes
 //! 3. Conflict markers: `<<<<<<<`, `=======`, `>>>>>>>`
-//! 4. Edge cases: huge lines, invalid UTF-8
+//! 4. Edge cases: huge content, invalid UTF-8
 
 #![allow(clippy::uninlined_format_args, clippy::redundant_clone)]
 
@@ -49,7 +49,7 @@ fn setup_workspace_with_issues() -> BrWorkspace {
         "create3",
     );
 
-    // Export to JSONL
+    // Export to Org
     let export = run_br(&workspace, ["sync", "--flush-only"], "export");
     assert!(export.status.success(), "export failed: {}", export.stderr);
 
@@ -57,26 +57,19 @@ fn setup_workspace_with_issues() -> BrWorkspace {
 }
 
 // ============================================================================
-// MALFORMED JSONL TESTS
+// MALFORMED ORG TESTS
 // ============================================================================
 
-/// Test: Import rejects JSONL with truncated/partial lines
+/// Test: Import rejects Org with heading missing ID property
 #[test]
 fn edge_case_import_rejects_partial_lines() {
     let _log = common::test_log("edge_case_import_rejects_partial_lines");
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let org_path = workspace.root.join(".beads").join("issues.org");
 
-    // Read original and truncate a line mid-way
-    let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
-    let lines: Vec<&str> = original.lines().collect();
-    assert!(!lines.is_empty(), "JSONL should have content");
-
-    // Create malformed JSONL by truncating the first line
-    let first_line = lines[0];
-    let truncated = &first_line[..first_line.len() / 2]; // Cut in half
-    let malformed = format!("{}\n{}", truncated, lines[1..].join("\n"));
-    fs::write(&jsonl_path, &malformed).expect("write malformed jsonl");
+    // Create malformed Org with heading missing :ID: property
+    let malformed = "* OPEN Test issue without ID\n:PROPERTIES:\n:END:\n\nSome content\n";
+    fs::write(&org_path, malformed).expect("write malformed org");
 
     // Attempt import - should fail
     let import = run_br(
@@ -88,12 +81,11 @@ fn edge_case_import_rejects_partial_lines() {
     // Log for postmortem
     let log = format!(
         "=== PARTIAL LINE TEST ===\n\
-         Original line: {}\n\
-         Truncated to: {}\n\n\
+         Malformed Org: {}\n\n\
          Import stdout: {}\n\
          Import stderr: {}\n\
          Exit status: {}",
-        first_line, truncated, import.stdout, import.stderr, import.status
+        malformed, import.stdout, import.stderr, import.status
     );
     let log_path = workspace.log_dir.join("partial_line_test.log");
     fs::write(&log_path, &log).expect("write log");
@@ -101,50 +93,48 @@ fn edge_case_import_rejects_partial_lines() {
     // ASSERTION: Import should fail
     assert!(
         !import.status.success(),
-        "SAFETY VIOLATION: Import should reject truncated JSONL!\n\
-         Truncated line: {truncated}\n\
+        "SAFETY VIOLATION: Import should reject Org heading without ID!\n\
+         Content: {malformed}\n\
          Log: {}",
         log_path.display()
     );
 
-    // ASSERTION: Error message should mention JSON parsing
+    // ASSERTION: Error message should mention ID or property issue
     assert!(
-        import.stderr.to_lowercase().contains("json")
+        import.stderr.to_lowercase().contains("id")
+            || import.stderr.to_lowercase().contains("property")
             || import.stderr.to_lowercase().contains("invalid")
             || import.stderr.to_lowercase().contains("parse"),
-        "Error should mention JSON/parsing issue. Got: {}",
+        "Error should mention ID/property issue. Got: {}",
         import.stderr
     );
 
     eprintln!(
-        "[PASS] Import correctly rejected partial line JSONL\n\
+        "[PASS] Import correctly rejected Org heading without ID\n\
          Error: {}",
         import.stderr.lines().next().unwrap_or("(no error)")
     );
 }
 
-/// Test: Import rejects JSONL with invalid JSON syntax
+/// Test: Import rejects Org with headings missing ID property
 #[test]
 fn edge_case_import_rejects_invalid_json() {
     let _log = common::test_log("edge_case_import_rejects_invalid_json");
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let org_path = workspace.root.join(".beads").join("issues.org");
 
-    // Create various invalid JSON payloads
-    let invalid_json_cases = [
-        ("{\"id\": \"test\", \"title\": ", "Missing closing brace"),
-        ("{invalid json here}", "Not valid JSON"),
-        (
-            "{\"id\": \"test\", \"title\": \"unclosed string}",
-            "Unclosed string",
-        ),
-        ("{\"id\": \"test\", trailing: garbage}", "Trailing garbage"),
-        ("not json at all", "Plain text"),
+    // Create various Org headings missing :ID: property
+    let invalid_org_cases = [
+        ("* OPEN Missing ID\n:PROPERTIES:\n:END:\n", "No ID property"),
+        ("* OPEN Another missing\n:PROPERTIES:\n:TITLE: test\n:END:\n", "Has other properties but no ID"),
+        ("* OPEN Third case\n", "No properties block at all"),
+        ("* OPEN Fourth\n:PROPERTIES:\n", "Incomplete properties block"),
+        ("* OPEN Fifth\n:PROPERTIES:\n:ID:\n:END:\n", "Empty ID value"),
     ];
 
-    for (invalid_line, description) in invalid_json_cases {
-        // Write invalid JSONL
-        fs::write(&jsonl_path, format!("{invalid_line}\n")).expect("write invalid jsonl");
+    for (invalid_org, description) in invalid_org_cases {
+        // Write invalid Org
+        fs::write(&org_path, invalid_org).expect("write invalid org");
 
         // Attempt import
         let import = run_br(
@@ -155,15 +145,15 @@ fn edge_case_import_rejects_invalid_json() {
 
         // Log for postmortem
         let log = format!(
-            "=== INVALID JSON TEST: {} ===\n\
-             Invalid line: {}\n\n\
+            "=== INVALID ORG TEST: {} ===\n\
+             Invalid Org: {}\n\n\
              Import stdout: {}\n\
              Import stderr: {}\n\
              Exit status: {}",
-            description, invalid_line, import.stdout, import.stderr, import.status
+            description, invalid_org, import.stdout, import.stderr, import.status
         );
         let log_path = workspace.log_dir.join(format!(
-            "invalid_json_{}.log",
+            "invalid_org_{}.log",
             description.replace(' ', "_")
         ));
         fs::write(&log_path, &log).expect("write log");
@@ -171,34 +161,45 @@ fn edge_case_import_rejects_invalid_json() {
         // ASSERTION: Import should fail
         assert!(
             !import.status.success(),
-            "SAFETY VIOLATION: Import should reject invalid JSON ({})!\n\
-             Line: {invalid_line}\n\
+            "SAFETY VIOLATION: Import should reject Org heading without ID ({})!\n\
+             Org: {invalid_org}\n\
              Log: {}",
             description,
             log_path.display()
         );
 
         eprintln!(
-            "[PASS] Rejected invalid JSON ({}): {}",
+            "[PASS] Rejected invalid Org ({}): {}",
             description,
             import.stderr.lines().next().unwrap_or("(no error)")
         );
     }
 }
 
-/// Test: Import rejects JSONL with empty lines interspersed (should skip them gracefully)
+/// Test: Import handles Org with empty lines (Org parser is tolerant)
 #[test]
 fn edge_case_import_handles_empty_lines() {
     let _log = common::test_log("edge_case_import_handles_empty_lines");
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let org_path = workspace.root.join(".beads").join("issues.org");
 
-    // Read original and add empty lines
-    let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
-    let with_empty = format!("\n\n{}\n\n\n", original.replace('\n', "\n\n"));
-    fs::write(&jsonl_path, &with_empty).expect("write with empty lines");
+    // Read original and add empty lines between headings (not within properties)
+    let original = fs::read_to_string(&org_path).expect("read org");
+    // Add empty lines at the start, end, and between headings
+    // Split by headings, add empty lines between them
+    let with_empty = if original.contains("* ") {
+        // Add empty lines before/after headings
+        let with_leading = format!("\n\n\n{}", original);
+        let with_trailing = format!("{}\n\n\n", with_leading);
+        // Add blank lines between :END: and next heading
+        with_trailing.replace(":END:\n", ":END:\n\n\n")
+    } else {
+        // If no headings, just add empty lines
+        format!("\n\n\n{}\n\n\n", original)
+    };
+    fs::write(&org_path, &with_empty).expect("write with empty lines");
 
-    // Attempt import - should succeed (empty lines are skipped)
+    // Attempt import - should succeed (empty lines are handled by Org parser)
     let import = run_br(
         &workspace,
         ["sync", "--import-only", "--force"],
@@ -207,16 +208,19 @@ fn edge_case_import_handles_empty_lines() {
 
     let log = format!(
         "=== EMPTY LINES TEST ===\n\
-         JSONL with empty lines:\n{}\n\n\
+         Org with empty lines (preview):\n{}\n\n\
          Import stdout: {}\n\
          Import stderr: {}\n\
          Exit status: {}",
-        with_empty, import.stdout, import.stderr, import.status
+        with_empty.chars().take(500).collect::<String>(),
+        import.stdout,
+        import.stderr,
+        import.status
     );
     let log_path = workspace.log_dir.join("empty_lines_test.log");
     fs::write(&log_path, &log).expect("write log");
 
-    // Empty lines should be gracefully skipped
+    // Empty lines should be gracefully handled
     assert!(
         import.status.success(),
         "Import should handle empty lines gracefully.\n\
@@ -231,15 +235,15 @@ fn edge_case_import_handles_empty_lines() {
 // CONFLICT MARKER TESTS
 // ============================================================================
 
-/// Test: Import rejects JSONL containing git merge conflict markers
+/// Test: Import rejects Org files containing git merge conflict markers
 #[test]
 fn edge_case_import_rejects_conflict_markers() {
     let _log = common::test_log("edge_case_import_rejects_conflict_markers");
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let org_path = workspace.root.join(".beads").join("issues.org");
 
-    // Read original JSONL
-    let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
+    // Read original Org
+    let original = fs::read_to_string(&org_path).expect("read org");
 
     // Test various conflict marker scenarios
     let conflict_cases = [
@@ -261,7 +265,7 @@ fn edge_case_import_rejects_conflict_markers() {
         ),
         (
             format!(
-                "{}\n<<<<<<< HEAD\n{{\"id\":\"conflict\"}}\n=======",
+                "{}\n<<<<<<< HEAD\n* OPEN Conflict issue\n:PROPERTIES:\n:ID: conflict-1\n:END:\n=======",
                 original
             ),
             "Marker mid-file",
@@ -269,8 +273,8 @@ fn edge_case_import_rejects_conflict_markers() {
     ];
 
     for (malformed, description) in conflict_cases {
-        // Write JSONL with conflict markers
-        fs::write(&jsonl_path, &malformed).expect("write conflicted jsonl");
+        // Write Org with conflict markers
+        fs::write(&org_path, &malformed).expect("write conflicted org");
 
         // Attempt import
         let import = run_br(
@@ -282,7 +286,7 @@ fn edge_case_import_rejects_conflict_markers() {
         // Log for postmortem
         let log = format!(
             "=== CONFLICT MARKER TEST: {} ===\n\
-             JSONL content:\n{}\n\n\
+             Org content:\n{}\n\n\
              Import stdout: {}\n\
              Import stderr: {}\n\
              Exit status: {}",
@@ -300,7 +304,7 @@ fn edge_case_import_rejects_conflict_markers() {
         // ASSERTION: Import should fail with conflict marker error
         assert!(
             !import.status.success(),
-            "SAFETY VIOLATION: Import should reject JSONL with conflict markers ({})!\n\
+            "SAFETY VIOLATION: Import should reject Org with conflict markers ({})!\n\
              Log: {}",
             description,
             log_path.display()
@@ -323,7 +327,7 @@ fn edge_case_import_rejects_conflict_markers() {
         );
 
         // Restore original for next test
-        fs::write(&jsonl_path, &original).expect("restore original");
+        fs::write(&org_path, &original).expect("restore original");
     }
 }
 
@@ -457,28 +461,22 @@ fn edge_case_symlink_escape_blocked() {
 // EDGE CASE TESTS
 // ============================================================================
 
-/// Test: Import handles extremely long lines
+/// Test: Import handles extremely large content (huge heading title)
 #[test]
 fn edge_case_huge_line() {
     let _log = common::test_log("edge_case_huge_line");
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let org_path = workspace.root.join(".beads").join("issues.org");
 
-    // Read original to get a valid issue structure
-    let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
-    let first_line = original.lines().next().expect("at least one line");
-
-    // Parse and modify to add huge title
-    let mut issue: serde_json::Value = serde_json::from_str(first_line).expect("parse first line");
-
-    // Create a title that's ~1MB
+    // Create a heading with huge title (~1MB)
     let huge_title = "X".repeat(1_000_000);
-    issue["title"] = serde_json::Value::String(huge_title.clone());
+    let huge_org = format!(
+        "* OPEN {}\n:PROPERTIES:\n:ID: huge-test\n:END:\n\nSome body content\n",
+        huge_title
+    );
 
-    let huge_line = serde_json::to_string(&issue).expect("serialize huge issue");
-
-    // Write the huge line
-    fs::write(&jsonl_path, format!("{huge_line}\n")).expect("write huge line");
+    // Write the huge Org content
+    fs::write(&org_path, &huge_org).expect("write huge org");
 
     // Attempt import
     let import = run_br(
@@ -490,12 +488,12 @@ fn edge_case_huge_line() {
     // Log for postmortem
     let log = format!(
         "=== HUGE LINE TEST ===\n\
-         Line size: {} bytes\n\
+         Org size: {} bytes\n\
          Title size: {} chars\n\n\
          Import stdout: {}\n\
          Import stderr: {}\n\
          Exit status: {}",
-        huge_line.len(),
+        huge_org.len(),
         huge_title.len(),
         import.stdout,
         import.stderr,
@@ -506,13 +504,13 @@ fn edge_case_huge_line() {
 
     // Either succeed gracefully or fail cleanly (no crash, no partial write)
     eprintln!(
-        "[INFO] Huge line test: status={}, line_size={} bytes",
+        "[INFO] Huge content test: status={}, size={} bytes",
         import.status,
-        huge_line.len()
+        huge_org.len()
     );
 
     // Verify no partial/corrupted state by checking we can still list issues
-    // Use --no-auto-import --allow-stale to verify DB state despite corrupt/newer JSONL
+    // Use --no-auto-import --allow-stale to verify DB state despite corrupt/newer Org
     let list = run_br(
         &workspace,
         ["list", "--no-auto-import", "--allow-stale"],
@@ -521,14 +519,14 @@ fn edge_case_huge_line() {
     // If import succeeded, list should work; if it failed, list should show old data
     assert!(
         list.status.success(),
-        "SAFETY VIOLATION: System in corrupted state after huge line test!\n\
+        "SAFETY VIOLATION: System in corrupted state after huge content test!\n\
          List failed: {}\n\
          Log: {}",
         list.stderr,
         log_path.display()
     );
 
-    eprintln!("[PASS] Huge line handled without crash or corruption");
+    eprintln!("[PASS] Huge content handled without crash or corruption");
 }
 
 /// Test: Import rejects files with invalid UTF-8
@@ -536,10 +534,10 @@ fn edge_case_huge_line() {
 fn edge_case_invalid_utf8() {
     let _log = common::test_log("edge_case_invalid_utf8");
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let org_path = workspace.root.join(".beads").join("issues.org");
 
     // Read original as bytes
-    let original = fs::read(&jsonl_path).expect("read jsonl bytes");
+    let original = fs::read(&org_path).expect("read org bytes");
 
     // Create invalid UTF-8 by inserting bytes that are invalid UTF-8
     // 0xFF is never valid in UTF-8
@@ -547,7 +545,7 @@ fn edge_case_invalid_utf8() {
     invalid_bytes.insert(10, 0xFF);
     invalid_bytes.insert(11, 0xFE);
 
-    fs::write(&jsonl_path, &invalid_bytes).expect("write invalid utf8");
+    fs::write(&org_path, &invalid_bytes).expect("write invalid utf8");
 
     // Attempt import
     let import = run_br(
@@ -592,15 +590,15 @@ fn edge_case_invalid_utf8() {
     );
 }
 
-/// Test: Import handles JSONL with only whitespace
+/// Test: Import handles Org with only whitespace
 #[test]
 fn edge_case_whitespace_only() {
     let _log = common::test_log("edge_case_whitespace_only");
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let org_path = workspace.root.join(".beads").join("issues.org");
 
     // Write whitespace-only content
-    fs::write(&jsonl_path, "   \n\t\n   \n\n").expect("write whitespace");
+    fs::write(&org_path, "   \n\t\n   \n\n").expect("write whitespace");
 
     // Attempt import - should succeed with 0 issues imported
     let import = run_br(
@@ -622,12 +620,12 @@ fn edge_case_whitespace_only() {
     // Should succeed (empty import)
     assert!(
         import.status.success(),
-        "Import should handle whitespace-only JSONL gracefully.\n\
+        "Import should handle whitespace-only Org gracefully.\n\
          Log: {}",
         log_path.display()
     );
 
-    eprintln!("[PASS] Whitespace-only JSONL handled gracefully");
+    eprintln!("[PASS] Whitespace-only Org handled gracefully");
 }
 
 /// Test: Import handles zero-byte file
@@ -635,10 +633,10 @@ fn edge_case_whitespace_only() {
 fn edge_case_empty_file() {
     let _log = common::test_log("edge_case_empty_file");
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let org_path = workspace.root.join(".beads").join("issues.org");
 
     // Write empty file
-    fs::write(&jsonl_path, "").expect("write empty file");
+    fs::write(&org_path, "").expect("write empty file");
 
     // Attempt import
     let import = run_br(
@@ -669,31 +667,26 @@ fn edge_case_empty_file() {
     eprintln!("[PASS] Empty file handled gracefully");
 }
 
-/// Test: Import handles extremely nested JSON (stack depth attack)
+/// Test: Import handles extremely nested Org structures (deeply nested headings)
 #[test]
 fn edge_case_deeply_nested_json() {
     let _log = common::test_log("edge_case_deeply_nested_json");
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let org_path = workspace.root.join(".beads").join("issues.org");
 
-    // Create deeply nested JSON (100 levels)
-    // This might be valid but tests parser limits
-    let mut nested = String::new();
-    let depth = 100;
-    for _ in 0..depth {
-        nested.push_str("{\"nested\":");
+    // Create deeply nested Org headings (50 levels - Org uses * for nesting)
+    // More than ~10-15 levels is unusual in practice
+    let depth = 50;
+    let mut nested_org = String::new();
+    for i in 1..=depth {
+        let stars = "*".repeat(i.min(15)); // Org typically uses 1-15 stars
+        nested_org.push_str(&format!(
+            "{} OPEN Level {} heading\n:PROPERTIES:\n:ID: nested-{}\n:END:\n\n",
+            stars, i, i
+        ));
     }
-    nested.push_str("\"leaf\"");
-    for _ in 0..depth {
-        nested.push('}');
-    }
 
-    // Wrap in a minimal issue structure
-    let deep_json = format!(
-        "{{\"id\":\"deep-test\",\"title\":\"Deep\",\"status\":\"open\",\"data\":{nested}}}"
-    );
-
-    fs::write(&jsonl_path, format!("{deep_json}\n")).expect("write deeply nested");
+    fs::write(&org_path, &nested_org).expect("write deeply nested org");
 
     // Attempt import
     let import = run_br(
@@ -703,7 +696,7 @@ fn edge_case_deeply_nested_json() {
     );
 
     let log = format!(
-        "=== DEEPLY NESTED JSON TEST ===\n\
+        "=== DEEPLY NESTED ORG TEST ===\n\
          Nesting depth: {}\n\n\
          Import stdout: {}\n\
          Import stderr: {}\n\
@@ -715,12 +708,12 @@ fn edge_case_deeply_nested_json() {
 
     // Should either succeed or fail cleanly (no stack overflow)
     eprintln!(
-        "[INFO] Deeply nested JSON test: status={}, depth={}",
+        "[INFO] Deeply nested Org test: status={}, depth={}",
         import.status, depth
     );
 
     // The important thing is no crash/panic
-    // Use --no-auto-import --allow-stale to verify DB state despite corrupt/newer JSONL
+    // Use --no-auto-import --allow-stale to verify DB state despite corrupt/newer Org
     let list = run_br(
         &workspace,
         ["list", "--no-auto-import", "--allow-stale"],
@@ -728,29 +721,29 @@ fn edge_case_deeply_nested_json() {
     );
     assert!(
         list.status.success(),
-        "System should remain stable after deeply nested JSON test"
+        "System should remain stable after deeply nested Org test"
     );
 
-    eprintln!("[PASS] Deeply nested JSON handled without crash");
+    eprintln!("[PASS] Deeply nested Org handled without crash");
 }
 
 /// Test: Verify no partial writes on import failure
 #[test]
 fn edge_case_no_partial_writes_on_failure() {
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let org_path = workspace.root.join(".beads").join("issues.org");
 
     // First, get the current state
     let list_before = run_br(&workspace, ["list", "--json"], "list_before");
     let count_before = list_before.stdout.matches("\"id\"").count();
 
-    // Create malformed JSONL with valid issues followed by invalid
-    let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
+    // Create malformed Org with valid heading followed by heading without ID
+    let original = fs::read_to_string(&org_path).expect("read org");
     let malformed = format!(
-        "{}\n{{\"id\":\"new-valid\",\"title\":\"New Valid Issue\",\"status\":\"open\"}}\n{{invalid json here}}\n",
+        "{}\n* OPEN New Valid Issue\n:PROPERTIES:\n:ID: new-valid-1\n:END:\n\n* OPEN Missing ID issue\n:PROPERTIES:\n:END:\n",
         original.trim()
     );
-    fs::write(&jsonl_path, &malformed).expect("write malformed");
+    fs::write(&org_path, &malformed).expect("write malformed");
 
     // Attempt import - should fail
     let import = run_br(
@@ -760,7 +753,7 @@ fn edge_case_no_partial_writes_on_failure() {
     );
 
     // Check final state
-    // Use --no-auto-import --allow-stale to verify DB state despite corrupt/newer JSONL
+    // Use --no-auto-import --allow-stale to verify DB state despite corrupt/newer Org
     let list_after = run_br(
         &workspace,
         ["list", "--json", "--no-auto-import", "--allow-stale"],
@@ -783,7 +776,7 @@ fn edge_case_no_partial_writes_on_failure() {
     // Import should have failed
     assert!(
         !import.status.success(),
-        "Import should fail on invalid JSON"
+        "Import should fail on heading without ID"
     );
 
     // If atomicity is enforced, count should be unchanged
@@ -794,7 +787,7 @@ fn edge_case_no_partial_writes_on_failure() {
     );
 
     // At minimum, the system should be in a consistent state
-    // Use --no-auto-import --allow-stale to verify DB state despite corrupt/newer JSONL
+    // Use --no-auto-import --allow-stale to verify DB state despite corrupt/newer Org
     let list_final = run_br(
         &workspace,
         ["list", "--no-auto-import", "--allow-stale"],

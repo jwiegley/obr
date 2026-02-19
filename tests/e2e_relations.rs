@@ -529,17 +529,17 @@ fn e2e_close_blocked_requires_force() {
         ["close", &blocked_id, "--json"],
         "close_blocked_skip",
     );
+    // Since NothingToDo was added, closing a blocked issue without --force
+    // returns a non-zero exit code instead of an empty success array.
     assert!(
-        close_skip.status.success(),
-        "close blocked failed: {}",
-        close_skip.stderr
+        !close_skip.status.success(),
+        "close of blocked issue should fail without --force"
     );
-    let payload = extract_json_payload(&close_skip.stdout);
-    let close_json: Value = serde_json::from_str(&payload).expect("close json");
-    let closed = close_json.as_array().cloned().unwrap_or_default();
+    // Verify the error is NOTHING_TO_DO (all skipped)
     assert!(
-        closed.is_empty(),
-        "blocked issue should not close without --force"
+        close_skip.stderr.contains("NOTHING_TO_DO") || close_skip.stderr.contains("skipped"),
+        "expected NOTHING_TO_DO error, got: {}",
+        close_skip.stderr
     );
 
     let show = run_br(

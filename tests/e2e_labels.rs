@@ -649,24 +649,35 @@ fn e2e_label_persistence_jsonl() {
     let export = run_br(&workspace, ["sync", "--flush-only"], "export");
     assert!(export.status.success(), "export failed: {}", export.stderr);
 
-    // Read JSONL and verify labels
+    // Read export file and verify labels
+    // Try issues.org first (new default), then fall back to issues.jsonl
+    let org_path = workspace.root.join(".beads").join("issues.org");
     let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    let jsonl_content = std::fs::read_to_string(&jsonl_path).expect("read jsonl");
 
-    // Find the line for our issue
-    let issue_line = jsonl_content
-        .lines()
-        .find(|line| line.contains(&id))
-        .expect("issue not found in jsonl");
+    if org_path.exists() {
+        // Org format - parse and check
+        let org_content = std::fs::read_to_string(&org_path).expect("read org");
+        assert!(org_content.contains(&id), "issue not found in org file");
+        assert!(org_content.contains(":persisted:"), "label not persisted in org file");
+    } else {
+        // JSONL format - parse JSON
+        let jsonl_content = std::fs::read_to_string(&jsonl_path).expect("read jsonl");
 
-    let issue_json: Value = serde_json::from_str(issue_line).expect("parse issue json");
-    let labels = &issue_json["labels"];
-    assert!(labels.is_array(), "labels should be array in jsonl");
-    let label_arr: Vec<String> = serde_json::from_value(labels.clone()).unwrap();
-    assert!(
-        label_arr.contains(&"persisted".to_string()),
-        "label not persisted in jsonl"
-    );
+        // Find the line for our issue
+        let issue_line = jsonl_content
+            .lines()
+            .find(|line| line.contains(&id))
+            .expect("issue not found in jsonl");
+
+        let issue_json: Value = serde_json::from_str(issue_line).expect("parse issue json");
+        let labels = &issue_json["labels"];
+        assert!(labels.is_array(), "labels should be array in jsonl");
+        let label_arr: Vec<String> = serde_json::from_value(labels.clone()).unwrap();
+        assert!(
+            label_arr.contains(&"persisted".to_string()),
+            "label not persisted in jsonl"
+        );
+    }
 }
 
 // =============================================================================
