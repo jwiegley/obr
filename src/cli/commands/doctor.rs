@@ -333,6 +333,10 @@ fn check_merge_artifacts(beads_dir: &Path, checks: &mut Vec<CheckResult>) -> Res
 }
 
 fn discover_jsonl(beads_dir: &Path) -> Option<PathBuf> {
+    let org = beads_dir.join("issues.org");
+    if org.exists() {
+        return Some(org);
+    }
     let issues = beads_dir.join("issues.jsonl");
     if issues.exists() {
         return Some(issues);
@@ -344,57 +348,97 @@ fn discover_jsonl(beads_dir: &Path) -> Option<PathBuf> {
     None
 }
 
-fn check_jsonl(path: &Path, checks: &mut Vec<CheckResult>) -> Result<usize> {
-    let file = File::open(path)?;
-    let reader = BufReader::new(file);
-    let mut total = 0usize;
-    let mut invalid = Vec::new();
-    let mut invalid_count = 0usize;
-
-    for (idx, line) in reader.lines().enumerate() {
-        let line = line?;
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        total += 1;
-        if serde_json::from_str::<serde_json::Value>(trimmed).is_err() {
-            invalid_count += 1;
-            if invalid.len() < 10 {
-                invalid.push(idx + 1);
+fn check_export_file(path: &Path, checks: &mut Vec<CheckResult>) -> Result<usize> {
+    // Check if this is an Org file
+    if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("org")) {
+        // Org-specific validation
+        let contents = fs::read_to_string(path)?;
+        match crate::sync::org_bridge::org_text_to_issues(&contents) {
+            Ok(issues) => {
+                let total = issues.len();
+                push_check(
+                    checks,
+                    "jsonl.parse",
+                    CheckStatus::Ok,
+                    Some(format!("Parsed {total} issues from Org format")),
+                    Some(serde_json::json!({
+                        "path": path.display().to_string(),
+                        "records": total,
+                        "format": "org"
+                    })),
+                );
+                Ok(total)
+            }
+            Err(err) => {
+                push_check(
+                    checks,
+                    "jsonl.parse",
+                    CheckStatus::Error,
+                    Some(format!("Failed to parse Org file: {err}")),
+                    Some(serde_json::json!({
+                        "path": path.display().to_string(),
+                        "format": "org",
+                        "error": err.to_string()
+                    })),
+                );
+                Ok(0)
             }
         }
-    }
-
-    if invalid.is_empty() {
-        push_check(
-            checks,
-            "jsonl.parse",
-            CheckStatus::Ok,
-            Some(format!("Parsed {total} records")),
-            Some(serde_json::json!({
-                "path": path.display().to_string(),
-                "records": total
-            })),
-        );
     } else {
-        push_check(
-            checks,
-            "jsonl.parse",
-            CheckStatus::Error,
-            Some(format!(
-                "Malformed JSONL lines: {invalid_count} (first: {invalid:?})"
-            )),
-            Some(serde_json::json!({
-                "path": path.display().to_string(),
-                "records": total,
-                "invalid_lines": invalid,
-                "invalid_count": invalid_count
-            })),
-        );
-    }
+        // JSONL validation
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        let mut total = 0usize;
+        let mut invalid = Vec::new();
+        let mut invalid_count = 0usize;
 
-    Ok(total)
+        for (idx, line) in reader.lines().enumerate() {
+            let line = line?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            total += 1;
+            if serde_json::from_str::<serde_json::Value>(trimmed).is_err() {
+                invalid_count += 1;
+                if invalid.len() < 10 {
+                    invalid.push(idx + 1);
+                }
+            }
+        }
+
+        if invalid.is_empty() {
+            push_check(
+                checks,
+                "jsonl.parse",
+                CheckStatus::Ok,
+                Some(format!("Parsed {total} records")),
+                Some(serde_json::json!({
+                    "path": path.display().to_string(),
+                    "records": total,
+                    "format": "jsonl"
+                })),
+            );
+        } else {
+            push_check(
+                checks,
+                "jsonl.parse",
+                CheckStatus::Error,
+                Some(format!(
+                    "Malformed JSONL lines: {invalid_count} (first: {invalid:?})"
+                )),
+                Some(serde_json::json!({
+                    "path": path.display().to_string(),
+                    "records": total,
+                    "invalid_lines": invalid,
+                    "invalid_count": invalid_count,
+                    "format": "jsonl"
+                })),
+            );
+        }
+
+        Ok(total)
+    }
 }
 
 fn check_db_count(
@@ -843,14 +887,14 @@ pub fn execute(cli: &config::CliOverrides, ctx: &OutputContext) -> Result<()> {
         // Check for merge conflict markers
         check_sync_conflict_markers(path, &mut checks);
 
-        match check_jsonl(path, &mut checks) {
+        match check_export_file(path, &mut checks) {
             Ok(count) => Some(count),
             Err(err) => {
                 push_check(
                     &mut checks,
                     "jsonl.parse",
                     CheckStatus::Error,
-                    Some(format!("Failed to read JSONL: {err}")),
+                    Some(format!("Failed to read export file: {err}")),
                     Some(serde_json::json!({ "path": path.display().to_string() })),
                 );
                 None
@@ -861,7 +905,7 @@ pub fn execute(cli: &config::CliOverrides, ctx: &OutputContext) -> Result<()> {
             &mut checks,
             "jsonl.parse",
             CheckStatus::Warn,
-            Some("No JSONL file found (.beads/issues.jsonl or .beads/beads.jsonl)".to_string()),
+            Some("No export file found (.beads/issues.org, .beads/issues.jsonl, or .beads/beads.jsonl)".to_string()),
             None,
         );
         None
@@ -922,13 +966,13 @@ mod tests {
     }
 
     #[test]
-    fn test_check_jsonl_detects_malformed() -> Result<()> {
+    fn test_check_export_file_detects_malformed() -> Result<()> {
         let mut file = NamedTempFile::new().unwrap();
         std::io::Write::write_all(file.as_file_mut(), b"{\"id\":\"ok\"}\n")?;
         std::io::Write::write_all(file.as_file_mut(), b"{bad json}\n")?;
 
         let mut checks = Vec::new();
-        let count = check_jsonl(file.path(), &mut checks).unwrap();
+        let count = check_export_file(file.path(), &mut checks).unwrap();
         assert_eq!(count, 2);
 
         let check = find_check(&checks, "jsonl.parse").expect("check present");

@@ -446,6 +446,8 @@ fn extract_title_text(contents: &[InlineContent]) -> String {
 /// Handles subscripts, superscripts, bold, italic, etc. so that
 /// titles like "BEADS_DIR" (where orgize parses `_DIR` as a subscript)
 /// are reconstructed properly.
+///
+/// Preserves markup delimiters for roundtrip fidelity.
 fn flatten_inline_to_text(item: &InlineContent, out: &mut String) {
     match item {
         InlineContent::Text { value }
@@ -475,27 +477,60 @@ fn flatten_inline_to_text(item: &InlineContent, out: &mut String) {
                 out.push('}');
             }
         }
-        InlineContent::Bold { contents }
-        | InlineContent::Italic { contents }
-        | InlineContent::Underline { contents }
-        | InlineContent::StrikeThrough { contents } => {
+        InlineContent::Bold { contents } => {
+            out.push('*');
             for child in contents {
                 flatten_inline_to_text(child, out);
             }
+            out.push('*');
         }
-        InlineContent::Code { value } | InlineContent::Verbatim { value } => {
+        InlineContent::Italic { contents } => {
+            out.push('/');
+            for child in contents {
+                flatten_inline_to_text(child, out);
+            }
+            out.push('/');
+        }
+        InlineContent::Underline { contents } => {
+            out.push('_');
+            for child in contents {
+                flatten_inline_to_text(child, out);
+            }
+            out.push('_');
+        }
+        InlineContent::StrikeThrough { contents } => {
+            out.push('+');
+            for child in contents {
+                flatten_inline_to_text(child, out);
+            }
+            out.push('+');
+        }
+        InlineContent::Code { value } => {
+            out.push('~');
             out.push_str(value);
+            out.push('~');
+        }
+        InlineContent::Verbatim { value } => {
+            out.push('=');
+            out.push_str(value);
+            out.push('=');
         }
         InlineContent::LineBreak => out.push('\n'),
-        InlineContent::Entity { name } => out.push_str(name),
-        InlineContent::Link { description, path, .. } => {
+        InlineContent::Entity { name } => {
+            out.push('\\');
+            out.push_str(name);
+            out.push_str("{}");
+        }
+        InlineContent::Link { description, path } => {
+            out.push_str("[[");
+            out.push_str(path);
             if let Some(desc_contents) = description {
+                out.push_str("][");
                 for child in desc_contents {
                     flatten_inline_to_text(child, out);
                 }
-            } else {
-                out.push_str(path);
             }
+            out.push_str("]]");
         }
         _ => {} // Skip unknown variants
     }
@@ -796,5 +831,70 @@ mod tests {
         assert!(org_text.contains(":demo:test:"));
         assert!(org_text.contains(":ID:       bd-test"));
         assert!(org_text.contains("Test description"));
+    }
+
+    #[test]
+    fn test_flatten_inline_preserves_markup() {
+        use org2jsonl::model::InlineContent;
+
+        // Bold
+        let bold = InlineContent::Bold {
+            contents: vec![InlineContent::Text { value: "bold text".to_string() }],
+        };
+        let mut out = String::new();
+        flatten_inline_to_text(&bold, &mut out);
+        assert_eq!(out, "*bold text*");
+
+        // Italic
+        let italic = InlineContent::Italic {
+            contents: vec![InlineContent::Text { value: "italic".to_string() }],
+        };
+        out.clear();
+        flatten_inline_to_text(&italic, &mut out);
+        assert_eq!(out, "/italic/");
+
+        // Code
+        let code = InlineContent::Code { value: "some code".to_string() };
+        out.clear();
+        flatten_inline_to_text(&code, &mut out);
+        assert_eq!(out, "~some code~");
+
+        // Verbatim
+        let verbatim = InlineContent::Verbatim { value: "verbatim".to_string() };
+        out.clear();
+        flatten_inline_to_text(&verbatim, &mut out);
+        assert_eq!(out, "=verbatim=");
+
+        // Entity
+        let entity = InlineContent::Entity { name: "alpha".to_string() };
+        out.clear();
+        flatten_inline_to_text(&entity, &mut out);
+        assert_eq!(out, "\\alpha{}");
+
+        // StrikeThrough
+        let strike = InlineContent::StrikeThrough {
+            contents: vec![InlineContent::Text { value: "struck".to_string() }],
+        };
+        out.clear();
+        flatten_inline_to_text(&strike, &mut out);
+        assert_eq!(out, "+struck+");
+
+        // Link with description
+        let link = InlineContent::Link {
+            path: "https://example.com".to_string(),
+            description: Some(vec![InlineContent::Text { value: "Example".to_string() }]),
+        };
+        out.clear();
+        flatten_inline_to_text(&link, &mut out);
+        assert_eq!(out, "[[https://example.com][Example]]");
+
+        // Link without description
+        let bare_link = InlineContent::Link {
+            path: "https://example.com".to_string(),
+            description: None,
+        };
+        out.clear();
+        flatten_inline_to_text(&bare_link, &mut out);
+        assert_eq!(out, "[[https://example.com]]");
     }
 }

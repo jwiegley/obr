@@ -73,10 +73,11 @@ pub fn execute(
 
     // Compute recent activity by default (matches bd behavior).
     // Use --no-activity to skip this (for performance).
+    let export_path = beads_dir.join(crate::config::DEFAULT_JSONL_FILENAME);
     let recent_activity = if args.no_activity {
         None
     } else {
-        compute_recent_activity(&beads_dir, args.activity_hours)
+        compute_recent_activity(&beads_dir, &export_path, args.activity_hours)
     };
 
     let output = Statistics {
@@ -350,11 +351,10 @@ fn compute_label_breakdown(
     })
 }
 
-/// Compute recent activity from git log on issues.jsonl.
-fn compute_recent_activity(beads_dir: &Path, hours: u32) -> Option<RecentActivity> {
-    let jsonl_path = beads_dir.join("issues.jsonl");
-    if !jsonl_path.exists() {
-        debug!("No issues.jsonl found for activity tracking");
+/// Compute recent activity from git log on the export file.
+fn compute_recent_activity(beads_dir: &Path, export_path: &Path, hours: u32) -> Option<RecentActivity> {
+    if !export_path.exists() {
+        debug!("Export file not found for activity tracking");
         return None;
     }
 
@@ -362,6 +362,20 @@ fn compute_recent_activity(beads_dir: &Path, hours: u32) -> Option<RecentActivit
 
     // Get the git repo root (parent of .beads)
     let repo_root = beads_dir.parent().unwrap_or(beads_dir);
+
+    // Get relative path from repo root for git log
+    let rel_path = export_path
+        .strip_prefix(repo_root)
+        .ok()
+        .and_then(|p| p.to_str())
+        .unwrap_or_else(|| {
+            export_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("issues.org")
+        });
+
+    debug!("Tracking activity for: {}", rel_path);
 
     // Get commit count using relative path from repo root
     let mut child = Command::new("git")
@@ -371,7 +385,7 @@ fn compute_recent_activity(beads_dir: &Path, hours: u32) -> Option<RecentActivit
             "--since",
             &since,
             "--",
-            ".beads/issues.jsonl",
+            rel_path,
         ])
         .current_dir(repo_root)
         .stdout(Stdio::piped())
