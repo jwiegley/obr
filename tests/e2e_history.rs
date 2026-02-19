@@ -68,10 +68,10 @@ fn list_backup_files(workspace: &BrWorkspace) -> Vec<String> {
                 .file_name()
                 .and_then(|n| n.to_str())
                 .is_some_and(|n| n.starts_with("issues."));
-            let has_jsonl = path
+            let has_valid_ext = path
                 .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"));
-            has_prefix && has_jsonl
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl") || ext.eq_ignore_ascii_case("org"));
+            has_prefix && has_valid_ext
         })
         .map(|e| e.file_name().to_string_lossy().to_string())
         .collect();
@@ -366,7 +366,7 @@ fn e2e_history_restore_without_force_fails_when_exists() {
     assert!(!backups.is_empty(), "should have backup");
     let backup_file = &backups[0];
 
-    // Try restore without --force (issues.jsonl exists)
+    // Try restore without --force (issues.org exists)
     let restore = run_br(
         &workspace,
         ["history", "restore", backup_file],
@@ -374,7 +374,7 @@ fn e2e_history_restore_without_force_fails_when_exists() {
     );
     assert!(
         !restore.status.success(),
-        "restore should fail without --force when issues.jsonl exists"
+        "restore should fail without --force when issues.org exists"
     );
     assert!(
         restore.stderr.contains("force")
@@ -456,11 +456,11 @@ fn e2e_history_with_many_issues() {
     let list = run_br(&workspace, ["history", "list"], "history_list_many");
     assert!(list.status.success(), "list failed: {}", list.stderr);
 
-    // Verify the JSONL file exists and has content
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    if jsonl_path.exists() {
-        let jsonl_size = fs::metadata(&jsonl_path).unwrap().len();
-        assert!(jsonl_size > 0, "jsonl should have content after 50 issues");
+    // Verify the Org file exists and has content
+    let org_path = workspace.root.join(".beads").join("issues.org");
+    if org_path.exists() {
+        let org_size = fs::metadata(&org_path).unwrap().len();
+        assert!(org_size > 0, "org file should have content after 50 issues");
     }
 }
 
@@ -535,9 +535,9 @@ fn e2e_history_restore_without_force_succeeds_when_no_current() {
     assert!(!backups.is_empty(), "should have backup");
     let backup_file = &backups[0];
 
-    // Remove current issues.jsonl
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    fs::remove_file(&jsonl_path).expect("remove issues.jsonl");
+    // Remove current issues.org
+    let org_path = workspace.root.join(".beads").join("issues.org");
+    fs::remove_file(&org_path).expect("remove issues.org");
 
     // Restore WITHOUT --force should succeed when no current file exists
     let restore = run_br(
@@ -547,12 +547,12 @@ fn e2e_history_restore_without_force_succeeds_when_no_current() {
     );
     assert!(
         restore.status.success(),
-        "restore should succeed without --force when no issues.jsonl exists: {}",
+        "restore should succeed without --force when no issues.org exists: {}",
         restore.stderr
     );
 
     // Verify file was restored
-    assert!(jsonl_path.exists(), "issues.jsonl should be restored");
+    assert!(org_path.exists(), "issues.org should be restored");
 }
 
 #[test]
@@ -601,8 +601,8 @@ fn e2e_history_restore_verifies_content() {
     );
 
     // Verify restored content matches backup
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    let restored_content = fs::read_to_string(&jsonl_path).expect("read restored");
+    let org_path = workspace.root.join(".beads").join("issues.org");
+    let restored_content = fs::read_to_string(&org_path).expect("read restored");
     assert_eq!(
         backup_content, restored_content,
         "restored content should match backup exactly"
@@ -626,11 +626,11 @@ fn e2e_history_diff_fails_when_no_current_jsonl() {
     assert!(!backups.is_empty(), "should have backup");
     let backup_file = &backups[0];
 
-    // Remove current issues.jsonl
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    fs::remove_file(&jsonl_path).expect("remove issues.jsonl");
+    // Remove current issues.org
+    let org_path = workspace.root.join(".beads").join("issues.org");
+    fs::remove_file(&org_path).expect("remove issues.org");
 
-    // Diff should fail when current issues.jsonl doesn't exist
+    // Diff should fail when current issues.org doesn't exist
     let diff = run_br(
         &workspace,
         ["history", "diff", backup_file],
@@ -638,11 +638,11 @@ fn e2e_history_diff_fails_when_no_current_jsonl() {
     );
     assert!(
         !diff.status.success(),
-        "diff should fail when no current issues.jsonl"
+        "diff should fail when no current issues.org"
     );
     assert!(
-        diff.stderr.contains("not found") || diff.stderr.contains("issues.jsonl"),
-        "error should mention missing issues.jsonl: {}",
+        diff.stderr.contains("not found") || diff.stderr.contains("issues.org"),
+        "error should mention missing issues.org: {}",
         diff.stderr
     );
 }

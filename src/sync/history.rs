@@ -70,7 +70,11 @@ pub fn backup_before_export(
 
     // Create timestamped backup
     let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
-    let backup_name = format!("{file_stem}.{timestamp}.jsonl");
+    let file_ext = target_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("jsonl");
+    let backup_name = format!("{file_stem}.{timestamp}.{file_ext}");
     let backup_path = history_dir.join(backup_name);
 
     // Check if the content is identical to the most recent backup (deduplication)
@@ -168,14 +172,14 @@ pub fn list_backups(history_dir: &Path, filter_prefix: Option<&str>) -> Result<V
             }
         }
 
-        let is_jsonl = path
+        let is_valid_ext = path
             .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"));
-        if !is_jsonl {
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl") || ext.eq_ignore_ascii_case("org"));
+        if !is_valid_ext {
             continue;
         }
 
-        // Parse timestamp from filename: <stem>.YYYYMMDD_HHMMSS.jsonl
+        // Parse timestamp from filename: <stem>.YYYYMMDD_HHMMSS.<ext>
         // We split by dot and treat the second-to-last component as the timestamp.
         let parts: Vec<&str> = name.split('.').collect();
         if parts.len() < 3 {

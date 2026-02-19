@@ -60,7 +60,7 @@ pub fn execute(
     if !metadata_existed || force {
         let metadata = r#"{
   "database": "beads.db",
-  "jsonl_export": "issues.jsonl"
+  "jsonl_export": "issues.org"
 }"#;
         fs::write(metadata_path, metadata)?;
     }
@@ -96,12 +96,12 @@ last-touched
         fs::write(gitignore_path, gitignore)?;
     }
 
-    // Write empty issues.jsonl for compatibility with bv (beads_viewer)
+    // Write empty issues.org for compatibility with bv (beads_viewer)
     // bv expects this file to exist even if there are no issues yet
-    let jsonl_path = beads_dir.join("issues.jsonl");
-    let jsonl_existed = jsonl_path.exists();
-    if !jsonl_existed {
-        fs::write(&jsonl_path, "")?;
+    let org_path = beads_dir.join("issues.org");
+    let org_existed = org_path.exists();
+    if !org_existed {
+        fs::write(&org_path, "")?;
     }
 
     if matches!(ctx.mode(), OutputMode::Quiet) {
@@ -116,7 +116,7 @@ last-touched
             force,
             config_existed,
             gitignore_existed,
-            jsonl_existed,
+            org_existed,
             prefix_set.as_deref(),
         );
         render_init_rich(&beads_dir, &steps, prefix_set.as_deref(), ctx);
@@ -150,7 +150,7 @@ fn build_init_steps(
     force: bool,
     config_existed: bool,
     gitignore_existed: bool,
-    jsonl_existed: bool,
+    org_existed: bool,
     prefix: Option<&str>,
 ) -> Vec<InitStep> {
     let mut steps = Vec::new();
@@ -204,8 +204,8 @@ fn build_init_steps(
     });
 
     steps.push(InitStep {
-        label: "issues.jsonl (for bv compatibility)".to_string(),
-        status: if jsonl_existed {
+        label: "issues.org".to_string(),
+        status: if org_existed {
             InitStepStatus::Existing
         } else {
             InitStepStatus::Created
@@ -250,7 +250,7 @@ fn render_init_rich(
     content.append("    |-- metadata.json\n");
     content.append("    |-- config.yaml\n");
     content.append("    |-- .gitignore\n");
-    content.append("    `-- issues.jsonl\n");
+    content.append("    `-- issues.org\n");
 
     content.append("\n");
     content.append_styled("Next steps:\n", theme.emphasis.clone());
@@ -308,7 +308,7 @@ mod tests {
         assert!(temp_dir.path().join(".beads/metadata.json").exists());
         assert!(temp_dir.path().join(".beads/config.yaml").exists());
         assert!(temp_dir.path().join(".beads/.gitignore").exists());
-        assert!(temp_dir.path().join(".beads/issues.jsonl").exists());
+        assert!(temp_dir.path().join(".beads/issues.org").exists());
         info!("test_init_creates_beads_directory: assertions passed");
     }
 
@@ -399,7 +399,7 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
         assert_eq!(parsed["database"], "beads.db");
-        assert_eq!(parsed["jsonl_export"], "issues.jsonl");
+        assert_eq!(parsed["jsonl_export"], "issues.org");
         info!("test_metadata_json_content: assertions passed");
     }
 

@@ -165,6 +165,15 @@ fn e2e_sync_roundtrip() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
+    // Override metadata to use JSONL format for this test since we
+    // directly manipulate file contents as JSON lines.
+    let metadata_path = workspace.root.join(".beads").join("metadata.json");
+    fs::write(
+        &metadata_path,
+        r#"{"database": "beads.db", "jsonl_export": "issues.jsonl"}"#,
+    )
+    .expect("write metadata override");
+
     let create = run_br(
         &workspace,
         ["create", "Original title", "--no-auto-flush"],
@@ -279,6 +288,15 @@ fn e2e_no_db_read_write() {
 
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+
+    // Override metadata to use JSONL format for this test since we
+    // directly manipulate file contents as JSON lines.
+    let metadata_path = workspace.root.join(".beads").join("metadata.json");
+    fs::write(
+        &metadata_path,
+        r#"{"database": "beads.db", "jsonl_export": "issues.jsonl"}"#,
+    )
+    .expect("write metadata override");
 
     let create = run_br(&workspace, ["create", "Seed issue"], "create_seed");
     assert!(create.status.success(), "create failed: {}", create.stderr);
@@ -497,8 +515,21 @@ fn e2e_sync_conflict_markers_aborts_import() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
+    // Override metadata to use JSONL format for this test since we
+    // directly manipulate file contents as JSON lines.
+    let metadata_path = workspace.root.join(".beads").join("metadata.json");
+    fs::write(
+        &metadata_path,
+        r#"{"database": "beads.db", "jsonl_export": "issues.jsonl"}"#,
+    )
+    .expect("write metadata override");
+
     // Create initial issue and export
-    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    let create = run_br(
+        &workspace,
+        ["create", "Test issue", "--no-auto-flush"],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     let flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
@@ -578,12 +609,12 @@ fn e2e_sync_tombstone_preservation() {
         flush.stderr
     );
 
-    // Read the JSONL and verify tombstone is present
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    let contents = fs::read_to_string(&jsonl_path).expect("read jsonl");
+    // Read the Org file and verify tombstone is present
+    let org_path = workspace.root.join(".beads").join("issues.org");
+    let contents = fs::read_to_string(&org_path).expect("read org");
     assert!(
-        contents.contains("\"status\":\"tombstone\""),
-        "JSONL should contain tombstone status"
+        contents.contains("TOMBSTONE"),
+        "Org file should contain TOMBSTONE keyword"
     );
 
     // Create a new workspace to simulate importing into fresh database
@@ -591,9 +622,9 @@ fn e2e_sync_tombstone_preservation() {
     let init2 = run_br(&workspace2, ["init"], "init2");
     assert!(init2.status.success(), "init2 failed: {}", init2.stderr);
 
-    // Copy the JSONL to new workspace
-    let jsonl_path2 = workspace2.root.join(".beads").join("issues.jsonl");
-    fs::copy(&jsonl_path, &jsonl_path2).expect("copy jsonl");
+    // Copy the Org file to new workspace
+    let org_path2 = workspace2.root.join(".beads").join("issues.org");
+    fs::copy(&org_path, &org_path2).expect("copy org");
 
     // Import
     let import = run_br(
@@ -625,8 +656,21 @@ fn e2e_sync_tombstone_protection() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
+    // Override metadata to use JSONL format for this test since we
+    // directly manipulate file contents as JSON lines.
+    let metadata_path = workspace.root.join(".beads").join("metadata.json");
+    fs::write(
+        &metadata_path,
+        r#"{"database": "beads.db", "jsonl_export": "issues.jsonl"}"#,
+    )
+    .expect("write metadata override");
+
     // Create and delete an issue
-    let create = run_br(&workspace, ["create", "Protected issue"], "create");
+    let create = run_br(
+        &workspace,
+        ["create", "Protected issue", "--no-auto-flush"],
+        "create",
+    );
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
@@ -787,15 +831,15 @@ fn e2e_jsonl_discovery_prefers_issues() {
         flush.stderr
     );
 
-    // Verify issues.jsonl was created (default)
-    let issues_path = workspace.root.join(".beads").join("issues.jsonl");
-    assert!(issues_path.exists(), "issues.jsonl should be created");
+    // Verify issues.org was created (default)
+    let issues_path = workspace.root.join(".beads").join("issues.org");
+    assert!(issues_path.exists(), "issues.org should be created");
 
     // Create a legacy beads.jsonl with different content
     let beads_path = workspace.root.join(".beads").join("beads.jsonl");
     fs::write(&beads_path, "{\"id\": \"fake-id\", \"title\": \"Legacy issue\", \"status\": \"open\", \"issue_type\": \"task\", \"priority\": 2, \"labels\": [], \"created_at\": \"2026-01-01T00:00:00Z\", \"updated_at\": \"2026-01-01T00:00:00Z\", \"ephemeral\": false, \"pinned\": false, \"is_template\": false, \"dependencies\": [], \"comments\": []}\n").expect("write legacy");
 
-    // When both exist, import should use issues.jsonl (the issue we created)
+    // When both exist, import should use issues.org (the issue we created)
     let import = run_br(
         &workspace,
         ["sync", "--import-only", "--force"],
@@ -803,7 +847,7 @@ fn e2e_jsonl_discovery_prefers_issues() {
     );
     assert!(import.status.success(), "import failed: {}", import.stderr);
 
-    // Verify our issue exists (from issues.jsonl), not the fake one
+    // Verify our issue exists (from issues.org), not the fake one
     let show = run_br(&workspace, ["show", &id, "--json"], "show_original");
     assert!(
         show.status.success(),
@@ -818,7 +862,7 @@ fn e2e_jsonl_discovery_prefers_issues() {
     let fake_json: Vec<Value> = serde_json::from_str(&fake_payload).unwrap_or_default();
     assert!(
         fake_json.is_empty() || show_fake.stderr.contains("not found"),
-        "fake issue from beads.jsonl should not be imported when issues.jsonl exists"
+        "fake issue from beads.jsonl should not be imported when issues.org exists"
     );
 }
 
@@ -829,7 +873,11 @@ fn e2e_jsonl_discovery_uses_legacy_when_no_issues() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Remove issues.jsonl if it exists
+    // Remove issues.org and issues.jsonl if they exist
+    let org_path = workspace.root.join(".beads").join("issues.org");
+    if org_path.exists() {
+        fs::remove_file(&org_path).expect("remove issues.org");
+    }
     let issues_path = workspace.root.join(".beads").join("issues.jsonl");
     if issues_path.exists() {
         fs::remove_file(&issues_path).expect("remove issues.jsonl");
@@ -839,7 +887,7 @@ fn e2e_jsonl_discovery_uses_legacy_when_no_issues() {
     let beads_path = workspace.root.join(".beads").join("beads.jsonl");
     fs::write(&beads_path, "{\"id\": \"bd-legacy1\", \"title\": \"Legacy issue\", \"status\": \"open\", \"issue_type\": \"task\", \"priority\": 2, \"labels\": [], \"created_at\": \"2026-01-01T00:00:00Z\", \"updated_at\": \"2026-01-01T00:00:00Z\", \"ephemeral\": false, \"pinned\": false, \"is_template\": false, \"dependencies\": [], \"comments\": []}\n").expect("write legacy");
 
-    // Import should use beads.jsonl since issues.jsonl doesn't exist
+    // Import should use beads.jsonl since neither issues.org nor issues.jsonl exist
     let import = run_br(
         &workspace,
         ["sync", "--import-only", "--force"],

@@ -60,6 +60,9 @@ once_cell = "1.19"
 regex = "1.11"
 unicode-width = "0.2"
 
+# Org-mode integration
+org2jsonl = { path = "../org2jsonl" }
+
 # Versioning
 semver = "1.0"
 

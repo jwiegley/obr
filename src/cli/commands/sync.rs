@@ -202,9 +202,9 @@ fn validate_sync_paths(
         .extension()
         .and_then(|ext| ext.to_str())
         .map(str::to_ascii_lowercase);
-    if extension.as_deref() != Some("jsonl") {
+    if !matches!(extension.as_deref(), Some("jsonl" | "org")) {
         return Err(BeadsError::Config(format!(
-            "JSONL path must end with .jsonl: {}",
+            "Sync path must end with .jsonl or .org: {}",
             jsonl_path.display()
         )));
     }
@@ -223,7 +223,11 @@ fn validate_sync_paths(
     }
 
     let manifest_path = canonical_beads.join(".manifest.json");
-    let jsonl_temp_path = jsonl_path.with_extension("jsonl.tmp");
+    let jsonl_temp_path = if extension.as_deref() == Some("org") {
+        jsonl_path.with_extension("org.tmp")
+    } else {
+        jsonl_path.with_extension("jsonl.tmp")
+    };
 
     if contains_git_dir(&jsonl_path) {
         warn!(

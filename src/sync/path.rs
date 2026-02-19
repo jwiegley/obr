@@ -49,8 +49,10 @@ pub const ALLOWED_EXTENSIONS: &[&str] = &[
     "db",        // SQLite database
     "db-wal",    // SQLite WAL
     "db-shm",    // SQLite shared memory
-    "jsonl",     // JSONL export
+    "jsonl",     // JSONL export (legacy)
     "jsonl.tmp", // Atomic write temp files
+    "org",       // Org-mode export
+    "org.tmp",   // Org atomic write temp files
 ];
 
 /// Files explicitly allowed by exact name within `.beads/`.
@@ -475,11 +477,15 @@ pub fn validate_sync_path_with_external(
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
 
-        // Case-sensitive check is intentional: JSONL files should use lowercase .jsonl extension
+        // Case-sensitive check is intentional: files should use lowercase extensions
         #[allow(clippy::case_sensitive_file_extension_comparisons)]
-        if !file_name.ends_with(".jsonl") && !file_name.ends_with(".jsonl.tmp") {
+        if !file_name.ends_with(".jsonl")
+            && !file_name.ends_with(".jsonl.tmp")
+            && !file_name.ends_with(".org")
+            && !file_name.ends_with(".org.tmp")
+        {
             return Err(BeadsError::Config(format!(
-                "External path '{}' must be a .jsonl file",
+                "External path '{}' must be a .jsonl or .org file",
                 path.display()
             )));
         }

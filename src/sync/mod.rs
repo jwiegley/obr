@@ -8,6 +8,7 @@
 //! - Path validation and allowlist enforcement
 
 pub mod history;
+pub mod org_bridge;
 pub mod path;
 
 pub use path::{
@@ -1132,6 +1133,16 @@ pub fn analyze_jsonl(path: &Path) -> Result<(usize, HashSet<String>)> {
         Err(e) => return Err(BeadsError::Io(e)),
     };
 
+    // Detect format based on extension
+    let is_org_format = path
+        .extension()
+        .and_then(|e| e.to_str()) == Some("org");
+
+    if is_org_format {
+        // Count level-1 headings in Org file
+        return count_issues_in_org(path);
+    }
+
     let mut reader = BufReader::new(file);
     let mut count = 0;
     let mut ids = HashSet::new();
@@ -1156,6 +1167,36 @@ pub fn analyze_jsonl(path: &Path) -> Result<(usize, HashSet<String>)> {
 
         ids.insert(partial.id);
         count += 1;
+    }
+
+    Ok((count, ids))
+}
+
+/// Count issues in an Org file by counting level-1 headings and extracting IDs.
+fn count_issues_in_org(path: &Path) -> Result<(usize, HashSet<String>)> {
+    let content = fs::read_to_string(path)?;
+    let entries = org2jsonl::org_to_json::org_to_entries_with_keywords(
+        &content,
+        org_bridge::BEADS_TODO_KEYWORDS,
+        org_bridge::BEADS_DONE_KEYWORDS,
+    );
+
+    let mut count = 0;
+    let mut ids = HashSet::new();
+
+    for entry in entries {
+        if let org2jsonl::model::EntryContent::Heading(heading) = entry.content {
+            if heading.level == 1 {
+                // Extract ID from properties
+                for prop in &heading.properties {
+                    if prop.key == "ID" {
+                        ids.insert(prop.value.trim().to_string());
+                        break;
+                    }
+                }
+                count += 1;
+            }
+        }
     }
 
     Ok((count, ids))
@@ -1372,7 +1413,17 @@ pub fn export_to_jsonl_with_policy(
     // Ensure parent directory exists
     fs::create_dir_all(parent_dir)?;
 
-    let temp_path = output_path.with_extension("jsonl.tmp");
+    // Determine file format based on extension
+    let is_org_format = output_path
+        .extension()
+        .and_then(|e| e.to_str()) == Some("org");
+
+    let temp_ext = if is_org_format { "org.tmp" } else { "jsonl.tmp" };
+    let temp_path = if is_org_format {
+        output_path.with_extension(temp_ext)
+    } else {
+        output_path.with_extension("jsonl.tmp")
+    };
 
     // Validate temp file path (PC-4: temp files must be in same directory as target)
     if let Some(ref beads_dir) = config.beads_dir {
@@ -1392,12 +1443,14 @@ pub fn export_to_jsonl_with_policy(
     let temp_file = File::create(&temp_path)?;
     let mut writer = BufWriter::new(temp_file);
 
-    // Write JSONL and compute hash
+    // Compute hash and prepare data
     let mut hasher = Sha256::new();
     let mut exported_ids = Vec::new();
     let mut skipped_tombstone_ids = Vec::new();
     let mut issue_hashes = Vec::new();
+    let mut issues_for_export = Vec::new();
 
+    // Filter and collect issues for export
     for issue in &issues {
         // Skip expired tombstones
         if issue.is_expired_tombstone(config.retention_days) {
@@ -1405,32 +1458,6 @@ pub fn export_to_jsonl_with_policy(
             progress.inc(1);
             continue;
         }
-
-        let json = match serde_json::to_string(issue) {
-            Ok(json) => json,
-            Err(err) => {
-                ctx.handle_error(ExportError::new(
-                    ExportEntityType::Issue,
-                    issue.id.clone(),
-                    err.to_string(),
-                ))?;
-                progress.inc(1);
-                continue;
-            }
-        };
-
-        if let Err(err) = writeln!(writer, "{json}") {
-            ctx.handle_error(ExportError::new(
-                ExportEntityType::Issue,
-                issue.id.clone(),
-                err.to_string(),
-            ))?;
-            progress.inc(1);
-            continue;
-        }
-
-        hasher.update(json.as_bytes());
-        hasher.update(b"\n");
 
         exported_ids.push(issue.id.clone());
         issue_hashes.push((
@@ -1444,7 +1471,49 @@ pub fn export_to_jsonl_with_policy(
         report.dependencies_exported += issue.dependencies.len();
         report.labels_exported += issue.labels.len();
         report.comments_exported += issue.comments.len();
+        issues_for_export.push(issue.clone());
         progress.inc(1);
+    }
+
+    // Write in the appropriate format
+    if is_org_format {
+        // Write Org-mode format
+        let org_text = org_bridge::issues_to_org_text(&issues_for_export);
+        if let Err(err) = writer.write_all(org_text.as_bytes()) {
+            ctx.handle_error(ExportError::new(
+                ExportEntityType::Issue,
+                "all".to_string(),
+                err.to_string(),
+            ))?;
+        }
+        hasher.update(org_text.as_bytes());
+    } else {
+        // Write JSONL format
+        for issue in &issues_for_export {
+            let json = match serde_json::to_string(issue) {
+                Ok(json) => json,
+                Err(err) => {
+                    ctx.handle_error(ExportError::new(
+                        ExportEntityType::Issue,
+                        issue.id.clone(),
+                        err.to_string(),
+                    ))?;
+                    continue;
+                }
+            };
+
+            if let Err(err) = writeln!(writer, "{json}") {
+                ctx.handle_error(ExportError::new(
+                    ExportEntityType::Issue,
+                    issue.id.clone(),
+                    err.to_string(),
+                ))?;
+                continue;
+            }
+
+            hasher.update(json.as_bytes());
+            hasher.update(b"\n");
+        }
     }
 
     progress.finish_with_message("Export complete");
@@ -1856,8 +1925,18 @@ pub fn auto_flush(storage: &mut SqliteStorage, beads_dir: &Path) -> Result<AutoF
 
     tracing::debug!(dirty_count, "Auto-flush: exporting dirty issues");
 
-    // Default JSONL path
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    // Resolve the export path from metadata (respects jsonl_export setting)
+    let jsonl_path = match crate::config::Metadata::load(beads_dir) {
+        Ok(metadata) => {
+            let export_name = &metadata.jsonl_export;
+            if export_name.contains('/') || export_name.contains('\\') {
+                PathBuf::from(export_name)
+            } else {
+                beads_dir.join(export_name)
+            }
+        }
+        Err(_) => beads_dir.join(crate::config::DEFAULT_JSONL_FILENAME),
+    };
 
     // Configure export with defaults, including beads_dir for path validation
     let export_config = ExportConfig {
@@ -1891,6 +1970,18 @@ pub fn auto_flush(storage: &mut SqliteStorage, beads_dir: &Path) -> Result<AutoF
 ///
 /// Returns an error if the file cannot be read or contains invalid JSON.
 pub fn read_issues_from_jsonl(path: &Path) -> Result<Vec<Issue>> {
+    // Detect format based on extension
+    let is_org_format = path
+        .extension()
+        .and_then(|e| e.to_str()) == Some("org");
+
+    if is_org_format {
+        // Read as Org format
+        let content = fs::read_to_string(path)?;
+        return org_bridge::org_text_to_issues(&content);
+    }
+
+    // Read as JSONL format
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let mut issues = Vec::new();
@@ -2129,23 +2220,36 @@ pub fn import_from_jsonl(
     // Step 1: Conflict marker scan
     ensure_no_conflict_markers(input_path)?;
 
-    // Step 2: Parse JSONL with 2MB buffer
-    let spinner = create_spinner("Reading JSONL", config.show_progress);
-    let file = File::open(input_path)?;
-    let reader = BufReader::with_capacity(2 * 1024 * 1024, file);
-    let mut issues = Vec::new();
+    // Step 2: Parse file (JSONL or Org format)
+    let is_org_format = input_path
+        .extension()
+        .and_then(|e| e.to_str()) == Some("org");
 
-    for (line_num, line) in reader.lines().enumerate() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
+    let mut issues = if is_org_format {
+        let spinner = create_spinner("Reading Org file", config.show_progress);
+        let content = fs::read_to_string(input_path)?;
+        let parsed_issues = org_bridge::org_text_to_issues(&content)?;
+        spinner.finish_with_message("Read Org file");
+        parsed_issues
+    } else {
+        let spinner = create_spinner("Reading JSONL", config.show_progress);
+        let file = File::open(input_path)?;
+        let reader = BufReader::with_capacity(2 * 1024 * 1024, file);
+        let mut parsed_issues = Vec::new();
+
+        for (line_num, line) in reader.lines().enumerate() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let issue: Issue = serde_json::from_str(&line).map_err(|e| {
+                BeadsError::Config(format!("Invalid JSON at line {}: {}", line_num + 1, e))
+            })?;
+            parsed_issues.push(issue);
         }
-        let issue: Issue = serde_json::from_str(&line).map_err(|e| {
-            BeadsError::Config(format!("Invalid JSON at line {}: {}", line_num + 1, e))
-        })?;
-        issues.push(issue);
-    }
-    spinner.finish_with_message("Read JSONL");
+        spinner.finish_with_message("Read JSONL");
+        parsed_issues
+    };
 
     let mut result = ImportResult::default();
 

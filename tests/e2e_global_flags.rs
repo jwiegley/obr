@@ -379,10 +379,10 @@ fn e2e_allow_stale_flag() {
     let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(sync.status.success(), "sync flush failed: {}", sync.stderr);
 
-    // Modify JSONL directly (makes DB "stale" relative to JSONL)
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    let contents = fs::read_to_string(&jsonl_path).expect("read jsonl");
-    fs::write(&jsonl_path, format!("{}\n", contents.trim())).expect("write jsonl");
+    // Modify Org file directly (makes DB "stale" relative to Org)
+    let org_path = workspace.root.join(".beads").join("issues.org");
+    let contents = fs::read_to_string(&org_path).expect("read org");
+    fs::write(&org_path, format!("{}\n", contents.trim())).expect("write org");
 
     // List with --allow-stale should succeed even if DB is stale
     let list = run_br(&workspace, ["--allow-stale", "list"], "list_allow_stale");
@@ -445,12 +445,12 @@ fn e2e_no_auto_flush_flag() {
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Check if JSONL exists and if it contains the issue
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    // Check if Org file exists and if it contains the issue
+    let org_path = workspace.root.join(".beads").join("issues.org");
 
-    if jsonl_path.exists() {
-        let contents = fs::read_to_string(&jsonl_path).expect("read jsonl");
-        // With --no-auto-flush, the issue should NOT be in JSONL yet
+    if org_path.exists() {
+        let contents = fs::read_to_string(&org_path).expect("read org");
+        // With --no-auto-flush, the issue should NOT be in Org yet
         // (unless there was a previous sync)
         // This is a soft check since auto-import might have created empty file
         if contents.contains("No auto-flush test") {
@@ -463,8 +463,8 @@ fn e2e_no_auto_flush_flag() {
     let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(sync.status.success(), "sync flush failed: {}", sync.stderr);
 
-    // After flush, issue should be in JSONL
-    let contents = fs::read_to_string(&jsonl_path).expect("read jsonl");
+    // After flush, issue should be in Org file
+    let contents = fs::read_to_string(&org_path).expect("read org");
     assert!(
         contents.contains("No auto-flush test"),
         "issue should be in JSONL after explicit flush"

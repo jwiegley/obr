@@ -55,10 +55,10 @@ fn list_backup_files(workspace: &BrWorkspace) -> Vec<String> {
                 .file_name()
                 .and_then(|n| n.to_str())
                 .is_some_and(|n| n.starts_with("issues."));
-            let has_jsonl = path
+            let has_valid_ext = path
                 .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"));
-            has_prefix && has_jsonl
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl") || ext.eq_ignore_ascii_case("org"));
+            has_prefix && has_valid_ext
         })
         .map(|e| e.file_name().to_string_lossy().to_string())
         .collect();
@@ -129,7 +129,7 @@ fn e2e_history_restore_verifies_content_integrity() {
     let original_backup_content = fs::read(&backup_path).expect("read backup");
 
     // Verify issues.jsonl has MORE lines than the backup (4 vs 2)
-    let current_content = read_file_bytes(&workspace, ".beads/issues.jsonl");
+    let current_content = read_file_bytes(&workspace, ".beads/issues.org");
     let current_lines = current_content.iter().filter(|&&b| b == b'\n').count();
     let backup_lines = original_backup_content
         .iter()
@@ -153,7 +153,7 @@ fn e2e_history_restore_verifies_content_integrity() {
     );
 
     // Verify restored content matches original backup exactly
-    let restored_content = read_file_bytes(&workspace, ".beads/issues.jsonl");
+    let restored_content = read_file_bytes(&workspace, ".beads/issues.org");
     assert_eq!(
         restored_content, original_backup_content,
         "restored content should match original backup exactly"
@@ -268,7 +268,7 @@ fn e2e_history_restore_corrupt_backup_succeeds_copy() {
     );
 
     // The restored issues.jsonl should contain the corrupt content
-    let restored_content = fs::read_to_string(workspace.root.join(".beads").join("issues.jsonl"))
+    let restored_content = fs::read_to_string(workspace.root.join(".beads").join("issues.org"))
         .expect("read restored");
     assert!(
         restored_content.contains("this is not valid json"),
@@ -310,7 +310,7 @@ fn e2e_history_restore_empty_backup() {
     );
 
     // Verify the restored file is empty
-    let restored = fs::read_to_string(workspace.root.join(".beads").join("issues.jsonl"))
+    let restored = fs::read_to_string(workspace.root.join(".beads").join("issues.org"))
         .expect("read restored");
     assert!(restored.is_empty(), "restored file should be empty");
 }
@@ -570,7 +570,7 @@ fn e2e_history_restore_with_real_dataset() {
 
     // Verify content matches
     let restored_content =
-        fs::read(workspace.root.join(".beads").join("issues.jsonl")).expect("read restored");
+        fs::read(workspace.root.join(".beads").join("issues.org")).expect("read restored");
     assert_eq!(
         restored_content, original_content,
         "restored content should match backup"
@@ -676,8 +676,8 @@ fn e2e_history_restore_succeeds_without_force_when_missing() {
     assert!(!backups.is_empty());
     let backup_file = &backups[0];
 
-    // Delete the current issues.jsonl
-    fs::remove_file(workspace.root.join(".beads").join("issues.jsonl")).expect("delete jsonl");
+    // Delete the current issues.org
+    fs::remove_file(workspace.root.join(".beads").join("issues.org")).expect("delete org");
 
     // Restore without --force should succeed when target doesn't exist
     let restore = run_br(
@@ -692,7 +692,7 @@ fn e2e_history_restore_succeeds_without_force_when_missing() {
     );
 
     // Verify file was restored
-    assert!(workspace.root.join(".beads").join("issues.jsonl").exists());
+    assert!(workspace.root.join(".beads").join("issues.org").exists());
 }
 
 #[test]

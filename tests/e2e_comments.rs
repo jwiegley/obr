@@ -577,10 +577,10 @@ fn e2e_comments_sync_roundtrip() {
     let init2 = run_br(&workspace2, ["init"], "init2");
     assert!(init2.status.success(), "init2 failed: {}", init2.stderr);
 
-    // Copy JSONL to new workspace
-    let jsonl_src = workspace.root.join(".beads").join("issues.jsonl");
-    let jsonl_dst = workspace2.root.join(".beads").join("issues.jsonl");
-    std::fs::copy(&jsonl_src, &jsonl_dst).expect("copy jsonl");
+    // Copy Org file to new workspace
+    let org_src = workspace.root.join(".beads").join("issues.org");
+    let org_dst = workspace2.root.join(".beads").join("issues.org");
+    std::fs::copy(&org_src, &org_dst).expect("copy org");
 
     // Import
     let import = run_br(

@@ -603,12 +603,12 @@ fn e2e_no_db_creates_to_jsonl() {
         create_no_db.stderr
     );
 
-    // Verify the JSONL was updated
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    let contents = fs::read_to_string(&jsonl_path).expect("read jsonl");
+    // Verify the Org file was updated
+    let org_path = workspace.root.join(".beads").join("issues.org");
+    let contents = fs::read_to_string(&org_path).expect("read org");
     assert!(
         contents.contains("Created in no-db"),
-        "no-db create should update JSONL"
+        "no-db create should update Org file"
     );
 }
 

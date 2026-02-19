@@ -30,9 +30,11 @@ use tracing::warn;
 /// Default database filename used when metadata is missing.
 const DEFAULT_DB_FILENAME: &str = "beads.db";
 /// Default JSONL filename used when metadata is missing.
-const DEFAULT_JSONL_FILENAME: &str = "issues.jsonl";
+pub const DEFAULT_JSONL_FILENAME: &str = "issues.org";
 /// Legacy JSONL filename to fall back to.
-const LEGACY_JSONL_FILENAME: &str = "beads.jsonl";
+const LEGACY_JSONL_FILENAME: &str = "issues.jsonl";
+/// Older legacy JSONL filename.
+const OLDER_LEGACY_JSONL_FILENAME: &str = "beads.jsonl";
 
 /// JSONL files that should never be treated as the main export file.
 /// Includes merge artifacts, deletion logs, and interaction logs.
@@ -92,29 +94,36 @@ impl Metadata {
     }
 }
 
-/// Discover the best JSONL file in the beads directory.
+/// Discover the best JSONL/Org file in the beads directory.
 ///
 /// Selection rules:
-/// 1. Prefer `issues.jsonl` if present.
-/// 2. Fall back to `beads.jsonl` (legacy) if present.
-/// 3. Never use merge artifacts (`beads.base.jsonl`, `beads.left.jsonl`, `beads.right.jsonl`).
-/// 4. Never use deletion logs (`deletions.jsonl`) or interaction logs (`interactions.jsonl`).
-/// 5. If no valid JSONL exists, return `None` (caller should use default for writing).
+/// 1. Prefer `issues.org` if present (new default).
+/// 2. Fall back to `issues.jsonl` if present (legacy).
+/// 3. Fall back to `beads.jsonl` (older legacy) if present.
+/// 4. Never use merge artifacts (`beads.base.jsonl`, `beads.left.jsonl`, `beads.right.jsonl`).
+/// 5. Never use deletion logs (`deletions.jsonl`) or interaction logs (`interactions.jsonl`).
+/// 6. If no valid file exists, return `None` (caller should use default for writing).
 #[must_use]
 pub fn discover_jsonl(beads_dir: &Path) -> Option<PathBuf> {
-    // Check preferred file first
+    // Check preferred file first (issues.org)
     let issues_path = beads_dir.join(DEFAULT_JSONL_FILENAME);
     if issues_path.is_file() {
         return Some(issues_path);
     }
 
-    // Check legacy file
+    // Check legacy file (issues.jsonl)
     let legacy_path = beads_dir.join(LEGACY_JSONL_FILENAME);
     if legacy_path.is_file() {
         return Some(legacy_path);
     }
 
-    // No valid JSONL found
+    // Check older legacy file (beads.jsonl)
+    let older_legacy_path = beads_dir.join(OLDER_LEGACY_JSONL_FILENAME);
+    if older_legacy_path.is_file() {
+        return Some(older_legacy_path);
+    }
+
+    // No valid file found
     None
 }
 
@@ -332,7 +341,7 @@ impl OpenStorageResult {
 
         let export_config = ExportConfig {
             force: false,
-            is_default_path: self.paths.jsonl_path == self.paths.beads_dir.join("issues.jsonl"),
+            is_default_path: self.paths.jsonl_path == self.paths.beads_dir.join(DEFAULT_JSONL_FILENAME),
             beads_dir: Some(self.paths.beads_dir.clone()),
             allow_external_jsonl: false,
             show_progress: false,
@@ -442,6 +451,27 @@ fn resolve_no_db_prefix(beads_dir: &Path, jsonl_path: &Path) -> Result<String> {
 fn common_prefix_from_jsonl(jsonl_path: &Path) -> Result<Option<String>> {
     if !jsonl_path.is_file() {
         return Ok(None);
+    }
+
+    // For Org-mode files, parse issues via org_bridge and extract prefixes
+    let is_org = jsonl_path
+        .extension()
+        .and_then(|e| e.to_str()) == Some("org");
+
+    if is_org {
+        let content = std::fs::read_to_string(jsonl_path)?;
+        let issues = crate::sync::org_bridge::org_text_to_issues(&content)?;
+        let mut prefixes: HashSet<String> = HashSet::new();
+        for issue in &issues {
+            if let Some((prefix, _)) = issue.id.split_once('-') {
+                prefixes.insert(prefix.to_string());
+            }
+        }
+        return if prefixes.len() == 1 {
+            Ok(prefixes.into_iter().next())
+        } else {
+            Ok(None)
+        };
     }
 
     let file = std::fs::File::open(jsonl_path)?;
@@ -1737,7 +1767,7 @@ labels:
         let db_override = PathBuf::from("/some/path/custom.db");
 
         let resolved = resolve_jsonl_path(&beads_dir, &metadata, Some(&db_override));
-        assert_eq!(resolved, PathBuf::from("/some/path/issues.jsonl"));
+        assert_eq!(resolved, PathBuf::from("/some/path/issues.org"));
     }
 
     #[test]
@@ -2097,8 +2127,8 @@ routing:
         let metadata = Metadata::default();
         let resolved = resolve_jsonl_path(&beads_dir, &metadata, None);
 
-        // Should return default for writing
-        assert_eq!(resolved, beads_dir.join("issues.jsonl"));
+        // Should return default for writing (changed to .org)
+        assert_eq!(resolved, beads_dir.join("issues.org"));
     }
 
     #[test]
@@ -2116,8 +2146,8 @@ routing:
         let db_override = custom_dir.join("custom.db");
 
         let resolved = resolve_jsonl_path(&beads_dir, &metadata, Some(&db_override));
-        // Should derive sibling from db_override path
-        assert_eq!(resolved, custom_dir.join("issues.jsonl"));
+        // Should derive sibling from db_override path (changed to .org)
+        assert_eq!(resolved, custom_dir.join("issues.org"));
     }
 
     #[test]

@@ -141,11 +141,12 @@ fn diff_backup(
         )));
     }
 
-    let current_path = beads_dir.join("issues.jsonl");
+    let current_path = beads_dir.join(crate::config::DEFAULT_JSONL_FILENAME);
     if !current_path.exists() {
-        return Err(BeadsError::Config(
-            "Current issues.jsonl not found".to_string(),
-        ));
+        return Err(BeadsError::Config(format!(
+            "Current {} not found",
+            crate::config::DEFAULT_JSONL_FILENAME
+        )));
     }
 
     if ctx.is_json() {
@@ -170,14 +171,14 @@ fn diff_backup(
 
     if ctx.is_rich() {
         let theme = ctx.theme();
-        let header = format!("Current: issues.jsonl\nBackup: {filename}");
+        let header = format!("Current: {}\nBackup: {filename}", crate::config::DEFAULT_JSONL_FILENAME);
         let panel = Panel::from_text(&header)
             .title(Text::styled("History Diff", theme.panel_title.clone()))
             .box_style(theme.box_style)
             .border_style(theme.panel_border.clone());
         ctx.render(&panel);
     } else {
-        println!("Diffing current issues.jsonl vs {filename}...");
+        println!("Diffing current {} vs {filename}...", crate::config::DEFAULT_JSONL_FILENAME);
     }
 
     // Let's shell out to `diff -u` for now as it's standard on linux/mac.
@@ -243,15 +244,16 @@ fn restore_backup(
         )));
     }
 
-    let target_path = beads_dir.join("issues.jsonl");
+    let target_path = beads_dir.join(crate::config::DEFAULT_JSONL_FILENAME);
 
     if target_path.exists() && !force {
-        return Err(BeadsError::Config(
-            "Current issues.jsonl exists. Use --force to overwrite.".to_string(),
-        ));
+        return Err(BeadsError::Config(format!(
+            "Current {} exists. Use --force to overwrite.",
+            crate::config::DEFAULT_JSONL_FILENAME
+        )));
     }
 
-    // Copy backup to issues.jsonl
+    // Copy backup to export file
     std::fs::copy(&backup_path, &target_path)?;
 
     if ctx.is_json() {
@@ -273,14 +275,14 @@ fn restore_backup(
     if ctx.is_rich() {
         let theme = ctx.theme();
         let body =
-            format!("Restored {filename} to issues.jsonl.\nNext: br sync --import-only --force");
+            format!("Restored {filename} to {}.\nNext: br sync --import-only --force", crate::config::DEFAULT_JSONL_FILENAME);
         let panel = Panel::from_text(&body)
             .title(Text::styled("History Restore", theme.panel_title.clone()))
             .box_style(theme.box_style)
             .border_style(theme.panel_border.clone());
         ctx.render(&panel);
     } else {
-        println!("Restored {filename} to issues.jsonl");
+        println!("Restored {filename} to {}", crate::config::DEFAULT_JSONL_FILENAME);
         println!("Run 'br sync --import-only --force' to import this state into the database.");
     }
 

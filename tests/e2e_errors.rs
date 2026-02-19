@@ -55,6 +55,11 @@ fn e2e_error_handling() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
+    // Override metadata to use JSONL format (tests below manipulate raw JSONL content)
+    let metadata_path = workspace.root.join(".beads").join("metadata.json");
+    fs::write(&metadata_path, r#"{"database": "beads.db", "jsonl_export": "issues.jsonl"}"#)
+        .expect("write metadata override");
+
     let create = run_br(&workspace, ["create", "Bad status"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
@@ -175,6 +180,11 @@ fn e2e_sync_export_guards() {
 
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+
+    // Override metadata to use JSONL format (test manipulates raw JSONL content)
+    let metadata_path = workspace.root.join(".beads").join("metadata.json");
+    fs::write(&metadata_path, r#"{"database": "beads.db", "jsonl_export": "issues.jsonl"}"#)
+        .expect("write metadata override");
 
     let beads_dir = workspace.root.join(".beads");
     let issues_path = beads_dir.join("issues.jsonl");
@@ -758,6 +768,11 @@ fn e2e_structured_error_jsonl_parse() {
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
 
+    // Override metadata to use JSONL format (test writes malformed JSONL content)
+    let metadata_path = workspace.root.join(".beads").join("metadata.json");
+    fs::write(&metadata_path, r#"{"database": "beads.db", "jsonl_export": "issues.jsonl"}"#)
+        .expect("write metadata override");
+
     // Create malformed JSONL
     let beads_dir = workspace.root.join(".beads");
     let issues_path = beads_dir.join("issues.jsonl");
@@ -791,6 +806,11 @@ fn e2e_structured_error_conflict_markers() {
 
     let init = run_br(&workspace, ["init"], "init");
     assert!(init.status.success());
+
+    // Override metadata to use JSONL format (test writes conflict markers to JSONL)
+    let metadata_path = workspace.root.join(".beads").join("metadata.json");
+    fs::write(&metadata_path, r#"{"database": "beads.db", "jsonl_export": "issues.jsonl"}"#)
+        .expect("write metadata override");
 
     // Create JSONL with conflict markers
     let beads_dir = workspace.root.join(".beads");
