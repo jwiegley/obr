@@ -30,7 +30,7 @@ pub fn issues_to_org_text(issues: &[Issue]) -> String {
 
     // File header with TODO sequence
     output.push_str("#+TITLE: Beads Issues\n");
-    output.push_str("#+SEQ_TODO: OPEN IN_PROGRESS BLOCKED DEFERRED PINNED | CLOSED TOMBSTONE\n");
+    output.push_str("#+SEQ_TODO: TODO DOING WAIT DEFER NOTE | DONE CANCELED\n");
     output.push('\n');
 
     for issue in issues {
@@ -261,13 +261,13 @@ fn sanitize_org_text(text: &str) -> String {
 /// Convert Issue status to Org keyword.
 fn status_to_keyword(status: &Status) -> String {
     match status {
-        Status::Open => "OPEN".to_string(),
-        Status::InProgress => "IN_PROGRESS".to_string(),
-        Status::Blocked => "BLOCKED".to_string(),
-        Status::Deferred => "DEFERRED".to_string(),
-        Status::Closed => "CLOSED".to_string(),
-        Status::Tombstone => "TOMBSTONE".to_string(),
-        Status::Pinned => "PINNED".to_string(),
+        Status::Open => "TODO".to_string(),
+        Status::InProgress => "DOING".to_string(),
+        Status::Blocked => "WAIT".to_string(),
+        Status::Deferred => "DEFER".to_string(),
+        Status::Closed => "DONE".to_string(),
+        Status::Tombstone => "CANCELED".to_string(),
+        Status::Pinned => "NOTE".to_string(),
         Status::Custom(s) => s.to_uppercase(),
     }
 }
@@ -275,6 +275,15 @@ fn status_to_keyword(status: &Status) -> String {
 /// Convert Org keyword to Issue status.
 fn keyword_to_status(keyword: &str) -> Result<Status> {
     match keyword.to_uppercase().as_str() {
+        // Primary Org names
+        "TODO" => Ok(Status::Open),
+        "DOING" => Ok(Status::InProgress),
+        "WAIT" => Ok(Status::Blocked),
+        "DEFER" => Ok(Status::Deferred),
+        "DONE" => Ok(Status::Closed),
+        "CANCELED" => Ok(Status::Tombstone),
+        "NOTE" => Ok(Status::Pinned),
+        // Legacy names for backwards compatibility
         "OPEN" => Ok(Status::Open),
         "IN_PROGRESS" | "INPROGRESS" => Ok(Status::InProgress),
         "BLOCKED" => Ok(Status::Blocked),
@@ -308,19 +317,19 @@ fn org_to_priority(org_priority: Option<&str>) -> Priority {
     }
 }
 
-/// TODO keywords used in beads Org files (active/incomplete states).
+/// TODO keywords used in OBR Org files (active/incomplete states).
 pub const BEADS_TODO_KEYWORDS: &[&str] = &[
-    "OPEN",
-    "IN_PROGRESS",
-    "BLOCKED",
-    "DEFERRED",
-    "PINNED",
+    "TODO",
+    "DOING",
+    "WAIT",
+    "DEFER",
+    "NOTE",
 ];
 
-/// DONE keywords used in beads Org files (completed states).
+/// DONE keywords used in OBR Org files (completed states).
 pub const BEADS_DONE_KEYWORDS: &[&str] = &[
-    "CLOSED",
-    "TOMBSTONE",
+    "DONE",
+    "CANCELED",
 ];
 
 /// Parse Org-mode text into a collection of issues.
@@ -827,7 +836,7 @@ mod tests {
 
         let org_text = issues_to_org_text(&[issue]);
 
-        assert!(org_text.contains("* OPEN [#B] Test Issue"));
+        assert!(org_text.contains("* TODO [#B] Test Issue"));
         assert!(org_text.contains(":demo:test:"));
         assert!(org_text.contains(":ID:       bd-test"));
         assert!(org_text.contains("Test description"));

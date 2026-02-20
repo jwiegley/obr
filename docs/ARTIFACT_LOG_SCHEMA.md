@@ -23,7 +23,7 @@ Each line in `events.jsonl` is a JSON object matching this schema:
   "timestamp": "2026-01-17T12:34:56.789Z",  // RFC3339, required
   "event_type": "command",                   // "command" | "snapshot", required
   "label": "init",                           // human-readable step name, required
-  "binary": "br",                            // binary executed, required for command
+  "binary": "obr",                            // binary executed, required for command
   "args": ["init", "--prefix", "bd"],        // array of strings, required
   "cwd": "/tmp/test123",                     // working directory, required
   "exit_code": 0,                            // integer, required for command
@@ -44,7 +44,7 @@ Each line in `events.jsonl` is a JSON object matching this schema:
 | `timestamp` | string | Yes | RFC3339 timestamp (UTC) |
 | `event_type` | string | Yes | `"command"` or `"snapshot"` |
 | `label` | string | Yes | Human-readable step identifier |
-| `binary` | string | Yes* | Binary name (`"br"`, `"bd"`, `"git"`) |
+| `binary` | string | Yes* | Binary name (`"obr"`, `"bd"`, `"git"`) |
 | `args` | string[] | Yes | Command arguments (excluding binary) |
 | `cwd` | string | Yes | Absolute path to working directory |
 | `exit_code` | integer | Yes* | Process exit code (0 = success) |
