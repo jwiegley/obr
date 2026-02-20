@@ -18,9 +18,13 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     flake-utils.url = "github:numtide/flake-utils";
+    org2jsonl = {
+      url = "git+file:///Users/johnw/src/org2jsonl";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils }:
+  outputs = { self, nixpkgs, rust-overlay, flake-utils, org2jsonl }@inputs:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -50,6 +54,11 @@
           version = "0.1.14";
 
           src = ./.;
+
+          postUnpack = ''
+            cp -r ${inputs.org2jsonl} org2jsonl
+            chmod -R u+w org2jsonl
+          '';
 
           cargoLock = {
             lockFile = ./Cargo.lock;
