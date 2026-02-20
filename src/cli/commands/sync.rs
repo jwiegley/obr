@@ -1179,7 +1179,7 @@ fn execute_merge(
         return Err(BeadsError::Config(msg));
     }
 
-    let _actor = cli.actor.as_deref().unwrap_or("br");
+    let _actor = cli.actor.as_deref().unwrap_or("obr");
 
     // Apply deletions
     for id in &report.deleted {

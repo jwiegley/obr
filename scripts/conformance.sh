@@ -155,7 +155,7 @@ cargo build --release --quiet 2>/dev/null || cargo build --release
 
 BR_PATH="${BR_BINARY:-$(cargo metadata --format-version=1 2>/dev/null | jq -r '.target_directory')/release/br}"
 if [[ ! -x "$BR_PATH" ]]; then
-    BR_PATH="$PROJECT_ROOT/target/release/br"
+    BR_PATH="$PROJECT_ROOT/target/release/obr"
 fi
 log "Using br at: $BR_PATH"
 BR_VERSION=$("$BR_PATH" version 2>/dev/null | head -1 || echo "unknown")

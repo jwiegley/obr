@@ -33,7 +33,7 @@ where
     S: AsRef<OsStr>,
 {
     let start = Instant::now();
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("br"));
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("obr"));
     cmd.current_dir(root);
     cmd.args(args);
     cmd.env("NO_COLOR", "1");

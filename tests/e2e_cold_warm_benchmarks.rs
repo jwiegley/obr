@@ -334,7 +334,7 @@ fn benchmark_command(
     // Cold runs - first invocations
     for i in 0..config.cold_runs {
         // Run br cold
-        let br_run = run_command(br_path, &args, workspace, label, "br", RunType::Cold, i);
+        let br_run = run_command(br_path, &args, workspace, label, "obr", RunType::Cold, i);
         br_runs.push(br_run);
 
         // Run bd cold
@@ -344,7 +344,7 @@ fn benchmark_command(
 
     // Warm runs - subsequent invocations benefit from caches
     for i in 0..config.warm_runs {
-        let br_run = run_command(br_path, &args, workspace, label, "br", RunType::Warm, i);
+        let br_run = run_command(br_path, &args, workspace, label, "obr", RunType::Warm, i);
         br_runs.push(br_run);
 
         let bd_run = run_command(bd_path, &args, workspace, label, "bd", RunType::Warm, i);
@@ -381,7 +381,7 @@ fn benchmark_command(
 
     let br_comparison = ColdWarmComparison {
         command: label.to_string(),
-        binary: "br".to_string(),
+        binary: "obr".to_string(),
         cold: br_cold.clone(),
         warm: br_warm.clone(),
         warm_speedup_ratio: br_warm_speedup,
@@ -576,14 +576,14 @@ fn print_cold_warm_table(result: &ColdWarmBenchmarkResult) {
     println!("{}", "-".repeat(60));
     for c in &result.comparisons {
         let cold_winner = if c.br_bd_cold_ratio < 0.95 {
-            "br"
+            "obr"
         } else if c.br_bd_cold_ratio > 1.05 {
             "bd"
         } else {
             "tie"
         };
         let warm_winner = if c.br_bd_warm_ratio < 0.95 {
-            "br"
+            "obr"
         } else if c.br_bd_warm_ratio > 1.05 {
             "bd"
         } else {
@@ -746,7 +746,7 @@ fn cold_warm_quick() {
 fn cold_warm_tagging_works() {
     let cold_run = RunMetrics {
         command: "test".to_string(),
-        binary: "br".to_string(),
+        binary: "obr".to_string(),
         run_type: RunType::Cold,
         run_index: 0,
         duration_ms: 100,
@@ -757,7 +757,7 @@ fn cold_warm_tagging_works() {
 
     let warm_run = RunMetrics {
         command: "test".to_string(),
-        binary: "br".to_string(),
+        binary: "obr".to_string(),
         run_type: RunType::Warm,
         run_index: 0,
         duration_ms: 50,
@@ -778,7 +778,7 @@ fn run_stats_calculation() {
     let runs = vec![
         RunMetrics {
             command: "test".to_string(),
-            binary: "br".to_string(),
+            binary: "obr".to_string(),
             run_type: RunType::Cold,
             run_index: 0,
             duration_ms: 100,
@@ -788,7 +788,7 @@ fn run_stats_calculation() {
         },
         RunMetrics {
             command: "test".to_string(),
-            binary: "br".to_string(),
+            binary: "obr".to_string(),
             run_type: RunType::Cold,
             run_index: 1,
             duration_ms: 120,
@@ -798,7 +798,7 @@ fn run_stats_calculation() {
         },
         RunMetrics {
             command: "test".to_string(),
-            binary: "br".to_string(),
+            binary: "obr".to_string(),
             run_type: RunType::Warm,
             run_index: 0,
             duration_ms: 50,
@@ -808,7 +808,7 @@ fn run_stats_calculation() {
         },
         RunMetrics {
             command: "test".to_string(),
-            binary: "br".to_string(),
+            binary: "obr".to_string(),
             run_type: RunType::Warm,
             run_index: 1,
             duration_ms: 60,

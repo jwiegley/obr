@@ -1,6 +1,6 @@
 //! `beads_rust` - Agent-first issue tracker library
 //!
-//! This crate provides the core functionality for the `br` CLI tool,
+//! This crate provides the core functionality for the `obr` CLI tool,
 //! a Rust port of the classic beads issue tracker.
 //!
 //! # Architecture

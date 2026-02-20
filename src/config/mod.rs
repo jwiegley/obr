@@ -1283,7 +1283,7 @@ labels:
         let mut layer = ConfigLayer::default();
         layer
             .runtime
-            .insert("issue_prefix".to_string(), "br".to_string());
+            .insert("issue_prefix".to_string(), "obr".to_string());
         layer
             .runtime
             .insert("min_hash_length".to_string(), "4".to_string());
@@ -1295,7 +1295,7 @@ labels:
             .insert("max_collision_prob".to_string(), "0.5".to_string());
 
         let config = id_config_from_layer(&layer);
-        assert_eq!(config.prefix, "br");
+        assert_eq!(config.prefix, "obr");
         assert_eq!(config.min_hash_length, 4);
         assert_eq!(config.max_hash_length, 10);
         assert!((config.max_collision_prob - 0.5).abs() < f64::EPSILON);

@@ -1,7 +1,7 @@
-# br - Beads Rust
+# obr - Beads Rust
 
 <div align="center">
-  <img src="br_illustration.webp" alt="br - Fast, non-invasive issue tracker for git repositories" width="600">
+  <img src="br_illustration.webp" alt="obr - Fast, non-invasive issue tracker for git repositories" width="600">
 </div>
 
 <div align="center">
@@ -52,7 +52,7 @@ You need to track issues for your project, but:
 
 ### The Solution
 
-**br** is a local-first issue tracker that stores issues in SQLite with JSONL export for git-friendly collaboration. It's **20K lines of Rust** focused on one thing: tracking issues without getting in your way.
+**obr** is a local-first issue tracker that stores issues in SQLite with JSONL export for git-friendly collaboration. It's **20K lines of Rust** focused on one thing: tracking issues without getting in your way.
 
 ```bash
 br init                              # Initialize in your repo
@@ -64,7 +64,7 @@ br sync --flush-only                 # Export for git commit
 
 ### Why br?
 
-| Feature | br | GitHub Issues | Jira | TODO comments |
+| Feature | obr | GitHub Issues | Jira | TODO comments |
 |---------|-----|---------------|------|---------------|
 | Works offline | **Yes** | No | No | Yes |
 | Lives in repo | **Yes** | No | No | Yes |
@@ -124,7 +124,7 @@ git add .beads/ && git commit -m "Update issues"
 br **never** touches your source code or runs git commands automatically. Other tools might auto-commit or install hooks without asking. br doesn't.
 
 ```bash
-# br only touches .beads/ directory
+# obr only touches .beads/ directory
 ls -la .beads/
 # beads.db       # SQLite database
 # issues.jsonl   # Git-friendly export
@@ -199,9 +199,9 @@ Output mode is auto-detected:
 
 ## Comparison vs Alternatives
 
-### br vs Original beads (Go)
+### obr vs Original beads (Go)
 
-| Aspect | br (Rust) | beads (Go) |
+| Aspect | obr (Rust) | beads (Go) |
 |--------|-----------|------------|
 | Lines of code | ~20,000 | ~276,000 |
 | Git operations | **Never** (explicit) | Auto-commit, hooks |
@@ -215,9 +215,9 @@ Output mode is auto-detected:
 
 **When to use beads:** You want advanced features like Linear/Jira sync, RPC daemon, automatic hooks.
 
-### br vs GitHub Issues
+### obr vs GitHub Issues
 
-| Aspect | br | GitHub Issues |
+| Aspect | obr | GitHub Issues |
 |--------|-----|---------------|
 | Works offline | **Yes** | No |
 | Lives in repo | **Yes** | Separate |
@@ -226,9 +226,9 @@ Output mode is auto-detected:
 | Machine API | `--json` flag | REST API |
 | Cost | Free | Free (limits) |
 
-### br vs Linear/Jira
+### obr vs Linear/Jira
 
-| Aspect | br | Linear/Jira |
+| Aspect | obr | Linear/Jira |
 |--------|-----|-------------|
 | Setup time | 1 command | Account + config |
 | Cost | Free | $8-15/user/mo |
@@ -281,7 +281,7 @@ cargo install --git https://github.com/Dicklesworthstone/beads_rust.git --no-def
 
 ```bash
 br --version
-# br 0.1.0 (rustc 1.85.0-nightly)
+# obr 0.1.0 (rustc 1.85.0-nightly)
 ```
 
 ---
@@ -347,62 +347,62 @@ git commit -m "Fix: login timeout (bd-a1b2c3)"
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `init` | Initialize workspace | `br init` |
-| `create` | Create issue | `br create "Title" -p 1 --type bug` |
-| `q` | Quick capture (ID only) | `br q "Fix typo"` |
-| `show` | Show issue details | `br show bd-abc123` |
-| `update` | Update issue | `br update bd-abc123 --priority 0` |
-| `close` | Close issue | `br close bd-abc123 --reason "Done"` |
-| `reopen` | Reopen closed issue | `br reopen bd-abc123` |
-| `delete` | Delete issue (tombstone) | `br delete bd-abc123` |
+| `init` | Initialize workspace | `obr init` |
+| `create` | Create issue | `obr create "Title" -p 1 --type bug` |
+| `q` | Quick capture (ID only) | `obr q "Fix typo"` |
+| `show` | Show issue details | `obr show bd-abc123` |
+| `update` | Update issue | `obr update bd-abc123 --priority 0` |
+| `close` | Close issue | `obr close bd-abc123 --reason "Done"` |
+| `reopen` | Reopen closed issue | `obr reopen bd-abc123` |
+| `delete` | Delete issue (tombstone) | `obr delete bd-abc123` |
 
 ### Querying
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `list` | List issues | `br list --status open --priority 0-1` |
-| `ready` | Actionable work | `br ready` |
-| `blocked` | Blocked issues | `br blocked` |
-| `search` | Full-text search | `br search "authentication"` |
-| `stale` | Stale issues | `br stale --days 30` |
-| `count` | Count with grouping | `br count --by status` |
+| `list` | List issues | `obr list --status open --priority 0-1` |
+| `ready` | Actionable work | `obr ready` |
+| `blocked` | Blocked issues | `obr blocked` |
+| `search` | Full-text search | `obr search "authentication"` |
+| `stale` | Stale issues | `obr stale --days 30` |
+| `count` | Count with grouping | `obr count --by status` |
 
 ### Dependencies
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `dep add` | Add dependency | `br dep add bd-child bd-parent` |
-| `dep remove` | Remove dependency | `br dep remove bd-child bd-parent` |
-| `dep list` | List dependencies | `br dep list bd-abc123` |
-| `dep tree` | Dependency tree | `br dep tree bd-abc123` |
-| `dep cycles` | Find cycles | `br dep cycles` |
+| `dep add` | Add dependency | `obr dep add bd-child bd-parent` |
+| `dep remove` | Remove dependency | `obr dep remove bd-child bd-parent` |
+| `dep list` | List dependencies | `obr dep list bd-abc123` |
+| `dep tree` | Dependency tree | `obr dep tree bd-abc123` |
+| `dep cycles` | Find cycles | `obr dep cycles` |
 
 ### Labels
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `label add` | Add labels | `br label add bd-abc123 backend urgent` |
-| `label remove` | Remove label | `br label remove bd-abc123 urgent` |
-| `label list` | List issue labels | `br label list bd-abc123` |
-| `label list-all` | All labels in project | `br label list-all` |
+| `label add` | Add labels | `obr label add bd-abc123 backend urgent` |
+| `label remove` | Remove label | `obr label remove bd-abc123 urgent` |
+| `label list` | List issue labels | `obr label list bd-abc123` |
+| `label list-all` | All labels in project | `obr label list-all` |
 
 ### Comments
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `comments add` | Add comment | `br comments add bd-abc123 "Found root cause"` |
-| `comments list` | List comments | `br comments list bd-abc123` |
+| `comments add` | Add comment | `obr comments add bd-abc123 "Found root cause"` |
+| `comments list` | List comments | `obr comments list bd-abc123` |
 
 ### Sync & System
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `sync` | Sync DB ↔ JSONL | `br sync --flush-only` |
-| `doctor` | Run diagnostics | `br doctor` |
-| `stats` | Project statistics | `br stats` |
-| `config` | Manage config | `br config --list` |
-| `upgrade` | Self-update | `br upgrade` |
-| `version` | Show version | `br version` |
+| `sync` | Sync DB ↔ JSONL | `obr sync --flush-only` |
+| `doctor` | Run diagnostics | `obr doctor` |
+| `stats` | Project statistics | `obr stats` |
+| `config` | Manage config | `obr config --list` |
+| `upgrade` | Self-update | `obr upgrade` |
+| `version` | Show version | `obr version` |
 
 ### Global Flags
 
@@ -642,7 +642,7 @@ br works seamlessly with [beads_viewer](https://github.com/Dicklesworthstone/bea
 # Use bv for interactive TUI
 bv
 
-# Use br for CLI/scripting
+# Use obr for CLI/scripting
 br ready --json | jq
 ```
 
@@ -687,7 +687,7 @@ br sync --import-only
 # Issue A depends on Issue B (A is blocked until B is closed)
 br dep add bd-A bd-B
 
-# Now bd-A won't appear in `br ready` until bd-B is closed
+# Now bd-A won't appear in `obr ready` until bd-B is closed
 br ready  # Only shows bd-B
 
 # Close the blocker

@@ -1,12 +1,12 @@
 # E2E Sync Safety Tests
 
-This document explains how to run the sync safety end-to-end tests and interpret their output. These tests verify that `br sync` operations adhere to strict safety invariants.
+This document explains how to run the sync safety end-to-end tests and interpret their output. These tests verify that `obr sync` operations adhere to strict safety invariants.
 
 ## Overview
 
 The e2e sync test suite verifies several critical safety properties:
 
-1. **No Git Operations** - `br sync` never executes git commands, creates commits, or modifies `.git/`
+1. **No Git Operations** - `obr sync` never executes git commands, creates commits, or modifies `.git/`
 2. **Path Confinement** - Sync only touches files within `.beads/` (with a strict allowlist)
 3. **Atomic Writes** - Export uses write-to-temp + atomic rename; failures preserve original files
 4. **Preflight Validation** - Import validates JSONL before any database changes
@@ -89,9 +89,9 @@ Each test creates a temporary workspace:
 │   ├── issues.jsonl      # JSONL export
 │   └── .manifest.json    # Optional manifest
 ├── logs/                 # Test logs (BrWorkspace.log_dir)
-│   ├── init.log          # br init output
-│   ├── create1.log       # br create output
-│   ├── sync_export.log   # br sync --flush-only output
+│   ├── init.log          # obr init output
+│   ├── create1.log       # obr create output
+│   ├── sync_export.log   # obr sync --flush-only output
 │   └── artifacts/        # Detailed artifact captures
 │       ├── *_snapshots.txt
 │       ├── *_commands.log

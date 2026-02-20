@@ -60,7 +60,7 @@ jobs:
       - name: Verify binaries
         run: |
           echo "=== br version ==="
-          ./target/release/br --version
+          ./target/release/obr --version
           echo ""
           echo "=== bd version ==="
           $BD_BINARY version || true

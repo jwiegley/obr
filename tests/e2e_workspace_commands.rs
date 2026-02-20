@@ -503,7 +503,7 @@ fn e2e_version_short_flag() {
     assert!(version.status.success(), "-V failed: {}", version.stderr);
 
     assert!(
-        version.stdout.contains("br")
+        version.stdout.contains("obr")
             || version.stdout.contains("0.")
             || version.stdout.contains("1."),
         "-V should output version: {}",
@@ -525,7 +525,7 @@ fn e2e_version_help() {
     );
 
     assert!(
-        version.stdout.contains("br")
+        version.stdout.contains("obr")
             || version.stdout.contains("0.")
             || version.stdout.contains("1."),
         "--version should output version: {}",

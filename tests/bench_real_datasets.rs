@@ -53,7 +53,7 @@ use std::time::Instant;
 pub struct RunMetrics {
     /// Command label (e.g., "list", "ready")
     pub label: String,
-    /// Binary used ("br" or "bd")
+    /// Binary used ("obr" or "bd")
     pub binary: String,
     /// Wall-clock duration in milliseconds
     pub duration_ms: u128,
@@ -205,7 +205,7 @@ fn run_read_workloads(br_path: &Path, bd_path: &Path, workspace: &Path) -> Vec<C
     let mut comparisons = Vec::new();
 
     // List all issues
-    let br = run_with_metrics(br_path, &["list", "--json"], workspace, "list", "br");
+    let br = run_with_metrics(br_path, &["list", "--json"], workspace, "list", "obr");
     let bd = run_with_metrics(bd_path, &["list", "--json"], workspace, "list", "bd");
     comparisons.push(make_comparison("list", br, bd));
 
@@ -215,7 +215,7 @@ fn run_read_workloads(br_path: &Path, bd_path: &Path, workspace: &Path) -> Vec<C
         &["list", "--status=open", "--json"],
         workspace,
         "list_open",
-        "br",
+        "obr",
     );
     let bd = run_with_metrics(
         bd_path,
@@ -227,12 +227,12 @@ fn run_read_workloads(br_path: &Path, bd_path: &Path, workspace: &Path) -> Vec<C
     comparisons.push(make_comparison("list_open", br, bd));
 
     // Ready issues (dependency resolution)
-    let br = run_with_metrics(br_path, &["ready", "--json"], workspace, "ready", "br");
+    let br = run_with_metrics(br_path, &["ready", "--json"], workspace, "ready", "obr");
     let bd = run_with_metrics(bd_path, &["ready", "--json"], workspace, "ready", "bd");
     comparisons.push(make_comparison("ready", br, bd));
 
     // Stats
-    let br = run_with_metrics(br_path, &["stats", "--json"], workspace, "stats", "br");
+    let br = run_with_metrics(br_path, &["stats", "--json"], workspace, "stats", "obr");
     let bd = run_with_metrics(bd_path, &["stats", "--json"], workspace, "stats", "bd");
     comparisons.push(make_comparison("stats", br, bd));
 
@@ -242,7 +242,7 @@ fn run_read_workloads(br_path: &Path, bd_path: &Path, workspace: &Path) -> Vec<C
         &["search", "test", "--json"],
         workspace,
         "search",
-        "br",
+        "obr",
     );
     let bd = run_with_metrics(
         bd_path,
@@ -260,7 +260,7 @@ fn run_read_workloads(br_path: &Path, bd_path: &Path, workspace: &Path) -> Vec<C
         &["list", "--limit=1", "--json"],
         workspace,
         "list_one",
-        "br",
+        "obr",
     );
     let bd = run_with_metrics(
         bd_path,
@@ -292,7 +292,7 @@ fn run_write_workloads(
             &["create", "--title", &title, "--type=task", "--priority=2"],
             br_workspace,
             &format!("create_{i}"),
-            "br",
+            "obr",
         );
         let bd = run_with_metrics(
             bd_path,
@@ -321,7 +321,7 @@ fn run_write_workloads(
         label: "create_10_total".to_string(),
         br: RunMetrics {
             label: "create_10_total".to_string(),
-            binary: "br".to_string(),
+            binary: "obr".to_string(),
             duration_ms: br_create_total,
             peak_rss_bytes: None,
             exit_code: 0,
@@ -456,7 +456,7 @@ fn print_comparison_table(benchmark: &DatasetBenchmark) {
 
     for c in &benchmark.comparisons {
         let winner = if c.duration_ratio < 0.95 {
-            "br"
+            "obr"
         } else if c.duration_ratio > 1.05 {
             "bd"
         } else {
@@ -692,7 +692,7 @@ fn test_calculate_summary() {
             label: "op1".to_string(),
             br: RunMetrics {
                 label: "op1".to_string(),
-                binary: "br".to_string(),
+                binary: "obr".to_string(),
                 duration_ms: 100,
                 peak_rss_bytes: Some(1000),
                 exit_code: 0,
@@ -717,7 +717,7 @@ fn test_calculate_summary() {
             label: "op2".to_string(),
             br: RunMetrics {
                 label: "op2".to_string(),
-                binary: "br".to_string(),
+                binary: "obr".to_string(),
                 duration_ms: 200,
                 peak_rss_bytes: Some(2000),
                 exit_code: 0,
@@ -755,7 +755,7 @@ fn test_calculate_summary() {
 fn test_make_comparison() {
     let br = RunMetrics {
         label: "test".to_string(),
-        binary: "br".to_string(),
+        binary: "obr".to_string(),
         duration_ms: 100,
         peak_rss_bytes: Some(1024),
         exit_code: 0,

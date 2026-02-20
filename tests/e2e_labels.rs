@@ -785,7 +785,7 @@ fn e2e_harness_label_list_all_real_dataset() {
         .expect("should create isolated beads_rust");
 
     // Run list-all on the isolated dataset
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("br"))
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("obr"))
         .args(["label", "list-all", "--json"])
         .current_dir(isolated.workspace_root())
         .env("NO_COLOR", "1")
@@ -936,7 +936,7 @@ fn e2e_harness_label_rename_real_dataset() {
         .expect("should create isolated beads_rust");
 
     // First, list all labels to find one we can rename
-    let list_output = Command::new(assert_cmd::cargo::cargo_bin!("br"))
+    let list_output = Command::new(assert_cmd::cargo::cargo_bin!("obr"))
         .args(["label", "list-all", "--json"])
         .current_dir(isolated.workspace_root())
         .env("NO_COLOR", "1")
@@ -961,7 +961,7 @@ fn e2e_harness_label_rename_real_dataset() {
     let new_name = format!("{old_name}-renamed");
 
     // Perform rename
-    let rename_output = Command::new(assert_cmd::cargo::cargo_bin!("br"))
+    let rename_output = Command::new(assert_cmd::cargo::cargo_bin!("obr"))
         .args(["label", "rename", old_name, &new_name, "--json"])
         .current_dir(isolated.workspace_root())
         .env("NO_COLOR", "1")
@@ -988,7 +988,7 @@ fn e2e_harness_label_rename_real_dataset() {
     );
 
     // Verify list-all shows new label, not old
-    let verify_output = Command::new(assert_cmd::cargo::cargo_bin!("br"))
+    let verify_output = Command::new(assert_cmd::cargo::cargo_bin!("obr"))
         .args(["label", "list-all", "--json"])
         .current_dir(isolated.workspace_root())
         .env("NO_COLOR", "1")

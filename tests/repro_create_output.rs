@@ -6,7 +6,7 @@ fn test_create_json_output_is_single_object() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path();
 
-    let bin = assert_cmd::cargo::cargo_bin!("br");
+    let bin = assert_cmd::cargo::cargo_bin!("obr");
 
     // Init
     Command::new(bin)

@@ -26,13 +26,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [[ -n "${BR_BIN:-}" ]]; then
     BR="$BR_BIN"
-elif [[ -x "$ROOT/target/debug/br" ]]; then
-    BR="$ROOT/target/debug/br"
-elif [[ -x "$ROOT/target/release/br" ]]; then
-    BR="$ROOT/target/release/br"
+elif [[ -x "$ROOT/target/debug/obr" ]]; then
+    BR="$ROOT/target/debug/obr"
+elif [[ -x "$ROOT/target/release/obr" ]]; then
+    BR="$ROOT/target/release/obr"
 elif command -v br >/dev/null 2>&1; then
     # Fallback for environments where br is installed but the repo isn't built.
-    BR="br"
+    BR="obr"
 else
     log "br binary not found. Build it with:"
     log "  CARGO_TARGET_DIR=target cargo build"

@@ -28,7 +28,7 @@ fn init_workspace(workspace: &BrWorkspace) {
 fn assert_contains_dynamic_markers(output: &str, shell_name: &str) {
     // All dynamic completion scripts must reference the binary name
     assert!(
-        output.contains("br"),
+        output.contains("obr"),
         "{shell_name} completions should reference 'br' binary"
     );
     // All dynamic completion scripts set a COMPLETE env var
@@ -411,7 +411,7 @@ fn e2e_completions_all_shells_have_help() {
         );
         // Dynamic completions produce registration stubs referencing the binary name
         assert!(
-            completions.stdout.contains("br"),
+            completions.stdout.contains("obr"),
             "completions for {shell} should reference the binary name"
         );
     }

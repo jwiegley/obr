@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# br (beads_rust) installer - Ultra-robust multi-platform installer with beautiful output
+# obr (beads_rust) installer - Ultra-robust multi-platform installer with beautiful output
 #
 # One-liner install:
 #   curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/beads_rust/main/install.sh?$(date +%s)" | bash
@@ -18,7 +18,7 @@
 #   --quiet            Suppress non-error output
 #   --no-gum           Disable gum formatting even if available
 #   --skip-skills      Don't install Claude Code / Codex skills
-#   --uninstall        Remove br and clean up
+#   --uninstall        Remove obr and clean up
 #   --help             Show this help
 #
 set -euo pipefail
@@ -31,7 +31,7 @@ shopt -s lastpipe 2>/dev/null || true
 VERSION="${VERSION:-}"
 OWNER="${OWNER:-Dicklesworthstone}"
 REPO="${REPO:-beads_rust}"
-BINARY_NAME="br"
+BINARY_NAME="obr"
 DEST_DEFAULT="$HOME/.local/bin"
 DEST="${DEST:-$DEST_DEFAULT}"
 EASY=0
@@ -42,7 +42,7 @@ UNINSTALL=0
 CHECKSUM="${CHECKSUM:-}"
 CHECKSUM_URL="${CHECKSUM_URL:-}"
 ARTIFACT_URL="${ARTIFACT_URL:-}"
-LOCK_FILE="/tmp/br-install.lock"
+LOCK_FILE="/tmp/obr-install.lock"
 SYSTEM=0
 NO_GUM=0
 SKIP_SKILLS=0
@@ -186,7 +186,7 @@ print_banner() {
             --padding "0 2" \
             --margin "1 0" \
             --bold \
-            "$(gum style --foreground 42 '🔗 br installer')" \
+            "$(gum style --foreground 42 '🔗 obr installer')" \
             "$(gum style --foreground 245 'Agent-first issue tracker (beads_rust)')"
     else
         echo ""
@@ -322,7 +322,7 @@ usage() {
         gum style --faint "    --skip-skills      Don't install Claude/Codex skills"
         echo ""
         gum style --foreground 39 "  Maintenance"
-        gum style --faint "    --uninstall        Remove br and clean up"
+        gum style --faint "    --uninstall        Remove obr and clean up"
         gum style --faint "    --help             Show this help"
         echo ""
 
@@ -457,11 +457,11 @@ do_uninstall() {
 
     # Remove PATH modifications from shell rc files
     for rc in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile" "$HOME/.config/fish/config.fish"; do
-        if [ -f "$rc" ] && grep -q "# br installer" "$rc" 2>/dev/null; then
+        if [ -f "$rc" ] && grep -q "# obr installer" "$rc" 2>/dev/null; then
             if [[ "$OSTYPE" == "darwin"* ]]; then
-                sed -i '' '/# br installer/d' "$rc" 2>/dev/null || true
+                sed -i '' '/# obr installer/d' "$rc" 2>/dev/null || true
             else
-                sed -i '/# br installer/d' "$rc" 2>/dev/null || true
+                sed -i '/# obr installer/d' "$rc" 2>/dev/null || true
             fi
             log_step "Cleaned $rc"
         fi
@@ -623,7 +623,7 @@ maybe_add_path() {
                     if [ -f "$rc" ] && [ -w "$rc" ]; then
                         if ! grep -qF "$DEST" "$rc" 2>/dev/null; then
                             echo "" >> "$rc"
-                            echo "export PATH=\"$DEST:\$PATH\"  # br installer" >> "$rc"
+                            echo "export PATH=\"$DEST:\$PATH\"  # obr installer" >> "$rc"
                         fi
                         updated=1
                     fi
@@ -634,7 +634,7 @@ maybe_add_path() {
                 if [ -f "$fish_config" ] && [ -w "$fish_config" ]; then
                     if ! grep -qF "$DEST" "$fish_config" 2>/dev/null; then
                         echo "" >> "$fish_config"
-                        echo "set -gx PATH $DEST \$PATH  # br installer" >> "$fish_config"
+                        echo "set -gx PATH $DEST \$PATH  # obr installer" >> "$fish_config"
                     fi
                     updated=1
                 fi
@@ -659,10 +659,10 @@ fix_alias_conflicts() {
     for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
         if [ -f "$rc" ]; then
             # Add unalias after any potential alias definitions
-            if ! grep -q "unalias br.*# br installer" "$rc" 2>/dev/null; then
+            if ! grep -q "unalias obr.*# obr installer" "$rc" 2>/dev/null; then
                 if grep -q "alias br=" "$rc" 2>/dev/null || grep -q "\.bun" "$rc" 2>/dev/null; then
                     echo "" >> "$rc"
-                    echo "unalias br 2>/dev/null  # br installer - remove conflicting alias" >> "$rc"
+                    echo "unalias obr 2>/dev/null  # obr installer - remove conflicting alias" >> "$rc"
                     log_step "Added unalias to $rc to prevent conflicts"
                 fi
             fi
@@ -853,7 +853,7 @@ prepare_for_build() {
     rm -f ~/.cargo/.package-cache 2>/dev/null || true
     rm -f ~/.cargo/registry/.crate-cache.lock 2>/dev/null || true
 
-    # Clean up old br build directories
+    # Clean up old obr build directories
     rm -rf /tmp/br-build-* 2>/dev/null || true
 
     # Check disk space (need at least 1GB)
@@ -997,7 +997,7 @@ build_from_source() {
     # Build with explicit target dir to avoid conflicts
     local target_dir="$TMP/target"
     if [[ "$GUM_AVAILABLE" == "true" && "$QUIET" -eq 0 ]]; then
-        if ! gum spin --spinner dot --title "Compiling br (release mode)..." -- \
+        if ! gum spin --spinner dot --title "Compiling obr (release mode)..." -- \
             bash -c "cd '$build_dir' && CARGO_TARGET_DIR='$target_dir' cargo build --release"; then
             die "Build failed"
         fi
@@ -1114,7 +1114,7 @@ check_conflicts() {
 
     local conflicts=()
 
-    # Check for br in other locations
+    # Check for obr in other locations
     if [ "$DEST" != "$HOME/.cargo/bin" ] && [ -x "$cargo_bin" ]; then
         conflicts+=("$cargo_bin")
     fi
@@ -1123,7 +1123,7 @@ check_conflicts() {
     fi
 
     if [ ${#conflicts[@]} -gt 0 ]; then
-        log_warn "Found br in multiple locations:"
+        log_warn "Found obr in multiple locations:"
         log_step "  Installed: $installed_path"
         for conflict in "${conflicts[@]}"; do
             log_step "  Conflict:  $conflict"
@@ -1131,9 +1131,9 @@ check_conflicts() {
 
         # Check PATH priority
         local active_br
-        active_br=$(command -v br 2>/dev/null || echo "")
+        active_br=$(command -v obr 2>/dev/null || echo "")
         if [ -n "$active_br" ] && [ "$active_br" != "$installed_path" ]; then
-            log_warn "The active br ($active_br) differs from the newly installed version!"
+            log_warn "The active obr ($active_br) differs from the newly installed version!"
             log_warn "To use the new version, either:"
             log_step "  1. Remove the conflicting binary: rm $active_br"
             log_step "  2. Adjust PATH so $DEST comes first"
@@ -1167,7 +1167,7 @@ print_summary() {
             --border-foreground 82 \
             --padding "1 2" \
             --margin "1 0" \
-            "$(gum style --foreground 82 --bold '✓ br installed successfully!')" \
+            "$(gum style --foreground 82 --bold '✓ obr installed successfully!')" \
             "" \
             "$(gum style --foreground 245 "Version:  $installed_version")" \
             "$(gum style --foreground 245 "Location: $DEST/$BINARY_NAME")"
@@ -1181,11 +1181,11 @@ print_summary() {
         fi
 
         gum style --foreground 214 --bold "Quick Start"
-        gum style --faint "  br init            Initialize a workspace"
-        gum style --faint "  br create          Create an issue"
-        gum style --faint "  br list            List issues"
-        gum style --faint "  br ready           Show ready work"
-        gum style --faint "  br --help          Full help"
+        gum style --faint "  obr init            Initialize a workspace"
+        gum style --faint "  obr create          Create an issue"
+        gum style --faint "  obr list            List issues"
+        gum style --faint "  obr ready           Show ready work"
+        gum style --faint "  obr --help          Full help"
         echo ""
     else
         echo ""
@@ -1202,11 +1202,11 @@ print_summary() {
         fi
 
         echo "  Quick Start:"
-        echo "    br init            Initialize a workspace"
-        echo "    br create          Create an issue"
-        echo "    br list            List issues"
-        echo "    br ready           Show ready work"
-        echo "    br --help          Full help"
+        echo "    obr init            Initialize a workspace"
+        echo "    obr create          Create an issue"
+        echo "    obr list            List issues"
+        echo "    obr ready           Show ready work"
+        echo "    obr --help          Full help"
         echo ""
     fi
 }

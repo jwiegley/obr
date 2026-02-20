@@ -1,14 +1,14 @@
-# br sync Safety Model
+# obr sync Safety Model
 
-> How `br sync` keeps your repository safe.
+> How `obr sync` keeps your repository safe.
 
 ---
 
 ## Overview
 
-`br` (beads_rust) is a **non-invasive** issue tracker. The `br sync` command synchronizes your SQLite database with a JSONL file for git-based collaboration.
+`br` (beads_rust) is a **non-invasive** issue tracker. The `obr sync` command synchronizes your SQLite database with a JSONL file for git-based collaboration.
 
-**Key safety principle**: `br sync` will never modify your source code or execute git commands.
+**Key safety principle**: `obr sync` will never modify your source code or execute git commands.
 
 ---
 
@@ -133,7 +133,7 @@ br sync --import-only      # Import collaborators' changes
 **Cause**: Your database has 0 issues, but the JSONL file has existing issues.
 
 **Fix**:
-- Run `br sync --import-only` first to populate the database
+- Run `obr sync --import-only` first to populate the database
 - Or use `--force` if you intentionally want an empty export
 
 ### "Refusing to export stale database..."
@@ -141,7 +141,7 @@ br sync --import-only      # Import collaborators' changes
 **Cause**: The JSONL file contains issues that don't exist in your database.
 
 **Fix**:
-- Run `br sync --import-only` first to import the missing issues
+- Run `obr sync --import-only` first to import the missing issues
 - Or use `--force` if you intentionally want to lose those issues
 
 ### "Merge conflict markers detected..."
@@ -205,7 +205,7 @@ If a safety guard triggers unexpectedly, the verbose log will show exactly why.
 
 ### The Core Guarantee
 
-**Even if `br sync` has a bug, it cannot delete your source code.**
+**Even if `obr sync` has a bug, it cannot delete your source code.**
 
 This is not a best-effort promise—it's an architectural constraint enforced by:
 1. Code that literally cannot call git (no git library, no shell-out to git)

@@ -1,8 +1,8 @@
 # Nix flake for beads_rust - Agent-first issue tracker
 #
 # Usage:
-#   nix build              Build the br binary
-#   nix run                Run br directly
+#   nix build              Build the obr binary
+#   nix run                Run obr directly
 #   nix develop            Enter development shell
 #
 # First time setup:
@@ -44,7 +44,7 @@
           rustc = rustToolchain;
         };
 
-        # Build the br binary using the nightly Rust toolchain
+        # Build the obr binary using the nightly Rust toolchain
         beads_rust = rustPlatform.buildRustPackage {
           pname = "beads_rust";
           version = "0.1.14";
@@ -78,7 +78,7 @@
             description = "Agent-first issue tracker (SQLite + JSONL)";
             homepage = "https://github.com/Dicklesworthstone/beads_rust";
             license = licenses.mit;
-            mainProgram = "br";
+            mainProgram = "obr";
             platforms = platforms.unix;
           };
         };
@@ -126,7 +126,7 @@
         # nix run
         apps.default = flake-utils.lib.mkApp {
           drv = beads_rust;
-          name = "br";
+          name = "obr";
         };
       });
 }

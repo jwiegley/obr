@@ -10,7 +10,7 @@ keywords = ["cli", "issue-tracker", "sqlite", "agent"]
 categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
-name = "br"
+name = "obr"
 path = "src/main.rs"
 
 [dependencies]

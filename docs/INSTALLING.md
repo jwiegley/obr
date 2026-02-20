@@ -317,7 +317,7 @@ default_priority: 1
 br version
 
 # Expected output:
-# br 0.1.0 (abc1234)
+# obr 0.1.0 (abc1234)
 # Built: 2026-01-17
 
 # Check help
@@ -459,7 +459,7 @@ rm .beads/*.db-shm .beads/*.db-wal
 
 #### Self-Update Fails
 
-If `br upgrade` fails:
+If `obr upgrade` fails:
 
 ```bash
 # Manual update

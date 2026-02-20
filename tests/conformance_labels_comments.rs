@@ -253,7 +253,7 @@ fn update_summary(log_dir: &PathBuf, entries: &[RunLogEntry]) {
             .comparisons
             .entry(entry.label.clone())
             .or_insert_with(ComparisonStats::default);
-        if entry.binary == "br" {
+        if entry.binary == "obr" {
             comparison.br_runs += 1;
             comparison.br_total_ms = comparison.br_total_ms.saturating_add(entry.duration_ms);
         } else if entry.binary == "bd" {
@@ -372,7 +372,7 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("br"));
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("obr"));
     cmd.current_dir(cwd);
     cmd.args(args);
     cmd.env("NO_COLOR", "1");
@@ -480,7 +480,7 @@ fn run_and_log(mut cmd: Command, cwd: &PathBuf, log_dir: &PathBuf, label: &str) 
     let entry = RunLogEntry {
         timestamp: Utc::now().to_rfc3339(),
         label: label.to_string(),
-        binary: "br".to_string(),
+        binary: "obr".to_string(),
         args: cmd
             .get_args()
             .map(|arg| arg.to_string_lossy().to_string())

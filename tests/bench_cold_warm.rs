@@ -107,7 +107,7 @@ impl ColdWarmConfig {
 pub struct Measurement {
     /// "cold" or "warm"
     pub start_type: String,
-    /// Which binary ("br" or "bd")
+    /// Which binary ("obr" or "bd")
     pub binary: String,
     /// Command label (e.g., "list", "ready")
     pub command: String,
@@ -457,7 +457,7 @@ fn benchmark_dataset(
 
         // Measure br
         let br_cold_warm =
-            measure_cold_warm(&binaries.br.path, args, workspace, label, "br", config);
+            measure_cold_warm(&binaries.br.path, args, workspace, label, "obr", config);
 
         // Measure bd if available
         let bd_cold_warm = bd_path
@@ -799,7 +799,7 @@ fn test_timing_stats() {
     let measurements = vec![
         Measurement {
             start_type: "warm".to_string(),
-            binary: "br".to_string(),
+            binary: "obr".to_string(),
             command: "list".to_string(),
             run_index: 0,
             duration_ms: 10.0,
@@ -809,7 +809,7 @@ fn test_timing_stats() {
         },
         Measurement {
             start_type: "warm".to_string(),
-            binary: "br".to_string(),
+            binary: "obr".to_string(),
             command: "list".to_string(),
             run_index: 1,
             duration_ms: 20.0,
@@ -819,7 +819,7 @@ fn test_timing_stats() {
         },
         Measurement {
             start_type: "warm".to_string(),
-            binary: "br".to_string(),
+            binary: "obr".to_string(),
             command: "list".to_string(),
             run_index: 2,
             duration_ms: 30.0,
@@ -843,7 +843,7 @@ fn test_timing_stats() {
 fn test_cold_warm_comparison_structure() {
     let cold = vec![Measurement {
         start_type: "cold".to_string(),
-        binary: "br".to_string(),
+        binary: "obr".to_string(),
         command: "list".to_string(),
         run_index: 0,
         duration_ms: 50.0,
@@ -854,7 +854,7 @@ fn test_cold_warm_comparison_structure() {
 
     let warm = vec![Measurement {
         start_type: "warm".to_string(),
-        binary: "br".to_string(),
+        binary: "obr".to_string(),
         command: "list".to_string(),
         run_index: 0,
         duration_ms: 25.0,

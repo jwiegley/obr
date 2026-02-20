@@ -383,10 +383,10 @@ fn setup_isolated_binary(workspace: &BrWorkspace) -> Option<std::path::PathBuf> 
     let bin_dir = workspace.root.join("bin");
     std::fs::create_dir_all(&bin_dir).ok()?;
 
-    let target_binary = bin_dir.join("br");
+    let target_binary = bin_dir.join("obr");
 
     // Find the current test binary location
-    let current_binary = assert_cmd::cargo::cargo_bin!("br");
+    let current_binary = assert_cmd::cargo::cargo_bin!("obr");
 
     // Copy the binary to the isolated location
     std::fs::copy(current_binary, &target_binary).ok()?;

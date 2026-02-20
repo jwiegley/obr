@@ -7,7 +7,7 @@
 # Usage: ./scripts/generate_json_baseline.sh
 #
 # Prerequisites:
-#   - br binary must be in PATH or built at target/release/br
+#   - br binary must be in PATH or built at target/release/obr
 #   - jq must be installed for JSON validation
 
 set -euo pipefail
@@ -23,11 +23,11 @@ log_error() { echo "[$(date '+%H:%M:%S')] ERROR: $*" >&2; }
 # Find br binary
 find_br() {
     if command -v br &> /dev/null; then
-        echo "br"
-    elif [[ -x "./target/release/br" ]]; then
-        echo "./target/release/br"
-    elif [[ -x "./target/debug/br" ]]; then
-        echo "./target/debug/br"
+        echo "obr"
+    elif [[ -x "./target/release/obr" ]]; then
+        echo "./target/release/obr"
+    elif [[ -x "./target/debug/obr" ]]; then
+        echo "./target/debug/obr"
     else
         log_error "br binary not found. Build with: cargo build --release"
         exit 1

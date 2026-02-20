@@ -1,6 +1,6 @@
 //! Binary discovery and version pinning for conformance testing.
 //!
-//! Ensures conformance runs use the correct br/bd binaries and records version metadata.
+//! Ensures conformance runs use the correct obr/bd binaries and records version metadata.
 //! Fails early with actionable errors if bd is missing or unsupported.
 
 #![allow(dead_code)]
@@ -70,36 +70,36 @@ impl DiscoveredBinaries {
     }
 }
 
-/// Discover br binary (from cargo build).
+/// Discover obr binary (from cargo build).
 fn discover_br() -> Result<BinaryVersion, String> {
     // First check if BR_BINARY env var is set
     if let Ok(br_path) = std::env::var("BR_BINARY") {
         let path = PathBuf::from(&br_path);
         if path.exists() {
-            return probe_binary("br", &path);
+            return probe_binary("obr", &path);
         }
         return Err(format!("BR_BINARY={br_path} does not exist"));
     }
 
     // Try cargo-built binary
-    let cargo_bin = assert_cmd::cargo::cargo_bin!("br");
+    let cargo_bin = assert_cmd::cargo::cargo_bin!("obr");
     if cargo_bin.exists() {
-        return probe_binary("br", cargo_bin);
+        return probe_binary("obr", cargo_bin);
     }
 
     // Try release binary
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let release_bin = manifest_dir.join("target/release/br");
+    let release_bin = manifest_dir.join("target/release/obr");
     if release_bin.exists() {
-        return probe_binary("br", &release_bin);
+        return probe_binary("obr", &release_bin);
     }
 
     // Try PATH
-    if let Some(path) = which("br") {
-        return probe_binary("br", &path);
+    if let Some(path) = which("obr") {
+        return probe_binary("obr", &path);
     }
 
-    Err("br binary not found. Build with `cargo build` first.".to_string())
+    Err("obr binary not found. Build with `cargo build` first.".to_string())
 }
 
 /// Discover bd binary (Go beads).
@@ -153,7 +153,7 @@ fn probe_binary(name: &str, path: &Path) -> Result<BinaryVersion, String> {
         if let Some(output) = run_version_command(path, &["version"]) {
             if looks_like_br(&output) {
                 return Err(format!(
-                    "bd binary at {} appears to be br; set BD_BINARY to real bd",
+                    "bd binary at {} appears to be obr; set BD_BINARY to real bd",
                     path.display()
                 ));
             }
@@ -209,7 +209,7 @@ fn probe_binary(name: &str, path: &Path) -> Result<BinaryVersion, String> {
 }
 
 fn looks_like_br(output: &str) -> bool {
-    output.trim_start().starts_with("br ")
+    output.trim_start().starts_with("obr ")
 }
 
 /// Run a version command and capture output.
@@ -243,7 +243,7 @@ fn parse_json_version(output: &str) -> Result<JsonVersion, serde_json::Error> {
     serde_json::from_str(&output[json_start..])
 }
 
-/// Parse plain text version output (e.g., "br 0.1.0").
+/// Parse plain text version output (e.g., "obr 0.1.0").
 fn parse_plain_version(output: &str) -> String {
     let output = output.trim();
 
@@ -278,9 +278,9 @@ fn which(name: &str) -> Option<PathBuf> {
     })
 }
 
-/// Discover both br and bd binaries.
+/// Discover both obr and bd binaries.
 ///
-/// Returns error only if br is not found (bd is optional for non-conformance tests).
+/// Returns error only if obr is not found (bd is optional for non-conformance tests).
 pub fn discover_binaries() -> Result<DiscoveredBinaries, String> {
     let br = discover_br()?;
     let bd = discover_bd();
@@ -328,10 +328,10 @@ mod tests {
     #[test]
     fn test_discover_br() {
         let result = discover_br();
-        assert!(result.is_ok(), "br should be discoverable: {result:?}");
+        assert!(result.is_ok(), "obr should be discoverable: {result:?}");
 
         let version = result.unwrap();
-        assert_eq!(version.binary, "br");
+        assert_eq!(version.binary, "obr");
         assert!(version.path.exists());
     }
 
@@ -341,7 +341,7 @@ mod tests {
         assert!(result.is_ok(), "Binary discovery failed: {result:?}");
 
         let binaries = result.unwrap();
-        assert_eq!(binaries.br.binary, "br");
+        assert_eq!(binaries.br.binary, "obr");
 
         // bd may or may not be available
         if binaries.bd_available() {
@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn test_parse_plain_version() {
-        assert_eq!(parse_plain_version("br 0.1.0"), "0.1.0");
+        assert_eq!(parse_plain_version("obr 0.1.0"), "0.1.0");
         assert_eq!(parse_plain_version("beads 0.5.2"), "0.5.2");
         assert_eq!(parse_plain_version("0.1.0-dev"), "0.1.0-dev");
         assert_eq!(parse_plain_version("no version"), "unknown");

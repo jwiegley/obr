@@ -287,7 +287,7 @@ fn update_summary(log_dir: &PathBuf, entries: &[RunLogEntry]) {
             .comparisons
             .entry(entry.label.clone())
             .or_insert_with(ComparisonStats::default);
-        if entry.binary == "br" {
+        if entry.binary == "obr" {
             comparison.br_runs += 1;
             comparison.br_total_ms = comparison.br_total_ms.saturating_add(entry.duration_ms);
         } else if entry.binary == "bd" {
@@ -406,7 +406,7 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("br"));
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("obr"));
     cmd.current_dir(cwd);
     cmd.args(args);
     cmd.env("NO_COLOR", "1");
@@ -430,7 +430,7 @@ where
     let entry = RunLogEntry {
         timestamp: Utc::now().to_rfc3339(),
         label: label.to_string(),
-        binary: "br".to_string(),
+        binary: "obr".to_string(),
         args: cmd
             .get_args()
             .map(|arg| arg.to_string_lossy().to_string())
@@ -904,7 +904,7 @@ fn benchmark_memory_usage_1000() -> Option<MemoryComparison> {
     let workspace = BenchmarkWorkspace::new();
     populate_workspace(&workspace, 1000);
 
-    let br_bin = assert_cmd::cargo::cargo_bin!("br");
+    let br_bin = assert_cmd::cargo::cargo_bin!("obr");
     let br_stats = time_binary_with_rss(&br_bin, &workspace.br_root, &["list", "--json"])
         .unwrap_or(MemoryStats { max_rss_kb: None });
 
@@ -930,7 +930,7 @@ fn benchmark_memory_sync_flush_1000() -> Option<MemoryComparison> {
     let workspace = BenchmarkWorkspace::new();
     populate_workspace(&workspace, 1000);
 
-    let br_bin = assert_cmd::cargo::cargo_bin!("br");
+    let br_bin = assert_cmd::cargo::cargo_bin!("obr");
     let br_stats = time_binary_with_rss(&br_bin, &workspace.br_root, &["sync", "--flush-only"])
         .unwrap_or(MemoryStats { max_rss_kb: None });
 
@@ -967,7 +967,7 @@ fn benchmark_memory_sync_import_1000() -> Option<MemoryComparison> {
     let bd_jsonl_path = bd_workspace.bd_root.join(".beads").join("issues.jsonl");
     fs::write(&bd_jsonl_path, &jsonl_data).expect("write bd issues.jsonl");
 
-    let br_bin = assert_cmd::cargo::cargo_bin!("br");
+    let br_bin = assert_cmd::cargo::cargo_bin!("obr");
     let br_stats = time_binary_with_rss(&br_bin, &br_workspace.br_root, &["sync", "--import-only"])
         .unwrap_or(MemoryStats { max_rss_kb: None });
 

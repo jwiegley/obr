@@ -1,4 +1,4 @@
-# br sync Safety Maintenance Checklist
+# obr sync Safety Maintenance Checklist
 
 > Use this checklist when making changes to sync-related code.
 
@@ -22,7 +22,7 @@ Before merging any PR that touches sync code, verify all checks pass:
 
 ### 1. Verify No Git Operations
 
-**Why**: `br sync` must never execute git commands. This is a non-negotiable safety invariant.
+**Why**: `obr sync` must never execute git commands. This is a non-negotiable safety invariant.
 
 **Checks**:
 

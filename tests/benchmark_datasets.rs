@@ -193,7 +193,7 @@ impl DatasetBenchmarkWorkspace {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        run_cmd("br", &self.br_root, args)
+        run_cmd("obr", &self.br_root, args)
     }
 
     /// Run bd command
@@ -271,8 +271,8 @@ where
 {
     let start = Instant::now();
 
-    let output = if binary == "br" {
-        let br_bin = assert_cmd::cargo::cargo_bin!("br");
+    let output = if binary == "obr" {
+        let br_bin = assert_cmd::cargo::cargo_bin!("obr");
         std::process::Command::new(&br_bin)
             .current_dir(cwd)
             .args(args)
@@ -371,8 +371,8 @@ fn measure_rss(binary: &str, cwd: &Path, args: &[&str]) -> MemoryStats {
         return MemoryStats { max_rss_kb: None };
     }
 
-    let program = if binary == "br" {
-        assert_cmd::cargo::cargo_bin!("br").to_path_buf()
+    let program = if binary == "obr" {
+        assert_cmd::cargo::cargo_bin!("obr").to_path_buf()
     } else {
         PathBuf::from("bd")
     };
@@ -433,7 +433,7 @@ impl WorkloadResult {
 
     pub fn print(&self) {
         let winner = if self.speedup_percent > 5.0 {
-            "br"
+            "obr"
         } else if self.speedup_percent < -5.0 {
             "bd"
         } else {
@@ -529,7 +529,7 @@ fn benchmark_list(workspace: &DatasetBenchmarkWorkspace, config: &BenchConfig) -
         .collect();
 
     // Memory measurement
-    let br_rss = measure_rss("br", &workspace.br_root, &args);
+    let br_rss = measure_rss("obr", &workspace.br_root, &args);
     let bd_rss = measure_rss("bd", &workspace.bd_root, &args);
 
     WorkloadResult::new(
@@ -558,7 +558,7 @@ fn benchmark_search(workspace: &DatasetBenchmarkWorkspace, config: &BenchConfig)
         .map(|_| workspace.time_bd(&args))
         .collect();
 
-    let br_rss = measure_rss("br", &workspace.br_root, &args);
+    let br_rss = measure_rss("obr", &workspace.br_root, &args);
     let bd_rss = measure_rss("bd", &workspace.bd_root, &args);
 
     WorkloadResult::new(
@@ -587,7 +587,7 @@ fn benchmark_ready(workspace: &DatasetBenchmarkWorkspace, config: &BenchConfig) 
         .map(|_| workspace.time_bd(&args))
         .collect();
 
-    let br_rss = measure_rss("br", &workspace.br_root, &args);
+    let br_rss = measure_rss("obr", &workspace.br_root, &args);
     let bd_rss = measure_rss("bd", &workspace.bd_root, &args);
 
     WorkloadResult::new(
@@ -616,7 +616,7 @@ fn benchmark_stats(workspace: &DatasetBenchmarkWorkspace, config: &BenchConfig) 
         .map(|_| workspace.time_bd(&args))
         .collect();
 
-    let br_rss = measure_rss("br", &workspace.br_root, &args);
+    let br_rss = measure_rss("obr", &workspace.br_root, &args);
     let bd_rss = measure_rss("bd", &workspace.bd_root, &args);
 
     WorkloadResult::new(
@@ -648,7 +648,7 @@ fn benchmark_blocked(
         .map(|_| workspace.time_bd(&args))
         .collect();
 
-    let br_rss = measure_rss("br", &workspace.br_root, &args);
+    let br_rss = measure_rss("obr", &workspace.br_root, &args);
     let bd_rss = measure_rss("bd", &workspace.bd_root, &args);
 
     WorkloadResult::new(
@@ -692,7 +692,7 @@ fn benchmark_create(workspace: &DatasetBenchmarkWorkspace, config: &BenchConfig)
 
     // RSS measurement for create
     let br_rss = measure_rss(
-        "br",
+        "obr",
         &workspace.br_root,
         &["create", "RSS test br", "--type", "task"],
     );
@@ -754,7 +754,7 @@ fn benchmark_update(workspace: &DatasetBenchmarkWorkspace, config: &BenchConfig)
     }
 
     let args = ["update", issue_id, "--title", "RSS test"];
-    let br_rss = measure_rss("br", &workspace.br_root, &args);
+    let br_rss = measure_rss("obr", &workspace.br_root, &args);
     let bd_rss = measure_rss("bd", &workspace.bd_root, &args);
 
     WorkloadResult::new(
@@ -821,7 +821,7 @@ fn benchmark_close_reopen(
     let br_create = workspace.run_br(["create", "RSS close test br", "--type", "task", "--json"]);
     let br_rss = if let Ok(v) = serde_json::from_str::<serde_json::Value>(&br_create.stdout) {
         if let Some(id) = v.get("id").and_then(|i| i.as_str()) {
-            measure_rss("br", &workspace.br_root, &["close", id])
+            measure_rss("obr", &workspace.br_root, &["close", id])
         } else {
             MemoryStats { max_rss_kb: None }
         }

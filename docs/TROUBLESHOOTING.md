@@ -1,4 +1,4 @@
-# br Troubleshooting Guide
+# obr Troubleshooting Guide
 
 Common issues and solutions when using `br` (beads_rust).
 
@@ -88,7 +88,7 @@ br list
 
 ### Database created in wrong location
 
-**Cause:** `br init` was run in wrong directory, or `.beads/` was moved.
+**Cause:** `obr init` was run in wrong directory, or `.beads/` was moved.
 
 **Solution:**
 ```bash
@@ -288,7 +288,7 @@ br dep remove bd-456 bd-123
 ```
 
 **Prevention:**
-- Use `br dep tree <id>` before adding dependencies
+- Use `obr dep tree <id>` before adding dependencies
 - Consider if relationship should be `related` instead of `blocks`
 
 ---

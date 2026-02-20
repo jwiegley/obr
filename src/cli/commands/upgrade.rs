@@ -1,6 +1,6 @@
 //! Upgrade command implementation.
 //!
-//! Enables br to update itself to the latest version using the `self_update` crate.
+//! Enables obr to update itself to the latest version using the `self_update` crate.
 
 use crate::cli::UpgradeArgs;
 use crate::error::{BeadsError, Result};
@@ -18,7 +18,7 @@ const REPO_OWNER: &str = "Dicklesworthstone";
 const REPO_NAME: &str = "beads_rust";
 
 /// Binary name.
-const BIN_NAME: &str = "br";
+const BIN_NAME: &str = "obr";
 
 /// Update check result.
 #[derive(Serialize)]
@@ -88,7 +88,7 @@ fn execute_check(current_version: &str, ctx: &OutputContext) -> Result<()> {
         println!("Latest version:  {latest_version}");
 
         if update_available {
-            println!("\n\u{2191} Update available! Run `br upgrade` to install.");
+            println!("\n\u{2191} Update available! Run `obr upgrade` to install.");
         } else {
             println!("\n\u{2713} Already up to date");
         }

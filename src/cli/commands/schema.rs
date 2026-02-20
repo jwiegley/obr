@@ -66,7 +66,7 @@ pub fn execute(
 
     let schemas = build_schemas(args.target);
     let payload = SchemaOutput {
-        tool: "br",
+        tool: "obr",
         generated_at: Utc::now(),
         schemas,
     };

@@ -11,7 +11,7 @@ pkgdesc="Agent-first issue tracker (SQLite + JSONL)"
 arch=('x86_64' 'aarch64')
 url="https://github.com/Dicklesworthstone/beads_rust"
 license=('MIT')
-provides=('br')
+provides=('obr')
 conflicts=('br' 'br-git')
 depends=('gcc-libs')
 

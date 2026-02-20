@@ -21,7 +21,7 @@ scripts/e2e.sh                    # Quick E2E subset (~6 tests)
 E2E_FULL_CONFIRM=1 scripts/e2e_full.sh   # All E2E tests
 
 # Conformance (requires bd binary)
-scripts/conformance.sh            # br vs bd parity checks
+scripts/conformance.sh            # obr vs bd parity checks
 
 # Benchmarks
 scripts/bench.sh --quick          # Quick performance comparison
@@ -142,7 +142,7 @@ scripts/bench.sh --save baseline-v1              # Save baseline
 scripts/bench.sh --baseline baseline-v1          # Compare to baseline
 ```
 
-### br vs bd Comparison
+### obr vs bd Comparison
 
 ```bash
 scripts/bench.sh --compare          # Compare br and bd

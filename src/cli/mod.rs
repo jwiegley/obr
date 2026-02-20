@@ -649,7 +649,7 @@ fn csv_fields_completer(current: &OsStr) -> Vec<CompletionCandidate> {
 
 /// Agent-first issue tracker (`SQLite` + JSONL)
 #[derive(Parser, Debug)]
-#[command(name = "br", author, version, about, long_about = None)]
+#[command(name = "obr", author, version, about, long_about = None)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct Cli {
     #[command(subcommand)]
@@ -847,7 +847,7 @@ EXAMPLES:
     /// Show diagnostic metadata about the workspace
     Info(InfoArgs),
 
-    /// Emit JSON Schemas for br output types (for agent/tooling integration)
+    /// Emit JSON Schemas for obr output types (for agent/tooling integration)
     Schema(SchemaArgs),
 
     /// Show the active .beads directory

@@ -34,8 +34,8 @@ fn create_sample_artifacts(base_dir: &std::path::Path) -> std::io::Result<()> {
 
     fs::write(
         pass_dir.join("events.jsonl"),
-        r#"{"timestamp":"2026-01-17T12:00:00Z","event_type":"command","label":"init","binary":"br","args":["init"],"cwd":"/tmp/test1","exit_code":0,"success":true,"duration_ms":50,"stdout_len":100,"stderr_len":0}
-{"timestamp":"2026-01-17T12:00:01Z","event_type":"command","label":"create","binary":"br","args":["create","--title","Test Issue"],"cwd":"/tmp/test1","exit_code":0,"success":true,"duration_ms":120,"stdout_len":200,"stderr_len":0}"#,
+        r#"{"timestamp":"2026-01-17T12:00:00Z","event_type":"command","label":"init","binary":"obr","args":["init"],"cwd":"/tmp/test1","exit_code":0,"success":true,"duration_ms":50,"stdout_len":100,"stderr_len":0}
+{"timestamp":"2026-01-17T12:00:01Z","event_type":"command","label":"create","binary":"obr","args":["create","--title","Test Issue"],"cwd":"/tmp/test1","exit_code":0,"success":true,"duration_ms":120,"stdout_len":200,"stderr_len":0}"#,
     )?;
 
     // Create another passing test
@@ -49,7 +49,7 @@ fn create_sample_artifacts(base_dir: &std::path::Path) -> std::io::Result<()> {
 
     fs::write(
         pass_dir2.join("events.jsonl"),
-        r#"{"timestamp":"2026-01-17T12:01:00Z","event_type":"command","label":"list","binary":"br","args":["list","--json"],"cwd":"/tmp/test2","exit_code":0,"success":true,"duration_ms":80,"stdout_len":500,"stderr_len":0}"#,
+        r#"{"timestamp":"2026-01-17T12:01:00Z","event_type":"command","label":"list","binary":"obr","args":["list","--json"],"cwd":"/tmp/test2","exit_code":0,"success":true,"duration_ms":80,"stdout_len":500,"stderr_len":0}"#,
     )?;
 
     // Create a failing test
@@ -63,7 +63,7 @@ fn create_sample_artifacts(base_dir: &std::path::Path) -> std::io::Result<()> {
 
     fs::write(
         fail_dir.join("events.jsonl"),
-        r#"{"timestamp":"2026-01-17T12:02:00Z","event_type":"command","label":"sync","binary":"br","args":["sync","--import-only"],"cwd":"/tmp/test3","exit_code":1,"success":false,"duration_ms":250,"stdout_len":50,"stderr_len":100,"stderr_path":"0001_sync.stderr"}"#,
+        r#"{"timestamp":"2026-01-17T12:02:00Z","event_type":"command","label":"sync","binary":"obr","args":["sync","--import-only"],"cwd":"/tmp/test3","exit_code":1,"success":false,"duration_ms":250,"stdout_len":50,"stderr_len":100,"stderr_path":"0001_sync.stderr"}"#,
     )?;
 
     fs::write(

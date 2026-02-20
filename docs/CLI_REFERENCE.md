@@ -1,4 +1,4 @@
-# br CLI Reference
+# obr CLI Reference
 
 Comprehensive reference for all `br` (beads_rust) commands.
 
@@ -782,7 +782,7 @@ br history <COMMAND>
 | `restore <BACKUP>` | Restore from backup |
 
 **Notes:**
-- Backups are created during `br sync --flush-only` when overwriting a JSONL file inside `.beads/`, including custom `BEADS_JSONL` paths that still target `.beads/`.
+- Backups are created during `obr sync --flush-only` when overwriting a JSONL file inside `.beads/`, including custom `BEADS_JSONL` paths that still target `.beads/`.
 
 ---
 
@@ -872,7 +872,7 @@ source ~/.bashrc
 | `BEADS_DIR` | Override `.beads` directory location |
 | `BEADS_JSONL` | Override JSONL file path (requires `--allow-external-jsonl`) |
 | `BD_ACTOR` | Default actor name for audit trail |
-| `EDITOR` | Editor for `br config --edit` |
+| `EDITOR` | Editor for `obr config --edit` |
 | `NO_COLOR` | Disable colored output (any value) |
 | `RUST_LOG` | Logging level (debug, info, warn, error) |
 

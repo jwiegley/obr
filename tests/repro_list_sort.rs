@@ -6,7 +6,7 @@ fn test_list_sort_title_case_insensitive() {
     let path = temp.path();
 
     // Init
-    Command::new(assert_cmd::cargo::cargo_bin!("br"))
+    Command::new(assert_cmd::cargo::cargo_bin!("obr"))
         .current_dir(path)
         .arg("init")
         .assert()
@@ -14,7 +14,7 @@ fn test_list_sort_title_case_insensitive() {
 
     // Create issues
     // "apple" (lowercase 'a')
-    Command::new(assert_cmd::cargo::cargo_bin!("br"))
+    Command::new(assert_cmd::cargo::cargo_bin!("obr"))
         .current_dir(path)
         .arg("create")
         .arg("apple")
@@ -22,7 +22,7 @@ fn test_list_sort_title_case_insensitive() {
         .success();
 
     // "Banana" (uppercase 'B')
-    Command::new(assert_cmd::cargo::cargo_bin!("br"))
+    Command::new(assert_cmd::cargo::cargo_bin!("obr"))
         .current_dir(path)
         .arg("create")
         .arg("Banana")
@@ -30,7 +30,7 @@ fn test_list_sort_title_case_insensitive() {
         .success();
 
     // List sorted by title
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("br"))
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("obr"))
         .current_dir(path)
         .arg("list")
         .arg("--sort")

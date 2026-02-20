@@ -529,7 +529,7 @@ fn e2e_audit_record_via_stdin() {
     let json_input = r#"{"kind": "llm_call", "model": "gpt-4", "prompt": "stdin test"}"#;
 
     // Run br with stdin
-    let br_path = assert_cmd::cargo::cargo_bin!("br");
+    let br_path = assert_cmd::cargo::cargo_bin!("obr");
     let mut child = Command::new(br_path)
         .args(["audit", "record", "--stdin"])
         .current_dir(&workspace.root)

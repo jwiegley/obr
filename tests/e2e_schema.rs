@@ -27,7 +27,7 @@ fn e2e_schema_json_issue() {
     let payload = extract_json_payload(&run.stdout);
     let json: Value = serde_json::from_str(&payload).expect("valid JSON output");
 
-    assert_eq!(json["tool"], "br");
+    assert_eq!(json["tool"], "obr");
     assert!(json.get("generated_at").is_some(), "missing generated_at");
     assert!(json.get("schemas").is_some(), "missing schemas");
     assert!(
@@ -58,7 +58,7 @@ fn e2e_schema_toon_decodes() {
     let decoded = toon_rust::try_decode(toon, None).expect("valid TOON");
     let json = Value::from(decoded);
 
-    assert_eq!(json["tool"], "br");
+    assert_eq!(json["tool"], "obr");
     assert!(json.get("generated_at").is_some(), "missing generated_at");
     // TOON output uses key folding, so nested map keys may appear as dotted keys.
     let has_nested = json

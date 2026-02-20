@@ -371,7 +371,7 @@ mod tests {
 
     #[test]
     fn parse_global_flags_and_command() {
-        let cli = Cli::parse_from(["br", "--json", "-vv", "list"]);
+        let cli = Cli::parse_from(["obr", "--json", "-vv", "list"]);
         assert!(cli.json);
         assert_eq!(cli.verbose, 2);
         assert!(!cli.quiet);
@@ -380,7 +380,7 @@ mod tests {
 
     #[test]
     fn parse_create_title_positional() {
-        let cli = Cli::parse_from(["br", "create", "FixBug"]);
+        let cli = Cli::parse_from(["obr", "create", "FixBug"]);
         match cli.command {
             Commands::Create(args) => {
                 assert_eq!(args.title.as_deref(), Some("FixBug"));
@@ -392,7 +392,7 @@ mod tests {
     #[test]
     fn build_overrides_maps_flags() {
         let cli = Cli::parse_from([
-            "br",
+            "obr",
             "--json",
             "--no-color",
             "--no-auto-flush",
@@ -419,7 +419,7 @@ mod tests {
     #[test]
     fn version_includes_name_and_version() {
         let version = Cli::command().render_version();
-        assert!(version.contains("br"));
+        assert!(version.contains("obr"));
         assert!(version.contains(env!("CARGO_PKG_VERSION")));
     }
 

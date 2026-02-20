@@ -64,7 +64,7 @@ impl SchemaWorkspace {
 
     /// Run br command
     pub fn run_br(&self, args: &[&str]) -> CmdOutput {
-        run_binary("br", &self.br_root, args)
+        run_binary("obr", &self.br_root, args)
     }
 
     /// Run bd command
@@ -123,7 +123,7 @@ fn binaries_available() -> bool {
                 std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
             PathBuf::from(manifest_dir).join("target")
         });
-    let br_path = target_dir.join("release").join("br");
+    let br_path = target_dir.join("release").join("obr");
     let br_exists = br_path.exists();
 
     // Check bd is available
@@ -146,7 +146,7 @@ macro_rules! skip_if_no_binaries {
 }
 
 fn run_binary(binary: &str, cwd: &PathBuf, args: &[&str]) -> CmdOutput {
-    let cmd_path = if binary == "br" {
+    let cmd_path = if binary == "obr" {
         // Use cargo-built binary, respecting CARGO_TARGET_DIR if set
         let target_dir = std::env::var("CARGO_TARGET_DIR")
             .ok()
@@ -156,7 +156,7 @@ fn run_binary(binary: &str, cwd: &PathBuf, args: &[&str]) -> CmdOutput {
                     std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
                 PathBuf::from(manifest_dir).join("target")
             });
-        target_dir.join("release").join("br")
+        target_dir.join("release").join("obr")
     } else {
         // Use system bd
         PathBuf::from(binary)

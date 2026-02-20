@@ -365,7 +365,7 @@ fn benchmark_cold_warm(
         eprintln!("  Benchmarking {label}...");
 
         let br_metrics =
-            measure_cold_warm(&binaries.br.path, args, &br_root, "br", label, WARM_RUNS);
+            measure_cold_warm(&binaries.br.path, args, &br_root, "obr", label, WARM_RUNS);
 
         let bd_metrics = measure_cold_warm(&bd.path, args, &bd_root, "bd", label, WARM_RUNS);
 
@@ -399,7 +399,7 @@ fn benchmark_cold_warm(
             &binaries.br.path,
             &show_args,
             &br_root,
-            "br",
+            "obr",
             "show",
             WARM_RUNS,
         );
@@ -803,7 +803,7 @@ fn cold_warm_real_datasets() {
                 &binaries.br.path,
                 args,
                 br_isolated.workspace_root(),
-                "br",
+                "obr",
                 label,
                 WARM_RUNS,
             );
@@ -847,7 +847,7 @@ fn cold_warm_real_datasets() {
                 &binaries.br.path,
                 &show_args,
                 br_isolated.workspace_root(),
-                "br",
+                "obr",
                 "show",
                 WARM_RUNS,
             );

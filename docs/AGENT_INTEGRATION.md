@@ -33,8 +33,8 @@ This guide covers how AI coding agents can effectively use `br` (beads_rust) for
 1. **Always use `--json`** for programmatic access
 2. **Check exit codes** for success/failure
 3. **Parse structured errors** for recovery hints
-4. **Use `br ready`** to find actionable work
-5. **Sync at session end** with `br sync --flush-only`
+4. **Use `obr ready`** to find actionable work
+5. **Sync at session end** with `obr sync --flush-only`
 
 ---
 
@@ -113,8 +113,8 @@ br list --json --limit 5   # JSON always wins
 ### JSON Output Characteristics
 
 - **Always valid JSON** - parseable even on errors
-- **Arrays for lists** - `br list`, `br ready`, `br search`
-- **Objects for single items** - `br show`, `br create`
+- **Arrays for lists** - `obr list`, `obr ready`, `obr search`
+- **Objects for single items** - `obr show`, `obr create`
 - **Structured errors** - error object with code and hints
 
 ### Example Output
@@ -266,7 +266,7 @@ if ready:
 const { execSync } = require('child_process');
 
 function br(...args) {
-  const result = execSync(`br ${args.join(' ')} --json`, {
+  const result = execSync(`obr ${args.join(' ')} --json`, {
     encoding: 'utf-8',
     stdio: ['pipe', 'pipe', 'pipe']
   });
@@ -430,8 +430,8 @@ br update <id> --status in_progress --assignee copilot
 3. **Set `BD_ACTOR`** for audit trail attribution
 4. **Use `--claim`** for atomic status+assignee updates
 5. **Create discovered issues** with `--deps discovered-from:<id>`
-6. **Sync at session end** with `br sync --flush-only`
-7. **Use `br ready`** to find actionable work
+6. **Sync at session end** with `obr sync --flush-only`
+7. **Use `obr ready`** to find actionable work
 8. **Include reasons** when closing issues
 
 ### DON'T

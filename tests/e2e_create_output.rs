@@ -8,7 +8,7 @@ fn test_create_with_title_flag() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path();
 
-    let bin = assert_cmd::cargo::cargo_bin!("br");
+    let bin = assert_cmd::cargo::cargo_bin!("obr");
 
     // Init
     Command::new(bin.as_os_str())
@@ -46,7 +46,7 @@ fn test_create_positional_vs_title_flag() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path();
 
-    let bin = assert_cmd::cargo::cargo_bin!("br");
+    let bin = assert_cmd::cargo::cargo_bin!("obr");
 
     // Init
     Command::new(bin.as_os_str())
@@ -90,7 +90,7 @@ fn test_create_json_output_includes_labels_and_deps() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path();
 
-    let bin = assert_cmd::cargo::cargo_bin!("br");
+    let bin = assert_cmd::cargo::cargo_bin!("obr");
 
     // Init
     Command::new(bin.as_os_str())

@@ -159,9 +159,9 @@ mod tests {
             script.contains("complete -o"),
             "should contain bash complete command"
         );
-        assert!(script.contains("br"), "should reference br command");
+        assert!(script.contains("obr"), "should reference obr command");
         assert!(
-            script.contains("_clap_complete_br"),
+            script.contains("_clap_complete_obr"),
             "should define dynamic completion function"
         );
         info!("test_bash_completion_generation: assertions passed");
@@ -173,9 +173,9 @@ mod tests {
         info!("test_zsh_completion_generation: starting");
         let script = render_shell(ShellType::Zsh);
 
-        assert!(script.contains("#compdef br"), "should start with #compdef");
+        assert!(script.contains("#compdef obr"), "should start with #compdef");
         assert!(
-            script.contains("_clap_dynamic_completer_br"),
+            script.contains("_clap_dynamic_completer_obr"),
             "should define dynamic completion function"
         );
         info!("test_zsh_completion_generation: assertions passed");

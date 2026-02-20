@@ -57,7 +57,7 @@ fn bd_available() -> bool {
             };
             match first_token.to_ascii_lowercase().as_str() {
                 "bd" | "beads" => true,
-                "br" => false,
+                "obr" => false,
                 _ => false,
             }
         })
@@ -459,7 +459,7 @@ impl WorkflowWorkspace {
 
     /// Run br command.
     pub fn run_br(&self, args: &[&str]) -> CmdOutput {
-        let mut cmd = std::process::Command::new(assert_cmd::cargo::cargo_bin!("br"));
+        let mut cmd = std::process::Command::new(assert_cmd::cargo::cargo_bin!("obr"));
         cmd.current_dir(&self.br_root);
         cmd.args(args);
         cmd.env("NO_COLOR", "1");

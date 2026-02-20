@@ -20,7 +20,7 @@ use tempfile::TempDir;
 use walkdir::WalkDir;
 
 fn br_binary_path() -> PathBuf {
-    assert_cmd::cargo::cargo_bin!("br").to_path_buf()
+    assert_cmd::cargo::cargo_bin!("obr").to_path_buf()
 }
 
 /// Get the path to the bd (Go beads) binary.
@@ -668,10 +668,10 @@ impl TestWorkspace {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        self.run_binary("br", args, label)
+        self.run_binary("obr", args, label)
     }
 
-    /// Run br command with environment variables
+    /// Run obr command with environment variables
     pub fn run_br_env<I, S, E, K, V>(&mut self, args: I, env_vars: E, label: &str) -> CommandResult
     where
         I: IntoIterator<Item = S>,
@@ -680,19 +680,19 @@ impl TestWorkspace {
         K: AsRef<OsStr>,
         V: AsRef<OsStr>,
     {
-        self.run_binary_env("br", args, env_vars, label)
+        self.run_binary_env("obr", args, env_vars, label)
     }
 
-    /// Run br command with stdin input
+    /// Run obr command with stdin input
     pub fn run_br_stdin<I, S>(&mut self, args: I, input: &str, label: &str) -> CommandResult
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        self.run_binary_stdin("br", args, input, label)
+        self.run_binary_stdin("obr", args, input, label)
     }
 
-    /// Run br command with environment variables and stdin input
+    /// Run obr command with environment variables and stdin input
     pub fn run_br_env_stdin<I, S, E, K, V>(
         &mut self,
         args: I,
@@ -707,7 +707,7 @@ impl TestWorkspace {
         K: AsRef<OsStr>,
         V: AsRef<OsStr>,
     {
-        self.run_binary_full("br", args, env_vars, Some(input), label)
+        self.run_binary_full("obr", args, env_vars, Some(input), label)
     }
 
     /// Run bd (Go beads) command
@@ -1000,7 +1000,7 @@ impl ConformanceWorkspace {
         S: AsRef<OsStr>,
     {
         self.run_in_workspace(
-            "br",
+            "obr",
             &self.br_workspace.clone(),
             args,
             &format!("br_{label}"),
@@ -1022,7 +1022,7 @@ impl ConformanceWorkspace {
         )
     }
 
-    /// Run br command with environment variables
+    /// Run obr command with environment variables
     pub fn run_br_env<I, S, E, K, V>(&mut self, args: I, env_vars: E, label: &str) -> CommandResult
     where
         I: IntoIterator<Item = S>,
@@ -1032,7 +1032,7 @@ impl ConformanceWorkspace {
         V: AsRef<OsStr>,
     {
         self.run_in_workspace_env(
-            "br",
+            "obr",
             &self.br_workspace.clone(),
             args,
             env_vars,
@@ -1041,14 +1041,14 @@ impl ConformanceWorkspace {
         )
     }
 
-    /// Run br command with stdin input
+    /// Run obr command with stdin input
     pub fn run_br_stdin<I, S>(&mut self, args: I, input: &str, label: &str) -> CommandResult
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
         self.run_in_workspace_env(
-            "br",
+            "obr",
             &self.br_workspace.clone(),
             args,
             std::iter::empty::<(String, String)>(),
@@ -1057,7 +1057,7 @@ impl ConformanceWorkspace {
         )
     }
 
-    /// Run br command with env vars and stdin
+    /// Run obr command with env vars and stdin
     pub fn run_br_env_stdin<I, S, E, K, V>(
         &mut self,
         args: I,
@@ -1073,7 +1073,7 @@ impl ConformanceWorkspace {
         V: AsRef<OsStr>,
     {
         self.run_in_workspace_env(
-            "br",
+            "obr",
             &self.br_workspace.clone(),
             args,
             env_vars,
@@ -1687,7 +1687,7 @@ mod tests {
 
         logger.log_command(
             "sample",
-            "br",
+            "obr",
             &["--version".to_string()],
             Path::new("."),
             &result,

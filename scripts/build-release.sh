@@ -12,7 +12,7 @@ set -euo pipefail
 # ============================================================================
 # Configuration
 # ============================================================================
-readonly BINARY_NAME="br"
+readonly BINARY_NAME="obr"
 readonly PROJECT_NAME="beads_rust"
 
 # Target triples for cross-compilation

@@ -33,7 +33,7 @@ This document describes the internal architecture of `beads_rust` (br), a Rust p
 
 ### Comparison with Go beads (bd)
 
-| Feature | br (Rust) | bd (Go) |
+| Feature | obr (Rust) | bd (Go) |
 |---------|-----------|---------|
 | Lines of Code | ~33k | ~276k |
 | Backend | SQLite only | SQLite + Dolt |

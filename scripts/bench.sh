@@ -188,7 +188,7 @@ run_bd_comparison() {
         return
     fi
 
-    BR_PATH="$PROJECT_ROOT/target/release/br"
+    BR_PATH="$PROJECT_ROOT/target/release/obr"
 
     log "  br: $BR_PATH"
     log "  bd: $BD_PATH"

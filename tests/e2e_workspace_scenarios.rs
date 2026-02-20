@@ -356,7 +356,7 @@ fn scenario_version_text() {
 
     // Should contain version info
     assert!(
-        version.stdout.contains("br") || version.stdout.contains("version"),
+        version.stdout.contains("obr") || version.stdout.contains("version"),
         "version should show version info: {}",
         version.stdout
     );
