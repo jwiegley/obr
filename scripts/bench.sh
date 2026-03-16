@@ -41,75 +41,75 @@ TIMEOUT="${BENCH_TIMEOUT:-300}"
 DATASET="${BENCH_DATASET:-beads_rust}"
 
 log() {
-    if [[ "$JSON_OUTPUT" -eq 0 ]]; then
-        echo -e "\033[36m[bench]\033[0m $*"
-    fi
+	if [[ "$JSON_OUTPUT" -eq 0 ]]; then
+		echo -e "\033[36m[bench]\033[0m $*"
+	fi
 }
 
 error() {
-    if [[ "$JSON_OUTPUT" -eq 0 ]]; then
-        echo -e "\033[31m[bench] ERROR:\033[0m $*" >&2
-    fi
+	if [[ "$JSON_OUTPUT" -eq 0 ]]; then
+		echo -e "\033[31m[bench] ERROR:\033[0m $*" >&2
+	fi
 }
 
 warn() {
-    if [[ "$JSON_OUTPUT" -eq 0 ]]; then
-        echo -e "\033[33m[bench] WARN:\033[0m $*" >&2
-    fi
+	if [[ "$JSON_OUTPUT" -eq 0 ]]; then
+		echo -e "\033[33m[bench] WARN:\033[0m $*" >&2
+	fi
 }
 
 usage() {
-    head -n 25 "$0" | tail -n +2 | sed 's/^# //' | sed 's/^#//'
-    exit 0
+	head -n 25 "$0" | tail -n +2 | sed 's/^# //' | sed 's/^#//'
+	exit 0
 }
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --json)
-            JSON_OUTPUT=1
-            shift
-            ;;
-        --quick)
-            QUICK_ONLY=1
-            shift
-            ;;
-        --criterion)
-            CRITERION_ONLY=1
-            shift
-            ;;
-        --compare)
-            COMPARE_BD=1
-            shift
-            ;;
-        --save)
-            SAVE_BASELINE="$2"
-            shift 2
-            ;;
-        --baseline)
-            USE_BASELINE="$2"
-            shift 2
-            ;;
-        --help|-h)
-            usage
-            ;;
-        *)
-            error "Unknown argument: $1"
-            usage
-            ;;
-    esac
+	case "$1" in
+	--json)
+		JSON_OUTPUT=1
+		shift
+		;;
+	--quick)
+		QUICK_ONLY=1
+		shift
+		;;
+	--criterion)
+		CRITERION_ONLY=1
+		shift
+		;;
+	--compare)
+		COMPARE_BD=1
+		shift
+		;;
+	--save)
+		SAVE_BASELINE="$2"
+		shift 2
+		;;
+	--baseline)
+		USE_BASELINE="$2"
+		shift 2
+		;;
+	--help | -h)
+		usage
+		;;
+	*)
+		error "Unknown argument: $1"
+		usage
+		;;
+	esac
 done
 
 # Environment guard for long-running benchmarks
 if [[ -z "${BENCH_CONFIRM:-}" ]] && [[ "$JSON_OUTPUT" -eq 0 ]] && [[ "$QUICK_ONLY" -eq 0 ]]; then
-    warn "Full benchmarks may take several minutes."
-    warn "Set BENCH_CONFIRM=1 or use --quick for fast feedback."
-    read -p "Continue? [y/N] " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        log "Aborted."
-        exit 0
-    fi
+	warn "Full benchmarks may take several minutes."
+	warn "Set BENCH_CONFIRM=1 or use --quick for fast feedback."
+	read -p "Continue? [y/N] " -n 1 -r
+	echo
+	if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+		log "Aborted."
+		exit 0
+	fi
 fi
 
 # Ensure build is up to date (release mode for accurate benchmarks)
@@ -125,124 +125,131 @@ RESULTS=()
 
 # Quick comparison benchmark
 run_quick_benchmark() {
-    log "Running quick comparison benchmark..."
+	log "Running quick comparison benchmark..."
 
-    local quick_result
-    if timeout "$TIMEOUT" cargo test --test benchmark_comparison -- --nocapture 2>&1 | tee "$ARTIFACTS_DIR/benchmark/quick_comparison.log"; then
-        quick_result="pass"
-        RESULTS+=("{\"benchmark\":\"quick_comparison\",\"result\":\"pass\"}")
-        log "  Quick comparison: PASS"
-    else
-        quick_result="fail"
-        RESULTS+=("{\"benchmark\":\"quick_comparison\",\"result\":\"fail\"}")
-        error "  Quick comparison: FAIL"
-    fi
+	if timeout "$TIMEOUT" cargo test --test benchmark_comparison -- --nocapture 2>&1 | tee "$ARTIFACTS_DIR/benchmark/quick_comparison.log"; then
+		RESULTS+=("{\"benchmark\":\"quick_comparison\",\"result\":\"pass\"}")
+		log "  Quick comparison: PASS"
+	else
+		RESULTS+=("{\"benchmark\":\"quick_comparison\",\"result\":\"fail\"}")
+		error "  Quick comparison: FAIL"
+	fi
 }
 
 # Criterion benchmarks
 run_criterion_benchmarks() {
-    log "Running criterion benchmarks..."
+	log "Running criterion benchmarks..."
 
-    local baseline_args=""
-    if [[ -n "$SAVE_BASELINE" ]]; then
-        baseline_args="--save-baseline $SAVE_BASELINE"
-        log "  Saving baseline as: $SAVE_BASELINE"
-    elif [[ -n "$USE_BASELINE" ]]; then
-        baseline_args="--baseline $USE_BASELINE"
-        log "  Comparing against baseline: $USE_BASELINE"
-    fi
+	local baseline_args=""
+	if [[ -n "$SAVE_BASELINE" ]]; then
+		baseline_args="--save-baseline $SAVE_BASELINE"
+		log "  Saving baseline as: $SAVE_BASELINE"
+	elif [[ -n "$USE_BASELINE" ]]; then
+		baseline_args="--baseline $USE_BASELINE"
+		log "  Comparing against baseline: $USE_BASELINE"
+	fi
 
-    # Run criterion benchmarks
-    if timeout "$TIMEOUT" cargo bench $baseline_args 2>&1 | tee "$ARTIFACTS_DIR/benchmark/criterion.log"; then
-        RESULTS+=("{\"benchmark\":\"criterion\",\"result\":\"pass\"}")
-        log "  Criterion benchmarks: PASS"
-    else
-        RESULTS+=("{\"benchmark\":\"criterion\",\"result\":\"fail\"}")
-        error "  Criterion benchmarks: FAIL"
-    fi
+	# Run criterion benchmarks
+	# shellcheck disable=SC2086
+	if timeout "$TIMEOUT" cargo bench $baseline_args 2>&1 | tee "$ARTIFACTS_DIR/benchmark/criterion.log"; then
+		RESULTS+=("{\"benchmark\":\"criterion\",\"result\":\"pass\"}")
+		log "  Criterion benchmarks: PASS"
+	else
+		RESULTS+=("{\"benchmark\":\"criterion\",\"result\":\"fail\"}")
+		error "  Criterion benchmarks: FAIL"
+	fi
 
-    # Copy criterion reports to artifacts
-    if [[ -d "$CRITERION_DIR" ]]; then
-        log "  Criterion reports: $CRITERION_DIR"
-    fi
+	# Copy criterion reports to artifacts
+	if [[ -d "$CRITERION_DIR" ]]; then
+		log "  Criterion reports: $CRITERION_DIR"
+	fi
 }
 
 # br vs bd comparison
 run_bd_comparison() {
-    log "Running br vs bd performance comparison..."
+	log "Running br vs bd performance comparison..."
 
-    # Find bd binary
-    BD_PATH="${BD_BINARY:-}"
-    if [[ -z "$BD_PATH" ]]; then
-        for candidate in "/data/projects/beads/.bin/beads" "$HOME/go/bin/bd" "$(command -v bd 2>/dev/null || true)"; do
-            if [[ -n "$candidate" ]] && [[ -x "$candidate" ]]; then
-                BD_PATH="$candidate"
-                break
-            fi
-        done
-    fi
+	# Find bd binary
+	BD_PATH="${BD_BINARY:-}"
+	if [[ -z "$BD_PATH" ]]; then
+		for candidate in "/data/projects/beads/.bin/beads" "$HOME/go/bin/bd" "$(command -v bd 2>/dev/null || true)"; do
+			if [[ -n "$candidate" ]] && [[ -x "$candidate" ]]; then
+				BD_PATH="$candidate"
+				break
+			fi
+		done
+	fi
 
-    if [[ -z "$BD_PATH" ]] || [[ ! -x "$BD_PATH" ]]; then
-        warn "bd binary not found, skipping comparison"
-        RESULTS+=("{\"benchmark\":\"bd_comparison\",\"result\":\"skipped\",\"reason\":\"bd_not_found\"}")
-        return
-    fi
+	if [[ -z "$BD_PATH" ]] || [[ ! -x "$BD_PATH" ]]; then
+		warn "bd binary not found, skipping comparison"
+		RESULTS+=("{\"benchmark\":\"bd_comparison\",\"result\":\"skipped\",\"reason\":\"bd_not_found\"}")
+		return
+	fi
 
-    BR_PATH="$PROJECT_ROOT/target/release/obr"
+	BR_PATH="$PROJECT_ROOT/target/release/obr"
 
-    log "  br: $BR_PATH"
-    log "  bd: $BD_PATH"
+	log "  br: $BR_PATH"
+	log "  bd: $BD_PATH"
 
-    # Simple timing comparison on common operations
-    local comparison_file="$ARTIFACTS_DIR/benchmark/bd_comparison.json"
-    local ops=("list --json" "ready --json" "stats --json")
+	# Simple timing comparison on common operations
+	local comparison_file="$ARTIFACTS_DIR/benchmark/bd_comparison.json"
+	local ops=("list --json" "ready --json" "stats --json")
 
-    echo "{" > "$comparison_file"
-    echo "  \"operations\": [" >> "$comparison_file"
+	echo "{" >"$comparison_file"
+	echo "  \"operations\": [" >>"$comparison_file"
 
-    local first=1
-    for op in "${ops[@]}"; do
-        if [[ "$first" -eq 0 ]]; then
-            echo "," >> "$comparison_file"
-        fi
-        first=0
+	local first=1
+	for op in "${ops[@]}"; do
+		if [[ "$first" -eq 0 ]]; then
+			echo "," >>"$comparison_file"
+		fi
+		first=0
 
-        # Time br
-        local br_start=$(date +%s.%N)
-        "$BR_PATH" $op >/dev/null 2>&1 || true
-        local br_end=$(date +%s.%N)
-        local br_time=$(echo "$br_end - $br_start" | bc)
+		# Time br
+		local br_start
+		br_start=$(date +%s.%N)
+		# shellcheck disable=SC2086
+		"$BR_PATH" $op >/dev/null 2>&1 || true
+		local br_end
+		br_end=$(date +%s.%N)
+		local br_time
+		br_time=$(echo "$br_end - $br_start" | bc)
 
-        # Time bd
-        local bd_start=$(date +%s.%N)
-        "$BD_PATH" $op >/dev/null 2>&1 || true
-        local bd_end=$(date +%s.%N)
-        local bd_time=$(echo "$bd_end - $bd_start" | bc)
+		# Time bd
+		local bd_start
+		bd_start=$(date +%s.%N)
+		# shellcheck disable=SC2086
+		"$BD_PATH" $op >/dev/null 2>&1 || true
+		local bd_end
+		bd_end=$(date +%s.%N)
+		local bd_time
+		bd_time=$(echo "$bd_end - $bd_start" | bc)
 
-        local speedup=$(echo "scale=2; $bd_time / $br_time" | bc 2>/dev/null || echo "N/A")
+		local speedup
+		speedup=$(echo "scale=2; $bd_time / $br_time" | bc 2>/dev/null || echo "N/A")
 
-        echo "    {\"op\": \"$op\", \"br_ms\": $br_time, \"bd_ms\": $bd_time, \"speedup\": $speedup}" >> "$comparison_file"
-        log "  $op: br=${br_time}s bd=${bd_time}s speedup=${speedup}x"
-    done
+		echo "    {\"op\": \"$op\", \"br_ms\": $br_time, \"bd_ms\": $bd_time, \"speedup\": $speedup}" >>"$comparison_file"
+		log "  $op: br=${br_time}s bd=${bd_time}s speedup=${speedup}x"
+	done
 
-    echo "  ]" >> "$comparison_file"
-    echo "}" >> "$comparison_file"
+	echo "  ]" >>"$comparison_file"
+	echo "}" >>"$comparison_file"
 
-    RESULTS+=("{\"benchmark\":\"bd_comparison\",\"result\":\"pass\",\"report\":\"$comparison_file\"}")
-    log "  Comparison report: $comparison_file"
+	RESULTS+=("{\"benchmark\":\"bd_comparison\",\"result\":\"pass\",\"report\":\"$comparison_file\"}")
+	log "  Comparison report: $comparison_file"
 }
 
 # Run benchmarks based on flags
 if [[ "$QUICK_ONLY" -eq 1 ]]; then
-    run_quick_benchmark
+	run_quick_benchmark
 elif [[ "$CRITERION_ONLY" -eq 1 ]]; then
-    run_criterion_benchmarks
+	run_criterion_benchmarks
 else
-    run_quick_benchmark
-    run_criterion_benchmarks
-    if [[ "$COMPARE_BD" -eq 1 ]]; then
-        run_bd_comparison
-    fi
+	run_quick_benchmark
+	run_criterion_benchmarks
+	if [[ "$COMPARE_BD" -eq 1 ]]; then
+		run_bd_comparison
+	fi
 fi
 
 END_TIME=$(date +%s)
@@ -252,7 +259,7 @@ TOTAL_DURATION=$((END_TIME - START_TIME))
 SUMMARY_FILE="$ARTIFACTS_DIR/benchmark_summary.json"
 RESULTS_JSON=$(printf '%s\n' "${RESULTS[@]}" | paste -sd, -)
 
-cat > "$SUMMARY_FILE" << EOF
+cat >"$SUMMARY_FILE" <<EOF
 {
   "suite": "benchmark",
   "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -269,7 +276,7 @@ EOF
 log "Summary written to: $SUMMARY_FILE"
 
 if [[ "$JSON_OUTPUT" -eq 1 ]]; then
-    cat "$SUMMARY_FILE"
+	cat "$SUMMARY_FILE"
 fi
 
 # Final summary

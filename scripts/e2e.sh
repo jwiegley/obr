@@ -27,12 +27,12 @@ ARTIFACTS_DIR="${PROJECT_ROOT}/target/test-artifacts"
 
 # Quick subset of E2E tests (critical path, fast-running)
 QUICK_TESTS=(
-    e2e_basic_lifecycle
-    e2e_ready
-    e2e_create_output
-    e2e_list_priority
-    e2e_errors
-    e2e_harness_demo
+	e2e_basic_lifecycle
+	e2e_ready
+	e2e_create_output
+	e2e_list_priority
+	e2e_errors
+	e2e_harness_demo
 )
 
 # Configuration
@@ -42,51 +42,52 @@ FILTER=""
 TIMEOUT="${E2E_TIMEOUT:-180}"
 
 log() {
-    if [[ "$JSON_OUTPUT" -eq 0 ]]; then
-        echo -e "\033[32m[e2e]\033[0m $*"
-    fi
+	if [[ "$JSON_OUTPUT" -eq 0 ]]; then
+		echo -e "\033[32m[e2e]\033[0m $*"
+	fi
 }
 
 error() {
-    if [[ "$JSON_OUTPUT" -eq 0 ]]; then
-        echo -e "\033[31m[e2e] ERROR:\033[0m $*" >&2
-    fi
+	if [[ "$JSON_OUTPUT" -eq 0 ]]; then
+		echo -e "\033[31m[e2e] ERROR:\033[0m $*" >&2
+	fi
 }
 
+# shellcheck disable=SC2329
 warn() {
-    if [[ "$JSON_OUTPUT" -eq 0 ]]; then
-        echo -e "\033[33m[e2e] WARN:\033[0m $*" >&2
-    fi
+	if [[ "$JSON_OUTPUT" -eq 0 ]]; then
+		echo -e "\033[33m[e2e] WARN:\033[0m $*" >&2
+	fi
 }
 
 usage() {
-    head -n 20 "$0" | tail -n +2 | sed 's/^# //' | sed 's/^#//'
-    exit 0
+	head -n 20 "$0" | tail -n +2 | sed 's/^# //' | sed 's/^#//'
+	exit 0
 }
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --json)
-            JSON_OUTPUT=1
-            shift
-            ;;
-        --verbose|-v)
-            VERBOSE=1
-            shift
-            ;;
-        --filter)
-            FILTER="$2"
-            shift 2
-            ;;
-        --help|-h)
-            usage
-            ;;
-        *)
-            error "Unknown argument: $1"
-            usage
-            ;;
-    esac
+	case "$1" in
+	--json)
+		JSON_OUTPUT=1
+		shift
+		;;
+	--verbose | -v)
+		VERBOSE=1
+		shift
+		;;
+	--filter)
+		FILTER="$2"
+		shift 2
+		;;
+	--help | -h)
+		usage
+		;;
+	*)
+		error "Unknown argument: $1"
+		usage
+		;;
+	esac
 done
 
 # Ensure build is up to date
@@ -108,44 +109,44 @@ log "Running quick E2E tests (${#QUICK_TESTS[@]} tests)..."
 log "Artifacts: $ARTIFACTS_DIR"
 
 for test in "${QUICK_TESTS[@]}"; do
-    # Apply filter if specified
-    if [[ -n "$FILTER" ]] && [[ ! "$test" =~ $FILTER ]]; then
-        SKIPPED=$((SKIPPED + 1))
-        continue
-    fi
+	# Apply filter if specified
+	if [[ -n "$FILTER" ]] && [[ ! "$test" =~ $FILTER ]]; then
+		SKIPPED=$((SKIPPED + 1))
+		continue
+	fi
 
-    log "  Running: $test"
+	log "  Running: $test"
 
-    TEST_START=$(date +%s.%N)
+	TEST_START=$(date +%s.%N)
 
-    if [[ "$VERBOSE" -eq 1 ]]; then
-        if timeout "$TIMEOUT" cargo test --release --test "$test" -- --nocapture 2>&1; then
-            RESULT="pass"
-            PASSED=$((PASSED + 1))
-        else
-            RESULT="fail"
-            FAILED=$((FAILED + 1))
-        fi
-    else
-        if timeout "$TIMEOUT" cargo test --release --test "$test" -- --nocapture >/dev/null 2>&1; then
-            RESULT="pass"
-            PASSED=$((PASSED + 1))
-        else
-            RESULT="fail"
-            FAILED=$((FAILED + 1))
-        fi
-    fi
+	if [[ "$VERBOSE" -eq 1 ]]; then
+		if timeout "$TIMEOUT" cargo test --release --test "$test" -- --nocapture 2>&1; then
+			RESULT="pass"
+			PASSED=$((PASSED + 1))
+		else
+			RESULT="fail"
+			FAILED=$((FAILED + 1))
+		fi
+	else
+		if timeout "$TIMEOUT" cargo test --release --test "$test" -- --nocapture >/dev/null 2>&1; then
+			RESULT="pass"
+			PASSED=$((PASSED + 1))
+		else
+			RESULT="fail"
+			FAILED=$((FAILED + 1))
+		fi
+	fi
 
-    TEST_END=$(date +%s.%N)
-    TEST_DURATION=$(echo "$TEST_END - $TEST_START" | bc 2>/dev/null || echo "0")
+	TEST_END=$(date +%s.%N)
+	TEST_DURATION=$(echo "$TEST_END - $TEST_START" | bc 2>/dev/null || echo "0")
 
-    RESULTS+=("{\"test\":\"$test\",\"result\":\"$RESULT\",\"duration_s\":$TEST_DURATION}")
+	RESULTS+=("{\"test\":\"$test\",\"result\":\"$RESULT\",\"duration_s\":$TEST_DURATION}")
 
-    if [[ "$RESULT" == "pass" ]]; then
-        log "    PASS (${TEST_DURATION}s)"
-    else
-        error "    FAIL (${TEST_DURATION}s)"
-    fi
+	if [[ "$RESULT" == "pass" ]]; then
+		log "    PASS (${TEST_DURATION}s)"
+	else
+		error "    FAIL (${TEST_DURATION}s)"
+	fi
 done
 
 END_TIME=$(date +%s)
@@ -155,7 +156,7 @@ TOTAL_DURATION=$((END_TIME - START_TIME))
 SUMMARY_FILE="$ARTIFACTS_DIR/e2e_quick_summary.json"
 RESULTS_JSON=$(printf '%s\n' "${RESULTS[@]}" | paste -sd, -)
 
-cat > "$SUMMARY_FILE" << EOF
+cat >"$SUMMARY_FILE" <<EOF
 {
   "suite": "e2e_quick",
   "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -172,7 +173,7 @@ EOF
 log "Summary written to: $SUMMARY_FILE"
 
 if [[ "$JSON_OUTPUT" -eq 1 ]]; then
-    cat "$SUMMARY_FILE"
+	cat "$SUMMARY_FILE"
 fi
 
 # Final summary
@@ -183,7 +184,7 @@ log "Artifacts: $ARTIFACTS_DIR"
 log "============================================"
 
 if [[ "$FAILED" -gt 0 ]]; then
-    exit 1
+	exit 1
 fi
 
 exit 0

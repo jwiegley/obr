@@ -13,10 +13,10 @@ log() { echo "[agent_smoke $(date +%H:%M:%S)] $*" >&2; }
 export RUST_LOG="${RUST_LOG:-error}"
 
 need_cmd() {
-    if ! command -v "$1" >/dev/null 2>&1; then
-        log "Missing required command: $1"
-        exit 1
-    fi
+	if ! command -v "$1" >/dev/null 2>&1; then
+		log "Missing required command: $1"
+		exit 1
+	fi
 }
 
 need_cmd jq
@@ -25,18 +25,18 @@ need_cmd tru
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [[ -n "${BR_BIN:-}" ]]; then
-    BR="$BR_BIN"
+	BR="$BR_BIN"
 elif [[ -x "$ROOT/target/debug/obr" ]]; then
-    BR="$ROOT/target/debug/obr"
+	BR="$ROOT/target/debug/obr"
 elif [[ -x "$ROOT/target/release/obr" ]]; then
-    BR="$ROOT/target/release/obr"
+	BR="$ROOT/target/release/obr"
 elif command -v br >/dev/null 2>&1; then
-    # Fallback for environments where br is installed but the repo isn't built.
-    BR="obr"
+	# Fallback for environments where br is installed but the repo isn't built.
+	BR="obr"
 else
-    log "br binary not found. Build it with:"
-    log "  CARGO_TARGET_DIR=target cargo build"
-    exit 1
+	log "br binary not found. Build it with:"
+	log "  CARGO_TARGET_DIR=target cargo build"
+	exit 1
 fi
 
 WORKDIR="$(mktemp -d)"
@@ -72,7 +72,7 @@ BR_OUTPUT_FORMAT=json TOON_DEFAULT_FORMAT=toon "$BR" list --limit 1 | jq -e "typ
 log "Error envelope (stderr JSON)"
 ERR_JSON="$WORKDIR/err.json"
 set +e
-"$BR" show bd-NOTEXIST --format json > /dev/null 2> "$ERR_JSON"
+"$BR" show bd-NOTEXIST --format json >/dev/null 2>"$ERR_JSON"
 EC=$?
 set -e
 jq -e ".error.code == \"ISSUE_NOT_FOUND\"" "$ERR_JSON" >/dev/null

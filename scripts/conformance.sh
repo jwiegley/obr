@@ -33,10 +33,10 @@ ARTIFACTS_DIR="${PROJECT_ROOT}/target/test-artifacts"
 
 # Conformance tests
 CONFORMANCE_TESTS=(
-    conformance
-    conformance_edge_cases
-    conformance_labels_comments
-    conformance_schema
+	conformance
+	conformance_edge_cases
+	conformance_labels_comments
+	conformance_schema
 )
 
 # Configuration
@@ -47,96 +47,96 @@ CHECK_BD=0
 TIMEOUT="${CONFORMANCE_TIMEOUT:-120}"
 
 # Binary paths
-BR_BIN="${BR_BINARY:-}"
 BD_BIN="${BD_BINARY:-}"
 
 log() {
-    if [[ "$JSON_OUTPUT" -eq 0 ]]; then
-        echo -e "\033[35m[conformance]\033[0m $*"
-    fi
+	if [[ "$JSON_OUTPUT" -eq 0 ]]; then
+		echo -e "\033[35m[conformance]\033[0m $*"
+	fi
 }
 
 error() {
-    if [[ "$JSON_OUTPUT" -eq 0 ]]; then
-        echo -e "\033[31m[conformance] ERROR:\033[0m $*" >&2
-    fi
+	if [[ "$JSON_OUTPUT" -eq 0 ]]; then
+		echo -e "\033[31m[conformance] ERROR:\033[0m $*" >&2
+	fi
 }
 
+# shellcheck disable=SC2329
 warn() {
-    if [[ "$JSON_OUTPUT" -eq 0 ]]; then
-        echo -e "\033[33m[conformance] WARN:\033[0m $*" >&2
-    fi
+	if [[ "$JSON_OUTPUT" -eq 0 ]]; then
+		echo -e "\033[33m[conformance] WARN:\033[0m $*" >&2
+	fi
 }
 
 usage() {
-    head -n 25 "$0" | tail -n +2 | sed 's/^# //' | sed 's/^#//'
-    exit 0
+	head -n 25 "$0" | tail -n +2 | sed 's/^# //' | sed 's/^#//'
+	exit 0
 }
 
 # Find bd binary
 find_bd() {
-    if [[ -n "$BD_BIN" ]] && [[ -x "$BD_BIN" ]]; then
-        echo "$BD_BIN"
-        return 0
-    fi
+	if [[ -n "$BD_BIN" ]] && [[ -x "$BD_BIN" ]]; then
+		echo "$BD_BIN"
+		return 0
+	fi
 
-    # Common locations for bd
-    local candidates=(
-        "/data/projects/beads/.bin/beads"
-        "$HOME/go/bin/bd"
-        "$HOME/.local/bin/bd"
-        "$(command -v bd 2>/dev/null || true)"
-    )
+	# Common locations for bd
+	local candidates=(
+		"/data/projects/beads/.bin/beads"
+		"$HOME/go/bin/bd"
+		"$HOME/.local/bin/bd"
+		"$(command -v bd 2>/dev/null || true)"
+	)
 
-    for candidate in "${candidates[@]}"; do
-        if [[ -n "$candidate" ]] && [[ -x "$candidate" ]]; then
-            echo "$candidate"
-            return 0
-        fi
-    done
+	for candidate in "${candidates[@]}"; do
+		if [[ -n "$candidate" ]] && [[ -x "$candidate" ]]; then
+			echo "$candidate"
+			return 0
+		fi
+	done
 
-    return 1
+	return 1
 }
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --json)
-            JSON_OUTPUT=1
-            shift
-            ;;
-        --verbose|-v)
-            VERBOSE=1
-            shift
-            ;;
-        --filter)
-            FILTER="$2"
-            shift 2
-            ;;
-        --check-bd)
-            CHECK_BD=1
-            shift
-            ;;
-        --help|-h)
-            usage
-            ;;
-        *)
-            error "Unknown argument: $1"
-            usage
-            ;;
-    esac
+	case "$1" in
+	--json)
+		JSON_OUTPUT=1
+		shift
+		;;
+	--verbose | -v)
+		VERBOSE=1
+		shift
+		;;
+	--filter)
+		FILTER="$2"
+		shift 2
+		;;
+	--check-bd)
+		CHECK_BD=1
+		shift
+		;;
+	--help | -h)
+		usage
+		;;
+	*)
+		error "Unknown argument: $1"
+		usage
+		;;
+	esac
 done
 
 # Check for bd availability
 log "Checking for bd (Go beads) binary..."
 if ! BD_PATH=$(find_bd); then
-    error "bd binary not found!"
-    error "Conformance tests require both br (Rust) and bd (Go) binaries."
-    error "Set BD_BINARY=/path/to/bd or install bd."
-    if [[ "$JSON_OUTPUT" -eq 1 ]]; then
-        echo '{"error": "bd_not_found", "message": "bd binary required for conformance tests"}'
-    fi
-    exit 2
+	error "bd binary not found!"
+	error "Conformance tests require both br (Rust) and bd (Go) binaries."
+	error "Set BD_BINARY=/path/to/bd or install bd."
+	if [[ "$JSON_OUTPUT" -eq 1 ]]; then
+		echo '{"error": "bd_not_found", "message": "bd binary required for conformance tests"}'
+	fi
+	exit 2
 fi
 
 log "Found bd at: $BD_PATH"
@@ -144,8 +144,8 @@ BD_VERSION=$("$BD_PATH" version 2>/dev/null | head -1 || echo "unknown")
 log "bd version: $BD_VERSION"
 
 if [[ "$CHECK_BD" -eq 1 ]]; then
-    log "bd is available. Exiting (--check-bd mode)."
-    exit 0
+	log "bd is available. Exiting (--check-bd mode)."
+	exit 0
 fi
 
 # Ensure br build is up to date
@@ -155,7 +155,7 @@ cargo build --release --quiet 2>/dev/null || cargo build --release
 
 BR_PATH="${BR_BINARY:-$(cargo metadata --format-version=1 2>/dev/null | jq -r '.target_directory')/release/br}"
 if [[ ! -x "$BR_PATH" ]]; then
-    BR_PATH="$PROJECT_ROOT/target/release/obr"
+	BR_PATH="$PROJECT_ROOT/target/release/obr"
 fi
 log "Using br at: $BR_PATH"
 BR_VERSION=$("$BR_PATH" version 2>/dev/null | head -1 || echo "unknown")
@@ -179,39 +179,39 @@ log "Running conformance tests (${#CONFORMANCE_TESTS[@]} test files)..."
 log "Artifacts: $ARTIFACTS_DIR/conformance"
 
 for test in "${CONFORMANCE_TESTS[@]}"; do
-    # Apply filter if specified
-    if [[ -n "$FILTER" ]] && [[ ! "$test" =~ $FILTER ]]; then
-        ((SKIPPED++))
-        continue
-    fi
+	# Apply filter if specified
+	if [[ -n "$FILTER" ]] && [[ ! "$test" =~ $FILTER ]]; then
+		((SKIPPED++))
+		continue
+	fi
 
-    log "  Running: $test"
+	log "  Running: $test"
 
-    TEST_START=$(date +%s.%N)
+	TEST_START=$(date +%s.%N)
 
-    NOCAPTURE_FLAG=""
-    if [[ "$VERBOSE" -eq 1 ]]; then
-        NOCAPTURE_FLAG="--nocapture"
-    fi
+	NOCAPTURE_FLAG=""
+	if [[ "$VERBOSE" -eq 1 ]]; then
+		NOCAPTURE_FLAG="--nocapture"
+	fi
 
-    if timeout "$TIMEOUT" cargo test --test "$test" -- $NOCAPTURE_FLAG 2>&1; then
-        RESULT="pass"
-        ((PASSED++))
-    else
-        RESULT="fail"
-        ((FAILED++))
-    fi
+	if timeout "$TIMEOUT" cargo test --test "$test" -- $NOCAPTURE_FLAG 2>&1; then
+		RESULT="pass"
+		((PASSED++))
+	else
+		RESULT="fail"
+		((FAILED++))
+	fi
 
-    TEST_END=$(date +%s.%N)
-    TEST_DURATION=$(echo "$TEST_END - $TEST_START" | bc 2>/dev/null || echo "0")
+	TEST_END=$(date +%s.%N)
+	TEST_DURATION=$(echo "$TEST_END - $TEST_START" | bc 2>/dev/null || echo "0")
 
-    RESULTS+=("{\"test\":\"$test\",\"result\":\"$RESULT\",\"duration_s\":$TEST_DURATION}")
+	RESULTS+=("{\"test\":\"$test\",\"result\":\"$RESULT\",\"duration_s\":$TEST_DURATION}")
 
-    if [[ "$RESULT" == "pass" ]]; then
-        log "    PASS (${TEST_DURATION}s)"
-    else
-        error "    FAIL (${TEST_DURATION}s)"
-    fi
+	if [[ "$RESULT" == "pass" ]]; then
+		log "    PASS (${TEST_DURATION}s)"
+	else
+		error "    FAIL (${TEST_DURATION}s)"
+	fi
 done
 
 END_TIME=$(date +%s)
@@ -221,7 +221,7 @@ TOTAL_DURATION=$((END_TIME - START_TIME))
 SUMMARY_FILE="$ARTIFACTS_DIR/conformance_summary.json"
 RESULTS_JSON=$(printf '%s\n' "${RESULTS[@]}" | paste -sd, -)
 
-cat > "$SUMMARY_FILE" << EOF
+cat >"$SUMMARY_FILE" <<EOF
 {
   "suite": "conformance",
   "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -244,7 +244,7 @@ EOF
 log "Summary written to: $SUMMARY_FILE"
 
 if [[ "$JSON_OUTPUT" -eq 1 ]]; then
-    cat "$SUMMARY_FILE"
+	cat "$SUMMARY_FILE"
 fi
 
 # Final summary
@@ -256,7 +256,7 @@ log "Artifacts: $ARTIFACTS_DIR/conformance"
 log "============================================"
 
 if [[ "$FAILED" -gt 0 ]]; then
-    exit 1
+	exit 1
 fi
 
 exit 0

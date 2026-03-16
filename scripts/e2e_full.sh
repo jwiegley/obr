@@ -39,71 +39,71 @@ DATASET="${E2E_DATASET:-}"
 TIMEOUT="${E2E_TIMEOUT:-120}"
 
 log() {
-    if [[ "$JSON_OUTPUT" -eq 0 ]]; then
-        echo -e "\033[32m[e2e_full]\033[0m $*"
-    fi
+	if [[ "$JSON_OUTPUT" -eq 0 ]]; then
+		echo -e "\033[32m[e2e_full]\033[0m $*"
+	fi
 }
 
 error() {
-    if [[ "$JSON_OUTPUT" -eq 0 ]]; then
-        echo -e "\033[31m[e2e_full] ERROR:\033[0m $*" >&2
-    fi
+	if [[ "$JSON_OUTPUT" -eq 0 ]]; then
+		echo -e "\033[31m[e2e_full] ERROR:\033[0m $*" >&2
+	fi
 }
 
 warn() {
-    if [[ "$JSON_OUTPUT" -eq 0 ]]; then
-        echo -e "\033[33m[e2e_full] WARN:\033[0m $*" >&2
-    fi
+	if [[ "$JSON_OUTPUT" -eq 0 ]]; then
+		echo -e "\033[33m[e2e_full] WARN:\033[0m $*" >&2
+	fi
 }
 
 usage() {
-    head -n 25 "$0" | tail -n +2 | sed 's/^# //' | sed 's/^#//'
-    exit 0
+	head -n 25 "$0" | tail -n +2 | sed 's/^# //' | sed 's/^#//'
+	exit 0
 }
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --json)
-            JSON_OUTPUT=1
-            shift
-            ;;
-        --verbose|-v)
-            VERBOSE=1
-            shift
-            ;;
-        --filter)
-            FILTER="$2"
-            shift 2
-            ;;
-        --parallel)
-            PARALLEL=1
-            shift
-            ;;
-        --dataset)
-            DATASET="$2"
-            shift 2
-            ;;
-        --help|-h)
-            usage
-            ;;
-        *)
-            error "Unknown argument: $1"
-            usage
-            ;;
-    esac
+	case "$1" in
+	--json)
+		JSON_OUTPUT=1
+		shift
+		;;
+	--verbose | -v)
+		VERBOSE=1
+		shift
+		;;
+	--filter)
+		FILTER="$2"
+		shift 2
+		;;
+	--parallel)
+		PARALLEL=1
+		shift
+		;;
+	--dataset)
+		DATASET="$2"
+		shift 2
+		;;
+	--help | -h)
+		usage
+		;;
+	*)
+		error "Unknown argument: $1"
+		usage
+		;;
+	esac
 done
 
 # Environment guard for long-running tests
 if [[ -z "${E2E_FULL_CONFIRM:-}" ]] && [[ "$JSON_OUTPUT" -eq 0 ]]; then
-    warn "Full E2E suite runs all tests and may take several minutes."
-    warn "Set E2E_FULL_CONFIRM=1 or use scripts/e2e.sh for quick feedback."
-    read -p "Continue? [y/N] " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        log "Aborted."
-        exit 0
-    fi
+	warn "Full E2E suite runs all tests and may take several minutes."
+	warn "Set E2E_FULL_CONFIRM=1 or use scripts/e2e.sh for quick feedback."
+	read -p "Continue? [y/N] " -n 1 -r
+	echo
+	if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+		log "Aborted."
+		exit 0
+	fi
 fi
 
 # Ensure build is up to date
@@ -115,12 +115,12 @@ cargo build --release --quiet 2>/dev/null || cargo build --release
 log "Discovering E2E tests..."
 ALL_TESTS=()
 for test_file in tests/e2e_*.rs; do
-    test_name=$(basename "$test_file" .rs)
-    # Apply filter if specified
-    if [[ -n "$FILTER" ]] && [[ ! "$test_name" =~ $FILTER ]]; then
-        continue
-    fi
-    ALL_TESTS+=("$test_name")
+	test_name=$(basename "$test_file" .rs)
+	# Apply filter if specified
+	if [[ -n "$FILTER" ]] && [[ ! "$test_name" =~ $FILTER ]]; then
+		continue
+	fi
+	ALL_TESTS+=("$test_name")
 done
 
 log "Found ${#ALL_TESTS[@]} E2E tests"
@@ -130,8 +130,8 @@ mkdir -p "$ARTIFACTS_DIR"
 
 # Export dataset if specified
 if [[ -n "$DATASET" ]]; then
-    export E2E_DATASET="$DATASET"
-    log "Using dataset: $DATASET"
+	export E2E_DATASET="$DATASET"
+	log "Using dataset: $DATASET"
 fi
 
 # Run tests
@@ -142,41 +142,42 @@ START_TIME=$(date +%s)
 RESULTS=()
 
 if [[ "$PARALLEL" -eq 1 ]]; then
-    log "Running tests in parallel..."
-    CARGO_ARGS="--jobs $(nproc 2>/dev/null || echo 4)"
+	log "Running tests in parallel..."
+	CARGO_ARGS="--jobs $(nproc 2>/dev/null || echo 4)"
 else
-    log "Running tests serially..."
-    CARGO_ARGS="--jobs 1"
+	log "Running tests serially..."
+	CARGO_ARGS="--jobs 1"
 fi
 
 for test in "${ALL_TESTS[@]}"; do
-    log "  Running: $test"
+	log "  Running: $test"
 
-    TEST_START=$(date +%s.%N)
+	TEST_START=$(date +%s.%N)
 
-    NOCAPTURE_FLAG=""
-    if [[ "$VERBOSE" -eq 1 ]]; then
-        NOCAPTURE_FLAG="--nocapture"
-    fi
+	NOCAPTURE_FLAG=""
+	if [[ "$VERBOSE" -eq 1 ]]; then
+		NOCAPTURE_FLAG="--nocapture"
+	fi
 
-    if timeout "$TIMEOUT" cargo test --test "$test" $CARGO_ARGS -- $NOCAPTURE_FLAG >/dev/null 2>&1; then
-        RESULT="pass"
-        ((PASSED++))
-    else
-        RESULT="fail"
-        ((FAILED++))
-    fi
+	# shellcheck disable=SC2086
+	if timeout "$TIMEOUT" cargo test --test "$test" $CARGO_ARGS -- $NOCAPTURE_FLAG >/dev/null 2>&1; then
+		RESULT="pass"
+		((PASSED++))
+	else
+		RESULT="fail"
+		((FAILED++))
+	fi
 
-    TEST_END=$(date +%s.%N)
-    TEST_DURATION=$(echo "$TEST_END - $TEST_START" | bc 2>/dev/null || echo "0")
+	TEST_END=$(date +%s.%N)
+	TEST_DURATION=$(echo "$TEST_END - $TEST_START" | bc 2>/dev/null || echo "0")
 
-    RESULTS+=("{\"test\":\"$test\",\"result\":\"$RESULT\",\"duration_s\":$TEST_DURATION}")
+	RESULTS+=("{\"test\":\"$test\",\"result\":\"$RESULT\",\"duration_s\":$TEST_DURATION}")
 
-    if [[ "$RESULT" == "pass" ]]; then
-        log "    PASS (${TEST_DURATION}s)"
-    else
-        error "    FAIL (${TEST_DURATION}s)"
-    fi
+	if [[ "$RESULT" == "pass" ]]; then
+		log "    PASS (${TEST_DURATION}s)"
+	else
+		error "    FAIL (${TEST_DURATION}s)"
+	fi
 done
 
 END_TIME=$(date +%s)
@@ -186,7 +187,7 @@ TOTAL_DURATION=$((END_TIME - START_TIME))
 SUMMARY_FILE="$ARTIFACTS_DIR/e2e_full_summary.json"
 RESULTS_JSON=$(printf '%s\n' "${RESULTS[@]}" | paste -sd, -)
 
-cat > "$SUMMARY_FILE" << EOF
+cat >"$SUMMARY_FILE" <<EOF
 {
   "suite": "e2e_full",
   "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -205,7 +206,7 @@ EOF
 log "Summary written to: $SUMMARY_FILE"
 
 if [[ "$JSON_OUTPUT" -eq 1 ]]; then
-    cat "$SUMMARY_FILE"
+	cat "$SUMMARY_FILE"
 fi
 
 # Final summary
@@ -216,7 +217,7 @@ log "Artifacts: $ARTIFACTS_DIR"
 log "============================================"
 
 if [[ "$FAILED" -gt 0 ]]; then
-    exit 1
+	exit 1
 fi
 
 exit 0

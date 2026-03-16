@@ -17,21 +17,26 @@ LOG_FILE="/tmp/br_baseline_$(date +%Y%m%d_%H%M%S).log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
-log_section() { echo ""; log "═══════════════════════════════════════════════════════════════════"; log "$*"; log "═══════════════════════════════════════════════════════════════════"; }
+log_section() {
+	echo ""
+	log "═══════════════════════════════════════════════════════════════════"
+	log "$*"
+	log "═══════════════════════════════════════════════════════════════════"
+}
 log_error() { echo "[$(date '+%H:%M:%S')] ERROR: $*" >&2; }
 
 # Find br binary
 find_br() {
-    if command -v br &> /dev/null; then
-        echo "obr"
-    elif [[ -x "./target/release/obr" ]]; then
-        echo "./target/release/obr"
-    elif [[ -x "./target/debug/obr" ]]; then
-        echo "./target/debug/obr"
-    else
-        log_error "br binary not found. Build with: cargo build --release"
-        exit 1
-    fi
+	if command -v br &>/dev/null; then
+		echo "obr"
+	elif [[ -x "./target/release/obr" ]]; then
+		echo "./target/release/obr"
+	elif [[ -x "./target/debug/obr" ]]; then
+		echo "./target/debug/obr"
+	else
+		log_error "br binary not found. Build with: cargo build --release"
+		exit 1
+	fi
 }
 
 BR=$(find_br)
@@ -102,25 +107,25 @@ log "Configured test data: dependencies, labels, comments, closed issue"
 log_section "Phase 2: Capture JSON baselines"
 
 capture_fixture() {
-    local name="$1"
-    local description="$2"
-    shift 2
-    local output_file="$FIXTURE_DIR/${name}.json"
+	local name="$1"
+	local description="$2"
+	shift 2
+	local output_file="$FIXTURE_DIR/${name}.json"
 
-    log "Capturing: $name - $description"
-    if "$BR" "$@" > "$output_file" 2>/dev/null; then
-        if jq -e '.' "$output_file" > /dev/null 2>&1; then
-            log "  ✓ Valid JSON captured: $output_file"
-            return 0
-        else
-            log "  ⚠ Output is not valid JSON, keeping for reference"
-            return 0
-        fi
-    else
-        log "  ✗ Command failed: br $*"
-        echo "null" > "$output_file"
-        return 0
-    fi
+	log "Capturing: $name - $description"
+	if "$BR" "$@" >"$output_file" 2>/dev/null; then
+		if jq -e '.' "$output_file" >/dev/null 2>&1; then
+			log "  ✓ Valid JSON captured: $output_file"
+			return 0
+		else
+			log "  ⚠ Output is not valid JSON, keeping for reference"
+			return 0
+		fi
+	else
+		log "  ✗ Command failed: br $*"
+		echo "null" >"$output_file"
+		return 0
+	fi
 }
 
 # List commands
@@ -140,26 +145,26 @@ capture_fixture "blocked" "Blocked issues" blocked --json
 capture_fixture "stats" "Project statistics" stats --json
 
 # Count command
-capture_fixture "count" "Issue counts" count --json 2>/dev/null || echo '{"total": 0}' > "$FIXTURE_DIR/count.json"
+capture_fixture "count" "Issue counts" count --json 2>/dev/null || echo '{"total": 0}' >"$FIXTURE_DIR/count.json"
 
 # Search command
-capture_fixture "search" "Search results for 'test'" search "test" --json 2>/dev/null || echo '[]' > "$FIXTURE_DIR/search.json"
+capture_fixture "search" "Search results for 'test'" search "test" --json 2>/dev/null || echo '[]' >"$FIXTURE_DIR/search.json"
 
 # Dependency commands
-capture_fixture "dep_list" "Dependency list for single issue" dep list "$ID1" --json 2>/dev/null || echo '{"dependencies": []}' > "$FIXTURE_DIR/dep_list.json"
+capture_fixture "dep_list" "Dependency list for single issue" dep list "$ID1" --json 2>/dev/null || echo '{"dependencies": []}' >"$FIXTURE_DIR/dep_list.json"
 
 # Label commands
-capture_fixture "label_list" "Labels for single issue" label list "$ID1" --json 2>/dev/null || echo '[]' > "$FIXTURE_DIR/label_list.json"
-capture_fixture "label_list_all" "All labels in project" label list-all --json 2>/dev/null || echo '[]' > "$FIXTURE_DIR/label_list_all.json"
+capture_fixture "label_list" "Labels for single issue" label list "$ID1" --json 2>/dev/null || echo '[]' >"$FIXTURE_DIR/label_list.json"
+capture_fixture "label_list_all" "All labels in project" label list-all --json 2>/dev/null || echo '[]' >"$FIXTURE_DIR/label_list_all.json"
 
 # Comments command
-capture_fixture "comments_list" "Comments for single issue" comments list "$ID1" --json 2>/dev/null || echo '[]' > "$FIXTURE_DIR/comments_list.json"
+capture_fixture "comments_list" "Comments for single issue" comments list "$ID1" --json 2>/dev/null || echo '[]' >"$FIXTURE_DIR/comments_list.json"
 
 # Version command
-capture_fixture "version" "Version information" version --json 2>/dev/null || echo '{"version": "unknown"}' > "$FIXTURE_DIR/version.json"
+capture_fixture "version" "Version information" version --json 2>/dev/null || echo '{"version": "unknown"}' >"$FIXTURE_DIR/version.json"
 
 # Doctor command (diagnostic)
-capture_fixture "doctor" "Diagnostic check" doctor --json 2>/dev/null || echo '{"status": "unknown"}' > "$FIXTURE_DIR/doctor.json"
+capture_fixture "doctor" "Diagnostic check" doctor --json 2>/dev/null || echo '{"status": "unknown"}' >"$FIXTURE_DIR/doctor.json"
 
 log_section "Phase 3: Validation"
 
@@ -167,13 +172,13 @@ log_section "Phase 3: Validation"
 VALID=0
 INVALID=0
 for f in "$FIXTURE_DIR"/*.json; do
-    if jq -e '.' "$f" > /dev/null 2>&1; then
-        log "✓ $(basename "$f")"
-        ((VALID++))
-    else
-        log "✗ INVALID: $(basename "$f")"
-        ((INVALID++))
-    fi
+	if jq -e '.' "$f" >/dev/null 2>&1; then
+		log "✓ $(basename "$f")"
+		((VALID++))
+	else
+		log "✗ INVALID: $(basename "$f")"
+		((INVALID++))
+	fi
 done
 
 log_section "Summary"
@@ -186,13 +191,14 @@ log "Log file: $LOG_FILE"
 # List generated files with sizes
 log ""
 log "Generated files:"
+# shellcheck disable=SC2012
 ls -lh "$FIXTURE_DIR"/*.json 2>/dev/null | while read -r line; do
-    log "  $line"
+	log "  $line"
 done
 
 if [[ $INVALID -gt 0 ]]; then
-    log_error "Some fixtures are invalid. Please check and fix."
-    exit 1
+	log_error "Some fixtures are invalid. Please check and fix."
+	exit 1
 fi
 
 log ""
