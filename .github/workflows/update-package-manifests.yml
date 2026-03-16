@@ -51,7 +51,7 @@ jobs:
             else
               ext="tar.gz"
             fi
-            FILE="br-v${VERSION}-${platform}.${ext}.sha256"
+            FILE="obr-v${VERSION}-${platform}.${ext}.sha256"
             echo "Downloading $FILE..."
             curl -sL "${RELEASE_URL}/${FILE}" -o "$FILE" || echo "Warning: Could not download $FILE"
           done
@@ -71,7 +71,7 @@ jobs:
             else
               ext="tar.gz"
             fi
-            FILE="br-v${VERSION}-${platform}.${ext}.sha256"
+            FILE="obr-v${VERSION}-${platform}.${ext}.sha256"
             if [ -f "$FILE" ]; then
               HASH=$(cat "$FILE" | awk '{print $1}')
               VAR_NAME=$(echo "${platform}" | tr '[:lower:]' '[:upper:]')
@@ -87,29 +87,29 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
 
           # Update version
-          sed -i "s/version \"[^\"]*\"/version \"${VERSION}\"/" packaging/homebrew/br.rb
+          sed -i "s/version \"[^\"]*\"/version \"${VERSION}\"/" packaging/homebrew/obr.rb
 
           # Update SHA256 hashes
           if [ -n "${{ steps.hashes.outputs.DARWIN_ARM64_SHA256 }}" ]; then
-            sed -i "s/PLACEHOLDER_DARWIN_ARM64_SHA256/${{ steps.hashes.outputs.DARWIN_ARM64_SHA256 }}/" packaging/homebrew/br.rb
+            sed -i "s/PLACEHOLDER_DARWIN_ARM64_SHA256/${{ steps.hashes.outputs.DARWIN_ARM64_SHA256 }}/" packaging/homebrew/obr.rb
             # Also update if already has a real hash
-            sed -i "s/sha256 \"[a-f0-9]\{64\}\"  # darwin_arm64/sha256 \"${{ steps.hashes.outputs.DARWIN_ARM64_SHA256 }}\"  # darwin_arm64/" packaging/homebrew/br.rb
+            sed -i "s/sha256 \"[a-f0-9]\{64\}\"  # darwin_arm64/sha256 \"${{ steps.hashes.outputs.DARWIN_ARM64_SHA256 }}\"  # darwin_arm64/" packaging/homebrew/obr.rb
           fi
 
           if [ -n "${{ steps.hashes.outputs.DARWIN_AMD64_SHA256 }}" ]; then
-            sed -i "s/PLACEHOLDER_DARWIN_AMD64_SHA256/${{ steps.hashes.outputs.DARWIN_AMD64_SHA256 }}/" packaging/homebrew/br.rb
+            sed -i "s/PLACEHOLDER_DARWIN_AMD64_SHA256/${{ steps.hashes.outputs.DARWIN_AMD64_SHA256 }}/" packaging/homebrew/obr.rb
           fi
 
           if [ -n "${{ steps.hashes.outputs.LINUX_ARM64_SHA256 }}" ]; then
-            sed -i "s/PLACEHOLDER_LINUX_ARM64_SHA256/${{ steps.hashes.outputs.LINUX_ARM64_SHA256 }}/" packaging/homebrew/br.rb
+            sed -i "s/PLACEHOLDER_LINUX_ARM64_SHA256/${{ steps.hashes.outputs.LINUX_ARM64_SHA256 }}/" packaging/homebrew/obr.rb
           fi
 
           if [ -n "${{ steps.hashes.outputs.LINUX_AMD64_SHA256 }}" ]; then
-            sed -i "s/PLACEHOLDER_LINUX_AMD64_SHA256/${{ steps.hashes.outputs.LINUX_AMD64_SHA256 }}/" packaging/homebrew/br.rb
+            sed -i "s/PLACEHOLDER_LINUX_AMD64_SHA256/${{ steps.hashes.outputs.LINUX_AMD64_SHA256 }}/" packaging/homebrew/obr.rb
           fi
 
           echo "=== Updated Homebrew formula ==="
-          cat packaging/homebrew/br.rb
+          cat packaging/homebrew/obr.rb
 
       - name: Update Scoop manifest
         run: |
@@ -119,7 +119,7 @@ jobs:
           # Use jq to update the manifest
           jq --arg version "$VERSION" --arg hash "$HASH" '
             .version = $version |
-            .architecture."64bit".url = "https://github.com/Dicklesworthstone/beads_rust/releases/download/v\($version)/br-v\($version)-windows_amd64.zip" |
+            .architecture."64bit".url = "https://github.com/Dicklesworthstone/beads_rust/releases/download/v\($version)/obr-v\($version)-windows_amd64.zip" |
             .architecture."64bit".hash = $hash
           ' packaging/scoop/br.json > packaging/scoop/br.json.tmp
 
@@ -162,7 +162,7 @@ jobs:
             Automated update of package manager manifests for release v${{ steps.version.outputs.version }}.
 
             ## Updated Files
-            - `packaging/homebrew/br.rb` - Homebrew formula
+            - `packaging/homebrew/obr.rb` - Homebrew formula
             - `packaging/scoop/br.json` - Scoop manifest
             - `packaging/aur/PKGBUILD` - AUR package
 

@@ -41,10 +41,10 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy (all features)
-        run: cargo clippy --all-targets --all-features
+        run: cargo clippy --all-targets --all-features -- --deny warnings
 
       - name: Clippy (no default features)
-        run: cargo clippy --all-targets --no-default-features
+        run: cargo clippy --all-targets --no-default-features -- --deny warnings
 
       - name: Check (all targets)
         run: cargo check --all-targets --all-features
@@ -177,25 +177,25 @@ jobs:
 
       - name: Verify binary runs (Unix)
         if: runner.os != 'Windows'
-        run: ./target/${{ matrix.target }}/release/br --version
+        run: ./target/${{ matrix.target }}/release/obr --version
 
       - name: Verify binary runs (Windows)
         if: runner.os == 'Windows'
-        run: ./target/${{ matrix.target }}/release/br.exe --version
+        run: ./target/${{ matrix.target }}/release/obr.exe --version
 
       - name: Upload artifact (Unix)
         if: runner.os != 'Windows'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
-          name: br-${{ matrix.name }}
-          path: target/${{ matrix.target }}/release/br
+          name: obr-${{ matrix.name }}
+          path: target/${{ matrix.target }}/release/obr
 
       - name: Upload artifact (Windows)
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
-          name: br-${{ matrix.name }}
-          path: target/${{ matrix.target }}/release/br.exe
+          name: obr-${{ matrix.name }}
+          path: target/${{ matrix.target }}/release/obr.exe
 
   bench:
     name: Benchmarks
@@ -239,7 +239,7 @@ jobs:
           fi
         continue-on-error: true
 
-      - name: Check benchmark regressions (10% threshold)
+      - name: Check benchmark regressions (5% threshold)
         run: |
           python3 - <<'PY'
           import glob
@@ -247,7 +247,7 @@ jobs:
           import os
           import sys
 
-          threshold = 1.10
+          threshold = 1.05
           prev_root = "target/criterion_prev"
           curr_root = "target/criterion"
 
@@ -279,7 +279,7 @@ jobs:
                   regressions.append((rel, prev_mean, curr_mean, ratio))
 
           if regressions:
-              print("benchmark_regression: failures (mean > 10% slower)")
+              print("benchmark_regression: failures (mean > 5% slower)")
               for rel, prev_mean, curr_mean, ratio in regressions:
                   print(f"  {rel}: prev={prev_mean:.2f} curr={curr_mean:.2f} ratio={ratio:.2f}")
               sys.exit(1)
@@ -313,20 +313,20 @@ jobs:
       - name: Download Linux artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
-          name: br-linux-x64
+          name: obr-linux-x64
           path: ./bin
 
       - name: Make binary executable
-        run: chmod +x ./bin/br
+        run: chmod +x ./bin/obr
 
       - name: Verify version info
         run: |
           echo "=== Version output ==="
-          ./bin/br --version
+          ./bin/obr --version
           echo ""
           echo "=== Checking for build info ==="
-          VERSION_OUTPUT=$(./bin/br --version 2>&1 || true)
-          if echo "$VERSION_OUTPUT" | grep -q "br\|beads"; then
+          VERSION_OUTPUT=$(./bin/obr --version 2>&1 || true)
+          if echo "$VERSION_OUTPUT" | grep -q "obr\|beads"; then
             echo "Version info present"
           else
             echo "Warning: Version output may be missing expected info"
