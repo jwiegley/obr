@@ -92,7 +92,7 @@ where
     K: AsRef<OsStr>,
     V: AsRef<OsStr>,
 {
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("br"));
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("obr"));
     cmd.current_dir(&workspace.root);
     cmd.args(args);
     cmd.envs(env_vars);
