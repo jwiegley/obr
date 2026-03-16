@@ -275,22 +275,13 @@ fn status_to_keyword(status: &Status) -> String {
 /// Convert Org keyword to Issue status.
 fn keyword_to_status(keyword: &str) -> Result<Status> {
     match keyword.to_uppercase().as_str() {
-        // Primary Org names
-        "TODO" => Ok(Status::Open),
-        "DOING" => Ok(Status::InProgress),
-        "WAIT" => Ok(Status::Blocked),
-        "DEFER" => Ok(Status::Deferred),
-        "DONE" => Ok(Status::Closed),
-        "CANCELED" => Ok(Status::Tombstone),
-        "NOTE" => Ok(Status::Pinned),
-        // Legacy names for backwards compatibility
-        "OPEN" => Ok(Status::Open),
-        "IN_PROGRESS" | "INPROGRESS" => Ok(Status::InProgress),
-        "BLOCKED" => Ok(Status::Blocked),
-        "DEFERRED" => Ok(Status::Deferred),
-        "CLOSED" => Ok(Status::Closed),
-        "TOMBSTONE" => Ok(Status::Tombstone),
-        "PINNED" => Ok(Status::Pinned),
+        "TODO" | "OPEN" => Ok(Status::Open),
+        "DOING" | "IN_PROGRESS" | "INPROGRESS" => Ok(Status::InProgress),
+        "WAIT" | "BLOCKED" => Ok(Status::Blocked),
+        "DEFER" | "DEFERRED" => Ok(Status::Deferred),
+        "DONE" | "CLOSED" => Ok(Status::Closed),
+        "CANCELED" | "TOMBSTONE" => Ok(Status::Tombstone),
+        "NOTE" | "PINNED" => Ok(Status::Pinned),
         _ => Status::from_str(keyword),
     }
 }
