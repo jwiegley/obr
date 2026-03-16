@@ -31,6 +31,10 @@ Thumbs.db
 # Coverage reports
 /coverage/
 
+# Fuzz testing artifacts
+fuzz/artifacts/
+fuzz/corpus/
+
 # Local agent/session artifacts
 SESSION_STATUS.md
 a.out
