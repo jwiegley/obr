@@ -86,10 +86,44 @@
           meta = with pkgs.lib; {
             description = "Agent-first issue tracker (SQLite + JSONL)";
             homepage = "https://github.com/Dicklesworthstone/beads_rust";
-            license = licenses.mit;
+            license = licenses.bsd3;
             mainProgram = "obr";
             platforms = platforms.unix;
           };
+        };
+
+        # Shared attributes for check derivations that build from source
+        checkCommon = {
+          pname = "beads_rust-check";
+          version = beads_rust.version;
+          src = ./.;
+
+          postUnpack = ''
+            cp -r ${inputs.org2jsonl} org2jsonl
+            chmod -R u+w org2jsonl
+          '';
+
+          cargoLock = {
+            lockFile = ./Cargo.lock;
+            outputHashes = {
+              "toon_rust-0.1.1" = "sha256-3NUdC0BL7IvB1eP1USrA9oeSTRGpE18fgsw6t1W0oQ8=";
+            };
+          };
+
+          nativeBuildInputs = with pkgs; [
+            pkg-config
+          ] ++ [
+            rustPlatform.bindgenHook
+          ];
+
+          buildInputs = with pkgs; [
+            sqlite
+          ] ++ lib.optionals stdenv.hostPlatform.isDarwin [
+            libiconv
+            apple-sdk_15
+          ];
+
+          doCheck = false;
         };
 
       in
@@ -107,6 +141,10 @@
             cargo-edit
             cargo-expand
             cargo-nextest
+            lefthook
+            cargo-audit
+            shellcheck
+            shfmt
 
             # SQLite inspection
             sqlite
@@ -136,6 +174,51 @@
         apps.default = flake-utils.lib.mkApp {
           drv = beads_rust;
           name = "obr";
+        };
+
+        # nix flake check
+        checks = {
+          # Verify the package builds
+          build = self.packages.${system}.default;
+
+          # Check source formatting with cargo fmt
+          formatting = rustPlatform.buildRustPackage (checkCommon // {
+            pname = "beads_rust-fmt";
+
+            buildPhase = ''
+              cargo fmt --all -- --check
+            '';
+
+            installPhase = ''
+              mkdir -p $out
+            '';
+          });
+
+          # Lint with clippy (pedantic + nursery, deny warnings)
+          clippy = rustPlatform.buildRustPackage (checkCommon // {
+            pname = "beads_rust-clippy";
+
+            buildPhase = ''
+              cargo clippy --all-targets -- --deny warnings
+            '';
+
+            installPhase = ''
+              mkdir -p $out
+            '';
+          });
+
+          # Run unit tests
+          tests = rustPlatform.buildRustPackage (checkCommon // {
+            pname = "beads_rust-tests";
+
+            buildPhase = ''
+              cargo test --lib --bins
+            '';
+
+            installPhase = ''
+              mkdir -p $out
+            '';
+          });
         };
       });
 }
