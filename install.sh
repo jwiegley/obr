@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# br (beads_rust) installer - Ultra-robust multi-platform installer with beautiful output
+# obr installer - Ultra-robust multi-platform installer with beautiful output
 #
 # One-liner install:
-#   curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/beads_rust/main/install.sh?$(date +%s)" | bash
+#   curl -fsSL "https://raw.githubusercontent.com/jwiegley/obr/main/install.sh?$(date +%s)" | bash
 #
 # Options:
 #   --version vX.Y.Z   Install specific version (default: latest)
@@ -19,9 +19,8 @@
 #   --from-source      Build from source instead of downloading binary
 #   --quiet            Suppress non-error output
 #   --no-gum           Disable gum formatting even if available
-#   --skip-skills      Don't install any Claude Code / Codex skills
-#   --with-migration-skill  Install the bd-to-br-migration skill (opt-in; default is to skip it)
-#   --uninstall        Remove br and clean up
+#   --with-gum         Install gum if missing (third-party repo/binary, uses sudo)
+#   --uninstall        Remove obr and clean up
 #   --help             Show this help
 #
 set -euo pipefail
@@ -54,63 +53,112 @@ shopt -s lastpipe 2>/dev/null || true
 # `BASH_SOURCE[0]` is populated, interactive `read` can route to the
 # controlling tty, and parsing errors disappear.
 #
-# Re-exec is guarded by BR_INSTALLER_SELF_REEXEC=1 to prevent infinite
+# Identifies this file to the pipe-detection below. Any string unique to this
+# script works; it is grepped, never executed.
+OBR_INSTALLER_SELF_MARKER="obr-installer-self-marker-v1"
+
+# Re-exec is guarded by OBR_INSTALLER_SELF_REEXEC=1 to prevent infinite
 # recursion if for some reason the on-disk copy still looks piped (e.g.
 # `exec` with no tty on an exotic runtime).
-if [[ -z "${BR_INSTALLER_SELF_REEXEC:-}" ]] \
-    && [[ -z "${BASH_SOURCE[0]:-}" || ! -r "${BASH_SOURCE[0]:-}" ]]; then
-    __br_self_owner="${OWNER:-Dicklesworthstone}"
-    __br_self_repo="${REPO:-beads_rust}"
-    __br_self_branch="${BR_INSTALLER_BRANCH:-main}"
-    __br_self_url="${BR_INSTALLER_URL:-https://raw.githubusercontent.com/${__br_self_owner}/${__br_self_repo}/${__br_self_branch}/install.sh}"
-    __br_self_tmp="$(mktemp -t br-installer.XXXXXX 2>/dev/null || mktemp 2>/dev/null || echo "/tmp/br-installer.$$.sh")"
+# "Am I running from a file, or from a pipe?" A bare `-r "${BASH_SOURCE[0]}"`
+# gets this wrong under `curl | bash`, where BASH_SOURCE[0] is the literal
+# string "bash": any readable file named `bash` in the current directory makes
+# the test pass and silently disables this whole block. Identify the file by
+# CONTENT instead — it must be this installer, not merely something readable.
+__obr_self_source="${BASH_SOURCE[0]:-}"
+__obr_self_from_file=0
+if [[ -n "$__obr_self_source" && -r "$__obr_self_source" ]] &&
+	grep -q "$OBR_INSTALLER_SELF_MARKER" "$__obr_self_source" 2>/dev/null; then
+	__obr_self_from_file=1
+fi
+if [[ -z "${OBR_INSTALLER_SELF_REEXEC:-}" ]] && [[ "$__obr_self_from_file" -eq 0 ]]; then
+	__obr_self_owner="${OWNER:-jwiegley}"
+	__obr_self_repo="${REPO:-obr}"
+	__obr_self_branch="${OBR_INSTALLER_BRANCH:-main}"
+	__obr_self_default_url="https://raw.githubusercontent.com/${__obr_self_owner}/${__obr_self_repo}/${__obr_self_branch}/install.sh"
+	__obr_self_url="${OBR_INSTALLER_URL:-$__obr_self_default_url}"
 
-    __br_self_fetched=0
-    if command -v curl >/dev/null 2>&1; then
-        # Cache-bust with a query param to sidestep stale CDN copies; the
-        # server ignores unknown query strings on raw.githubusercontent.com.
-        if curl -fsSL --retry 3 --max-time 60 \
-            "${__br_self_url}?$(date +%s 2>/dev/null || echo self)" \
-            -o "$__br_self_tmp" 2>/dev/null; then
-            __br_self_fetched=1
-        fi
-    fi
-    if [[ "$__br_self_fetched" -eq 0 ]] && command -v wget >/dev/null 2>&1; then
-        if wget -qO "$__br_self_tmp" \
-            "${__br_self_url}?$(date +%s 2>/dev/null || echo self)" 2>/dev/null; then
-            __br_self_fetched=1
-        fi
-    fi
+	# A single environment variable must not be able to redirect this into
+	# `exec bash <attacker-controlled script>`. Fetching from anywhere other
+	# than the pinned default is opt-in and stated out loud.
+	if [[ "$__obr_self_url" != "$__obr_self_default_url" ]]; then
+		case " $* " in
+		*" --allow-custom-source "*) : ;;
+		*)
+			echo "obr installer: OBR_INSTALLER_URL points somewhere other than the" >&2
+			echo "obr installer: pinned default. Re-run with --allow-custom-source to" >&2
+			echo "obr installer: allow it, or unset OBR_INSTALLER_URL." >&2
+			exit 1
+			;;
+		esac
+	fi
 
-    if [[ "$__br_self_fetched" -eq 1 ]] && [[ -s "$__br_self_tmp" ]]; then
-        chmod 0700 "$__br_self_tmp" 2>/dev/null || true
-        export BR_INSTALLER_SELF_REEXEC=1
-        # Route interactive input to the controlling tty if one is usable.
-        # `[[ -r /dev/tty ]]` returns true in some CI harnesses where
-        # opening /dev/tty actually fails with "No such device or address",
-        # so probe by opening it in a subshell first.
-        if ( : </dev/tty ) 2>/dev/null; then
-            exec bash "$__br_self_tmp" "$@" </dev/tty
-        else
-            exec bash "$__br_self_tmp" "$@" </dev/null
-        fi
-    fi
-    # Fall through: if the self-download failed we still try to run what
-    # we have.  This preserves the old curl|bash behavior for environments
-    # without curl/wget, at the cost of the known piped-stdin hazards.
-    rm -f "$__br_self_tmp" 2>/dev/null || true
-    unset __br_self_owner __br_self_repo __br_self_branch __br_self_url __br_self_tmp __br_self_fetched
+	# No predictable fallback path: the old `/tmp/obr-installer.$$.sh` is a
+	# guessable name in a shared directory that `curl -o` will write through a
+	# pre-planted symlink, and the next line execs it — as root, under the
+	# advertised `curl … | sudo bash`. If we cannot get a private temp file, we
+	# do not re-exec at all.
+	__obr_self_tmp="$(mktemp -t obr-installer.XXXXXX 2>/dev/null || mktemp 2>/dev/null || true)"
+	if [[ -z "$__obr_self_tmp" || ! -f "$__obr_self_tmp" ]]; then
+		echo "obr installer: cannot create a private temporary file; not re-execing." >&2
+		echo "obr installer: download install.sh and run it directly instead." >&2
+		exit 1
+	fi
+	chmod 0600 "$__obr_self_tmp" 2>/dev/null || true
+
+	__obr_self_fetched=0
+	if command -v curl >/dev/null 2>&1; then
+		# Cache-bust with a query param to sidestep stale CDN copies; the
+		# server ignores unknown query strings on raw.githubusercontent.com.
+		if curl -fsSL --retry 3 --max-time 60 \
+			"${__obr_self_url}?$(date +%s 2>/dev/null || echo self)" \
+			-o "$__obr_self_tmp" 2>/dev/null; then
+			__obr_self_fetched=1
+		fi
+	fi
+	if [[ "$__obr_self_fetched" -eq 0 ]] && command -v wget >/dev/null 2>&1; then
+		if wget -qO "$__obr_self_tmp" \
+			"${__obr_self_url}?$(date +%s 2>/dev/null || echo self)" 2>/dev/null; then
+			__obr_self_fetched=1
+		fi
+	fi
+
+	# No checksum is verified here, and none can be: this stage fetches the
+	# BRANCH TIP of install.sh, which by definition has no published digest to
+	# compare against (the release archives it later downloads do, and those
+	# ARE verified — see verify_archive_checksum). The trust anchor at this
+	# stage is TLS to the pinned host plus the refusal above to fetch from any
+	# other origin. Keep it that way: nothing between here and the exec may
+	# widen where the bytes come from.
+	if [[ "$__obr_self_fetched" -eq 1 ]] && [[ -s "$__obr_self_tmp" ]]; then
+		chmod 0700 "$__obr_self_tmp" 2>/dev/null || true
+		export OBR_INSTALLER_SELF_REEXEC=1
+		# Route interactive input to the controlling tty if one is usable.
+		# `[[ -r /dev/tty ]]` returns true in some CI harnesses where
+		# opening /dev/tty actually fails with "No such device or address",
+		# so probe by opening it in a subshell first.
+		if (: </dev/tty) 2>/dev/null; then
+			exec bash "$__obr_self_tmp" "$@" </dev/tty
+		else
+			exec bash "$__obr_self_tmp" "$@" </dev/null
+		fi
+	fi
+	# Fall through: if the self-download failed we still try to run what
+	# we have.  This preserves the old curl|bash behavior for environments
+	# without curl/wget, at the cost of the known piped-stdin hazards.
+	rm -f "$__obr_self_tmp" 2>/dev/null || true
+	unset __obr_self_owner __obr_self_repo __obr_self_branch __obr_self_url __obr_self_tmp __obr_self_fetched
 fi
 
 # ============================================================================
 # Configuration
 # ============================================================================
 VERSION="${VERSION:-}"
-OWNER="${OWNER:-Dicklesworthstone}"
-REPO="${REPO:-beads_rust}"
+OWNER="${OWNER:-jwiegley}"
+REPO="${REPO:-obr}"
 case "$(uname -s)" in
-    MINGW*|MSYS*|CYGWIN*) BINARY_NAME="br.exe" ;;
-    *) BINARY_NAME="br" ;;
+MINGW* | MSYS* | CYGWIN*) BINARY_NAME="obr.exe" ;;
+*) BINARY_NAME="obr" ;;
 esac
 DEST_DEFAULT="$HOME/.local/bin"
 DEST="${DEST:-$DEST_DEFAULT}"
@@ -123,18 +171,16 @@ CHECKSUM="${CHECKSUM:-}"
 CHECKSUM_URL="${CHECKSUM_URL:-}"
 ARTIFACT_URL="${ARTIFACT_URL:-}"
 INSECURE_SKIP_CHECKSUM=0
-# Honor TMPDIR (POSIX convention) so sandboxed/hermetic environments get a
-# private lock; default environments keep the shared /tmp lock that protects
-# against genuinely concurrent installs.
-LOCK_FILE="${TMPDIR:-/tmp}/br-install.lock"
+# Scoped to the install destination, not the machine: two installs into
+# different directories have nothing to serialize on, and a single global
+# path made concurrent installs (and the test suite) fail on each other.
+# The resolved path also honors TMPDIR (POSIX convention) so sandboxed and
+# hermetic environments get a private lock. Resolved after argument parsing,
+# once DEST is final.
+LOCK_FILE=""
 NO_GUM=0
-SKIP_SKILLS=0
-# Per-skill opt-ins. Default is to NOT install the bd-to-br-migration skill
-# (see #261 — once a user has migrated, the skill just pollutes context;
-# it's a one-time tool, not a steady-state surface). Pass
-# --with-migration-skill to include it. --skip-skills still wins and
-# suppresses every skill regardless of this flag.
-INSTALL_MIGRATION_SKILL=0
+# Opt-in: install gum (third-party, needs sudo) when it is not already present.
+WITH_GUM=0
 MAX_RETRIES=3
 DOWNLOAD_TIMEOUT=120
 INSTALLER_VERSION="2.1.0"
@@ -154,10 +200,8 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
-MAGENTA='\033[0;35m'
 BOLD='\033[1m'
 DIM='\033[2m'
-ITALIC='\033[3m'
 NC='\033[0m'
 
 # Gum availability flag
@@ -167,108 +211,113 @@ GUM_AVAILABLE=false
 # Gum auto-installation (from giil)
 # ============================================================================
 try_install_gum() {
-    # Skip if in CI or non-interactive
-    [[ -z "${CI:-}" ]] || return 1
-    [[ -t 1 ]] || return 1
+	# Skip if in CI or non-interactive
+	[[ -z "${CI:-}" ]] || return 1
+	[[ -t 1 ]] || return 1
 
-    printf >&2 '%s\n' "Note: installing 'gum' (charmbracelet/gum) for styled output. Pass --no-gum to skip."
+	printf >&2 '%s\n' "Installing 'gum' (charmbracelet/gum) as requested by --with-gum; this uses sudo."
 
-    # Inline OS detection
-    local os="unknown"
-    case "$(uname -s)" in
-        Darwin*) os="macos" ;;
-        Linux*)  os="linux" ;;
-    esac
+	# Inline OS detection
+	local os="unknown"
+	case "$(uname -s)" in
+	Darwin*) os="macos" ;;
+	Linux*) os="linux" ;;
+	esac
 
-    # Try to install gum quietly
-    case "$os" in
-        macos)
-            if command -v brew &> /dev/null; then
-                brew install gum &>/dev/null && return 0
-            fi
-            ;;
-        linux)
-            # Try common package managers
-            if command -v apt-get &> /dev/null; then
-                (
-                    sudo mkdir -p /etc/apt/keyrings 2>/dev/null
-                    curl -fsSL https://repo.charm.sh/apt/gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/charm.gpg 2>/dev/null
-                    echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" | sudo tee /etc/apt/sources.list.d/charm.list >/dev/null
-                    sudo apt-get update -qq && sudo apt-get install -y -qq gum
-                ) &>/dev/null && return 0
-            elif command -v dnf &> /dev/null; then
-                (
-                    echo '[charm]
+	# Try to install gum quietly
+	case "$os" in
+	macos)
+		if command -v brew &>/dev/null; then
+			brew install gum &>/dev/null && return 0
+		fi
+		;;
+	linux)
+		# Try common package managers
+		if command -v apt-get &>/dev/null; then
+			(
+				sudo mkdir -p /etc/apt/keyrings 2>/dev/null
+				curl -fsSL https://repo.charm.sh/apt/gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/charm.gpg 2>/dev/null
+				echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" | sudo tee /etc/apt/sources.list.d/charm.list >/dev/null
+				sudo apt-get update -qq && sudo apt-get install -y -qq gum
+			) &>/dev/null && return 0
+		elif command -v dnf &>/dev/null; then
+			(
+				echo '[charm]
 name=Charm
 baseurl=https://repo.charm.sh/yum/
 enabled=1
 gpgcheck=1
 gpgkey=https://repo.charm.sh/yum/gpg.key' | sudo tee /etc/yum.repos.d/charm.repo >/dev/null
-                    sudo dnf install -y gum
-                ) &>/dev/null && return 0
-            elif command -v pacman &> /dev/null; then
-                sudo pacman -S --noconfirm gum &>/dev/null && return 0
-            fi
+				sudo dnf install -y gum
+			) &>/dev/null && return 0
+		elif command -v pacman &>/dev/null; then
+			sudo pacman -S --noconfirm gum &>/dev/null && return 0
+		fi
 
-            # Fallback: download from GitHub releases
-            local arch
-            arch=$(uname -m)
-            case "$arch" in
-                x86_64) arch="amd64" ;;
-                aarch64|arm64) arch="arm64" ;;
-                *) return 1 ;;
-            esac
+		# Fallback: download from GitHub releases
+		local arch
+		arch=$(uname -m)
+		case "$arch" in
+		x86_64) arch="amd64" ;;
+		aarch64 | arm64) arch="arm64" ;;
+		*) return 1 ;;
+		esac
 
-            local tmp_dir
-            tmp_dir=$(mktemp -d)
-            local gum_version="0.14.5"
-            local gum_url="https://github.com/charmbracelet/gum/releases/download/v${gum_version}/gum_${gum_version}_Linux_${arch}.tar.gz"
+		local tmp_dir
+		tmp_dir=$(mktemp -d)
+		local gum_version="0.14.5"
+		local gum_url="https://github.com/charmbracelet/gum/releases/download/v${gum_version}/gum_${gum_version}_Linux_${arch}.tar.gz"
 
-            (
-                cd "$tmp_dir"
-                curl -fsSL "$gum_url" -o gum.tar.gz
-                tar -xzf gum.tar.gz
-                if sudo mv gum /usr/local/bin/gum 2>/dev/null; then
-                    :
-                else
-                    mkdir -p ~/.local/bin
-                    mv gum ~/.local/bin/gum
-                fi
-            ) &>/dev/null && rm -rf "$tmp_dir" && return 0
+		(
+			cd "$tmp_dir"
+			curl -fsSL "$gum_url" -o gum.tar.gz
+			tar -xzf gum.tar.gz
+			if sudo mv gum /usr/local/bin/gum 2>/dev/null; then
+				:
+			else
+				mkdir -p ~/.local/bin
+				mv gum ~/.local/bin/gum
+			fi
+		) &>/dev/null && rm -rf "$tmp_dir" && return 0
 
-            rm -rf "$tmp_dir"
-            ;;
-    esac
+		rm -rf "$tmp_dir"
+		;;
+	esac
 
-    return 1
+	return 1
 }
 
 check_gum() {
-    # Respect NO_GUM flag
-    if [[ "$NO_GUM" -eq 1 ]]; then
-        GUM_AVAILABLE=false
-        return 1
-    fi
+	# Respect NO_GUM flag
+	if [[ "$NO_GUM" -eq 1 ]]; then
+		GUM_AVAILABLE=false
+		return 1
+	fi
 
-    if command -v gum &> /dev/null; then
-        GUM_AVAILABLE=true
-        return 0
-    fi
+	if command -v gum &>/dev/null; then
+		GUM_AVAILABLE=true
+		return 0
+	fi
 
-    # Only try to install gum if interactive and not disabled
-    if [[ -t 1 && -z "${CI:-}" ]]; then
-        if try_install_gum; then
-            if [[ -x "${HOME}/.local/bin/gum" && ":$PATH:" != *":${HOME}/.local/bin:"* ]]; then
-                export PATH="${HOME}/.local/bin:${PATH}"
-            fi
-            if command -v gum &> /dev/null; then
-                GUM_AVAILABLE=true
-                return 0
-            fi
-        fi
-    fi
+	# Installing gum is OPT-IN. It adds a third-party APT/DNF repository and
+	# GPG key with sudo, or downloads an unverified binary into /usr/local/bin
+	# — a permanent, privileged system change, for prettier output, in an
+	# installer whose own payload is checksum-gated. Every styled helper below
+	# already has a working plain-text branch, so the default path simply uses
+	# it. Pass --with-gum to opt in.
+	if [[ "$WITH_GUM" -eq 1 && -t 1 && -z "${CI:-}" ]]; then
+		if try_install_gum; then
+			if [[ -x "${HOME}/.local/bin/gum" && ":$PATH:" != *":${HOME}/.local/bin:"* ]]; then
+				export PATH="${HOME}/.local/bin:${PATH}"
+			fi
+			if command -v gum &>/dev/null; then
+				GUM_AVAILABLE=true
+				return 0
+			fi
+		fi
+	fi
 
-    return 1
+	return 1
 }
 
 # ============================================================================
@@ -277,194 +326,193 @@ check_gum() {
 
 # Print styled banner
 print_banner() {
-    [ "$QUIET" -eq 1 ] && return 0
+	[ "$QUIET" -eq 1 ] && return 0
 
-    if [[ "$GUM_AVAILABLE" == "true" ]]; then
-        gum style \
-            --border double \
-            --border-foreground 39 \
-            --padding "0 2" \
-            --margin "1 0" \
-            --bold \
-            "$(gum style --foreground 42 '🔗 br installer')" \
-            "$(gum style --foreground 245 'Agent-first issue tracker (beads_rust)')"
-    else
-        echo ""
-        echo -e "${BOLD}${BLUE}╔════════════════════════════════════════════════╗${NC}"
-        echo -e "${BOLD}${BLUE}║${NC}  ${BOLD}${GREEN}🔗 br installer${NC}                               ${BOLD}${BLUE}║${NC}"
-        echo -e "${BOLD}${BLUE}║${NC}  ${DIM}Agent-first issue tracker (beads_rust)${NC}        ${BOLD}${BLUE}║${NC}"
-        echo -e "${BOLD}${BLUE}╚════════════════════════════════════════════════╝${NC}"
-        echo ""
-    fi
+	if [[ "$GUM_AVAILABLE" == "true" ]]; then
+		gum style \
+			--border double \
+			--border-foreground 39 \
+			--padding "0 2" \
+			--margin "1 0" \
+			--bold \
+			"$(gum style --foreground 42 '🔗 obr installer')" \
+			"$(gum style --foreground 245 'Issue tracker with an Org-file surface')"
+	else
+		echo ""
+		echo -e "${BOLD}${BLUE}╔════════════════════════════════════════════════╗${NC}"
+		echo -e "${BOLD}${BLUE}║${NC}  ${BOLD}${GREEN}🔗 obr installer${NC}                               ${BOLD}${BLUE}║${NC}"
+		echo -e "${BOLD}${BLUE}║${NC}  ${DIM}Issue tracker with an Org-file surface${NC}        ${BOLD}${BLUE}║${NC}"
+		echo -e "${BOLD}${BLUE}╚════════════════════════════════════════════════╝${NC}"
+		echo ""
+	fi
 }
 
 # Log functions
 log_info() {
-    [ "$QUIET" -eq 1 ] && return 0
-    if [[ "$GUM_AVAILABLE" == "true" ]]; then
-        gum log --level info "$1" >&2
-    else
-        echo -e "${GREEN}[br]${NC} $1" >&2
-    fi
+	[ "$QUIET" -eq 1 ] && return 0
+	if [[ "$GUM_AVAILABLE" == "true" ]]; then
+		gum log --level info "$1" >&2
+	else
+		echo -e "${GREEN}[obr]${NC} $1" >&2
+	fi
 }
 
 log_warn() {
-    if [[ "$GUM_AVAILABLE" == "true" ]]; then
-        gum log --level warn "$1" >&2
-    else
-        echo -e "${YELLOW}[br]${NC} $1" >&2
-    fi
+	if [[ "$GUM_AVAILABLE" == "true" ]]; then
+		gum log --level warn "$1" >&2
+	else
+		echo -e "${YELLOW}[obr]${NC} $1" >&2
+	fi
 }
 
 log_error() {
-    if [[ "$GUM_AVAILABLE" == "true" ]]; then
-        gum log --level error "$1" >&2
-    else
-        echo -e "${RED}[br]${NC} $1" >&2
-    fi
+	if [[ "$GUM_AVAILABLE" == "true" ]]; then
+		gum log --level error "$1" >&2
+	else
+		echo -e "${RED}[obr]${NC} $1" >&2
+	fi
 }
 
 log_step() {
-    [ "$QUIET" -eq 1 ] && return 0
-    if [[ "$GUM_AVAILABLE" == "true" ]]; then
-        gum style --foreground 39 "→ $1" >&2
-    else
-        echo -e "${BLUE}→${NC} $1" >&2
-    fi
+	[ "$QUIET" -eq 1 ] && return 0
+	if [[ "$GUM_AVAILABLE" == "true" ]]; then
+		gum style --foreground 39 "→ $1" >&2
+	else
+		echo -e "${BLUE}→${NC} $1" >&2
+	fi
 }
 
 log_success() {
-    [ "$QUIET" -eq 1 ] && return 0
-    if [[ "$GUM_AVAILABLE" == "true" ]]; then
-        gum style --foreground 82 "✓ $1" >&2
-    else
-        echo -e "${GREEN}✓${NC} $1" >&2
-    fi
+	[ "$QUIET" -eq 1 ] && return 0
+	if [[ "$GUM_AVAILABLE" == "true" ]]; then
+		gum style --foreground 82 "✓ $1" >&2
+	else
+		echo -e "${GREEN}✓${NC} $1" >&2
+	fi
 }
 
 log_debug() {
-    [[ "${DEBUG:-0}" -eq 1 ]] || return 0
-    if [[ "$GUM_AVAILABLE" == "true" ]]; then
-        gum log --level debug "$1" >&2
-    else
-        echo -e "${CYAN}[br:debug]${NC} $1" >&2
-    fi
+	[[ "${DEBUG:-0}" -eq 1 ]] || return 0
+	if [[ "$GUM_AVAILABLE" == "true" ]]; then
+		gum log --level debug "$1" >&2
+	else
+		echo -e "${CYAN}[obr:debug]${NC} $1" >&2
+	fi
 }
 
 # Spinner wrapper for long operations
 # Note: gum spin can only execute external binaries, not shell functions.
 # We work around this by checking if the command is a function and using bash -c.
 run_with_spinner() {
-    local title="$1"
-    shift
-    if [[ "$GUM_AVAILABLE" == "true" && "$QUIET" -eq 0 ]]; then
-        # Check if first argument is a shell function
-        if declare -f "$1" >/dev/null 2>&1; then
-            # Export the function and run via bash -c
-            local func_name="$1"
-            shift
-            # Can't easily export functions to gum subshell, so fall back to no-spinner
-            log_step "$title"
-            "$func_name" "$@"
-        else
-            gum spin --spinner dot --title "$title" -- "$@"
-        fi
-    else
-        log_step "$title"
-        "$@"
-    fi
+	local title="$1"
+	shift
+	if [[ "$GUM_AVAILABLE" == "true" && "$QUIET" -eq 0 ]]; then
+		# Check if first argument is a shell function
+		if declare -f "$1" >/dev/null 2>&1; then
+			# Export the function and run via bash -c
+			local func_name="$1"
+			shift
+			# Can't easily export functions to gum subshell, so fall back to no-spinner
+			log_step "$title"
+			"$func_name" "$@"
+		else
+			gum spin --spinner dot --title "$title" -- "$@"
+		fi
+	else
+		log_step "$title"
+		"$@"
+	fi
 }
 
 # Die with error
 die() {
-    log_error "$@"
-    exit 1
+	log_error "$@"
+	exit 1
 }
 
 # ============================================================================
 # Usage / Help (gum-styled)
 # ============================================================================
 usage() {
-    check_gum || true
+	check_gum || true
 
-    if [[ "$GUM_AVAILABLE" == "true" ]]; then
-        gum style \
-            --border double \
-            --border-foreground 39 \
-            --padding "1 2" \
-            --margin "1" \
-            --bold \
-            "$(gum style --foreground 42 '🔗 br installer v'${INSTALLER_VERSION})" \
-            "$(gum style --foreground 245 'Agent-first issue tracker')"
+	if [[ "$GUM_AVAILABLE" == "true" ]]; then
+		gum style \
+			--border double \
+			--border-foreground 39 \
+			--padding "1 2" \
+			--margin "1" \
+			--bold \
+			"$(gum style --foreground 42 '🔗 obr installer v'${INSTALLER_VERSION})" \
+			"$(gum style --foreground 245 'Agent-first issue tracker')"
 
-        echo ""
+		echo ""
 
-        gum style --foreground 214 --bold "SYNOPSIS"
-        echo "  curl -fsSL .../install.sh | bash"
-        echo "  curl -fsSL .../install.sh | bash -s -- [OPTIONS]"
-        echo ""
+		gum style --foreground 214 --bold "SYNOPSIS"
+		echo "  curl -fsSL .../install.sh | bash"
+		echo "  curl -fsSL .../install.sh | bash -s -- [OPTIONS]"
+		echo ""
 
-        gum style --foreground 214 --bold "OPTIONS"
-        gum style --foreground 39 "  Installation"
-        gum style --faint "    --version vX.Y.Z   Install specific version (default: latest)"
-        gum style --faint "    --dest DIR         Install to DIR (default: ~/.local/bin)"
-        gum style --faint "    --system           Install to /usr/local/bin (requires sudo)"
-        gum style --faint "    --artifact-url URL Use a custom release artifact URL"
-        gum style --faint "    --checksum SHA     Provide expected SHA256 checksum"
-        gum style --faint "    --checksum-url URL Provide a custom checksum URL"
-        gum style --faint "    --insecure-skip-checksum  Allow unverified binary install"
-        gum style --faint "    --from-source      Build from source instead of binary"
-        echo ""
-        gum style --foreground 39 "  Behavior"
-        gum style --faint "    --easy-mode        Auto-update PATH in shell rc files"
-        gum style --faint "    --verify           Run self-test after install"
-        gum style --faint "    --quiet            Suppress progress messages"
-        gum style --faint "    --no-gum           Disable gum formatting"
-        gum style --faint "    --skip-skills      Don't install any Claude/Codex skills"
-        gum style --faint "    --with-migration-skill  Install the bd-to-br-migration skill (opt-in)"
-        echo ""
-        gum style --foreground 39 "  Maintenance"
-        gum style --faint "    --uninstall        Remove br and clean up"
-        gum style --faint "    --help             Show this help"
-        echo ""
+		gum style --foreground 214 --bold "OPTIONS"
+		gum style --foreground 39 "  Installation"
+		gum style --faint "    --version vX.Y.Z   Install specific version (default: latest)"
+		gum style --faint "    --dest DIR         Install to DIR (default: ~/.local/bin)"
+		gum style --faint "    --system           Install to /usr/local/bin (requires sudo)"
+		gum style --faint "    --artifact-url URL Use a custom release artifact URL"
+		gum style --faint "    --checksum SHA     Provide expected SHA256 checksum"
+		gum style --faint "    --checksum-url URL Provide a custom checksum URL"
+		gum style --faint "    --insecure-skip-checksum  Allow unverified binary install"
+		gum style --faint "    --from-source      Build from source instead of binary"
+		echo ""
+		gum style --foreground 39 "  Behavior"
+		gum style --faint "    --easy-mode        Auto-update PATH in shell rc files"
+		gum style --faint "    --verify           Run self-test after install"
+		gum style --faint "    --quiet            Suppress progress messages"
+		gum style --faint "    --no-gum           Disable gum formatting"
+		gum style --faint "    --with-gum         Install gum (third-party, uses sudo) if missing"
+		echo ""
+		gum style --foreground 39 "  Maintenance"
+		gum style --faint "    --uninstall        Remove obr and clean up"
+		gum style --faint "    --help             Show this help"
+		echo ""
 
-        gum style --foreground 214 --bold "ENVIRONMENT"
-        gum style --faint "  HTTPS_PROXY        Use HTTPS proxy for downloads"
-        gum style --faint "  HTTP_PROXY         Use HTTP proxy for downloads"
-        gum style --faint "  BR_INSTALL_DIR     Override default install directory"
-        gum style --faint "  VERSION            Override version to install"
-        echo ""
+		gum style --foreground 214 --bold "ENVIRONMENT"
+		gum style --faint "  HTTPS_PROXY        Use HTTPS proxy for downloads"
+		gum style --faint "  HTTP_PROXY         Use HTTP proxy for downloads"
+		gum style --faint "  OBR_INSTALL_DIR     Override default install directory"
+		gum style --faint "  VERSION            Override version to install"
+		echo ""
 
-        gum style --foreground 214 --bold "EXAMPLES"
-        gum style --foreground 39 "  # Default install"
-        echo "  curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/beads_rust/main/install.sh | bash"
-        echo ""
-        gum style --foreground 39 "  # System install with auto PATH"
-        echo "  curl -fsSL .../install.sh | sudo bash -s -- --system --easy-mode"
-        echo ""
-        gum style --foreground 39 "  # Force source build"
-        echo "  curl -fsSL .../install.sh | bash -s -- --from-source"
-        echo ""
-        gum style --foreground 39 "  # Uninstall"
-        echo "  curl -fsSL .../install.sh | bash -s -- --uninstall"
-        echo ""
+		gum style --foreground 214 --bold "EXAMPLES"
+		gum style --foreground 39 "  # Default install"
+		echo "  curl -fsSL https://raw.githubusercontent.com/jwiegley/obr/main/install.sh | bash"
+		echo ""
+		gum style --foreground 39 "  # System install with auto PATH"
+		echo "  curl -fsSL .../install.sh | sudo bash -s -- --system --easy-mode"
+		echo ""
+		gum style --foreground 39 "  # Force source build"
+		echo "  curl -fsSL .../install.sh | bash -s -- --from-source"
+		echo ""
+		gum style --foreground 39 "  # Uninstall"
+		echo "  curl -fsSL .../install.sh | bash -s -- --uninstall"
+		echo ""
 
-        gum style --foreground 214 --bold "PLATFORMS"
-        echo "  $(gum style --foreground 82 '✓ Linux x86_64')"
-        gum style --foreground 82 "  ✓ Linux ARM64"
-        gum style --foreground 82 "  ✓ macOS Intel"
-        gum style --foreground 82 "  ✓ macOS Apple Silicon"
-        echo "  $(gum style --foreground 82 '✓ Windows x64') $(gum style --foreground 245 --faint '(via WSL or manual)')"
-        echo ""
+		gum style --foreground 214 --bold "PLATFORMS"
+		echo "  $(gum style --foreground 82 '✓ Linux x86_64')"
+		gum style --foreground 82 "  ✓ Linux ARM64"
+		gum style --foreground 82 "  ✓ macOS Intel"
+		gum style --foreground 82 "  ✓ macOS Apple Silicon"
+		echo "  $(gum style --foreground 82 '✓ Windows x64') $(gum style --foreground 245 --faint '(via WSL or manual)')"
+		echo ""
 
-        gum style --foreground 245 --italic "Installer will auto-install gum for beautiful output if not present"
+		gum style --foreground 245 --italic "Installer will auto-install gum for beautiful output if not present"
 
-    else
-        cat <<'EOF'
-br installer - Install beads_rust (br) CLI tool
+	else
+		cat <<'EOF'
+obr installer - Install the obr CLI tool
 
 Usage:
-  curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/beads_rust/main/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/jwiegley/obr/main/install.sh | bash
   curl -fsSL .../install.sh | bash -s -- [OPTIONS]
 
 Options:
@@ -481,14 +529,13 @@ Options:
   --from-source      Build from source instead of downloading binary
   --quiet            Suppress non-error output
   --no-gum           Disable gum formatting even if available
-  --skip-skills      Don't install any Claude Code / Codex skills
-  --with-migration-skill  Install the bd-to-br-migration skill (opt-in)
-  --uninstall        Remove br and clean up
+  --with-gum         Install gum if missing (third-party repo/binary, uses sudo)
+  --uninstall        Remove obr and clean up
 
 Environment Variables:
   HTTPS_PROXY        Use HTTPS proxy for downloads
   HTTP_PROXY         Use HTTP proxy for downloads
-  BR_INSTALL_DIR     Override default install directory
+  OBR_INSTALL_DIR     Override default install directory
   VERSION            Override version to install
 
 Platforms:
@@ -511,39 +558,91 @@ Examples:
   # Uninstall
   curl -fsSL .../install.sh | bash -s -- --uninstall
 EOF
-    fi
-    exit 0
+	fi
+	exit 0
 }
 
 # ============================================================================
 # Argument Parsing
 # ============================================================================
 while [ $# -gt 0 ]; do
-    case "$1" in
-        --version) VERSION="$2"; shift 2;;
-        --version=*) VERSION="${1#*=}"; shift;;
-        --dest) DEST="$2"; shift 2;;
-        --dest=*) DEST="${1#*=}"; shift;;
-        --system) DEST="/usr/local/bin"; shift;;
-        --easy-mode) EASY=1; shift;;
-        --verify) VERIFY=1; shift;;
-        --artifact-url) ARTIFACT_URL="$2"; shift 2;;
-        --checksum) CHECKSUM="$2"; shift 2;;
-        --checksum-url) CHECKSUM_URL="$2"; shift 2;;
-        --insecure-skip-checksum) INSECURE_SKIP_CHECKSUM=1; shift;;
-        --from-source) FROM_SOURCE=1; shift;;
-        --quiet|-q) QUIET=1; shift;;
-        --no-gum) NO_GUM=1; shift;;
-        --skip-skills) SKIP_SKILLS=1; shift;;
-        --with-migration-skill) INSTALL_MIGRATION_SKILL=1; shift;;
-        --uninstall) UNINSTALL=1; shift;;
-        -h|--help) usage;;
-        *) shift;;
-    esac
+	case "$1" in
+	--version)
+		VERSION="$2"
+		shift 2
+		;;
+	--version=*)
+		VERSION="${1#*=}"
+		shift
+		;;
+	--dest)
+		DEST="$2"
+		shift 2
+		;;
+	--dest=*)
+		DEST="${1#*=}"
+		shift
+		;;
+	--system)
+		DEST="/usr/local/bin"
+		shift
+		;;
+	--easy-mode)
+		EASY=1
+		shift
+		;;
+	--verify)
+		VERIFY=1
+		shift
+		;;
+	--artifact-url)
+		ARTIFACT_URL="$2"
+		shift 2
+		;;
+	--checksum)
+		CHECKSUM="$2"
+		shift 2
+		;;
+	--checksum-url)
+		CHECKSUM_URL="$2"
+		shift 2
+		;;
+	--insecure-skip-checksum)
+		INSECURE_SKIP_CHECKSUM=1
+		shift
+		;;
+	--from-source)
+		FROM_SOURCE=1
+		shift
+		;;
+	--quiet | -q)
+		QUIET=1
+		shift
+		;;
+	--with-gum)
+		WITH_GUM=1
+		shift
+		;;
+	--allow-custom-source)
+		# Consumed by the re-exec bootstrap above; accepted here so the flag
+		# does not fall through to the unknown-argument path.
+		shift
+		;;
+	--no-gum)
+		NO_GUM=1
+		shift
+		;;
+	--uninstall)
+		UNINSTALL=1
+		shift
+		;;
+	-h | --help) usage ;;
+	*) shift ;;
+	esac
 done
 
 # Environment variable overrides
-[ -n "${BR_INSTALL_DIR:-}" ] && DEST="$BR_INSTALL_DIR"
+[ -n "${OBR_INSTALL_DIR:-}" ] && DEST="$OBR_INSTALL_DIR"
 
 # Initialize gum early for beautiful output
 check_gum || true
@@ -552,30 +651,30 @@ check_gum || true
 # Uninstall
 # ============================================================================
 do_uninstall() {
-    print_banner
-    log_step "Uninstalling br..."
+	print_banner
+	log_step "Uninstalling obr..."
 
-    if [ -f "$DEST/$BINARY_NAME" ]; then
-        rm -f "$DEST/$BINARY_NAME"
-        log_success "Removed $DEST/$BINARY_NAME"
-    else
-        log_warn "Binary not found at $DEST/$BINARY_NAME"
-    fi
+	if [ -f "$DEST/$BINARY_NAME" ]; then
+		rm -f "$DEST/$BINARY_NAME"
+		log_success "Removed $DEST/$BINARY_NAME"
+	else
+		log_warn "Binary not found at $DEST/$BINARY_NAME"
+	fi
 
-    # Remove PATH modifications from shell rc files
-    for rc in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile" "$HOME/.config/fish/config.fish"; do
-        if [ -f "$rc" ] && grep -q "# br installer" "$rc" 2>/dev/null; then
-            if [[ "$OSTYPE" == "darwin"* ]]; then
-                sed -i '' '/# br installer/d' "$rc" 2>/dev/null || true
-            else
-                sed -i '/# br installer/d' "$rc" 2>/dev/null || true
-            fi
-            log_step "Cleaned $rc"
-        fi
-    done
+	# Remove PATH modifications from shell rc files
+	for rc in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile" "$HOME/.config/fish/config.fish"; do
+		if [ -f "$rc" ] && grep -q "# obr installer" "$rc" 2>/dev/null; then
+			if [[ "$OSTYPE" == "darwin"* ]]; then
+				sed -i '' '/# obr installer/d' "$rc" 2>/dev/null || true
+			else
+				sed -i '/# obr installer/d' "$rc" 2>/dev/null || true
+			fi
+			log_step "Cleaned $rc"
+		fi
+	done
 
-    log_success "br uninstalled successfully"
-    exit 0
+	log_success "obr uninstalled successfully"
+	exit 0
 }
 
 [ "$UNINSTALL" -eq 1 ] && do_uninstall
@@ -584,228 +683,204 @@ do_uninstall() {
 # Platform Detection
 # ============================================================================
 detect_platform() {
-    local os arch libc
+	local os arch libc
 
-    case "$(uname -s)" in
-        Linux*)  os="linux" ;;
-        Darwin*) os="darwin" ;;
-        MINGW*|MSYS*|CYGWIN*) os="windows" ;;
-        *) die "Unsupported OS: $(uname -s)" ;;
-    esac
+	case "$(uname -s)" in
+	Linux*) os="linux" ;;
+	Darwin*) os="darwin" ;;
+	MINGW* | MSYS* | CYGWIN*) os="windows" ;;
+	*) die "Unsupported OS: $(uname -s)" ;;
+	esac
 
-    case "$(uname -m)" in
-        x86_64|amd64) arch="amd64" ;;
-        aarch64|arm64) arch="arm64" ;;
-        armv7*) arch="armv7" ;;
-        *) die "Unsupported architecture: $(uname -m)" ;;
-    esac
+	case "$(uname -m)" in
+	x86_64 | amd64) arch="amd64" ;;
+	aarch64 | arm64) arch="arm64" ;;
+	armv7*) arch="armv7" ;;
+	*) die "Unsupported architecture: $(uname -m)" ;;
+	esac
 
-    # Distinguish glibc vs musl on Linux. Alpine and other musl-based distros
-    # need the statically linked musl binary; the gnu artifact references
-    # libgcc_s/_Unwind_* symbols that musl's libc-compat shim does not provide
-    # (see #284).
-    libc=""
-    if [ "$os" = "linux" ]; then
-        # Detection order, cheapest and most reliable first:
-        #   1. /etc/alpine-release  — Alpine fast path (cheap stat).
-        #   2. /proc/self/maps      — what *this running bash* is linked
-        #      against. Bulletproof: it survives systems that have the
-        #      musl cross-toolchain installed alongside glibc (which
-        #      makes /lib/ld-musl-*.so* present even on glibc hosts), and
-        #      side-steps the `set -o pipefail` interaction with `ldd`.
-        #   3. `ldd --version` output sniff — last resort for exotic
-        #      systems with no /proc (e.g. heavily restricted containers).
-        #
-        # Note on the ldd path: musl's `ldd` exits non-zero even when it
-        # prints "musl libc" to stderr, so `if … | grep -q …` is never
-        # taken under `pipefail`. We capture combined output first and
-        # match with `case` to avoid the pipeline entirely.
-        if [ -f /etc/alpine-release ]; then
-            libc="musl"
-        elif grep -q 'ld-musl' /proc/self/maps 2>/dev/null; then
-            libc="musl"
-        elif command -v ldd >/dev/null 2>&1; then
-            ldd_output=$(ldd --version 2>&1 || true)
-            case "$ldd_output" in
-                *[Mm]usl*) libc="musl" ;;
-            esac
-        fi
-        # Only musl_arm64 and musl_amd64 are published; armv7 keeps gnu (no musl
-        # artifact yet). If we somehow detected musl on armv7, fall back to gnu
-        # rather than fabricating an artifact name that does not exist.
-        if [ "$libc" = "musl" ] && [ "$arch" != "amd64" ] && [ "$arch" != "arm64" ]; then
-            libc=""
-        fi
+	# Distinguish glibc vs musl on Linux. Alpine and other musl-based distros
+	# need the statically linked musl binary; the gnu artifact references
+	# libgcc_s/_Unwind_* symbols that musl's libc-compat shim does not provide
+	# (see #284).
+	libc=""
+	if [ "$os" = "linux" ]; then
+		# Detection order, cheapest and most reliable first:
+		#   1. /etc/alpine-release  — Alpine fast path (cheap stat).
+		#   2. /proc/self/maps      — what *this running bash* is linked
+		#      against. Bulletproof: it survives systems that have the
+		#      musl cross-toolchain installed alongside glibc (which
+		#      makes /lib/ld-musl-*.so* present even on glibc hosts), and
+		#      side-steps the `set -o pipefail` interaction with `ldd`.
+		#   3. `ldd --version` output sniff — last resort for exotic
+		#      systems with no /proc (e.g. heavily restricted containers).
+		#
+		# Note on the ldd path: musl's `ldd` exits non-zero even when it
+		# prints "musl libc" to stderr, so `if … | grep -q …` is never
+		# taken under `pipefail`. We capture combined output first and
+		# match with `case` to avoid the pipeline entirely.
+		if [ -f /etc/alpine-release ]; then
+			libc="musl"
+		elif grep -q 'ld-musl' /proc/self/maps 2>/dev/null; then
+			libc="musl"
+		elif command -v ldd >/dev/null 2>&1; then
+			ldd_output=$(ldd --version 2>&1 || true)
+			case "$ldd_output" in
+			*[Mm]usl*) libc="musl" ;;
+			esac
+		fi
+		# Only musl_arm64 and musl_amd64 are published; armv7 keeps gnu (no musl
+		# artifact yet). If we somehow detected musl on armv7, fall back to gnu
+		# rather than fabricating an artifact name that does not exist.
+		if [ "$libc" = "musl" ] && [ "$arch" != "amd64" ] && [ "$arch" != "arm64" ]; then
+			libc=""
+		fi
+	fi
 
-        # glibc hosts older than the gnu artifact's floor cannot start the
-        # gnu binary at all (loader failure before main, #444). The question
-        # that matters is not "which libc" but "which glibc version", so
-        # prefer the static musl artifact whenever the host floor is too low.
-        # Probe order: getconf (canonical), then ldd's banner. An unreadable
-        # version keeps the gnu artifact — glibc hosts virtually always
-        # answer one of the two probes, and guessing musl on a false negative
-        # would be a silent behavior change for healthy hosts.
-        if [ -z "$libc" ] && { [ "$arch" = "amd64" ] || [ "$arch" = "arm64" ]; }; then
-            local host_glibc=""
-            if command -v getconf >/dev/null 2>&1; then
-                host_glibc=$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}' || true)
-            fi
-            if [ -z "$host_glibc" ] && command -v ldd >/dev/null 2>&1; then
-                # Capture first, then match: musl's ldd exits non-zero and a
-                # pipeline here would trip `set -o pipefail` (same trap as
-                # the musl sniff above).
-                ldd_banner=$(ldd --version 2>&1 | head -n 1 || true)
-                case "$ldd_banner" in
-                    *[0-9].[0-9]*) host_glibc=$(printf '%s\n' "$ldd_banner" | grep -oE '[0-9]+\.[0-9]+' | tail -1 || true) ;;
-                esac
-            fi
-            # Defensive default in case the function is exercised standalone
-            # (the e2e harness extracts/sources functions in isolation).
-            local gnu_floor="${GNU_ARTIFACT_GLIBC_FLOOR:-2.39}"
-            case "$host_glibc" in
-                [0-9]*.[0-9]*)
-                    local host_major="${host_glibc%%.*}"
-                    local host_minor="${host_glibc#*.}"
-                    host_minor="${host_minor%%.*}"
-                    local floor_major="${gnu_floor%%.*}"
-                    local floor_minor="${gnu_floor#*.}"
-                    floor_minor="${floor_minor%%.*}"
-                    if [ "$host_major" -lt "$floor_major" ] || {
-                        [ "$host_major" -eq "$floor_major" ] && [ "$host_minor" -lt "$floor_minor" ]
-                    }; then
-                        log_warn "Host glibc ${host_glibc} is below the gnu artifact floor ${gnu_floor}; selecting the statically linked musl build"
-                        libc="musl"
-                    fi
-                    ;;
-            esac
-        fi
-    fi
-
-    if [ -n "$libc" ]; then
-        echo "${os}_${libc}_${arch}"
-    else
-        echo "${os}_${arch}"
-    fi
+	if [ -n "$libc" ]; then
+		echo "${os}_${libc}_${arch}"
+	else
+		echo "${os}_${arch}"
+	fi
 }
 
 # ============================================================================
 # Version Resolution (with robust fallbacks)
 # ============================================================================
 resolve_version() {
-    if [ -n "$VERSION" ]; then return 0; fi
+	if [ -n "$VERSION" ]; then return 0; fi
 
-    log_step "Resolving latest version..."
-    local latest_url="https://api.github.com/repos/${OWNER}/${REPO}/releases/latest"
-    local tag=""
-    local attempts=0
+	log_step "Resolving latest version..."
+	local latest_url="https://api.github.com/repos/${OWNER}/${REPO}/releases/latest"
+	local tag=""
+	local attempts=0
 
-    # Try GitHub API with retries
-    while [ $attempts -lt $MAX_RETRIES ] && [ -z "$tag" ]; do
-        attempts=$((attempts + 1))
+	# Try GitHub API with retries
+	while [ $attempts -lt $MAX_RETRIES ] && [ -z "$tag" ]; do
+		attempts=$((attempts + 1))
 
-        if command -v curl &>/dev/null; then
-            tag=$(curl -fsSL \
-                --connect-timeout 10 \
-                --max-time 30 \
-                -H "Accept: application/vnd.github.v3+json" \
-                "$latest_url" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || echo "")
-        elif command -v wget &>/dev/null; then
-            tag=$(wget -qO- --timeout=30 "$latest_url" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || echo "")
-        fi
+		if command -v curl &>/dev/null; then
+			tag=$(curl -fsSL \
+				--connect-timeout 10 \
+				--max-time 30 \
+				-H "Accept: application/vnd.github.v3+json" \
+				"$latest_url" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || echo "")
+		elif command -v wget &>/dev/null; then
+			tag=$(wget -qO- --timeout=30 "$latest_url" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || echo "")
+		fi
 
-        [ -z "$tag" ] && [ $attempts -lt $MAX_RETRIES ] && sleep 2
-    done
+		[ -z "$tag" ] && [ $attempts -lt $MAX_RETRIES ] && sleep 2
+	done
 
-    if [ -n "$tag" ] && [[ "$tag" =~ ^v[0-9] ]]; then
-        VERSION="$tag"
-        log_success "Latest version: $VERSION"
-        return 0
-    fi
+	if [ -n "$tag" ] && [[ "$tag" =~ ^v[0-9] ]]; then
+		VERSION="$tag"
+		log_success "Latest version: $VERSION"
+		return 0
+	fi
 
-    # Fallback: try redirect-based resolution
-    log_step "Trying redirect-based version resolution..."
-    local redirect_url="https://github.com/${OWNER}/${REPO}/releases/latest"
-    if command -v curl &>/dev/null; then
-        tag=$(curl -fsSL -o /dev/null -w '%{url_effective}' "$redirect_url" 2>/dev/null | sed -E 's|.*/tag/||' || echo "")
-    fi
+	# Fallback: try redirect-based resolution
+	log_step "Trying redirect-based version resolution..."
+	local redirect_url="https://github.com/${OWNER}/${REPO}/releases/latest"
+	if command -v curl &>/dev/null; then
+		tag=$(curl -fsSL -o /dev/null -w '%{url_effective}' "$redirect_url" 2>/dev/null | sed -E 's|.*/tag/||' || echo "")
+	fi
 
-    if [ -n "$tag" ] && [[ "$tag" =~ ^v[0-9] ]] && [[ "$tag" != *"/"* ]]; then
-        VERSION="$tag"
-        log_success "Latest version (via redirect): $VERSION"
-        return 0
-    fi
+	if [ -n "$tag" ] && [[ "$tag" =~ ^v[0-9] ]] && [[ "$tag" != *"/"* ]]; then
+		VERSION="$tag"
+		log_success "Latest version (via redirect): $VERSION"
+		return 0
+	fi
 
-    log_warn "Could not resolve latest version; will try building from source"
-    VERSION=""
+	log_warn "Could not resolve latest version; will try building from source"
+	VERSION=""
 }
 
 release_download_tag() {
-    local raw="$1"
-    if [ -z "$raw" ]; then
-        printf '%s\n' ""
-    elif [[ "$raw" == v* ]]; then
-        printf '%s\n' "$raw"
-    else
-        printf 'v%s\n' "$raw"
-    fi
+	local raw="$1"
+	if [ -z "$raw" ]; then
+		printf '%s\n' ""
+	elif [[ "$raw" == v* ]]; then
+		printf '%s\n' "$raw"
+	else
+		printf 'v%s\n' "$raw"
+	fi
 }
 
 release_asset_version() {
-    local raw="$1"
-    printf '%s\n' "${raw#v}"
+	local raw="$1"
+	local stripped="${raw#v}"
+	# Flatten semver build metadata's `+` to `.` for FILE NAMES ONLY.
+	#
+	# obr's version is `0.2.22+1`, and the release tag carries that `+`
+	# verbatim — release_download_tag above keeps it. Asset file names cannot:
+	# GitHub's release-asset upload API takes the asset name as a URL query
+	# parameter, where a literal `+` decodes to a space and is stored back as
+	# `.`, so .github/workflows/release.yml publishes `obr-0.2.22.1-*`.
+	# Reconstructing the `+` form here would ask for a file that is not there.
+	printf '%s\n' "${stripped//+/.}"
 }
 
 # ============================================================================
 # Cross-platform locking using mkdir (atomic on all POSIX systems)
 # ============================================================================
-LOCK_DIR="${LOCK_FILE}.d"
+LOCK_DIR=""
 LOCKED=0
 
 acquire_lock() {
-    if mkdir "$LOCK_DIR" 2>/dev/null; then
-        LOCKED=1
-        echo $$ > "$LOCK_DIR/pid"
-        return 0
-    fi
+	if [ -z "$LOCK_FILE" ]; then
+		local dest_key
+		dest_key="$(printf '%s' "$DEST" | tr -c 'A-Za-z0-9' '_')"
+		LOCK_FILE="${TMPDIR:-/tmp}/obr-install.${dest_key}.lock"
+	fi
+	LOCK_DIR="${LOCK_FILE}.d"
 
-    # Check if existing lock is stale
-    if [ -f "$LOCK_DIR/pid" ]; then
-        local old_pid
-        old_pid=$(cat "$LOCK_DIR/pid" 2>/dev/null || echo "")
+	if mkdir "$LOCK_DIR" 2>/dev/null; then
+		LOCKED=1
+		echo $$ >"$LOCK_DIR/pid"
+		return 0
+	fi
 
-        # Check if process is still running
-        if [ -n "$old_pid" ] && ! kill -0 "$old_pid" 2>/dev/null; then
-            log_warn "Removing stale lock (PID $old_pid not running)"
-            rm -rf "$LOCK_DIR"
-            if mkdir "$LOCK_DIR" 2>/dev/null; then
-                LOCKED=1
-                echo $$ > "$LOCK_DIR/pid"
-                return 0
-            fi
-        fi
+	# Check if existing lock is stale
+	if [ -f "$LOCK_DIR/pid" ]; then
+		local old_pid
+		old_pid=$(cat "$LOCK_DIR/pid" 2>/dev/null || echo "")
 
-        # Check lock age (5 minute timeout)
-        local lock_age=0
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            lock_age=$(( $(date +%s) - $(stat -f %m "$LOCK_DIR/pid" 2>/dev/null || echo 0) ))
-        else
-            lock_age=$(( $(date +%s) - $(stat -c %Y "$LOCK_DIR/pid" 2>/dev/null || echo 0) ))
-        fi
+		# Check if process is still running
+		if [ -n "$old_pid" ] && ! kill -0 "$old_pid" 2>/dev/null; then
+			log_warn "Removing stale lock (PID $old_pid not running)"
+			rm -rf "$LOCK_DIR"
+			if mkdir "$LOCK_DIR" 2>/dev/null; then
+				LOCKED=1
+				echo $$ >"$LOCK_DIR/pid"
+				return 0
+			fi
+		fi
 
-        if [ "$lock_age" -gt 300 ]; then
-            log_warn "Removing stale lock (age: ${lock_age}s)"
-            rm -rf "$LOCK_DIR"
-            if mkdir "$LOCK_DIR" 2>/dev/null; then
-                LOCKED=1
-                echo $$ > "$LOCK_DIR/pid"
-                return 0
-            fi
-        fi
-    fi
+		# Check lock age (5 minute timeout)
+		local lock_age=0
+		local lock_mtime
+		lock_mtime="$(stat -c %Y "$LOCK_DIR/pid" 2>/dev/null ||
+			stat -f %m "$LOCK_DIR/pid" 2>/dev/null ||
+			echo 0)"
+		case "$lock_mtime" in
+		'' | *[!0-9]*) lock_mtime=0 ;;
+		esac
+		lock_age=$(($(date +%s) - lock_mtime))
 
-    if [ "$LOCKED" -eq 0 ]; then
-        die "Another installation is running. If incorrect, run: rm -rf $LOCK_DIR"
-    fi
+		if [ "$lock_age" -gt 300 ]; then
+			log_warn "Removing stale lock (age: ${lock_age}s)"
+			rm -rf "$LOCK_DIR"
+			if mkdir "$LOCK_DIR" 2>/dev/null; then
+				LOCKED=1
+				echo $$ >"$LOCK_DIR/pid"
+				return 0
+			fi
+		fi
+	fi
+
+	if [ "$LOCKED" -eq 0 ]; then
+		die "Another installation is running. If incorrect, run: rm -rf $LOCK_DIR"
+	fi
 }
 
 # ============================================================================
@@ -813,9 +888,9 @@ acquire_lock() {
 # ============================================================================
 TMP=""
 cleanup() {
-    [ -n "$TMP" ] && rm -rf "$TMP"
-    [ "$LOCKED" -eq 1 ] && rm -rf "$LOCK_DIR"
-    return 0
+	[ -n "$TMP" ] && rm -rf "$TMP"
+	[ "$LOCKED" -eq 1 ] && rm -rf "$LOCK_DIR"
+	return 0
 }
 trap cleanup EXIT
 
@@ -823,546 +898,397 @@ trap cleanup EXIT
 # PATH modification
 # ============================================================================
 maybe_add_path() {
-    case ":$PATH:" in
-        *:"$DEST":*) return 0;;
-        *)
-            if [ "$EASY" -eq 1 ]; then
-                local updated=0
-                for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
-                    if [ -f "$rc" ] && [ -w "$rc" ]; then
-                        if ! grep -qF "$DEST" "$rc" 2>/dev/null; then
-                            echo "" >> "$rc"
-                            echo "export PATH=\"$DEST:\$PATH\"  # br installer" >> "$rc"
-                        fi
-                        updated=1
-                    fi
-                done
+	case ":$PATH:" in
+	*:"$DEST":*) return 0 ;;
+	*)
+		if [ "$EASY" -eq 1 ]; then
+			local updated=0
+			for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
+				if [ -f "$rc" ] && [ -w "$rc" ]; then
+					if ! grep -qF "$DEST" "$rc" 2>/dev/null; then
+						echo "" >>"$rc"
+						echo "export PATH=\"$DEST:\$PATH\"  # obr installer" >>"$rc"
+					fi
+					updated=1
+				fi
+			done
 
-                # Handle fish shell
-                local fish_config="$HOME/.config/fish/config.fish"
-                if [ -f "$fish_config" ] && [ -w "$fish_config" ]; then
-                    if ! grep -qF "$DEST" "$fish_config" 2>/dev/null; then
-                        echo "" >> "$fish_config"
-                        echo "set -gx PATH $DEST \$PATH  # br installer" >> "$fish_config"
-                    fi
-                    updated=1
-                fi
+			# Handle fish shell
+			local fish_config="$HOME/.config/fish/config.fish"
+			if [ -f "$fish_config" ] && [ -w "$fish_config" ]; then
+				if ! grep -qF "$DEST" "$fish_config" 2>/dev/null; then
+					echo "" >>"$fish_config"
+					echo "set -gx PATH $DEST \$PATH  # obr installer" >>"$fish_config"
+				fi
+				updated=1
+			fi
 
-                if [ "$updated" -eq 1 ]; then
-                    log_warn "PATH updated; restart shell or run: export PATH=\"$DEST:\$PATH\""
-                else
-                    log_warn "Add $DEST to PATH to use br"
-                fi
-            else
-                log_warn "Add $DEST to PATH to use br"
-            fi
-        ;;
-    esac
+			if [ "$updated" -eq 1 ]; then
+				log_warn "PATH updated; restart shell or run: export PATH=\"$DEST:\$PATH\""
+			else
+				log_warn "Add $DEST to PATH to use obr"
+			fi
+		else
+			log_warn "Add $DEST to PATH to use obr"
+		fi
+		;;
+	esac
 }
 
 # ============================================================================
 # Fix shell alias conflicts
 # ============================================================================
 fix_alias_conflicts() {
-    # Check if 'br' is aliased to something else (common: bun run)
-    for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
-        if [ -f "$rc" ]; then
-            # Add unalias after any potential alias definitions
-            if ! grep -q "unalias br.*# br installer" "$rc" 2>/dev/null; then
-                if grep -q "alias br=" "$rc" 2>/dev/null; then
-                    echo "" >> "$rc"
-                    echo "unalias br 2>/dev/null  # br installer - remove conflicting alias" >> "$rc"
-                    log_step "Added unalias to $rc to prevent conflicts"
-                fi
-            fi
-        fi
-    done
+	# Check if 'obr' is aliased to something else (common: bun run)
+	for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
+		if [ -f "$rc" ]; then
+			# Add unalias after any potential alias definitions
+			if ! grep -q "unalias obr.*# obr installer" "$rc" 2>/dev/null; then
+				if grep -q "alias obr=" "$rc" 2>/dev/null; then
+					echo "" >>"$rc"
+					echo "unalias obr 2>/dev/null  # obr installer - remove conflicting alias" >>"$rc"
+					log_step "Added unalias to $rc to prevent conflicts"
+				fi
+			fi
+		fi
+	done
 }
 
 # ============================================================================
 # Install Claude Code / Codex skills
 # ============================================================================
-install_skills() {
-    if [ "$SKIP_SKILLS" -eq 1 ]; then
-        log_step "Skipping skills installation (--skip-skills)"
-        return 0
-    fi
-
-    log_step "Installing Claude Code / Codex skills..."
-
-    local skills_base_url="https://raw.githubusercontent.com/${OWNER}/${REPO}/main/skills"
-    local claude_skills_dir="$HOME/.claude/skills"
-    local codex_skills_dir="${CODEX_HOME:-$HOME/.codex}/skills"
-
-    # List of skills to install (skill_name:files separated by commas)
-    local skills=(
-        "bd-to-br-migration:SKILL.md,SELF-TEST.md,references/TRANSFORMS.md,references/BULK.md,references/PITFALLS.md,scripts/find-bd-refs.sh,scripts/verify-migration.sh,subagents/batch-migrator.md"
-    )
-
-    local skill
-    local _skills_installed_count=0
-    for skill in "${skills[@]}"; do
-        local skill_name="${skill%%:*}"
-        local files_str="${skill#*:}"
-
-        # Per-skill opt-ins: map skill_name to its flag var.
-        case "$skill_name" in
-            bd-to-br-migration)
-                if [ "$INSTALL_MIGRATION_SKILL" -ne 1 ]; then
-                    log_step "Skipping skill: $skill_name (opt-in via --with-migration-skill)"
-                    continue
-                fi
-                ;;
-        esac
-
-        log_step "Installing skill: $skill_name"
-
-        # Create skill directories
-        mkdir -p "$claude_skills_dir/$skill_name/references" 2>/dev/null || true
-        mkdir -p "$claude_skills_dir/$skill_name/scripts" 2>/dev/null || true
-        mkdir -p "$claude_skills_dir/$skill_name/subagents" 2>/dev/null || true
-        mkdir -p "$codex_skills_dir/$skill_name/references" 2>/dev/null || true
-        mkdir -p "$codex_skills_dir/$skill_name/scripts" 2>/dev/null || true
-        mkdir -p "$codex_skills_dir/$skill_name/subagents" 2>/dev/null || true
-
-        # Download each file
-        IFS=',' read -ra files <<< "$files_str"
-        local file
-        local files_installed=0
-        for file in "${files[@]}"; do
-            local url="$skills_base_url/$skill_name/$file"
-            local claude_dest="$claude_skills_dir/$skill_name/$file"
-            local codex_dest="$codex_skills_dir/$skill_name/$file"
-            local tmp_file="${claude_dest}.tmp.$$"
-
-            # Download to temp file first to avoid leaving empty files on failure
-            if download_file "$url" "$tmp_file"; then
-                mv "$tmp_file" "$claude_dest"
-                # Make scripts executable
-                if [[ "$file" == scripts/* ]]; then
-                    chmod +x "$claude_dest" 2>/dev/null || true
-                fi
-                log_debug "Downloaded $file to Claude skills"
-                files_installed=$((files_installed + 1))
-
-                # Copy to Codex skills
-                cp "$claude_dest" "$codex_dest" 2>/dev/null || true
-                if [[ "$file" == scripts/* ]]; then
-                    chmod +x "$codex_dest" 2>/dev/null || true
-                fi
-            else
-                rm -f "$tmp_file" 2>/dev/null || true
-                log_debug "Could not download $file (may not exist)"
-            fi
-        done
-
-        if [ "$files_installed" -gt 0 ]; then
-            log_success "Installed skill: $skill_name ($files_installed files)"
-            _skills_installed_count=$((_skills_installed_count + 1))
-        else
-            log_warn "Skill $skill_name: no files could be downloaded"
-        fi
-    done
-
-    # Only show the fancy skills summary when at least one skill actually
-    # landed files on disk. Don't advertise skills that were skipped (e.g.
-    # bd-to-br-migration is opt-in per #261) or whose downloads all failed.
-    if [ "$_skills_installed_count" -gt 0 ]; then
-        print_skills_summary "$claude_skills_dir" "$codex_skills_dir"
-    fi
-}
-
 # Print beautiful skills installation summary
-print_skills_summary() {
-    local claude_dir="$1"
-    local codex_dir="$2"
-
-    [ "$QUIET" -eq 1 ] && return 0
-
-    echo ""
-    if [[ "$GUM_AVAILABLE" == "true" ]]; then
-        gum style \
-            --border rounded \
-            --border-foreground 213 \
-            --padding "1 2" \
-            --margin "1 0" \
-            "$(gum style --foreground 213 --bold '🎯 AI Coding Skills Installed!')" \
-            "" \
-            "$(gum style --foreground 245 'Skills help AI agents migrate from bd → br')"
-
-        echo ""
-        gum style --foreground 214 --bold "📍 Installed Locations"
-        gum style --foreground 39 "  Claude Code: $(gum style --foreground 82 "$claude_dir")"
-        gum style --foreground 39 "  Codex:       $(gum style --foreground 82 "$codex_dir")"
-
-        echo ""
-        gum style \
-            --border rounded \
-            --border-foreground 39 \
-            --padding "1 2" \
-            "$(gum style --foreground 39 --bold '⚡ How to Use Skills')" \
-            "" \
-            "$(gum style --foreground 214 'Claude Code') $(gum style --faint '(slash command):')" \
-            "  $(gum style --foreground 82 '/bd-to-br-migration')" \
-            "" \
-            "$(gum style --foreground 214 'Codex') $(gum style --faint '(dollar command):')" \
-            "  $(gum style --foreground 82 "\$bd-to-br-migration")"
-
-        echo ""
-        gum style --foreground 245 --italic "Skills auto-trigger when agents detect bd→br migration needs"
-
-    else
-        echo ""
-        echo -e "${MAGENTA}${BOLD}╔════════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${MAGENTA}${BOLD}║${NC}  ${BOLD}🎯 AI Coding Skills Installed!${NC}                            ${MAGENTA}${BOLD}║${NC}"
-        echo -e "${MAGENTA}${BOLD}║${NC}  ${DIM}Skills help AI agents migrate from bd → br${NC}                ${MAGENTA}${BOLD}║${NC}"
-        echo -e "${MAGENTA}${BOLD}╚════════════════════════════════════════════════════════════╝${NC}"
-        echo ""
-        echo -e "${YELLOW}${BOLD}📍 Installed Locations${NC}"
-        echo -e "  ${CYAN}Claude Code:${NC} ${GREEN}$claude_dir${NC}"
-        echo -e "  ${CYAN}Codex:${NC}       ${GREEN}$codex_dir${NC}"
-        echo ""
-        echo -e "${BLUE}${BOLD}╭────────────────────────────────────────────────────────────╮${NC}"
-        echo -e "${BLUE}${BOLD}│${NC}  ${BOLD}⚡ How to Use Skills${NC}                                      ${BLUE}${BOLD}│${NC}"
-        echo -e "${BLUE}${BOLD}│${NC}                                                            ${BLUE}${BOLD}│${NC}"
-        echo -e "${BLUE}${BOLD}│${NC}  ${YELLOW}Claude Code${NC} ${DIM}(slash command):${NC}                            ${BLUE}${BOLD}│${NC}"
-        echo -e "${BLUE}${BOLD}│${NC}    ${GREEN}/bd-to-br-migration${NC}                                    ${BLUE}${BOLD}│${NC}"
-        echo -e "${BLUE}${BOLD}│${NC}                                                            ${BLUE}${BOLD}│${NC}"
-        echo -e "${BLUE}${BOLD}│${NC}  ${YELLOW}Codex${NC} ${DIM}(dollar command):${NC}                                  ${BLUE}${BOLD}│${NC}"
-        echo -e "${BLUE}${BOLD}│${NC}    ${GREEN}\$bd-to-br-migration${NC}                                    ${BLUE}${BOLD}│${NC}"
-        echo -e "${BLUE}${BOLD}╰────────────────────────────────────────────────────────────╯${NC}"
-        echo ""
-        echo -e "${DIM}${ITALIC}Skills auto-trigger when agents detect bd→br migration needs${NC}"
-    fi
-}
-
 # ============================================================================
 # Rust installation for source builds
 # ============================================================================
 ensure_rust() {
-    if [ "${RUSTUP_INIT_SKIP:-0}" != "0" ]; then
-        log_step "Skipping rustup (RUSTUP_INIT_SKIP set)"
-        return 0
-    fi
+	if [ "${RUSTUP_INIT_SKIP:-0}" != "0" ]; then
+		log_step "Skipping rustup (RUSTUP_INIT_SKIP set)"
+		return 0
+	fi
 
-    if command -v cargo >/dev/null 2>&1; then
-        return 0
-    fi
+	if command -v cargo >/dev/null 2>&1; then
+		return 0
+	fi
 
-    if [ "$EASY" -ne 1 ] && [ -t 0 ]; then
-        if [[ "$GUM_AVAILABLE" == "true" ]]; then
-            if ! gum confirm "Rust not found. Install via rustup?"; then
-                log_warn "Skipping rustup"
-                return 1
-            fi
-        else
-            echo -n "Rust not found. Install via rustup? (Y/n): "
-            read -r ans
-            case "$ans" in n|N) log_warn "Skipping rustup"; return 1;; esac
-        fi
-    fi
+	if [ "$EASY" -ne 1 ] && [ -t 0 ]; then
+		if [[ "$GUM_AVAILABLE" == "true" ]]; then
+			if ! gum confirm "Rust not found. Install via rustup?"; then
+				log_warn "Skipping rustup"
+				return 1
+			fi
+		else
+			echo -n "Rust not found. Install via rustup? (Y/n): "
+			read -r ans
+			case "$ans" in n | N)
+				log_warn "Skipping rustup"
+				return 1
+				;;
+			esac
+		fi
+	fi
 
-    log_step "Installing Rust via rustup..."
-    run_with_spinner "Installing Rust toolchain..." \
-        curl -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
-    export PATH="$HOME/.cargo/bin:$PATH"
+	log_step "Installing Rust via rustup..."
+	run_with_spinner "Installing Rust toolchain..." \
+		curl -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+	export PATH="$HOME/.cargo/bin:$PATH"
 
-    # Source cargo env
-    # shellcheck source=/dev/null
-    [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
+	# Source cargo env
+	# shellcheck source=/dev/null
+	[ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
 }
 
 # ============================================================================
 # Pre-build cleanup for source builds
 # ============================================================================
 prepare_for_build() {
-    # Source builds use TMP-scoped clone and target directories, so preflight
-    # must not disturb unrelated Cargo processes or shared Cargo caches.
-    local avail_kb
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        avail_kb=$(df -k /tmp | tail -1 | awk '{print $4}')
-    else
-        avail_kb=$(df -k /tmp | tail -1 | awk '{print $4}')
-    fi
+	# Source builds use TMP-scoped clone and target directories, so preflight
+	# must not disturb unrelated Cargo processes or shared Cargo caches.
+	local avail_kb
+	if [[ "$OSTYPE" == "darwin"* ]]; then
+		avail_kb=$(df -k /tmp | tail -1 | awk '{print $4}')
+	else
+		avail_kb=$(df -k /tmp | tail -1 | awk '{print $4}')
+	fi
 
-    if [ "$avail_kb" -lt 1048576 ]; then
-        log_warn "Low disk space in /tmp ($(( avail_kb / 1024 ))MB). Source build may fail; set TMPDIR to a larger filesystem and retry if needed."
-    fi
+	if [ "$avail_kb" -lt 1048576 ]; then
+		log_warn "Low disk space in /tmp ($((avail_kb / 1024))MB). Source build may fail; set TMPDIR to a larger filesystem and retry if needed."
+	fi
 }
 
 # ============================================================================
 # Download with retry and progress
 # ============================================================================
 download_file() {
-    local url="$1"
-    local dest="$2"
-    local attempt=0
-    local partial="${dest}.part"
+	local url="$1"
+	local dest="$2"
+	local attempt=0
+	local partial="${dest}.part"
 
-    local proxy_env=()
-    local proxy_http="${HTTP_PROXY:-${http_proxy:-}}"
-    local proxy_https="${HTTPS_PROXY:-${https_proxy:-}}"
-    [ -n "$proxy_http" ] && proxy_env+=(HTTP_PROXY="$proxy_http" http_proxy="$proxy_http")
-    [ -n "$proxy_https" ] && proxy_env+=(HTTPS_PROXY="$proxy_https" https_proxy="$proxy_https")
+	local proxy_env=()
+	local proxy_http="${HTTP_PROXY:-${http_proxy:-}}"
+	local proxy_https="${HTTPS_PROXY:-${https_proxy:-}}"
+	[ -n "$proxy_http" ] && proxy_env+=(HTTP_PROXY="$proxy_http" http_proxy="$proxy_http")
+	[ -n "$proxy_https" ] && proxy_env+=(HTTPS_PROXY="$proxy_https" https_proxy="$proxy_https")
 
-    local show_progress=0
-    if [ "$QUIET" -eq 0 ] && [ -t 2 ]; then
-        show_progress=1
-    fi
+	local show_progress=0
+	if [ "$QUIET" -eq 0 ] && [ -t 2 ]; then
+		show_progress=1
+	fi
 
-    while [ $attempt -lt $MAX_RETRIES ]; do
-        attempt=$((attempt + 1))
-        log_debug "Download attempt $attempt for $url"
+	while [ $attempt -lt $MAX_RETRIES ]; do
+		attempt=$((attempt + 1))
+		log_debug "Download attempt $attempt for $url"
 
-        local use_resume=0
-        if [ -s "$partial" ]; then
-            use_resume=1
-        fi
+		local use_resume=0
+		if [ -s "$partial" ]; then
+			use_resume=1
+		fi
 
-        if command -v curl &>/dev/null; then
-            local curl_args=(
-                -fL
-                --connect-timeout 30
-                --max-time "$DOWNLOAD_TIMEOUT"
-                --retry 2
-                -o "$partial"
-                "$url"
-            )
-            if [ "$use_resume" -eq 1 ]; then
-                curl_args=(--continue-at - "${curl_args[@]}")
-            fi
-            if [ "$show_progress" -eq 1 ]; then
-                curl_args=(--progress-bar "${curl_args[@]}")
-            else
-                curl_args=(-sS "${curl_args[@]}")
-            fi
+		if command -v curl &>/dev/null; then
+			local curl_args=(
+				-fL
+				--connect-timeout 30
+				--max-time "$DOWNLOAD_TIMEOUT"
+				--retry 2
+				-o "$partial"
+				"$url"
+			)
+			if [ "$use_resume" -eq 1 ]; then
+				curl_args=(--continue-at - "${curl_args[@]}")
+			fi
+			if [ "$show_progress" -eq 1 ]; then
+				curl_args=(--progress-bar "${curl_args[@]}")
+			else
+				curl_args=(-sS "${curl_args[@]}")
+			fi
 
-            if env ${proxy_env[@]+"${proxy_env[@]}"} curl "${curl_args[@]}"; then
-                mv -f "$partial" "$dest"
-                return 0
-            fi
-        elif command -v wget &>/dev/null; then
-            local wget_args=(
-                --timeout="$DOWNLOAD_TIMEOUT"
-                -O "$partial"
-                "$url"
-            )
-            if [ "$use_resume" -eq 1 ]; then
-                wget_args=(--continue "${wget_args[@]}")
-            fi
-            if [ "$show_progress" -eq 1 ]; then
-                wget_args=(--show-progress "${wget_args[@]}")
-            else
-                wget_args=(--quiet "${wget_args[@]}")
-            fi
+			if env ${proxy_env[@]+"${proxy_env[@]}"} curl "${curl_args[@]}"; then
+				mv -f "$partial" "$dest"
+				return 0
+			fi
+		elif command -v wget &>/dev/null; then
+			local wget_args=(
+				--timeout="$DOWNLOAD_TIMEOUT"
+				-O "$partial"
+				"$url"
+			)
+			if [ "$use_resume" -eq 1 ]; then
+				wget_args=(--continue "${wget_args[@]}")
+			fi
+			if [ "$show_progress" -eq 1 ]; then
+				wget_args=(--show-progress "${wget_args[@]}")
+			else
+				wget_args=(--quiet "${wget_args[@]}")
+			fi
 
-            if env ${proxy_env[@]+"${proxy_env[@]}"} wget "${wget_args[@]}"; then
-                mv -f "$partial" "$dest"
-                return 0
-            fi
-        else
-            die "Neither curl nor wget found"
-        fi
+			if env ${proxy_env[@]+"${proxy_env[@]}"} wget "${wget_args[@]}"; then
+				mv -f "$partial" "$dest"
+				return 0
+			fi
+		else
+			die "Neither curl nor wget found"
+		fi
 
-        [ $attempt -lt $MAX_RETRIES ] && {
-            log_warn "Download failed, retrying in 3s..."
-            sleep 3
-        }
-    done
+		[ $attempt -lt $MAX_RETRIES ] && {
+			log_warn "Download failed, retrying in 3s..."
+			sleep 3
+		}
+	done
 
-    return 1
+	return 1
 }
 
 # ============================================================================
 # Atomic binary install
 # ============================================================================
 install_binary_atomic() {
-    local src="$1"
-    local dest="$2"
-    local tmp_dest="${dest}.tmp.$$"
+	local src="$1"
+	local dest="$2"
+	local tmp_dest="${dest}.tmp.$$"
 
-    install -m 0755 "$src" "$tmp_dest"
-    if ! mv -f "$tmp_dest" "$dest"; then
-        rm -f "$tmp_dest" 2>/dev/null || true
-        die "Failed to move binary into place"
-    fi
+	install -m 0755 "$src" "$tmp_dest"
+	if ! mv -f "$tmp_dest" "$dest"; then
+		rm -f "$tmp_dest" 2>/dev/null || true
+		die "Failed to move binary into place"
+	fi
 }
 
 is_windows_binary() {
-    case "$1" in
-        *.exe) return 0 ;;
-        *) return 1 ;;
-    esac
+	case "$1" in
+	*.exe) return 0 ;;
+	*) return 1 ;;
+	esac
 }
 
 is_installable_binary() {
-    local path="$1"
-    if [ ! -f "$path" ]; then
-        return 1
-    fi
+	local path="$1"
+	if [ ! -f "$path" ]; then
+		return 1
+	fi
 
-    if [ -x "$path" ] || is_windows_binary "$path"; then
-        return 0
-    fi
+	if [ -x "$path" ] || is_windows_binary "$path"; then
+		return 0
+	fi
 
-    return 1
+	return 1
 }
 
 find_binary_candidate() {
-    local search_root="$1"
-    local binary_name="$2"
-    local bin="$search_root/$binary_name"
+	local search_root="$1"
+	local binary_name="$2"
+	local bin="$search_root/$binary_name"
 
-    if is_installable_binary "$bin"; then
-        printf '%s\n' "$bin"
-        return 0
-    fi
+	if is_installable_binary "$bin"; then
+		printf '%s\n' "$bin"
+		return 0
+	fi
 
-    if is_windows_binary "$binary_name"; then
-        bin=$(find "$search_root" -name "$binary_name" -type f 2>/dev/null | head -1)
-    else
-        bin=$(find "$search_root" -name "$binary_name" -type f -perm -111 2>/dev/null | head -1)
-    fi
+	if is_windows_binary "$binary_name"; then
+		bin=$(find "$search_root" -name "$binary_name" -type f 2>/dev/null | head -1)
+	else
+		bin=$(find "$search_root" -name "$binary_name" -type f -perm -111 2>/dev/null | head -1)
+	fi
 
-    if [ -n "$bin" ] && is_installable_binary "$bin"; then
-        printf '%s\n' "$bin"
-        return 0
-    fi
+	if [ -n "$bin" ] && is_installable_binary "$bin"; then
+		printf '%s\n' "$bin"
+		return 0
+	fi
 
-    return 1
+	return 1
 }
 
 # ============================================================================
 # Build from source
 # ============================================================================
 build_from_source() {
-    log_step "Building from source..."
+	log_step "Building from source..."
 
-    if ! ensure_rust; then
-        die "Rust is required for source builds"
-    fi
+	if ! ensure_rust; then
+		die "Rust is required for source builds"
+	fi
 
-    prepare_for_build
+	prepare_for_build
 
-    local build_dir="$TMP/src"
+	local build_dir="$TMP/src"
 
-    run_with_spinner "Cloning repository..." \
-        git clone --depth 1 "https://github.com/${OWNER}/${REPO}.git" "$build_dir"
+	run_with_spinner "Cloning repository..." \
+		git clone --depth 1 "https://github.com/${OWNER}/${REPO}.git" "$build_dir"
 
-    if [ ! -d "$build_dir" ]; then
-        die "Failed to clone repository"
-    fi
+	if [ ! -d "$build_dir" ]; then
+		die "Failed to clone repository"
+	fi
 
-    # Clone frankensqlite next to beads_rust — Cargo.toml [patch.crates-io]
-    # overrides fsqlite crates with path deps at ../frankensqlite/crates/*
-    local franken_dir="$TMP/frankensqlite"
-    run_with_spinner "Cloning frankensqlite dependency..." \
-        git clone --depth 1 "https://github.com/${OWNER}/frankensqlite.git" "$franken_dir"
+	# Clone frankensqlite next to the checkout — Cargo.toml [patch.crates-io]
+	# overrides fsqlite crates with path deps at ../frankensqlite/crates/*
+	local franken_dir="$TMP/frankensqlite"
+	run_with_spinner "Cloning frankensqlite dependency..." \
+		git clone --depth 1 "https://github.com/${OWNER}/frankensqlite.git" "$franken_dir"
 
-    if [ ! -d "$franken_dir" ]; then
-        die "Failed to clone frankensqlite (required path dependency)"
-    fi
+	if [ ! -d "$franken_dir" ]; then
+		die "Failed to clone frankensqlite (required path dependency)"
+	fi
 
-    log_step "Building with Cargo (this may take a few minutes)..."
+	log_step "Building with Cargo (this may take a few minutes)..."
 
-    # Build with explicit target dir to avoid conflicts
-    local target_dir="$TMP/target"
-    if [[ "$GUM_AVAILABLE" == "true" && "$QUIET" -eq 0 ]]; then
-        if ! gum spin --spinner dot --title "Compiling br (release mode)..." -- \
-            bash -c "cd '$build_dir' && CARGO_TARGET_DIR='$target_dir' cargo build --release"; then
-            die "Build failed"
-        fi
-    else
-        (cd "$build_dir" && CARGO_TARGET_DIR="$target_dir" cargo build --release) || die "Build failed"
-    fi
+	# Build with explicit target dir to avoid conflicts
+	local target_dir="$TMP/target"
+	if [[ "$GUM_AVAILABLE" == "true" && "$QUIET" -eq 0 ]]; then
+		if ! gum spin --spinner dot --title "Compiling obr (release mode)..." -- \
+			bash -c "cd '$build_dir' && CARGO_TARGET_DIR='$target_dir' cargo build --release"; then
+			die "Build failed"
+		fi
+	else
+		(cd "$build_dir" && CARGO_TARGET_DIR="$target_dir" cargo build --release) || die "Build failed"
+	fi
 
-    # Find the binary
-    local bin
-    if ! bin=$(find_binary_candidate "$target_dir" "$BINARY_NAME"); then
-        die "Binary not found after build"
-    fi
+	# Find the binary
+	local bin
+	if ! bin=$(find_binary_candidate "$target_dir" "$BINARY_NAME"); then
+		die "Binary not found after build"
+	fi
 
-    install_binary_atomic "$bin" "$DEST/$BINARY_NAME"
-    log_success "Installed to $DEST/$BINARY_NAME (source build)"
+	install_binary_atomic "$bin" "$DEST/$BINARY_NAME"
+	log_success "Installed to $DEST/$BINARY_NAME (source build)"
 }
 
 # ============================================================================
 # Download release binary
 # ============================================================================
 is_valid_sha256() {
-    [[ "${1:-}" =~ ^[[:xdigit:]]{64}$ ]]
+	[[ "${1:-}" =~ ^[[:xdigit:]]{64}$ ]]
 }
 
 verify_archive_checksum() {
-    local archive_path="$1"
-    local archive_name="$2"
-    local expected="$3"
+	local archive_path="$1"
+	local archive_name="$2"
+	local expected="$3"
 
-    if [ -z "$expected" ]; then
-        if [ "$INSECURE_SKIP_CHECKSUM" -eq 1 ]; then
-            log_warn "Checksum not available for $archive_name; continuing because --insecure-skip-checksum was provided"
-            return 0
-        fi
-        log_error "Checksum not available for $archive_name; refusing to install an unverified binary"
-        log_error "Provide --checksum/--checksum-url, publish ${archive_name}.sha256, or pass --insecure-skip-checksum explicitly"
-        return 1
-    fi
+	if [ -z "$expected" ]; then
+		if [ "$INSECURE_SKIP_CHECKSUM" -eq 1 ]; then
+			log_warn "Checksum not available for $archive_name; continuing because --insecure-skip-checksum was provided"
+			return 0
+		fi
+		log_error "Checksum not available for $archive_name; refusing to install an unverified binary"
+		log_error "Provide --checksum/--checksum-url, publish ${archive_name}.sha256, or pass --insecure-skip-checksum explicitly"
+		return 1
+	fi
 
-    if ! is_valid_sha256 "$expected"; then
-        log_error "Invalid SHA256 checksum format for $archive_name"
-        return 1
-    fi
+	if ! is_valid_sha256 "$expected"; then
+		log_error "Invalid SHA256 checksum format for $archive_name"
+		return 1
+	fi
 
-    log_step "Verifying checksum..."
-    local actual=""
-    if command -v sha256sum &>/dev/null; then
-        actual=$(sha256sum "$archive_path" | awk '{print $1}')
-    elif command -v shasum &>/dev/null; then
-        actual=$(shasum -a 256 "$archive_path" | awk '{print $1}')
-    else
-        if [ "$INSECURE_SKIP_CHECKSUM" -eq 1 ]; then
-            log_warn "No SHA256 tool found; continuing because --insecure-skip-checksum was provided"
-            return 0
-        fi
-        log_error "No SHA256 verification tool found (need sha256sum or shasum)"
-        return 1
-    fi
+	log_step "Verifying checksum..."
+	local actual=""
+	if command -v sha256sum &>/dev/null; then
+		actual=$(sha256sum "$archive_path" | awk '{print $1}')
+	elif command -v shasum &>/dev/null; then
+		actual=$(shasum -a 256 "$archive_path" | awk '{print $1}')
+	else
+		if [ "$INSECURE_SKIP_CHECKSUM" -eq 1 ]; then
+			log_warn "No SHA256 tool found; continuing because --insecure-skip-checksum was provided"
+			return 0
+		fi
+		log_error "No SHA256 verification tool found (need sha256sum or shasum)"
+		return 1
+	fi
 
-    if [ "$expected" != "$actual" ]; then
-        log_error "Checksum mismatch!"
-        log_error "  Expected: $expected"
-        log_error "  Got:      $actual"
-        return 1
-    fi
-    log_success "Checksum verified"
+	if [ "$expected" != "$actual" ]; then
+		log_error "Checksum mismatch!"
+		log_error "  Expected: $expected"
+		log_error "  Got:      $actual"
+		return 1
+	fi
+	log_success "Checksum verified"
 }
 
 archive_member_name_is_safe() {
-    local member="${1:-}"
-    local normalized parts part
+	local member="${1:-}"
+	local normalized parts part
 
-    [ -n "$member" ] || return 1
-    case "$member" in
-        /*|\\*|[A-Za-z]:*) return 1 ;;
-    esac
+	[ -n "$member" ] || return 1
+	case "$member" in
+	/* | \\* | [A-Za-z]:*) return 1 ;;
+	esac
 
-    normalized="${member//\\//}"
-    local IFS='/'
-    read -r -a parts <<< "$normalized"
-    for part in "${parts[@]}"; do
-        if [ "$part" = ".." ]; then
-            return 1
-        fi
-    done
+	normalized="${member//\\//}"
+	local IFS='/'
+	read -r -a parts <<<"$normalized"
+	for part in "${parts[@]}"; do
+		if [ "$part" = ".." ]; then
+			return 1
+		fi
+	done
 
-    return 0
+	return 0
 }
 
 validate_archive_members_python() {
-    local archive_path="$1"
-    local archive_kind="$2"
+	local archive_path="$1"
+	local archive_kind="$2"
 
-    python3 - "$archive_path" "$archive_kind" <<'PY'
+	python3 - "$archive_path" "$archive_kind" <<'PY'
 import stat
 import sys
 import tarfile
@@ -1451,123 +1377,118 @@ PS1
 }
 
 validate_tar_archive_members() {
-    local archive_path="$1"
-    local member line entry_type
+	local archive_path="$1"
+	local member line entry_type
 
-    if python3_is_functional; then
-        validate_archive_members_python "$archive_path" "tar"
-        return $?
-    fi
+	if command -v python3 >/dev/null 2>&1; then
+		validate_archive_members_python "$archive_path" "tar"
+		return $?
+	fi
 
-    while IFS= read -r member; do
-        if ! archive_member_name_is_safe "$member"; then
-            log_error "Unsafe archive member path: $member"
-            return 1
-        fi
-    done < <(tar -tzf "$archive_path")
+	while IFS= read -r member; do
+		if ! archive_member_name_is_safe "$member"; then
+			log_error "Unsafe archive member path: $member"
+			return 1
+		fi
+	done < <(tar -tzf "$archive_path")
 
-    while IFS= read -r line; do
-        entry_type="${line:0:1}"
-        case "$entry_type" in
-            l|h)
-                log_error "Release archive contains link entries; refusing to extract"
-                return 1
-                ;;
-        esac
-    done < <(tar -tzvf "$archive_path")
+	while IFS= read -r line; do
+		entry_type="${line:0:1}"
+		case "$entry_type" in
+		l | h)
+			log_error "Release archive contains link entries; refusing to extract"
+			return 1
+			;;
+		esac
+	done < <(tar -tzvf "$archive_path")
 }
 
 validate_zip_archive_members() {
-    local archive_path="$1"
+	local archive_path="$1"
 
-    if python3_is_functional; then
-        validate_archive_members_python "$archive_path" "zip"
-        return $?
-    fi
+	if command -v python3 >/dev/null 2>&1; then
+		validate_archive_members_python "$archive_path" "zip"
+		return $?
+	fi
 
-    if command -v powershell.exe >/dev/null 2>&1; then
-        validate_zip_archive_members_powershell "$archive_path"
-        return $?
-    fi
-
-    log_error "python3 (or PowerShell on Windows) is required to validate zip archive members safely"
-    return 1
+	log_error "python3 is required to validate zip archive members safely"
+	return 1
 }
 
 download_release() {
-    local platform="$1"
+	local platform="$1"
 
-    # Map platform to release asset name
-    local archive_name=""
-    local url=""
-    if [ -n "$ARTIFACT_URL" ]; then
-        url="$ARTIFACT_URL"
-        archive_name="$(basename "$ARTIFACT_URL")"
-    else
-        local release_tag asset_version
-        release_tag="$(release_download_tag "$VERSION")"
-        asset_version="$(release_asset_version "$VERSION")"
-        local archive_ext="tar.gz"
-        case "$platform" in
-            windows_*) archive_ext="zip" ;;
-        esac
-        archive_name="br-${asset_version}-${platform}.${archive_ext}"
-        url="https://github.com/${OWNER}/${REPO}/releases/download/${release_tag}/${archive_name}"
-    fi
+	# Map platform to release asset name
+	local archive_name=""
+	local url=""
+	if [ -n "$ARTIFACT_URL" ]; then
+		url="$ARTIFACT_URL"
+		archive_name="$(basename "$ARTIFACT_URL")"
+	else
+		local release_tag asset_version
+		release_tag="$(release_download_tag "$VERSION")"
+		asset_version="$(release_asset_version "$VERSION")"
+		local archive_ext="tar.gz"
+		case "$platform" in
+		windows_*) archive_ext="zip" ;;
+		esac
+		archive_name="obr-${asset_version}-${platform}.${archive_ext}"
+		url="https://github.com/${OWNER}/${REPO}/releases/download/${release_tag}/${archive_name}"
+	fi
 
-    run_with_spinner "Downloading $archive_name..." \
-        download_file "$url" "$TMP/$archive_name"
+	run_with_spinner "Downloading $archive_name..." \
+		download_file "$url" "$TMP/$archive_name"
 
-    if [ ! -f "$TMP/$archive_name" ]; then
-        return 1
-    fi
+	if [ ! -f "$TMP/$archive_name" ]; then
+		return 1
+	fi
 
-    # Download and verify checksum
-    local expected=""
-    if [ -n "$CHECKSUM" ]; then
-        expected="${CHECKSUM%% *}"
-    else
-        local checksum_url=""
-        if [ -n "$CHECKSUM_URL" ]; then
-            checksum_url="$CHECKSUM_URL"
-        else
-            checksum_url="https://github.com/${OWNER}/${REPO}/releases/download/$(release_download_tag "$VERSION")/${archive_name}.sha256"
-        fi
+	# Download and verify checksum
+	local expected=""
+	if [ -n "$CHECKSUM" ]; then
+		expected="${CHECKSUM%% *}"
+	else
+		local checksum_url=""
+		if [ -n "$CHECKSUM_URL" ]; then
+			checksum_url="$CHECKSUM_URL"
+		else
+			checksum_url="https://github.com/${OWNER}/${REPO}/releases/download/$(release_download_tag "$VERSION")/${archive_name}.sha256"
+		fi
 
-        if download_file "$checksum_url" "$TMP/checksum.sha256"; then
-            expected=$(awk '{print $1}' "$TMP/checksum.sha256")
-        fi
-    fi
+		if download_file "$checksum_url" "$TMP/checksum.sha256"; then
+			expected=$(awk '{print $1}' "$TMP/checksum.sha256")
+		fi
+	fi
 
-    verify_archive_checksum "$TMP/$archive_name" "$archive_name" "$expected" || return 2
+	verify_archive_checksum "$TMP/$archive_name" "$archive_name" "$expected" || return 2
 
-    # Extract
-    log_step "Extracting..."
-    local extract_dir="$TMP/extract"
-    mkdir -p "$extract_dir"
-    case "$archive_name" in
-        *.tar.gz)
-            if ! validate_tar_archive_members "$TMP/$archive_name"; then
-                return 1
-            fi
-            if ! tar -xzf "$TMP/$archive_name" -C "$extract_dir" 2>/dev/null; then
-                return 1
-            fi
-            ;;
-        *.zip)
-            if ! validate_zip_archive_members "$TMP/$archive_name"; then
-                return 1
-            fi
-            if command -v unzip &>/dev/null; then
-                if ! unzip -q "$TMP/$archive_name" -d "$extract_dir" 2>/dev/null; then
-                    return 1
-                fi
-            elif command -v bsdtar &>/dev/null; then
-                if ! bsdtar -xf "$TMP/$archive_name" -C "$extract_dir" 2>/dev/null; then
-                    return 1
-                fi
-            elif python3_is_functional; then
-                if ! python3 - "$TMP/$archive_name" "$extract_dir" <<'PY'
+	# Extract
+	log_step "Extracting..."
+	local extract_dir="$TMP/extract"
+	mkdir -p "$extract_dir"
+	case "$archive_name" in
+	*.tar.gz)
+		if ! validate_tar_archive_members "$TMP/$archive_name"; then
+			return 1
+		fi
+		if ! tar -xzf "$TMP/$archive_name" -C "$extract_dir" 2>/dev/null; then
+			return 1
+		fi
+		;;
+	*.zip)
+		if ! validate_zip_archive_members "$TMP/$archive_name"; then
+			return 1
+		fi
+		if command -v unzip &>/dev/null; then
+			if ! unzip -q "$TMP/$archive_name" -d "$extract_dir" 2>/dev/null; then
+				return 1
+			fi
+		elif command -v bsdtar &>/dev/null; then
+			if ! bsdtar -xf "$TMP/$archive_name" -C "$extract_dir" 2>/dev/null; then
+				return 1
+			fi
+		elif command -v python3 &>/dev/null; then
+			if ! python3 - "$TMP/$archive_name" "$extract_dir" <<'PY'; then
 import sys
 import zipfile
 
@@ -1575,211 +1496,199 @@ archive_path, extract_dir = sys.argv[1], sys.argv[2]
 with zipfile.ZipFile(archive_path) as archive:
     archive.extractall(extract_dir)
 PY
-                then
-                    return 1
-                fi
-            elif command -v powershell.exe &>/dev/null; then
-                # Stock Git-for-Windows has no unzip, bsdtar, or working
-                # python3; Expand-Archive is always available there.
-                local win_zip win_dest
-                win_zip=$(cygpath -w "$TMP/$archive_name" 2>/dev/null || printf '%s' "$TMP/$archive_name")
-                win_dest=$(cygpath -w "$extract_dir" 2>/dev/null || printf '%s' "$extract_dir")
-                if ! powershell.exe -NoProfile -NonInteractive -Command \
-                    "Expand-Archive -LiteralPath '$win_zip' -DestinationPath '$win_dest' -Force" >/dev/null 2>&1; then
-                    return 1
-                fi
-            else
-                log_error "No zip extractor available (need unzip, bsdtar, python3, or PowerShell)"
-                return 1
-            fi
-            ;;
-        *)
-            log_error "Unsupported archive format: $archive_name"
-            return 1
-            ;;
-    esac
+				return 1
+			fi
+		else
+			log_error "No zip extractor available (need unzip, bsdtar, or python3)"
+			return 1
+		fi
+		;;
+	*)
+		log_error "Unsupported archive format: $archive_name"
+		return 1
+		;;
+	esac
 
-    # Find binary
-    local bin
-    if ! bin=$(find_binary_candidate "$extract_dir" "$BINARY_NAME"); then
-        return 1
-    fi
+	# Find binary
+	local bin
+	if ! bin=$(find_binary_candidate "$extract_dir" "$BINARY_NAME"); then
+		return 1
+	fi
 
-    install_binary_atomic "$bin" "$DEST/$BINARY_NAME"
-    log_success "Installed to $DEST/$BINARY_NAME"
-    return 0
+	install_binary_atomic "$bin" "$DEST/$BINARY_NAME"
+	log_success "Installed to $DEST/$BINARY_NAME"
+	return 0
 }
 
 # ============================================================================
 # Check for conflicting installations
 # ============================================================================
 check_conflicts() {
-    local installed_path="$DEST/$BINARY_NAME"
-    local cargo_bin="$HOME/.cargo/bin/$BINARY_NAME"
-    local local_bin="$HOME/.local/bin/$BINARY_NAME"
+	local installed_path="$DEST/$BINARY_NAME"
+	local cargo_bin="$HOME/.cargo/bin/$BINARY_NAME"
+	local local_bin="$HOME/.local/bin/$BINARY_NAME"
 
-    local conflicts=()
+	local conflicts=()
 
-    # Check for br in other locations
-    if [ "$DEST" != "$HOME/.cargo/bin" ] && [ -x "$cargo_bin" ]; then
-        conflicts+=("$cargo_bin")
-    fi
-    if [ "$DEST" != "$HOME/.local/bin" ] && [ -x "$local_bin" ]; then
-        conflicts+=("$local_bin")
-    fi
+	# Check for obr in other locations
+	if [ "$DEST" != "$HOME/.cargo/bin" ] && [ -x "$cargo_bin" ]; then
+		conflicts+=("$cargo_bin")
+	fi
+	if [ "$DEST" != "$HOME/.local/bin" ] && [ -x "$local_bin" ]; then
+		conflicts+=("$local_bin")
+	fi
 
-    if [ ${#conflicts[@]} -gt 0 ]; then
-        local active_br
-        active_br=$(command -v "$BINARY_NAME" 2>/dev/null || echo "")
+	if [ ${#conflicts[@]} -gt 0 ]; then
+		local active_obr
+		active_obr=$(command -v "$BINARY_NAME" 2>/dev/null || echo "")
 
-        if [ -n "$active_br" ] && [ "$active_br" != "$installed_path" ]; then
-            log_warn "The active br ($active_br) differs from the newly installed version!"
-            log_step "  Installed: $installed_path"
-            log_warn "Additional br location(s):"
-            for conflict in "${conflicts[@]}"; do
-                log_step "  Conflict:  $conflict"
-            done
-            log_warn "To use the new version, either adjust PATH so $DEST comes first, or move/remove the conflicting binary manually."
+		if [ -n "$active_obr" ] && [ "$active_obr" != "$installed_path" ]; then
+			log_warn "The active obr ($active_obr) differs from the newly installed version!"
+			log_step "  Installed: $installed_path"
+			log_warn "Additional obr location(s):"
+			for conflict in "${conflicts[@]}"; do
+				log_step "  Conflict:  $conflict"
+			done
+			log_warn "To use the new version, either adjust PATH so $DEST comes first, or move/remove the conflicting binary manually."
 
-            # Offer to remove conflicts in easy mode.
-            if [ "$EASY" -eq 1 ]; then
-                for conflict in "${conflicts[@]}"; do
-                    if [ -t 0 ] && [[ "$GUM_AVAILABLE" == "true" ]]; then
-                        if gum confirm "Remove conflicting binary at $conflict?"; then
-                            rm -f "$conflict"
-                            log_success "Removed $conflict"
-                        fi
-                    fi
-                done
-            fi
+			# Offer to remove conflicts in easy mode.
+			if [ "$EASY" -eq 1 ]; then
+				for conflict in "${conflicts[@]}"; do
+					if [ -t 0 ] && [[ "$GUM_AVAILABLE" == "true" ]]; then
+						if gum confirm "Remove conflicting binary at $conflict?"; then
+							rm -f "$conflict"
+							log_success "Removed $conflict"
+						fi
+					fi
+				done
+			fi
 
-            return 0
-        fi
+			return 0
+		fi
 
-        log_step "Found additional br location(s); $installed_path remains active"
-        for conflict in "${conflicts[@]}"; do
-            log_step "  Other:     $conflict"
-        done
-    fi
+		log_step "Found additional obr location(s); $installed_path remains active"
+		for conflict in "${conflicts[@]}"; do
+			log_step "  Other:     $conflict"
+		done
+	fi
 }
 
 # ============================================================================
 # Print installation summary
 # ============================================================================
 print_summary() {
-    local installed_version
-    installed_version=$("$DEST/$BINARY_NAME" --version 2>/dev/null || echo "unknown")
+	local installed_version
+	installed_version=$("$DEST/$BINARY_NAME" --version 2>/dev/null || echo "unknown")
 
-    if [[ "$GUM_AVAILABLE" == "true" ]]; then
-        echo ""
-        gum style \
-            --border rounded \
-            --border-foreground 82 \
-            --padding "1 2" \
-            --margin "1 0" \
-            "$(gum style --foreground 82 --bold '✓ br installed successfully!')" \
-            "" \
-            "$(gum style --foreground 245 "Version:  $installed_version")" \
-            "$(gum style --foreground 245 "Location: $DEST/$BINARY_NAME")"
+	if [[ "$GUM_AVAILABLE" == "true" ]]; then
+		echo ""
+		gum style \
+			--border rounded \
+			--border-foreground 82 \
+			--padding "1 2" \
+			--margin "1 0" \
+			"$(gum style --foreground 82 --bold '✓ obr installed successfully!')" \
+			"" \
+			"$(gum style --foreground 245 "Version:  $installed_version")" \
+			"$(gum style --foreground 245 "Location: $DEST/$BINARY_NAME")"
 
-        echo ""
+		echo ""
 
-        if [[ ":$PATH:" != *":$DEST:"* ]]; then
-            gum style --foreground 214 "To use br, restart your shell or run:"
-            gum style --foreground 39 "  export PATH=\"$DEST:\$PATH\""
-            echo ""
-        fi
+		if [[ ":$PATH:" != *":$DEST:"* ]]; then
+			gum style --foreground 214 "To use obr, restart your shell or run:"
+			gum style --foreground 39 "  export PATH=\"$DEST:\$PATH\""
+			echo ""
+		fi
 
-        gum style --foreground 214 --bold "Quick Start"
-        gum style --faint "  br init            Initialize a workspace"
-        gum style --faint "  br create          Create an issue"
-        gum style --faint "  br list            List issues"
-        gum style --faint "  br ready           Show ready work"
-        gum style --faint "  br --help          Full help"
-        echo ""
-    else
-        echo ""
-        log_success "br installed successfully!"
-        echo ""
-        echo "  Version:  $installed_version"
-        echo "  Location: $DEST/$BINARY_NAME"
-        echo ""
+		gum style --foreground 214 --bold "Quick Start"
+		gum style --faint "  obr init            Initialize a workspace"
+		gum style --faint "  obr create          Create an issue"
+		gum style --faint "  obr list            List issues"
+		gum style --faint "  obr ready           Show ready work"
+		gum style --faint "  obr --help          Full help"
+		echo ""
+	else
+		echo ""
+		log_success "obr installed successfully!"
+		echo ""
+		echo "  Version:  $installed_version"
+		echo "  Location: $DEST/$BINARY_NAME"
+		echo ""
 
-        if [[ ":$PATH:" != *":$DEST:"* ]]; then
-            echo "  To use br, restart your shell or run:"
-            echo "    export PATH=\"$DEST:\$PATH\""
-            echo ""
-        fi
+		if [[ ":$PATH:" != *":$DEST:"* ]]; then
+			echo "  To use obr, restart your shell or run:"
+			echo "    export PATH=\"$DEST:\$PATH\""
+			echo ""
+		fi
 
-        echo "  Quick Start:"
-        echo "    br init            Initialize a workspace"
-        echo "    br create          Create an issue"
-        echo "    br list            List issues"
-        echo "    br ready           Show ready work"
-        echo "    br --help          Full help"
-        echo ""
-    fi
+		echo "  Quick Start:"
+		echo "    obr init            Initialize a workspace"
+		echo "    obr create          Create an issue"
+		echo "    obr list            List issues"
+		echo "    obr ready           Show ready work"
+		echo "    obr --help          Full help"
+		echo ""
+	fi
 }
 
 # ============================================================================
 # Main
 # ============================================================================
 main() {
-    acquire_lock
+	acquire_lock
 
-    print_banner
+	print_banner
 
-    TMP=$(mktemp -d)
+	TMP=$(mktemp -d)
 
-    local platform
-    platform=$(detect_platform)
-    log_step "Platform: $platform"
-    log_step "Install directory: $DEST"
+	local platform
+	platform=$(detect_platform)
+	log_step "Platform: $platform"
+	log_step "Install directory: $DEST"
 
-    mkdir -p "$DEST"
+	mkdir -p "$DEST"
 
-    # Try binary download first (unless --from-source)
-    if [ "$FROM_SOURCE" -eq 0 ]; then
-        resolve_version
+	# Try binary download first (unless --from-source)
+	if [ "$FROM_SOURCE" -eq 0 ]; then
+		resolve_version
 
-        if [ -n "$VERSION" ]; then
-            local downloaded=0
-            if [ "$downloaded" -eq 0 ]; then
-                if download_release "$platform"; then
-                    downloaded=1
-                else
-                    local download_status=$?
-                    if [ "$download_status" -eq 2 ]; then
-                        die "Release artifact verification failed"
-                    fi
-                fi
-            fi
-            if [ "$downloaded" -eq 0 ]; then
-                log_warn "Binary download failed, building from source..."
-                build_from_source
-            fi
-        else
-            log_warn "No release version found, building from source..."
-            build_from_source
-        fi
-    else
-        build_from_source
-    fi
+		if [ -n "$VERSION" ]; then
+			local downloaded=0
+			if [ "$downloaded" -eq 0 ]; then
+				if download_release "$platform"; then
+					downloaded=1
+				else
+					local download_status=$?
+					if [ "$download_status" -eq 2 ]; then
+						die "Release artifact verification failed"
+					fi
+				fi
+			fi
+			if [ "$downloaded" -eq 0 ]; then
+				log_warn "Binary download failed, building from source..."
+				build_from_source
+			fi
+		else
+			log_warn "No release version found, building from source..."
+			build_from_source
+		fi
+	else
+		build_from_source
+	fi
 
-    # Post-install steps
-    maybe_add_path
-    fix_alias_conflicts
-    check_conflicts
-    install_skills
+	# Post-install steps
+	maybe_add_path
+	fix_alias_conflicts
+	check_conflicts
 
-    # Verify installation
-    if [ "$VERIFY" -eq 1 ]; then
-        log_step "Running self-test..."
-        "$DEST/$BINARY_NAME" --version || true
-        log_success "Self-test complete"
-    fi
+	# Verify installation
+	if [ "$VERIFY" -eq 1 ]; then
+		log_step "Running self-test..."
+		"$DEST/$BINARY_NAME" --version || true
+		log_success "Self-test complete"
+	fi
 
-    print_summary
+	print_summary
 }
 
 # Run main only when executed directly (not when sourced for tests).
@@ -1788,5 +1697,5 @@ main() {
 # The outer { ... } ensures bash buffers the call before executing, protecting against
 # truncated downloads in curl|bash pipelines (see PR #126 follow-up).
 if [[ "${BASH_SOURCE[0]:-}" == "${0:-}" ]] || [[ -z "${BASH_SOURCE[0]:-}" ]]; then
-    { main "$@"; }
+	{ main "$@"; }
 fi

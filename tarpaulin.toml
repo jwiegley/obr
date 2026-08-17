@@ -1,4 +1,4 @@
-# Tarpaulin configuration for beads_rust code coverage
+# Tarpaulin configuration for obr code coverage
 # See: https://github.com/xd009642/tarpaulin
 # Run with: cargo tarpaulin
 # Or with custom config: cargo tarpaulin --config tarpaulin.toml

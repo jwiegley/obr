@@ -3,7 +3,7 @@ target/
 target*/
 .rch-target/
 
-# Cargo.lock IS tracked — beads_rust is a binary CLI, so a committed
+# Cargo.lock IS tracked — obr is a binary CLI, so a committed
 # lockfile gives reproducible builds for `nix build`, `cargo install --git`,
 # and the flake input path used by Home Manager / NixOS configs.
 #
@@ -30,20 +30,16 @@ fuzz/Cargo.lock
 .DS_Store
 Thumbs.db
 
-# Legacy Go reference code (not part of Rust project)
-/legacy_beads/
-
-
 # Added by cargo (covered by target*/ above)
 
-# bv (beads viewer) local config and caches
+# bv (a separate issue viewer) local config and caches
 .bv/
 
-# Beads ephemeral files (runtime artifacts, not issues.jsonl)
-.beads/last-touched
-.beads/.bv.lock
-.beads/*.lock
-.beads/.br_history/
+# obr ephemeral files (runtime artifacts, not the tracked export)
+.obr/last-touched
+.obr/.bv.lock
+.obr/*.lock
+.obr/history/
 
 # Multi-agent swarm coordination scratch state
 .swarm/
@@ -57,7 +53,6 @@ SESSION_STATUS.md
 a.out
 
 # Temp directories and crash reports
-temp_test*/
 rustc-ice-*.txt
 fuzz/artifacts/
 
@@ -122,31 +117,28 @@ windsurf.mcp.json
 .opencode.json.*.bak
 .windsurf.mcp.json.*.bak
 .agent-mail-project-id
-.agent-mail.yaml
 *.sqlite3.bak
 *.sqlite3.corrupt*
 storage.sqlite3.corrupt-*
 storage.sqlite3-shm.corrupt-*
 storage.sqlite3-wal.corrupt-*
-.beads/*.corrupt*
-.beads/*.pre_repair_*
-.beads/*.repair_candidate_*
-.beads/*.bak-corrupt
+.obr/*.corrupt*
+.obr/*.pre_repair_*
+.obr/*.repair_candidate_*
+.obr/*.bak-corrupt
 
-# Beads ephemeral artifacts (recovery, backup, bad/rebuild snapshots)
-.beads/*.bad_*
-.beads/*.backup_*
-.beads/*.rebuild_*
-.beads/*.reindex_test_*
-.beads/*.vacuum_test_*
-.beads/recovery*/
+# obr ephemeral artifacts (recovery, backup, bad/rebuild snapshots)
+.obr/*.bad_*
+.obr/*.backup_*
+.obr/*.rebuild_*
+.obr/*.reindex_test_*
+.obr/*.vacuum_test_*
+.obr/recovery/
 
 # Malformed workspace test directories (br test artifacts)
 br_malformed_*/
 
 # SQLite WAL/SHM files in sample databases
-sample_beads_db_files/**/*.db-shm
-sample_beads_db_files/**/*.db-wal
 
 # Test database files (agent test artifacts)
 -memorytest.db
@@ -164,8 +156,9 @@ sample_beads_db_files/**/*.db-wal
 # out of the repo).
 /fix_*.sh
 
-# Beads snapshot backups (timestamped)
+# Foreign snapshot backups (timestamped), both naming generations
 .beads.snapshot_*/
+.obr.snapshot_*/
 
 # UBS scan output
 ubs.json
@@ -180,20 +173,14 @@ report.json
 .codex-tmp/
 
 # Claude Code runtime lockfile for the /schedule skill
-.claude/scheduled_tasks.lock
 
 # NTM agent pane runtime logs (also covered globally in ~/.gitignore,
 # but repeat here so they stay ignored on fresh clones or machines
 # without the global entry).
-.ntm/logs/*.log
 
 # NTM agent coordination state (human inbox spool, per-pane rate-limit
 # snapshots, spawn-state cache, robot snapshot summaries) — regenerated
 # on every orchestrator tick.
-.ntm/human_inbox/
-.ntm/rate_limits.json
-.ntm/spawn-state.json
-.ntm/summaries/
 
 # Skill workspaces — per-pass scratch trees written by /harmonize-skills-*,
 # /rust-unsafe-code-exorcist, and the rust-undefined-behavior-exorcist
@@ -203,7 +190,6 @@ report.json
 .unsafe-audit/
 
 # Skill-loop / refactor-pass run artifacts that should NOT be tracked.
-# Each pass's directory under refactor/artifacts/ legitimately contains
 # small markdown ledgers, scoring files, and golden replay JSON which
 # are tracked. The patterns below cover the consistently-large or
 # obviously-runtime entries that don't belong in git:
@@ -212,24 +198,16 @@ report.json
 #  - tests_before.txt / tests_current.txt: raw `cargo test` output
 #    captures (1.1MB+ each); the LEDGER and verify_report markdown
 #    summarize them.
-#  - golden_workspace/: a live `br` workspace (beads.db, .br_history,
+#  - golden_workspace/: a live `br` workspace (obr.db, history/,
 #    .sync.lock, .write.lock, last-touched) used to record golden
 #    replays, regenerated each pass.
-refactor/artifacts/*/ast_grep_functions.json
-refactor/artifacts/*/tests_before.txt
-refactor/artifacts/*/tests_current.txt
-refactor/artifacts/*/golden_workspace/
 
-# Per-run perf profiling capture tree (2GB+ of perf.data, beads.db
+# Per-run perf profiling capture tree (2GB+ of perf.data, obr.db
 # workspaces per scenario, criterion-style throughput dumps). The
 # LEDGER and bench-summary markdown files are written elsewhere by
 # the perf scripts; this tree is purely raw data.
 tests/artifacts/perf/
-tests/artifacts/perf/**/perf.data
-tests/artifacts/perf/**/*.beads/
 *.perf.data
 
-# Beads compliance audit dir (managed by /beads-compliance-and-completion-verification skill)
-/beads_compliance_audit/
 # br doctor per-run artifacts
 .doctor/

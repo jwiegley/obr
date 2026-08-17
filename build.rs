@@ -1,4 +1,4 @@
-//! Build script for `beads_rust`.
+//! Build script for `obr`.
 //!
 //! Uses vergen-gix for stable build/rustc metadata and quiet git probes for
 //! optional repository metadata.

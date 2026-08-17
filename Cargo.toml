@@ -1,29 +1,21 @@
 [package]
-name = "beads_rust"
-version = "0.5.7"
+name = "obr"
+version = "0.5.7+1"
 edition = "2024"
 rust-version = "1.88"
 autobenches = false
-description = "Agent-first issue tracker (SQLite + JSONL)"
+description = "Agent-first issue tracker (SQLite + Org-mode)"
 license-file = "LICENSE"
-repository = "https://github.com/Dicklesworthstone/beads_rust"
-keywords = ["cli", "issue-tracker", "sqlite", "agent"]
+repository = "https://github.com/jwiegley/obr"
+keywords = ["cli", "issue-tracker", "sqlite", "org-mode", "agent"]
 categories = ["command-line-utilities", "development-tools"]
 readme = "README.md"
 exclude = [
-    "sample_beads_db_files/",
-    ".beads/",
-    ".agent-mail.yaml",
+    ".obr/",
     ".github/",
-    ".claude/",
-    ".ntm/",
     "agent_baseline/",
     "docs/",
     "scripts/",
-    "skills/",
-    "temp_test/",
-    "temp_test_2/",
-    "refactor/",
     "*.webp",
     "*.png",
     "*.db",
@@ -32,7 +24,7 @@ exclude = [
 ]
 
 [[bin]]
-name = "br"
+name = "obr"
 path = "src/main.rs"
 
 [dependencies]
@@ -111,6 +103,9 @@ rich_rust = { version = "0.2.3", features = ["markdown", "json", "backtrace"] }
 # TOON format support (sibling project)
 toon_rust = { version = "0.2.3", package = "tru" }
 
+# Org-mode parsing (sibling project)
+org2jsonl = { git = "https://github.com/jwiegley/org2jsonl", rev = "59521f99a490703d4d02f9b0f312a92ec9135ba8" }
+
 # Path normalization (strips \\?\ prefix on Windows)
 dunce = "1.0.5"
 
@@ -128,12 +123,13 @@ semver = "1.0.28"
 # MCP server (optional; gated behind the `mcp` feature)
 fastmcp-rust = { version = "=0.7.0", optional = true }
 
-# Self-update (optional; gated behind the `self_update` feature)
-self_update = { version = "1.0.0-rc.4", features = ["reqwest", "rustls", "github", "progress-bar", "archive-tar", "compression-tar-gz"], default-features = false, optional = true }
-self-replace = { version = "1.5.0", optional = true }
+# NOTE: no self-updater. `obr` is an unpublished personal fork with no release
+# feed to check against, so the `self_update`/`self-replace` dependencies and
+# the `upgrade` subcommand were removed outright rather than feature-gated.
 
 # Cooperative shutdown so SIGINT/SIGTERM/SIGHUP unwind through main and let
 # SqliteStorage::Drop flush the WAL instead of stranding frames on disk (#270).
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.185"
 rustix = { version = "1.1.4", features = ["fs"] }
@@ -198,34 +194,26 @@ opt-level = 1
 
 # Unoptimized fsqlite schema paths can exhaust Linux's default main-thread
 # stack in integration-test child binaries before the test assertions run.
+
 [profile.test]
 opt-level = 1
 
 [features]
-default = ["self_update"]
+default = []
 mcp = ["dep:fastmcp-rust"]
-self_update = [
-    "dep:self_update",
-    "dep:self-replace",
-    "self_update/rustls",
-    "self_update/archive-tar",
-    "self_update/archive-zip",
-    "self_update/compression-tar-gz",
-    "self_update/compression-zip-deflate",
-]
 
 # NOTE: no `[patch.crates-io]` here.
 #
 # All dependencies — fsqlite 0.3.13, its fsqlite-* transitive crates, and
 # fastmcp-rust 0.7.0 — are published on crates.io, so this crate
-# resolves everything from the registry out of the box.  That makes
-# `cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --locked`
+# resolves everything from the registry out of the box. That makes
+# `cargo install --git https://github.com/jwiegley/obr.git obr --locked`
 # work without requiring sibling `frankensqlite` or `fastmcp_rust`
 # checkouts (issue #250 bug 1).
 #
 # Local co-development: contributors who want to hack on frankensqlite
-# or fastmcp_rust alongside beads_rust can add a workspace-level
-# `.cargo/config.toml` with their own `[patch.crates-io]` table.  See
+# or fastmcp_rust alongside obr can add a workspace-level
+# `.cargo/config.toml` with their own `[patch.crates-io]` table. See
 # `scripts/dev-local-frankensqlite.toml` for a ready-to-copy template.
 
 [lints.rust]

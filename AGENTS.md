@@ -1,4 +1,4 @@
-# AGENTS.md — beads_rust (br)
+# AGENTS.md — obr
 
 > Guidelines for AI coding agents working in this Rust codebase.
 
@@ -28,20 +28,10 @@ If I tell you to do something, even if it goes against what follows below, YOU M
 
 ---
 
-## Git Branch: ONLY Use `main`, NEVER `master`
+## Git Branch
 
-**The default branch is `main`. The `master` branch exists only for legacy URL compatibility.**
-
-- **All work happens on `main`** — commits, PRs, feature branches all merge to `main`
-- **Never reference `master` in code or docs** — if you see `master` anywhere, it's a bug that needs fixing
-- **The `master` branch must stay synchronized with `main`** — after pushing to `main`, also push to `master`:
-  ```bash
-  git push origin main:master
-  ```
-
-**If you see `master` referenced anywhere:**
-1. Update it to `main`
-2. Ensure `master` is synchronized: `git push origin main:master`
+The default branch is `main`, and it is the only branch on `origin`. A `master`
+branch exists on the `upstream` remote only; nothing in this fork mirrors to it.
 
 ---
 
@@ -55,13 +45,11 @@ commands for workflow changes.
 
 Important boundaries:
 
-- `br` never performs workflow git operations, releases, pull requests, network
+- `obr` never performs workflow git operations, releases, pull requests, network
   dispatches, or upstream lookups automatically.
-- Agents run workflow proof Cargo targets directly through RCH; local shell
-  verifier scripts are operator shortcuts and may call Cargo internally.
 - Whole-crate `cargo check --all-targets` and
   `cargo clippy --all-targets -- -D warnings` are required when Rust code
-  changes, and must be offloaded through RCH in agent sessions.
+  changes.
 - Run `git diff --check`, `actionlint` when available, the relevant workflow
   harnesses, and `ubs` on changed workflow-related files before committing.
 
@@ -93,7 +81,6 @@ We only use **Cargo** in this project, NEVER any other package manager.
 | `regex` | Pattern matching for search and validation |
 | `semver` | Semantic version parsing |
 | `tracing` | Structured logging and diagnostics |
-| `self_update` | Self-update from GitHub releases (optional, feature-gated) |
 
 ### Release Profile
 
@@ -135,11 +122,22 @@ New files are reserved for **genuinely new functionality** that makes zero sense
 
 ## Backwards Compatibility
 
-We do not care about backwards compatibility—we're in early development with no users. We want to do things the **RIGHT** way with **NO TECH DEBT**.
+Default to none. This is a personal fork with a single user, so prefer fixing
+code directly over adding wrappers for deprecated APIs, and do not add
+compatibility layers speculatively.
 
-- Never create "compatibility shims"
-- Never create wrapper functions for deprecated APIs
-- Just fix the code directly
+There is exactly one deliberate exception, and it is deliberately thin:
+`src/legacy_compat.rs` keeps reading pre-rename ON-DISK WORKSPACE artifacts,
+because the user's fork-era repositories may still hold them — the
+`.beads`/`_beads` directories, `beads.db`, in-dir `beads.jsonl` / `issues.jsonl`
+exports, merge/history/recovery/snapshot filenames, the Org drawer's
+`BEADS_SCHEMA_VERSION`, `br.*.v1` schema ids, and the agents marker. Each read
+warns once per process, and nothing is ever written under a legacy name.
+
+Environment variables and user-config locations are explicitly NOT in that
+surface: `OBR_*` and `~/.config/obr/config.yaml` are the only spellings obr
+reads. The `BEADS_*`/`BD_*`/`BR_*` names and the `~/.config/{beads,bd}`,
+`~/.beads` locations were removed outright rather than deprecated.
 
 ---
 
@@ -220,9 +218,9 @@ If you aren't 100% sure how to use a third-party library, **SEARCH ONLINE** to f
 
 ---
 
-## beads_rust (br) — This Project
+## obr — This Project
 
-**This is the project you're working on.** beads_rust is an agent-first, dependency-aware issue tracker CLI (`br`) that stores issues in SQLite with JSONL export for git-based sync. It is a Rust port of the classic Go beads issue tracker (`bd`), designed to be non-invasive (no automatic git operations, no daemons, no hooks).
+**This is the project you're working on.** obr is a dependency-aware issue tracker CLI (`obr`) that keeps a SQLite cache in `.obr/` and exports a tracked Org surface (`PLAN.org`) for git-based sync. It is a fork of beads_rust, itself a Rust port of the classic Go beads issue tracker (`bd`), and is deliberately non-invasive (no automatic git operations, no daemons, no hooks).
 
 ### What It Does
 
@@ -244,7 +242,7 @@ CLI (clap derive)
     │
     ├── Sync ───────── JSONL import/export (git-friendly, no auto-git)
     │                       │
-    │                       ├── Path resolution (.beads/ discovery)
+    │                       ├── Path resolution (.obr/ discovery)
     │                       └── History (snapshot restore, prune)
     │
     ├── Model ──────── Issue, Dependency, Comment, Event, Label
@@ -269,7 +267,7 @@ CLI (clap derive)
 ### Project Structure
 
 ```
-beads_rust/
+obr/
 ├── Cargo.toml                     # Single crate (not a workspace)
 ├── src/
 │   ├── main.rs                    # CLI entry point, clap dispatch
@@ -287,7 +285,7 @@ beads_rust/
 │   │   └── queries/               # Reusable query fragments
 │   ├── sync/
 │   │   ├── mod.rs                 # JSONL import/export (176KB)
-│   │   ├── path.rs                # .beads/ directory discovery
+│   │   ├── path.rs                # .obr/ directory discovery
 │   │   └── history.rs             # Snapshot restore and prune
 │   ├── config/
 │   │   ├── mod.rs                 # Layered configuration
@@ -323,8 +321,7 @@ beads_rust/
 │   └── logging.rs                 # tracing-subscriber setup
 ├── tests/                         # Integration, conformance, property, regression tests
 ├── benches/                       # Criterion benchmarks
-├── docs/                          # Architecture, CLI reference, troubleshooting
-└── .beads/                        # Self-tracked issues (beads tracking beads)
+└── docs/                          # Architecture, CLI reference, troubleshooting
 ```
 
 ### Key Files by Module
@@ -338,7 +335,7 @@ beads_rust/
 | `storage` | `storage/schema.rs` | DDL migrations, table creation, index management |
 | `storage` | `storage/events.rs` | Append-only audit log for all issue mutations |
 | `sync` | `sync/mod.rs` | JSONL import/export engine (176KB): merge, dedup, conflict resolution |
-| `sync` | `sync/path.rs` | `.beads/` directory discovery and path resolution |
+| `sync` | `sync/path.rs` | `.obr/` directory discovery and path resolution |
 | `sync` | `sync/history.rs` | Snapshot-based history: restore, prune, diff |
 | `config` | `config/mod.rs` | Layered config: file + env vars + CLI flags, project-aware resolution |
 | `error` | `error/structured.rs` | `StructuredError` with `ErrorCode` enum and deterministic exit codes |
@@ -351,8 +348,8 @@ beads_rust/
 
 ```toml
 [features]
-default = ["self_update"]
-self_update = ["dep:self_update"]   # Self-update from GitHub releases (rustls TLS, mandatory .sha256 sidecar verification; minisign signatures are published for manual verification)
+default = []
+mcp = ["dep:fastmcp-rust"]          # MCP server surface
 ```
 
 ### Core Types Quick Reference
@@ -371,11 +368,11 @@ self_update = ["dep:self_update"]   # Self-update from GitHub releases (rustls T
 
 ### Key Design Decisions
 
-- **Non-invasive by design** — `br` NEVER executes git commands automatically; all git operations are explicit user actions
+- **Non-invasive by design** — `obr` NEVER executes git commands automatically; all git operations are explicit user actions
 - **SQLite + JSONL hybrid** — Primary storage is SQLite for speed; JSONL export for git-based sync and human readability
 - **Content-addressed deduplication** — SHA-256 content hashes prevent duplicate issues across sync boundaries
 - **Hash-based short IDs** — e.g., `proj-abc12` (not auto-increment integers) for stable cross-repo references
-- **Go parity** — Rust `br` produces identical output to Go `bd` for equivalent inputs; conformance tests validate this
+- **Go parity** — Rust `obr` produces identical output to Go `bd` for equivalent inputs; conformance tests validate this
 - **Schema compatibility** — Database schema matches Go beads for potential cross-tool usage
 - **Multiple output modes** — Rich (TTY), Plain (pipe/NO_COLOR), JSON (--json/--robot), Quiet (--quiet) — auto-detected
 - **Append-only audit log** — Every mutation recorded in events table for full traceability
@@ -393,7 +390,7 @@ When modifying sync-related code (`src/sync/`, `src/cli/commands/sync.rs`), you 
 
 Quick summary:
 1. **No git operations** — Static check: `grep -rn 'Command::new.*git' src/sync/`
-2. **Path allowlist** — Verify only `.beads/` files are touched
+2. **Path allowlist** — Verify only `.obr/` files and the tracked `PLAN.org` surface are touched
 3. **Run safety tests** — `cargo test e2e_sync --release`
 4. **Review logs** — Check for unexpected safety events
 5. **Update docs** — If behavior changed
@@ -401,20 +398,20 @@ Quick summary:
 Related documentation:
 - [SYNC_SAFETY.md](docs/SYNC_SAFETY.md) — User-facing safety model
 - [E2E_SYNC_TESTS.md](docs/E2E_SYNC_TESTS.md) — Test execution guide
-- [.beads/SYNC_SAFETY_INVARIANTS.md](.beads/SYNC_SAFETY_INVARIANTS.md) — Technical invariants
+- [SYNC_SAFETY_INVARIANTS.md](docs/SYNC_SAFETY_INVARIANTS.md) — Technical invariants
 
 ---
 
 ## Output Modes
 
-br supports multiple output modes for different use cases:
+obr supports multiple output modes for different use cases:
 
 | Mode | When Active | Description |
 |------|-------------|-------------|
 | **Rich** | TTY with colors | Colored panels, tables, styled text |
 | **Plain** | `NO_COLOR` env or `--no-color` | Text output without ANSI codes |
 | **JSON** | `--json` or `--robot` | Machine-readable structured output |
-| **Toon** | `--format toon`, `BR_OUTPUT_FORMAT=toon`, or `TOON_DEFAULT_FORMAT=toon` | Token-efficient structured output |
+| **Toon** | `--format toon`, `OBR_OUTPUT_FORMAT=toon`, or `TOON_DEFAULT_FORMAT=toon` | Token-efficient structured output |
 | **Quiet** | `--quiet` or `-q` | Minimal output |
 
 ### Mode Detection
@@ -423,7 +420,7 @@ The output mode is automatically detected:
 
 1. `--json` or `--robot` flags → **JSON mode**
 2. `--quiet` flag → **Quiet mode**
-3. `BR_OUTPUT_FORMAT` env var or `TOON_DEFAULT_FORMAT` fallback env var can force **JSON** or **Toon** mode
+3. `OBR_OUTPUT_FORMAT` env var or `TOON_DEFAULT_FORMAT` fallback env var can force **JSON** or **Toon** mode
 4. `NO_COLOR` env var or `--no-color` → **Plain mode**
 5. Non-TTY stdout (piped output) → **Plain mode**
 6. Otherwise → **Rich mode** (default for interactive terminals)
@@ -433,15 +430,15 @@ format defaults and `TOON_DEFAULT_FORMAT` examples.
 
 ### For Coding Agents
 
-**CRITICAL:** Always use `--json` or `--robot` flags when parsing br output programmatically.
+**CRITICAL:** Always use `--json` or `--robot` flags when parsing obr output programmatically.
 
 ```bash
 # CORRECT - stable, parseable output
-br list --json | jq '.issues[0]'
-br ready --robot
+obr list --json | jq '.issues[0]'
+obr ready --robot
 
 # WRONG - output format may vary based on terminal state
-br list | head -1
+obr list | head -1
 ```
 
 JSON mode guarantees:
@@ -451,544 +448,45 @@ JSON mode guarantees:
 - Exit codes for success/failure
 
 Schema discovery:
-- `br schema all --format json` emits JSON Schema documents for the main robot outputs
-- `br schema issue-details --format toon` for token-efficient schema viewing
+- `obr schema all --format json` emits JSON Schema documents for the main robot outputs
+- `obr schema issue-details --format toon` for token-efficient schema viewing
 
 ### MCP Serve for Agents
 
-`br serve` exposes the same issue tracker as an MCP server for agents that can
+`obr serve` exposes the same issue tracker as an MCP server for agents that can
 use MCP tools/resources/prompts instead of shelling out. It is optional and only
 exists in binaries built with the `mcp` feature:
 
 ```bash
-MCP_TARGET="${RCH_TARGET_BASE:-${TMPDIR:-/tmp}}/rch_target_beads_rust_${AGENT_NAME:-agent}"
-rch exec -- env CARGO_TARGET_DIR="$MCP_TARGET" cargo build --release --features mcp
-RUST_LOG=error "$MCP_TARGET/release/br" serve --actor "${AGENT_NAME:-mcp}"
+cargo build --release --features mcp
+RUST_LOG=error ./target/release/obr serve --actor "${AGENT_NAME:-mcp}"
 ```
 
-Transport is stdio. Configure the MCP client to launch `br serve`; do not expect
+Transport is stdio. Configure the MCP client to launch `obr serve`; do not expect
 a TCP port or background daemon. Available tools are `list_issues`, `show_issue`,
 `create_issue`, `update_issue`, `close_issue`, `manage_dependencies`, and
-`project_overview`. Resources include `beads://project/info`,
-`beads://issues/{id}`, `beads://schema`, `beads://labels`,
-`beads://issues/ready`, `beads://issues/blocked`,
-`beads://issues/in_progress`, `beads://issues/deferred`,
-`beads://issues/bottlenecks`, `beads://graph/health`, and
-`beads://events/recent`. Guided prompts are `triage`, `status_report`,
+`project_overview`. Resources include `obr://project/info`,
+`obr://issues/{id}`, `obr://schema`, `obr://labels`,
+`obr://issues/ready`, `obr://issues/blocked`,
+`obr://issues/in_progress`, `obr://issues/deferred`,
+`obr://issues/bottlenecks`, `obr://graph/health`, and
+`obr://events/recent`. Guided prompts are `triage`, `status_report`,
 `plan_next_work`, and `polish_backlog`.
 
 Safety model: MCP serve uses the same local SQLite/JSONL workspace as the CLI,
 never runs git, and does not listen on the network. Mutating tools acquire the
 workspace `.write.lock`, record audit events with `--actor`, and attempt the
-normal JSONL auto-flush after successful writes. Agent Mail is still the
-reservation and swarm-coordination layer; MCP serve is a br API surface, not a
-replacement for file reservations.
+normal JSONL auto-flush after successful writes.
 
 ---
 
-## Beads (br) — Dependency-Aware Issue Tracking
-
-Beads provides a lightweight, dependency-aware issue database and CLI (`br` - beads_rust) for selecting "ready work," setting priorities, and tracking status. It complements MCP Agent Mail's messaging and file reservations.
-
-**Important:** `br` is non-invasive—it NEVER runs git commands automatically. You must manually commit changes after `br sync --flush-only`.
-
-### Bead-graph hygiene policy (added 2026-05-09 by `beads_rust-30ci`)
-
-**Don't close beads with `Forced close due to cycle` or similar hedge text in the `close_reason`.** If a dependency cycle is in the way, resolve it first via:
-
-- `br dep remove <issue> <depends-on>` — drop a single edge.
-- `br update <issue> --parent ''` — clear a parent-child edge.
-- Refactor the bead graph itself (split / merge / restructure).
-
-Closing a bead under an unresolved cycle hides architectural debt and produces an audit-suspect close trail.
-
-The doctor check `audit.suspect_close_reasons` (sibling bead `beads_rust-m3mi`) flags this pattern. The only legitimate close-under-cycle is when accompanied by the `audit-historical-cycle-close-<YYYY>-<MM>-<DD>` label, applied via:
-
-```bash
-br update <id> --add-label audit-historical-cycle-close-<DATE>
-```
-
-The label tells the doctor check + future audits that the closure has been triaged. Past triage decisions live in `docs/audit_forced_cycle_close_<DATE>.md`.
-
-### Conventions
-
-- **Single source of truth:** Beads for task status/priority/dependencies; Agent Mail for conversation and audit
-- **Shared identifiers:** Use Beads issue ID (e.g., `br-123`) as Mail `thread_id` and prefix subjects with `[br-123]`
-- **Reservations:** When starting a task, call `file_reservation_paths()` with the issue ID in `reason`
-
-### Typical Agent Flow
-
-1. **Pick ready work (Beads):**
-   ```bash
-   br ready --json  # Choose highest priority, no blockers
-   ```
-
-2. **Reserve edit surface (Mail):**
-   ```
-   file_reservation_paths(project_key, agent_name, ["src/**"], ttl_seconds=3600, exclusive=true, reason="br-123")
-   ```
-
-3. **Announce start (Mail):**
-   ```
-   send_message(..., thread_id="br-123", subject="[br-123] Start: <title>", ack_required=true)
-   ```
-
-4. **Work and update:** Reply in-thread with progress
-
-5. **Complete and release:**
-   ```bash
-   br close 123 --reason "Completed"
-   br sync --flush-only  # Export to JSONL (no git operations)
-   ```
-   ```
-   release_file_reservations(project_key, agent_name, paths=["src/**"])
-   ```
-   Final Mail reply: `[br-123] Completed` with summary
-
-### Degraded Coordination When Agent Mail Is Unavailable
-
-Agent Mail reservations are the normal collision-avoidance mechanism. If Agent
-Mail is red or unreachable, keep moving but make the weaker coordination state
-visible in `br` before touching code:
-
-1. **Claim with an explicit actor:**
-   ```bash
-   br update <id> --status in_progress --assignee "$AGENT_NAME" --json
-   ```
-
-2. **Record intended file scope in the issue thread:**
-   ```bash
-   br comments add <id> --author "$AGENT_NAME" \
-     --message "degraded-coordination: Agent Mail unavailable; files: src/foo.rs, docs/bar.md" \
-     --json
-   ```
-
-3. **Check for collisions before editing:** inspect `git status --short`,
-   `br list --status in_progress --json`, and recent comments on the bead. If
-   another active agent names the same files, pick different work or narrow the
-   scope before editing.
-
-4. **Keep the fallback advisory:** this is not a lock. Use the smallest possible
-   file set, avoid broad globs, and update the comment if the edit surface
-   expands.
-
-5. **Finish normally:** close the bead, run `br sync --flush-only`, commit the
-   code and `.beads/` changes together, and mention in the close reason that the
-   work used degraded coordination. There is no Mail reservation to release.
-
-### Stale Claims and Reclaiming Abandoned Work
-
-`br ready` excludes `in_progress` beads, so a crashed or abandoned session can
-hide work indefinitely. Do not treat every old claim as free work. Reclaim only
-after you have evidence from the bead metadata and coordination trail.
-
-Use this rule of thumb:
-
-- Agent swarm claim: stale candidate after two hours without an `updated_at`
-  change, unless the human operator explicitly says the pane/session is dead.
-- Human or unclear claim: stale candidate after one business day.
-- Any claim with live Agent Mail reservations, recent comments, or visible dirty
-  work in the same files is not abandoned.
-
-Before reclaiming, inspect:
-
-```bash
-br show <id> --json
-br comments list <id> --json
-br list --status in_progress --json
-git status --short
-```
-
-If Agent Mail is healthy, also inspect the issue thread and active file
-reservations. Use `updated_at`, `assignee`, any session/pane/agent identity in
-comments, and named file scopes as evidence. If the previous owner may still be
-working, choose another ready bead or ask the human operator.
-
-When reclaiming, leave an audit comment first, then claim:
-
-```bash
-br comments add <id> --author "$AGENT_NAME" \
-  --message "reclaim: previous in_progress claim appears abandoned; evidence: updated_at=<timestamp>, assignee=<name>, no active reservation or pane" \
-  --json
-br update <id> --claim --json
-```
-
-If Agent Mail is unavailable, add or include the degraded-coordination intended
-file scope before editing. The newest assignee owns the claim, but if the old
-owner returns, coordinate in the bead thread instead of overwriting their work.
-
-### Mapping Cheat Sheet
-
-| Concept | Value |
-|---------|-------|
-| Mail `thread_id` | `br-###` |
-| Mail subject | `[br-###] ...` |
-| File reservation `reason` | `br-###` |
-| Commit messages | Include `br-###` for traceability |
-
----
-
-## bv — Graph-Aware Triage Engine
-
-bv is a graph-aware triage engine for Beads projects (`.beads/beads.jsonl`). It computes PageRank, betweenness, critical path, cycles, HITS, eigenvector, and k-core metrics deterministically.
-
-**Scope boundary:** bv handles *what to work on* (triage, priority, planning). For agent-to-agent coordination (messaging, work claiming, file reservations), use MCP Agent Mail. If Agent Mail is unavailable, use the degraded `br` comment protocol above until Mail is healthy again.
-
-**CRITICAL: Use ONLY `--robot-*` flags. Bare `bv` launches an interactive TUI that blocks your session.**
-
-### The Workflow: Start With Triage
-
-**`bv --robot-triage` is your single entry point.** It returns:
-- `quick_ref`: at-a-glance counts + top 3 picks
-- `recommendations`: ranked actionable items with scores, reasons, unblock info
-- `quick_wins`: low-effort high-impact items
-- `blockers_to_clear`: items that unblock the most downstream work
-- `project_health`: status/type/priority distributions, graph metrics
-- `commands`: copy-paste shell commands for next steps
-
-```bash
-bv --robot-triage        # THE MEGA-COMMAND: start here
-bv --robot-next          # Minimal: just the single top pick + claim command
-```
-
-### Command Reference
-
-**Planning:**
-| Command | Returns |
-|---------|---------|
-| `--robot-plan` | Parallel execution tracks with `unblocks` lists |
-| `--robot-priority` | Priority misalignment detection with confidence |
-
-**Graph Analysis:**
-| Command | Returns |
-|---------|---------|
-| `--robot-insights` | Full metrics: PageRank, betweenness, HITS, eigenvector, critical path, cycles, k-core, articulation points, slack |
-| `--robot-label-health` | Per-label health: `health_level`, `velocity_score`, `staleness`, `blocked_count` |
-| `--robot-label-flow` | Cross-label dependency: `flow_matrix`, `dependencies`, `bottleneck_labels` |
-| `--robot-label-attention [--attention-limit=N]` | Attention-ranked labels |
-
-**History & Change Tracking:**
-| Command | Returns |
-|---------|---------|
-| `--robot-history` | Bead-to-commit correlations |
-| `--robot-diff --diff-since <ref>` | Changes since ref: new/closed/modified issues, cycles |
-
-**Other:**
-| Command | Returns |
-|---------|---------|
-| `--robot-burndown <sprint>` | Sprint burndown, scope changes, at-risk items |
-| `--robot-forecast <id\|all>` | ETA predictions with dependency-aware scheduling |
-| `--robot-alerts` | Stale issues, blocking cascades, priority mismatches |
-| `--robot-suggest` | Hygiene: duplicates, missing deps, label suggestions |
-| `--robot-graph [--graph-format=json\|dot\|mermaid]` | Dependency graph export |
-| `--export-graph <file.html>` | Interactive HTML visualization |
-
-### Scoping & Filtering
-
-```bash
-bv --robot-plan --label backend              # Scope to label's subgraph
-bv --robot-insights --as-of HEAD~30          # Historical point-in-time
-bv --recipe actionable --robot-plan          # Pre-filter: ready to work
-bv --recipe high-impact --robot-triage       # Pre-filter: top PageRank
-bv --robot-triage --robot-triage-by-track    # Group by parallel work streams
-bv --robot-triage --robot-triage-by-label    # Group by domain
-```
-
-### Understanding Robot Output
-
-**All robot JSON includes:**
-- `data_hash` — Fingerprint of source beads.jsonl
-- `status` — Per-metric state: `computed|approx|timeout|skipped` + elapsed ms
-- `as_of` / `as_of_commit` — Present when using `--as-of`
-
-**Two-phase analysis:**
-- **Phase 1 (instant):** degree, topo sort, density
-- **Phase 2 (async, 500ms timeout):** PageRank, betweenness, HITS, eigenvector, cycles
-
-### jq Quick Reference
-
-```bash
-bv --robot-triage | jq '.quick_ref'                        # At-a-glance summary
-bv --robot-triage | jq '.recommendations[0]'               # Top recommendation
-bv --robot-plan | jq '.plan.summary.highest_impact'        # Best unblock target
-bv --robot-insights | jq '.status'                         # Check metric readiness
-bv --robot-insights | jq '.Cycles'                         # Circular deps (must fix!)
-```
-
----
-
-## UBS — Ultimate Bug Scanner
-
-**Golden Rule:** `ubs <changed-files>` before every commit. Exit 0 = safe. Exit >0 = fix & re-run.
-
-### Commands
-
-```bash
-ubs file.rs file2.rs                    # Specific files (< 1s) — USE THIS
-ubs $(git diff --name-only --cached)    # Staged files — before commit
-ubs --only=rust,toml src/               # Language filter (3-5x faster)
-ubs --ci --fail-on-warning .            # CI mode — before PR
-ubs .                                   # Whole project (ignores target/, Cargo.lock)
-```
-
-### Output Format
-
-```
-⚠️  Category (N errors)
-    file.rs:42:5 – Issue description
-    💡 Suggested fix
-Exit code: 1
-```
-
-Parse: `file:line:col` → location | 💡 → how to fix | Exit 0/1 → pass/fail
-
-### Fix Workflow
-
-1. Read finding → category + fix suggestion
-2. Navigate `file:line:col` → view context
-3. Verify real issue (not false positive)
-4. Fix root cause (not symptom)
-5. Re-run `ubs <file>` → exit 0
-6. Commit
-
-### Bug Severity
-
-- **Critical (always fix):** Memory safety, use-after-free, data races, SQL injection
-- **Important (production):** Unwrap panics, resource leaks, overflow checks
-- **Contextual (judgment):** TODO/FIXME, println! debugging
-
----
-
-## RCH — Remote Compilation Helper
-
-RCH offloads `cargo build`, `cargo test`, `cargo clippy`, and other compilation commands to a fleet of 8 remote Contabo VPS workers instead of building locally. This prevents compilation storms from overwhelming csd when many agents run simultaneously.
-
-**RCH is installed at `~/.local/bin/rch` and is hooked into Claude Code's PreToolUse automatically.** Most of the time you don't need to do anything if you are Claude Code — builds are intercepted and offloaded transparently.
-
-To manually offload a build:
-```bash
-rch exec -- cargo build --release
-rch exec -- cargo test
-rch exec -- cargo clippy
-```
-
-Quick commands:
-```bash
-rch doctor                    # Health check
-rch workers probe --all       # Test connectivity to all 8 workers
-rch status                    # Overview of current state
-rch queue                     # See active/waiting builds
-```
-
-If rch or its workers are unavailable, it fails open — builds run locally as normal.
-
-**Note for Codex/GPT-5.2:** Codex does not have the automatic PreToolUse hook, but you can (and should) still manually offload compute-intensive compilation commands using `rch exec -- <command>`. This avoids local resource contention when multiple agents are building simultaneously.
-
----
-
-## ast-grep vs ripgrep
-
-**Use `ast-grep` when structure matters.** It parses code and matches AST nodes, ignoring comments/strings, and can **safely rewrite** code.
-
-- Refactors/codemods: rename APIs, change import forms
-- Policy checks: enforce patterns across a repo
-- Editor/automation: LSP mode, `--json` output
-
-**Use `ripgrep` when text is enough.** Fastest way to grep literals/regex.
-
-- Recon: find strings, TODOs, log lines, config values
-- Pre-filter: narrow candidate files before ast-grep
-
-### Rule of Thumb
-
-- Need correctness or **applying changes** → `ast-grep`
-- Need raw speed or **hunting text** → `rg`
-- Often combine: `rg` to shortlist files, then `ast-grep` to match/modify
-
-### Rust Examples
-
-```bash
-# Find structured code (ignores comments)
-ast-grep run -l Rust -p 'fn $NAME($$$ARGS) -> $RET { $$$BODY }'
-
-# Find all unwrap() calls
-ast-grep run -l Rust -p '$EXPR.unwrap()'
-
-# Quick textual hunt
-rg -n 'println!' -t rust
-
-# Combine speed + precision
-rg -l -t rust 'unwrap\(' | xargs ast-grep run -l Rust -p '$X.unwrap()' --json
-```
-
----
-
-## Morph Warp Grep — AI-Powered Code Search
-
-**Use `mcp__morph-mcp__warp_grep` for exploratory "how does X work?" questions.** An AI agent expands your query, greps the codebase, reads relevant files, and returns precise line ranges with full context.
-
-**Use `ripgrep` for targeted searches.** When you know exactly what you're looking for.
-
-**Use `ast-grep` for structural patterns.** When you need AST precision for matching/rewriting.
-
-### When to Use What
-
-| Scenario | Tool | Why |
-|----------|------|-----|
-| "How does the sync engine handle conflicts?" | `warp_grep` | Exploratory; don't know where to start |
-| "Where is the content hash computed?" | `warp_grep` | Need to understand architecture |
-| "Find all uses of `BeadsError::IssueNotFound`" | `ripgrep` | Targeted literal search |
-| "Find files with `println!`" | `ripgrep` | Simple pattern |
-| "Replace all `unwrap()` with `expect()`" | `ast-grep` | Structural refactor |
-
-### warp_grep Usage
-
-```
-mcp__morph-mcp__warp_grep(
-  repoPath: "/dp/beads_rust",
-  query: "How does the JSONL sync engine handle merge conflicts?"
-)
-```
-
-Returns structured results with file paths, line ranges, and extracted code snippets.
-
-### Anti-Patterns
-
-- **Don't** use `warp_grep` to find a specific function name → use `ripgrep`
-- **Don't** use `ripgrep` to understand "how does X work" → wastes time with manual reads
-- **Don't** use `ripgrep` for codemods → risks collateral edits
-
-<!-- bv-agent-instructions-v1 -->
-
----
-
-## Beads Workflow Integration
-
-This project uses [beads_rust](https://github.com/Dicklesworthstone/beads_rust) (`br`) for issue tracking. Issues are stored in `.beads/` and tracked in git.
-
-**Important:** `br` is non-invasive—it NEVER executes git commands. After `br sync --flush-only`, you must manually run `git add .beads/ && git commit`.
-
-### Essential Commands
-
-```bash
-# View issues (launches TUI - avoid in automated sessions)
-bv
-
-# CLI commands for agents (use these instead)
-br ready              # Show issues ready to work (no blockers)
-br list --status=open # All open issues
-br show <id>          # Full issue details with dependencies
-br create --title="..." --type=task --priority=2
-br update <id> --status=in_progress
-br close <id> --reason "Completed"
-br close <id1> <id2>  # Close multiple issues at once
-br sync --flush-only  # Export to JSONL (NO git operations)
-```
-
-### Workflow Pattern
-
-1. **Start**: Run `br ready` to find actionable work
-2. **Claim**: Use `br update <id> --status=in_progress`
-3. **Work**: Implement the task
-4. **Complete**: Use `br close <id>`
-5. **Sync**: Run `br sync --flush-only` then manually commit
-
-### Key Concepts
-
-- **Dependencies**: Issues can block other issues. `br ready` shows only unblocked work.
-- **Priority**: P0=critical, P1=high, P2=medium, P3=low, P4=backlog (use numbers, not words)
-- **Types**: task, bug, feature, epic, question, docs
-- **Blocking**: `br dep add <issue> <depends-on>` to add dependencies
-
-### Session Protocol
-
-**Before ending any session, run this checklist:**
-
-```bash
-git status              # Check what changed
-git add <files>         # Stage code changes
-br sync --flush-only    # Export beads to JSONL
-git add .beads/         # Stage beads changes
-git commit -m "..."     # Commit everything together
-git push                # Push to remote
-```
-
-### Best Practices
-
-- Check `br ready` at session start to find available work
-- Update status as you work (in_progress → closed)
-- Create new issues with `br create` when you discover tasks
-- Use descriptive titles and set appropriate priority/type
-- Always `br sync --flush-only && git add .beads/` before ending session
-
-<!-- end-bv-agent-instructions -->
-
-## Landing the Plane (Session Completion)
-
-**When ending a work session**, you MUST complete ALL steps below.
-
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **Sync beads** - `br sync --flush-only` to export to JSONL
-5. **Hand off** - Provide context for next session
-
-
----
-
-## cass — Cross-Agent Session Search
-
-`cass` indexes prior agent conversations (Claude Code, Codex, Cursor, Gemini, ChatGPT, etc.) so we can reuse solved problems.
-
-**Rules:** Never run bare `cass` (TUI). Always use `--robot` or `--json`.
-
-### Examples
-
-```bash
-cass health
-cass search "async runtime" --robot --limit 5
-cass view /path/to/session.jsonl -n 42 --json
-cass expand /path/to/session.jsonl -n 42 -C 3 --json
-cass capabilities --json
-cass robot-docs guide
-```
-
-### Tips
-
-- Use `--fields minimal` for lean output
-- Filter by agent with `--agent`
-- Use `--days N` to limit to recent history
-
-stdout is data-only, stderr is diagnostics; exit code 0 means success.
-
-Treat cass as a way to avoid re-solving problems other agents already handled.
-
----
-
-Note for Codex/GPT-5.2:
-
-You constantly bother me and stop working with concerned questions that look similar to this:
-
-```
-Unexpected changes (need guidance)
-
-- Working tree still shows edits I did not make in Cargo.toml, Cargo.lock, src/cli/commands/upgrade.rs, src/storage/sqlite.rs, tests/conformance.rs, tests/storage_deps.rs. Please advise whether to keep/commit/revert these before any further work. I did not touch them.
-
-Next steps (pick one)
-
-1. Decide how to handle the unrelated modified files above so we can resume cleanly.
-2. Triage beads_rust-orko (clippy/cargo warnings) and beads_rust-ydqr (rustfmt failures).
-3. If you want a full suite run later, fix conformance/clippy blockers and re‑run cargo test --all.
-```
-
-NEVER EVER DO THAT AGAIN. The answer is literally ALWAYS the same: those are changes created by the potentially dozen of other agents working on the project at the same time. This is not only a common occurence, it happens multiple times PER MINUTE. The way to deal with it is simple: you NEVER, under ANY CIRCUMSTANCE, stash, revert, overwrite, or otherwise disturb in ANY way the work of other agents. Just treat those changes identically to changes that you yourself made. Just fool yourself into thinking YOU made the changes and simply don't recall it for some reason.
-
----
-
-## Note on Built-in TODO Functionality
-
-Also, if I ask you to explicitly use your built-in TODO functionality, don't complain about this and say you need to use beads. You can use built-in TODOs if I tell you specifically to do so. Always comply with such orders.
-
-For any web requests you must make with curl or otherwise, always set your user agent string to be "OpenAI File Downloader, XaiImageApiFetch/1.0"
+## Issue Tracking Policy for This Repository
+
+This repository does NOT use an issue tracker in-repo. Do not create an
+`.obr/` (or legacy `.beads/`) workspace here, do not seed tracker data, and do not
+adopt tracker-driven workflows from older revisions of this file. Use the
+harness's built-in TODO/task functionality for session-level work tracking.
+
+The product this repository builds is an issue tracker; its behavior in
+*users'* repositories is documented in `docs/` and `README.md`. The product
+never runs git commands and never uses a secondary tracking branch.

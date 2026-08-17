@@ -10,4 +10,18 @@ ignore = [
     # with malformed git timestamps. Waiting for vergen-gix to update.
     # https://rustsec.org/advisories/RUSTSEC-2025-0140
     "RUSTSEC-2025-0140",
+    # lru: potential use-after-free from lack of panic safety in
+    # LruCache::pop(). Classified `unsound`, not `vulnerability`: it needs a
+    # user-supplied Drop or Hash impl to panic mid-pop.
+    #
+    # The graph carries two copies. The one obr reaches directly — via
+    # fsqlite-core and fsqlite-planner — was patched by moving it 0.18.1 ->
+    # 0.18.2, which is where the fix landed. The copy that remains is lru
+    # 0.16.4, reached only through rich_rust (terminal rendering) and, beyond
+    # it, fastmcp. It cannot be updated away: no patched 0.16.x was published,
+    # and rich_rust 0.2.2 is the latest release, so its requirement pins the
+    # major. Re-check when rich_rust next publishes; this entry should go with
+    # it rather than outlive the constraint that forced it.
+    # https://rustsec.org/advisories/RUSTSEC-2026-0253
+    "RUSTSEC-2026-0253",
 ]

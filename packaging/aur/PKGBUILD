@@ -1,31 +1,120 @@
-# Maintainer: Jeffrey Emanuel <jeff141421@gmail.com>
-# br-bin - Pre-built binary package for br (agent-first issue tracker)
+# Maintainer: John Wiegley <johnw@newartisans.com>
+# obr-bin - Pre-built binary package for obr (issue tracker with an Org surface)
 #
 # To build: makepkg -si
-# To install from AUR: yay -S br-bin
+# To install from AUR: yay -S obr-bin
+#
+# The sha256sums below are zero placeholders until obr publishes its first
+# release; .github/workflows/update-package-manifests.yml rewrites them from
+# the published .sha256 sidecars.
 
-pkgname=br-bin
-pkgver=0.5.2
+pkgname=obr-bin
+# `0.5.7+1` is upstream beads_rust release this fork tracks, plus fork
+# generation since it. makepkg permits `+` in pkgver.
+pkgver=0.5.7+1
 pkgrel=1
-pkgdesc="Agent-first issue tracker (SQLite + JSONL)"
+pkgdesc="Issue tracker with an Org-file surface (SQLite cache + Org export)"
 arch=('x86_64' 'aarch64')
-url="https://github.com/Dicklesworthstone/beads_rust"
-license=('LicenseRef-MIT-OpenAI-Anthropic-Rider')
-provides=('br')
-conflicts=('br' 'br-git')
+url="https://github.com/jwiegley/obr"
+# MIT, but carrying an additional rider; the full text is installed below and
+# lives in the repository LICENSE file.
+license=('MIT')
+provides=('obr')
+conflicts=('obr' 'obr-git')
 depends=('gcc-libs')
 
-source_x86_64=("${pkgname}-${pkgver}-x86_64.tar.gz::https://github.com/Dicklesworthstone/beads_rust/releases/download/v${pkgver}/br-${pkgver}-linux_amd64.tar.gz")
-source_aarch64=("${pkgname}-${pkgver}-aarch64.tar.gz::https://github.com/Dicklesworthstone/beads_rust/releases/download/v${pkgver}/br-${pkgver}-linux_arm64.tar.gz")
+# The published archives spell the `+` as `.`: GitHub's release-asset upload
+# API takes the asset name as a URL query parameter, where a literal `+`
+# decodes to a space and is stored back as `.`, so .github/workflows/release.yml
+# flattens it before uploading. The release TAG keeps the true version, so only
+# the file-name half of each URL uses _assetver.
+_assetver="${pkgver//+/.}"
 
-sha256sums_x86_64=('a1e740b0840464886f066a32e048721d028202e0bff9df024bf9d6fcc49ee0c7')
-sha256sums_aarch64=('7ae3a4b5a0e2ea0f11bce3a47f21d3d52f7f96e073aa8eecd5d38422d2d5a668')
+source_x86_64=("${pkgname}-${pkgver}-x86_64.tar.gz::https://github.com/jwiegley/obr/releases/download/v${pkgver}/obr-${_assetver}-linux_amd64.tar.gz")
+source_aarch64=("${pkgname}-${pkgver}-aarch64.tar.gz::https://github.com/jwiegley/obr/releases/download/v${pkgver}/obr-${_assetver}-linux_arm64.tar.gz")
+
+sha256sums_x86_64=('0000000000000000000000000000000000000000000000000000000000000000')
+sha256sums_aarch64=('0000000000000000000000000000000000000000000000000000000000000000')
 
 package() {
-    install -Dm755 "${srcdir}/br" "${pkgdir}/usr/bin/br"
+    install -Dm755 "${srcdir}/obr" "${pkgdir}/usr/bin/obr"
 
-    # v0.4.1 predates bundled licenses; v0.5.1 and later archives include it.
-    if [[ -f "${srcdir}/LICENSE" ]]; then
-        install -Dm644 "${srcdir}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
-    fi
+    # Install the license VERBATIM, rider included. The rider requires that
+    # every distribution carry it unmodified, so this cannot be reduced to a
+    # plain MIT notice.
+    install -Dm644 /dev/stdin "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE" << 'EOF'
+MIT License (with OpenAI/Anthropic Rider)
+
+Copyright (c) 2026 Jeffrey Emanuel
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+ADDITIONAL RIDER / RESTRICTION (OpenAI / Anthropic):
+
+This rider is part of the "conditions" of this License. In the event of any
+conflict between this rider and any other portion of this License, this rider
+controls.
+
+"Restricted Parties" means OpenAI, L.L.C.; Anthropic, PBC; any of their
+respective Affiliates; and any person or entity acting directly or indirectly
+on behalf of, for the benefit of, or under the direction of any of the
+foregoing (including any officer, director, employee, contractor, agent,
+consultant, service provider, or representative).
+
+Notwithstanding any other provision of this License, no rights are granted to
+any Restricted Party. Any purported license, sublicense, assignment, transfer,
+or other permission to any Restricted Party is null and void absent the
+express prior written permission of Jeffrey Emanuel.
+
+You may not provide, disclose, distribute, sublicense, sell, lease, lend,
+host, make available, or otherwise permit access to the Software or any
+derivative work of the Software (as defined in applicable copyright law)
+(collectively, "Derivative Works") to or for any Restricted Party.
+
+For purposes of this rider, "use" includes, without limitation: copying,
+modifying, merging, publishing, distributing, sublicensing, selling,
+transferring, making available, hosting, deploying, executing, benchmarking,
+testing, analyzing, indexing, or incorporating the Software or any Derivative
+Works into any dataset, training corpus, evaluation harness, or pipeline for
+machine learning or other automated systems.
+
+This rider applies to the Software and all Derivative Works. As a condition of
+use, you agree that this rider is a precondition to exercising any rights
+under this License, and you agree that any distribution of the Software or any
+Derivative Works must include this rider provision unmodified.
+
+Any breach of this rider automatically and immediately terminates the
+permissions granted by this License. Upon termination, you must immediately
+cease all use and distribution of the Software and any Derivative Works and
+destroy all copies under your control.
+
+You agree that a breach of this rider would cause irreparable harm and that
+Jeffrey Emanuel may seek injunctive or other equitable relief to enforce this
+rider, in addition to any other remedies available at law. To the maximum
+extent permitted by applicable law, the prevailing party in any action to
+enforce this rider shall be entitled to recover reasonable attorneys' fees and
+costs.
+
+For purposes of this rider, "Affiliate" means any entity that directly or
+indirectly controls, is controlled by, or is under common control with the
+specified party. "Control" means ownership of more than 50% of the voting
+securities or other ownership interest, or the power to direct management or
+policies by contract or otherwise.
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+EOF
 }
