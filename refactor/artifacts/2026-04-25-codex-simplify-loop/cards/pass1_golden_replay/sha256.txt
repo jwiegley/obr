@@ -1,6 +1,0 @@
-094b8a3a12711da1bbe069a81d1f2d2f1d06cc7ee5ef5bdad08bf05c1bef2acb  /data/projects/beads_rust/refactor/artifacts/2026-04-25-codex-simplify-loop/cards/pass1_golden_replay/comments_child.json
-5e363fdcaae426d1f038f05f271e310317b7664e565f9f95d282b0b0f88ecfc1  /data/projects/beads_rust/refactor/artifacts/2026-04-25-codex-simplify-loop/cards/pass1_golden_replay/ready.json
-6068564e50ecb7745652a60c58c73352913fc32a10e99a0f4e25e7549845e752  /data/projects/beads_rust/refactor/artifacts/2026-04-25-codex-simplify-loop/cards/pass1_golden_replay/show_child.json
-c3d8766eabf0b1f16735e143b72c07b32e93176ac5ebfa108f5fce9e7742ba60  /data/projects/beads_rust/refactor/artifacts/2026-04-25-codex-simplify-loop/cards/pass1_golden_replay/show_root.json
-dab529b5c56ba42e9875065326eabc641c746bf08b409ea5eb42fb406cd54892  /data/projects/beads_rust/refactor/artifacts/2026-04-25-codex-simplify-loop/cards/pass1_golden_replay/sync_status.json
-ebdc471cc70a6eef1df0e1a259f3a7690927fec12e1555cb692108c9c1dd6d6b  /data/projects/beads_rust/refactor/artifacts/2026-04-25-codex-simplify-loop/cards/pass1_golden_replay/list.json

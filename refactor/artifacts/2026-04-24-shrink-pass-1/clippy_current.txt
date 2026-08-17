@@ -1,5 +1,0 @@
-  [2m2026-04-24T22:09:16.175607Z[0m [33m WARN[0m [1;33mrch::hook[0m[33m: [33mexec called with non-compilation command: env 'CARGO_TARGET_DIR=/tmp/rch_target_copper_osprey' cargo clippy --all-targets -- -D warnings[0m
-    [2;3mat[0m rch/src/hook.rs:187 [2;3mon[0m ThreadId(1)
-
-   Compiling beads_rust v0.1.45 (/data/projects/beads_rust)
-    Finished `dev` profile [optimized + debuginfo] target(s) in 25.56s

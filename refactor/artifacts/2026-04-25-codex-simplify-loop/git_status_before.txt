@@ -1,3 +1,0 @@
-?? .skill-loop-progress.md
-?? refactor/
-?? tests/artifacts/
