@@ -1,5 +1,5 @@
 {
-  "tool": "br",
+  "tool": "obr",
   "generated_at": "<GENERATED_AT>",
   "schemas": {
     "ErrorEnvelope": {

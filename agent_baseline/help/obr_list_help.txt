@@ -1,6 +1,6 @@
 List issues
 
-Usage: br list [OPTIONS]
+Usage: obr list [OPTIONS]
 
 Options:
   -s, --status <STATUS>
@@ -73,7 +73,7 @@ Options:
           Wrap long lines instead of truncating in text output
 
       --format <FORMAT>
-          Output format (text, json, csv, toon). Env: BR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT
+          Output format (text, json, csv, toon). Env: OBR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT
 
           Possible values:
           - text: Human-readable text (default)
@@ -92,7 +92,7 @@ Options:
           Default: id, title, status, priority, `issue_type`, assignee, `created_at`, `updated_at`
 
       --db <DB>
-          Database path (auto-discover .beads/*.db if not set)
+          Database path (auto-discover .obr/*.db if not set)
 
       --actor <ACTOR>
           Actor name for audit trail
@@ -101,7 +101,7 @@ Options:
           Output as JSON
 
       --no-daemon
-          Force direct mode (no daemon) - effectively no-op in br v1
+          Force direct mode (no daemon) - effectively no-op in obr v1
 
       --no-auto-flush
           Skip auto JSONL export

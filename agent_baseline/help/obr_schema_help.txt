@@ -1,8 +1,8 @@
 Emit JSON Schemas and per-command output envelope shapes (for agent/tooling integration)
 
-IMPORTANT: br schema is not a stable API and is subject to change. Use at your own risk.
+IMPORTANT: obr schema is not a stable API and is subject to change. Use at your own risk.
 
-Usage: br schema [OPTIONS] [TARGET]
+Usage: obr schema [OPTIONS] [TARGET]
 
 Arguments:
   [TARGET]
@@ -28,7 +28,7 @@ Arguments:
 
 Options:
       --format <FORMAT>
-          Output format (text, json, toon). Env: BR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT
+          Output format (text, json, toon). Env: OBR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT
 
           Possible values:
           - text: Human-readable text (default)
@@ -39,7 +39,7 @@ Options:
           Show token savings stats when using TOON output
 
       --db <DB>
-          Database path (auto-discover .beads/*.db if not set)
+          Database path (auto-discover .obr/*.db if not set)
 
       --actor <ACTOR>
           Actor name for audit trail
@@ -48,7 +48,7 @@ Options:
           Output as JSON
 
       --no-daemon
-          Force direct mode (no daemon) - effectively no-op in br v1
+          Force direct mode (no daemon) - effectively no-op in obr v1
 
       --no-auto-flush
           Skip auto JSONL export

@@ -1,9 +1,9 @@
 {
-  "tool": "br",
-  "repo": "beads_rust",
-  "purpose": "Agent-first issue tracker (SQLite + JSONL).",
+  "tool": "obr",
+  "repo": "obr",
+  "purpose": "Issue tracker with an Org-file surface (SQLite cache + Org export).",
   "entrypoints": {
-    "binary": "br",
+    "binary": "obr",
     "agent_docs": [
       "AGENTS.md",
       "docs/agent/QUICKSTART.md",
@@ -35,15 +35,6 @@
     }
   ],
   "format_env": {
-    "BR_OUTPUT_FORMAT": {
-      "values": [
-        "text",
-        "json",
-        "toon",
-        "csv"
-      ],
-      "notes": "Highest precedence default output format when --format/--json not provided."
-    },
     "TOON_DEFAULT_FORMAT": {
       "values": [
         "text",
@@ -51,12 +42,21 @@
         "toon",
         "csv"
       ],
-      "notes": "Fallback default output format when BR_OUTPUT_FORMAT is not set."
+      "notes": "Fallback default output format when OBR_OUTPUT_FORMAT is not set."
+    },
+    "OBR_OUTPUT_FORMAT": {
+      "values": [
+        "text",
+        "json",
+        "toon",
+        "csv"
+      ],
+      "notes": "Highest precedence default output format when --format/--json not provided."
     }
   },
   "schema_surface": {
     "supported": true,
-    "command": "br schema all --format json",
+    "command": "obr schema all --format json",
     "targets": [
       "all",
       "issue",
@@ -67,6 +67,9 @@
       "blocked-issue",
       "tree-node",
       "statistics",
+      "coordination-status",
+      "additive-reconciliation",
+      "vcs-status",
       "error"
     ]
   },

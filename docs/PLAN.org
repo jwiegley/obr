@@ -2180,4 +2180,3 @@ The fixture the harness loads matches its manifest description, the three worksp
   }
 ]
 #+end_src
-

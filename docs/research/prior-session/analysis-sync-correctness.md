@@ -124,15 +124,15 @@ Measured: A adds `:ASSIGNEE: alice` to `bd-03`; B changes `bd-03`'s priority coo
 **semantically disjoint field edits to the same issue** - and git produces:
 
 ```
-:CREATED_AT: 2026-01-01T00:00:00+00:00
-<<<<<<< HEAD
+`:CREATED_AT: 2026-01-01T00:00:00+00:00
+<conflict-start HEAD>
 :UPDATED_AT: 2026-01-02T00:00:00+00:00
 :ASSIGNEE: alice
-||||||| <base>
+<common-ancestor base>
 :UPDATED_AT: 2026-01-01T00:00:00+00:00
-=======
+<conflict-divider>
 :UPDATED_AT: 2026-01-03T00:00:00+00:00
->>>>>>> B
+<conflict-end B>
 :END:
 ```
 

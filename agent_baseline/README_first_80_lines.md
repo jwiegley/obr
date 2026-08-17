@@ -1,79 +1,80 @@
-# br - Beads Rust
+# obr
 
-<div align="center">
-  <img src="../docs/assets/br_illustration.webp" alt="br - Fast, non-invasive issue tracker for git repositories" width="600">
-</div>
+An issue tracker whose working surface is a single Org file.
 
-<div align="center">
+## What it is
 
-[![CI](https://github.com/Dicklesworthstone/beads_rust/actions/workflows/ci.yml/badge.svg)](https://github.com/Dicklesworthstone/beads_rust/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Rust](https://img.shields.io/badge/rust-nightly-orange.svg)](https://www.rust-lang.org/)
-[![SQLite](https://img.shields.io/badge/storage-SQLite-green.svg)](https://www.sqlite.org/)
+`obr` keeps your project's issues in one place a human actually reads:
+`PLAN.org`, an Org-mode file tracked in git. Underneath, it is a thin layer
+over a fast SQLite issue engine — dependencies, priorities, ready-work
+queries, dedup, sync — inherited from
+[beads_rust](https://github.com/Dicklesworthstone/beads_rust). The Org file
+is bridged to that engine through the same line-oriented JSONL mechanism the
+engine already understands, so obr adds a surface, not a second brain.
 
-</div>
+Two stores, with a clear split of responsibility:
 
-A Rust port of Steve Yegge's [beads](https://github.com/steveyegge/beads), frozen at the "classic" SQLite + JSONL architecture I built my Agent Flywheel tooling around.
+- **`PLAN.org`** is the tracked surface. It lives under `doc/` if your project
+  has one, else `docs/` if it has that, else at the project root — in that
+  order of precedence; obr never creates either directory. This is the file
+  git sees, the file you edit, and the file a fresh clone bootstraps from.
+- **`.obr/`** is a per-machine cache — a SQLite database for fast queries,
+  plus config, metadata, history and lock files. It ignores itself wholesale
+  via its own `.gitignore`, and nothing inside it is ever committed.
 
-[Quick Start](#quick-start) | [Commands](#commands) | [Configuration](#configuration) | [VCS Integration](#vcs-integration) | [FAQ](#faq)
+Nothing invasive, by design: `obr` never runs git for you, never uses a
+tracking branch, and never writes tracked metadata into a dot-directory.
+Exports and imports are explicit; committing is yours to do.
 
-<div align="center">
-<h3>Quick Install</h3>
+## What PLAN.org looks like
 
-```bash
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/beads_rust/main/install.sh?$(date +%s)" | bash
+```org
+#+TITLE: Obr Issues
+#+SEQ_TODO: TODO DOING DRAFT WAIT DEFER NOTE | DONE CANCELED
+#+ISSUE_PREFIX: myproj
+
+* TODO [#B] Implement auth
+:PROPERTIES:
+:ID:       myproj-4gs
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-08 Sat 02:10]
+:END:
+
+Blocked on the schema work; see the dependency below.
 ```
 
-<p><em>Works on Linux, macOS, and Windows (WSL). Auto-detects your platform and downloads the right binary.</em></p>
-</div>
+Headings are issues; TODO keywords are status; properties carry the
+machine fields. Descriptions round-trip byte-exactly — content the Org
+grammar cannot carry natively is preserved verbatim in example blocks, so
+re-exports are a fixpoint: flush, import, and flush again produce the
+identical file.
 
----
+Times are Org-native inactive timestamps in your machine's local zone —
+`:CREATED:`, `:MODIFIED:`, `:FINISHED:`, `:DUE:`, `:DEFERRED:`, `:DELETED:`,
+`:COMPACTED:` — so Org's own tooling reads them: `org-sort-entries`,
+`org-entry-get`, `org-ql`, column view, `C-c .`. Closing time is `:FINISHED:`
+rather than `:CLOSED:`, which `org-special-properties` reserves and shadows.
+Inactive is a choice, not a limit: an *active* `<…>` timestamp in a drawer
+does reach the day agenda, which is no place for hundreds of issues. Org has
+nowhere to put a UTC offset or a seconds field, so — deliberately — the
+stored precision is one minute and two machines in different zones write the
+same issue as different bytes; `docs/RESIDUALS.md` states the cost. Files
+written before this change spelled these `:CREATED_AT:` and so on with
+RFC3339 values; those are still read, and re-exported in the current form.
 
-## Why This Project Exists
+Editing it by hand is expected, within one contract: obr rewrites the file
+from its database on every flush, so an issue may only carry the level-2
+sections obr stores (`Design`, `Acceptance Criteria`, `Notes`, `Close
+Reason`, `Delete Reason`, `Agent Context`, `Dependencies`, `Comments`).
+Any other section under an issue warns on import and is dropped on the next
+rewrite; a `Dependencies`, `Comments`, or `Agent Context` section whose
+`#+begin_src json` block has been broken fails the import outright rather
+than silently importing as empty.
 
-I (Jeffrey Emanuel) LOVE [Steve Yegge's Beads project](https://github.com/steveyegge/beads). Discovering it and seeing how well it worked together with my [MCP Agent Mail](https://github.com/Dicklesworthstone/mcp-agent-mail) was a truly transformative moment in my development workflows and professional life. This quickly also led to [beads_viewer (bv)](https://github.com/Dicklesworthstone/beads_viewer), which added another layer of analysis to beads that gives swarms of agents the insight into what beads they should work on next to de-bottleneck the development process and increase velocity. I'm very grateful for finding beads when I did and to Steve for making it.
+## Status
 
-At this point, my [Agent Flywheel](http://agent-flywheel.com/tldr) System is built around beads operating in a specific way. As Steve continues evolving beads toward [GasTown](https://github.com/steveyegge/gastown) and beyond, our use cases have naturally diverged. The hybrid SQLite + JSONL-git architecture that I built my tooling around (and independently mirrored in MCP Agent Mail) is being replaced with approaches better suited to Steve's vision.
+Unreleased. There is no published binary, no package-manager tap, and no
+upgrade command. The packaging manifests under `packaging/` are repointed at
+this fork but carry placeholder checksums until a first release is cut.
 
-Rather than ask Steve to maintain a legacy mode for my niche use case, I created this Rust port that freezes the "classic beads" architecture I depend on. The command is `br` to distinguish it from the original `bd`.
-
-**This isn't a criticism of beads**; Steve's taking it in exciting directions. It's simply that my tooling needs a stable snapshot of the architecture I built around, and maintaining my own fork is the right solution for that. Steve has given his full endorsement of this project.
-
----
-
-## TL;DR
-
-### The Problem
-
-You need to track issues for your project, but:
-- **GitHub/GitLab Issues** require internet, fragment context from code, and don't work offline
-- **TODO comments** get lost, have no status tracking, and can't express dependencies
-- **External tools** (Jira, Linear) add overhead, require context switching, and cost money
-
-### The Solution
-
-**br** is a local-first issue tracker that stores issues in SQLite with JSONL export for git-friendly collaboration. It's **20K lines of Rust** focused on one thing: tracking issues without getting in your way.
-
-```bash
-br init                              # Initialize in your repo
-br create "Fix login timeout" -p 1   # Create high-priority issue
-br ready                             # See what's actionable
-br close bd-abc123                   # Close when done
-br sync --flush-only                 # Export for git commit
-```
-
-### Why br?
-
-| Feature | br | GitHub Issues | Jira | TODO comments |
-|---------|-----|---------------|------|---------------|
-| Works offline | **Yes** | No | No | Yes |
-| Lives in repo | **Yes** | No | No | Yes |
-| Tracks dependencies | **Yes** | Limited | Yes | No |
-| Zero cost | **Yes** | Free tier | No | Yes |
-| No account required | **Yes** | No | No | Yes |
-| Machine-readable | **Yes** (`--json`) | API only | API only | No |
-| Git-friendly sync | **Yes** (JSONL) | N/A | N/A | N/A |
-| Non-invasive | **Yes** | N/A | N/A | Yes |
-| AI agent integration | **Yes** | Limited | Limited | No |
-
----
+The version is **`0.3.2+1`**. It has two halves:

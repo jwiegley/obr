@@ -1,5 +1,5 @@
 {
-  "tool": "br",
+  "tool": "obr",
   "generated_at": "<GENERATED_AT>",
   "schemas": {
     "IssueDetails": {
@@ -9,7 +9,7 @@
       "type": "object",
       "properties": {
         "id": {
-          "description": "Unique ID (e.g., \"bd-abc123\").",
+          "description": "Unique issue ID: the project's issue prefix, a hyphen, and a base36\nhash — for example \"obr-abc123\" under the default `obr` prefix. The\nprefix is per-workspace configuration (`issue_prefix`), so do not\nassume any particular one; read it from `obr://project/info` or\n`obr info --json`.",
           "type": "string"
         },
         "title": {
@@ -151,21 +151,21 @@
           ]
         },
         "source_repo": {
-          "description": "Source repository for multi-repo support — basename of the\ncanonicalized parent of `.beads/`. Stable across clones of the\nsame repo on different machines (different absolute paths\nproduce the same basename). See [`canonical_source_repo`] in\n`cli::commands::create`.",
+          "description": "Source repository for multi-repo support — basename of the\ncanonicalized parent of the workspace directory. Stable across clones of the\nsame repo on different machines (different absolute paths\nproduce the same basename). See [`canonical_source_repo`] in\n`cli::commands::create`.",
           "type": [
             "string",
             "null"
           ]
         },
         "source_repo_path": {
-          "description": "Absolute canonical path of the source repository. Distinct from\n`source_repo`: this field uniquely identifies the workspace on\nthe machine that produced the issue, which is what multi-repo\nfleet automation needs to route beads back to the right\ndirectory (see beads_rust#289). Two clones of the same repo\nunder `~/Developer/foo` vs `~/Developer/scratch/foo` collide on\n`source_repo` but disagree here. Optional — older databases and\nhand-edited JSONL records without this field are valid.",
+          "description": "Absolute canonical path of the source repository. Distinct from\n`source_repo`: this field uniquely identifies the workspace on\nthe machine that produced the issue, which is what multi-repo\nfleet automation needs to route obr back to the right directory.\nTwo clones of the same repo\nunder `~/Developer/foo` vs `~/Developer/scratch/foo` collide on\n`source_repo` but disagree here. Optional — older databases and\nhand-edited JSONL records without this field are valid.",
           "type": [
             "string",
             "null"
           ]
         },
         "agent_context": {
-          "description": "Canonical-JSON governing instructions inherited by descendant\nbeads (beads_rust#297). When set on an ancestor and the project\nhas `inherited_context.enabled = true` in `.beads/config.yaml`,\n`br update --status in_progress` / `--claim` and `br show` emit\nthe ancestor's `agent_context` alongside the child's normal\noutput so the working agent sees the constraints regardless of\ncontext compaction or cold-start lookups.\n\nStorage: TEXT column holding a JSON document (typically an\nobject with `skills`, `constraints`, `references`, `workflow`,\n`metadata` fields, but the schema is intentionally open).\n`None` means \"no inherited context\"; emission for descendants\nsilently skips ancestors with `None` (no error, no noise).\n\nNot displayed in `br list` / `br search` — this is per-bead\ngovernance metadata, not browsable content.",
+          "description": "Canonical-JSON governing instructions inherited by descendant issues.\nWhen set on an ancestor and the project\nhas `inherited_context.enabled = true` in `.obr/config.yaml`,\n`obr update --status in_progress` / `--claim` and `obr show` emit\nthe ancestor's `agent_context` alongside the child's normal\noutput so the working agent sees the constraints regardless of\ncontext compaction or cold-start lookups.\n\nStorage: TEXT column holding a JSON document (typically an\nobject with `skills`, `constraints`, `references`, `workflow`,\n`metadata` fields, but the schema is intentionally open).\n`None` means \"no inherited context\"; emission for descendants\nsilently skips ancestors with `None` (no error, no noise).\n\nNot displayed in `obr list` / `obr search` — this is per-issue\ngovernance metadata, not browsable content.",
           "type": [
             "string",
             "null"
