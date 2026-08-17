@@ -10419,7 +10419,7 @@ routing:
     fn deferred_recovery_restore_for_missing_db_cleans_up_fresh_database_family() {
         let temp = TempDir::new().expect("tempdir");
         let obr_dir = temp.path().join(".beads");
-        let db_path = obr_dir.join("beads.db");
+        let db_path = obr_dir.join(DEFAULT_DB_FILENAME);
         let jsonl_path = obr_dir.join("issues.jsonl");
         fs::create_dir_all(&obr_dir).expect("create obr dir");
 
@@ -11060,10 +11060,10 @@ routing:
     #[test]
     fn missing_db_recovery_quarantines_orphaned_fsqlite_sidecars() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join(DEFAULT_DB_FILENAME);
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
         write_single_issue_jsonl(&jsonl_path, "bd-sidecars", "Recovered after sidecars");
 
         let orphan_sidecars: &[(&str, &[u8])] = &[
@@ -11078,7 +11078,7 @@ routing:
         }
 
         let storage_ctx =
-            open_storage_with_cli(&beads_dir, &CliOverrides::default()).expect("storage");
+            open_storage_with_cli(&obr_dir, &CliOverrides::default()).expect("storage");
         let issue = storage_ctx
             .storage
             .get_issue("bd-sidecars")
@@ -11087,9 +11087,9 @@ routing:
         assert_eq!(issue.title, "Recovered after sidecars");
         drop(storage_ctx);
 
-        let recovery_dir = beads_dir.join(RECOVERY_DIR_NAME);
+        let recovery_dir = obr_dir.join(RECOVERY_DIR_NAME);
         for (suffix, sentinel) in orphan_sidecars {
-            let original_name = format!("beads.db{suffix}");
+            let original_name = format!("{DEFAULT_DB_FILENAME}{suffix}");
             let backups: Vec<_> = fs::read_dir(&recovery_dir)
                 .expect("list recovery dir")
                 .filter_map(std::result::Result::ok)
@@ -11114,7 +11114,7 @@ routing:
                 "original {original_name} sentinel backup count among {backups:?}"
             );
 
-            let live_path = beads_dir.join(&original_name);
+            let live_path = obr_dir.join(&original_name);
             if live_path.exists() {
                 assert_ne!(
                     fs::read(&live_path).expect("read replacement sidecar"),
