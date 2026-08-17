@@ -2,9 +2,9 @@ name: Doctor
 
 # Doctor surface integration (Phase 8 of the world-class-doctor-mode skill).
 #
-# Runs `br doctor health --json` against the repo's own `.beads/` and
+# Runs `obr doctor health --json` against a scratch workspace and
 # fails the job if the workspace reports anything non-healthy. Also
-# runs `br doctor capabilities --format json` to lock the contract
+# runs `obr doctor capabilities --format json` to lock the contract
 # shape and emits a regression-check stub for `scorecard_history.jsonl`.
 #
 # Action pin policy: every action is sha-pinned (per
@@ -27,7 +27,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   RUST_LOG: error
-  BR_NO_AUTOFLUSH: 1
+  OBR_NO_AUTO_FLUSH: 1
 
 permissions:
   contents: read
@@ -48,25 +48,32 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16  # v2.9.1
 
-      - name: Build br (release)
+      - name: Build obr (release)
         run: cargo build --release
 
-      - name: Doctor health (own .beads/)
+      - name: Doctor health (scratch workspace)
         id: health
         run: |
           set -euo pipefail
-          # `br doctor health` exits 1 when findings are present
+          # This repository does track its own issues now (docs/PLAN.org), but
+          # `.obr/` is a gitignored per-machine cache, so a fresh checkout has
+          # no workspace. Health therefore runs against a freshly initialised
+          # scratch one.
+          workspace="$(mktemp -d)"
+          (cd "$workspace" && "$GITHUB_WORKSPACE/target/release/obr" init --quiet)
+          cd "$workspace"
+          # `obr doctor health` exits 1 when findings are present
           # (DoctorExitCode::FindingsPresent). Under `set -euo pipefail` that
           # exit propagates through the pipe and kills the step BEFORE the
           # informational `::warning::` branch below has a chance to fire.
           # Tolerate the non-zero exit so the conditional can run; the JSON
           # payload still gets tee'd to /tmp for the uploaded artifact and
           # the downstream `jq` step.
-          ./target/release/br doctor health --json | tee /tmp/doctor_health.json || true
-          status="$(jq -r '.status // empty' /tmp/doctor_health.json)"
+          "$GITHUB_WORKSPACE/target/release/obr" doctor health --json | tee /tmp/doctor_health.json || true
+          status="$(jq -r '.status // empty' /tmp/doctor_health.json 2>/dev/null || echo "")"
           echo "status=$status" >>"$GITHUB_OUTPUT"
           if [ "$status" != "healthy" ]; then
-            echo "::warning::br doctor health reported status=$status"
+            echo "::warning::obr doctor health reported status=$status"
             # Non-healthy is informational on this repo for now; the
             # pre-commit guard blocks at the commit boundary. Once the
             # repo is consistently clean we can flip this to a hard
@@ -77,31 +84,47 @@ jobs:
       - name: Doctor capabilities (contract sanity)
         run: |
           set -euo pipefail
-          ./target/release/br doctor capabilities --format json | tee /tmp/doctor_caps.json
+          ./target/release/obr doctor capabilities --format json | tee /tmp/doctor_caps.json
           # Lock the contract shape: schema_version must match the
-          # br.doctor.capabilities.v1 envelope and every documented
+          # obr.doctor.capabilities.v1 envelope and every documented
           # exit-code variant must be present.
-          jq -e '.schema_version == "br.doctor.capabilities.v1"' /tmp/doctor_caps.json
+          jq -e '.schema_version == "obr.doctor.capabilities.v1"' /tmp/doctor_caps.json
           jq -e '(.exit_codes | length) >= 11' /tmp/doctor_caps.json
           jq -e '.ops_supported | length >= 5' /tmp/doctor_caps.json
 
       - name: Doctor robot-docs (parseable)
         run: |
           set -euo pipefail
-          ./target/release/br doctor robot-docs --format json | tee /tmp/doctor_docs.json
-          jq -e '.schema_version == "br.doctor.robot_docs.v1"' /tmp/doctor_docs.json
+          ./target/release/obr doctor robot-docs --format json | tee /tmp/doctor_docs.json
+          jq -e '.schema_version == "obr.doctor.robot_docs.v1"' /tmp/doctor_docs.json
           jq -e '.line_count > 20' /tmp/doctor_docs.json
 
       - name: Doctor --robot-triage (mega-envelope)
         run: |
           set -euo pipefail
-          ./target/release/br doctor --robot-triage --json | tee /tmp/doctor_triage.json
-          jq -e '.schema_version == "br.doctor.triage.v1"' /tmp/doctor_triage.json
+          # Needs a workspace, like the health step above. Each `run:` block is
+          # its own shell, so that step's `cd` into its scratch workspace does
+          # not carry here — this ran in the bare checkout, where `.obr` is
+          # gitignored and therefore absent. obr then emitted the `obr_dir`
+          # error envelope, which has no `.schema_version`, and the assertion
+          # below failed rather than checking anything. Red since the step was
+          # added; the assertions have never actually run.
+          workspace="$(mktemp -d)"
+          (cd "$workspace" && "$GITHUB_WORKSPACE/target/release/obr" init --quiet)
+          cd "$workspace"
+          "$GITHUB_WORKSPACE/target/release/obr" doctor --robot-triage --json | tee /tmp/doctor_triage.json
+          jq -e '.schema_version == "obr.doctor.triage.v1"' /tmp/doctor_triage.json
           jq -e 'has("summary") and has("findings") and has("quick_ref")' /tmp/doctor_triage.json
 
       - name: Fixture suite (default mode)
         env:
-          TOOL_BIN: ${{ github.workspace }}/target/release/br
+          TOOL_BIN: ${{ github.workspace }}/target/release/obr
+          # Report every failure, not just the first. run_all.sh defaults to
+          # FAIL_FAST=1, which meant a red job named only the alphabetically
+          # first broken fixture: `gitignore_bare_pattern` hid four more for
+          # weeks, two of them live product bugs. Every fixture must still pass
+          # — this only changes how much the job tells us when one does not.
+          FAIL_FAST: "0"
         run: |
           set -euo pipefail
           # Default run_all.sh: corrupt → detect → --repair → post_repair
@@ -110,7 +133,7 @@ jobs:
 
       - name: Fixture suite (idempotence replay gate, opt-in)
         env:
-          TOOL_BIN: ${{ github.workspace }}/target/release/br
+          TOOL_BIN: ${{ github.workspace }}/target/release/obr
           REPLAY_IDEMPOTENCE: "1"
         run: |
           set -euo pipefail

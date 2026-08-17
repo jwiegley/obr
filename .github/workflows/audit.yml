@@ -40,7 +40,9 @@ jobs:
 
       - name: Security audit (advisories)
         run: cargo audit --deny warnings
-        continue-on-error: true
+        # D-AUDIT: advisory findings block; suppressions live in
+        # .cargo/audit.toml where they are reviewable, not in a non-blocking
+        # CI step where they are invisible.
 
       - name: Check for yanked dependencies
         run: cargo audit --deny yanked

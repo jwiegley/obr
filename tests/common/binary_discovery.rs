@@ -103,10 +103,9 @@ impl DiscoveredBinaries {
 /// Discover obr binary (from cargo build).
 fn discover_obr() -> Result<BinaryVersion, String> {
     // First check if OBR_BINARY (or the legacy BR_BINARY) env var is set
-    if let Some((var, obr_path)) = std::env::var("OBR_BINARY")
+    if let Ok((var, obr_path)) = std::env::var("OBR_BINARY")
         .map(|value| ("OBR_BINARY", value))
         .or_else(|_| std::env::var("BR_BINARY").map(|value| ("BR_BINARY", value)))
-        .ok()
     {
         let path = PathBuf::from(&obr_path);
         if path.exists() {

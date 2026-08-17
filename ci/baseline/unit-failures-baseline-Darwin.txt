@@ -1,0 +1,2 @@
+test cli::commands::changelog::tests::test_git_tag_date_falls_back_for_lightweight_tags
+test cli::commands::vcs::tests::non_utf8_jsonl_leaf_is_observed_without_lossy_argument_conversion

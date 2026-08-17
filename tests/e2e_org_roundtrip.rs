@@ -82,6 +82,7 @@ fn show_issue_json(workspace: &ObrWorkspace, id: &str, label: &str) -> Value {
 /// The full G-org-roundtrip gate: field-level equality after re-import into
 /// a fresh database.
 #[test]
+#[allow(clippy::too_many_lines)]
 fn org_roundtrip_field_level_equality_into_fresh_db() {
     let source = ObrWorkspace::new();
     let init = run_obr(&source, ["init", "--prefix", "rt"], "init");

@@ -1,0 +1,41 @@
+# Pre-commit hooks via lefthook (https://lefthook.dev).
+#
+# Enable once per clone:   lefthook install
+# Skip a single commit:    LEFTHOOK=0 git commit ...
+#
+# NOTE on lint/format spellings: the `cargo-clippy` / `cargo-fmt` binaries
+# are invoked directly, never `cargo clippy` / `cargo fmt`. The space forms
+# resolve through $CARGO_HOME/bin rustup shims ahead of any toolchain on
+# PATH and can silently run a stale nightly (see ci/baseline/README.md).
+#
+# NOTE on gates: upstream's tree is red at baseline under clippy and the
+# unit suite; the lint/unit hooks run the no-NEW-failures gate scripts
+# against the committed inventories in ci/baseline/ rather than raw
+# commands that would block every commit.
+pre-commit:
+  parallel: true
+  commands:
+    fmt-check:
+      glob: "*.rs"
+      run: cargo-fmt --all -- --check
+    lint-gate:
+      glob: "*.rs"
+      run: scripts/lint-gate.sh
+    unit-gate:
+      glob: "*.{rs,toml}"
+      run: scripts/unit-gate.sh
+    shellcheck:
+      glob: "*.sh"
+      run: shellcheck {staged_files}
+    shfmt-check:
+      glob: "*.sh"
+      exclude: "tests/doctor_fixtures/**"
+      run: shfmt -d {staged_files}
+    doctor-quick:
+      # Folded from upstream's .githooks/pre-commit (D-HOOKS): guard the
+      # repo's own tracker workspace. Fail-open on missing tooling; skip
+      # with OBR_DOCTOR_SKIP_PRECOMMIT=1.
+      run: scripts/doctor-precommit.sh
+
+# No nix-check hook: `nix flake check` measures ~36 minutes on this tree (a
+# full LTO release build in the sandbox on any change) — CI-tier only.

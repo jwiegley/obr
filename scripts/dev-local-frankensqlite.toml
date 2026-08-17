@@ -1,7 +1,7 @@
 # Local contributor template: sibling-checkout path overrides for
 # frankensqlite (and, optionally, fastmcp_rust).
 #
-# Recommended usage (from the beads_rust repo root):
+# Recommended usage (from the obr repo root):
 #   scripts/activate-dev-local-patch.sh             # frankensqlite only
 #   scripts/activate-dev-local-patch.sh --fastmcp   # also enable fastmcp_rust
 #
@@ -23,7 +23,7 @@
 #   - Every `fsqlite*` crate resolves to the sibling path instead of
 #     crates.io, so edits to frankensqlite are picked up on the next
 #     `cargo build`.
-#   - `cargo install --git` / `cargo install beads_rust` users are
+#   - `cargo install --git` / `cargo install obr` users are
 #     unaffected — they install from crates.io without this file.
 #   - `cargo build` rewrites Cargo.lock to drop registry source/checksum
 #     entries for patched crates. The activate script flags Cargo.lock

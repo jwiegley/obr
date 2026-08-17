@@ -459,7 +459,7 @@ impl SyntheticDataset {
         Ok(Self {
             temp_dir,
             root,
-            obr_dir: obr_dir,
+            obr_dir,
             manifest_path,
             config,
             metrics,
@@ -557,7 +557,7 @@ impl SyntheticDataset {
         Ok(Self {
             temp_dir,
             root,
-            obr_dir: obr_dir,
+            obr_dir,
             manifest_path,
             config,
             metrics,

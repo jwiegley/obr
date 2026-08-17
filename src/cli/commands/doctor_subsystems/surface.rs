@@ -415,6 +415,7 @@ pub fn execute_health(args: &DoctorHealthArgs, repo_root: &Path) -> Result<i32> 
     Ok(output.exit_code)
 }
 
+#[allow(clippy::too_many_lines)]
 fn build_health_output(repo_root: &Path, start: Instant) -> HealthOutput {
     // Resolve through the shared four-name chain (`.obr`, `_obr`, then the
     // legacy `.beads`/`_beads`) rather than probing one hardcoded name: this

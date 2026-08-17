@@ -2,8 +2,8 @@
 set -euo pipefail
 
 if [[ $# -ne 3 ]]; then
-  echo "usage: $0 <br-binary> <baseline-db> <issues-jsonl>" >&2
-  exit 64
+	echo "usage: $0 <br-binary> <baseline-db> <issues-jsonl>" >&2
+	exit 64
 fi
 
 br_binary=$1
@@ -11,16 +11,16 @@ baseline_db=$2
 issues_jsonl=$3
 
 if [[ ! -x "$br_binary" ]]; then
-  echo "br binary is not executable: $br_binary" >&2
-  exit 65
+	echo "obr binary is not executable: $br_binary" >&2
+	exit 65
 fi
 if [[ ! -f "$baseline_db" ]]; then
-  echo "baseline DB is missing: $baseline_db" >&2
-  exit 66
+	echo "baseline DB is missing: $baseline_db" >&2
+	exit 66
 fi
 if [[ ! -f "$issues_jsonl" ]]; then
-  echo "issues JSONL is missing: $issues_jsonl" >&2
-  exit 66
+	echo "issues JSONL is missing: $issues_jsonl" >&2
+	exit 66
 fi
 
 tmp_root="${BR_IMPORT_INTEGRITY_TMPDIR:-${TMPDIR:-/tmp}}"
@@ -34,7 +34,7 @@ cp "$baseline_db" "$db_path"
 cp "$issues_jsonl" "$jsonl_path"
 
 RUST_LOG="${RUST_LOG:-warn}" BEADS_JSONL="$jsonl_path" "$br_binary" --db "$db_path" \
-  sync --import-only --json --allow-external-jsonl >"$import_stdout" 2>"$import_stderr"
+	sync --import-only --json --allow-external-jsonl >"$import_stdout" 2>"$import_stderr"
 
 python3 - "$db_path" "$workdir" "$import_stdout" "$import_stderr" <<'PY'
 import json

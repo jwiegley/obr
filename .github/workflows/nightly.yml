@@ -1,0 +1,149 @@
+name: Nightly Full Test Suite
+
+# The full `--all-features` test run, moved off the push path.
+#
+# Why a separate file and not another job in ci.yml:
+#   * ci.yml sets `concurrency.cancel-in-progress: true` on
+#     `${{ github.workflow }}-${{ github.ref }}`. A scheduled job living there
+#     would share that group with pushes to main, so any push would cancel a
+#     run already an hour deep. That is the disease this job exists to escape:
+#     the last Test Suite run was cancelled at 45 minutes.
+#   * Adding `schedule:` to ci.yml's `on:` fires ALL of its jobs nightly unless
+#     every one of them grows an `if:` guard.
+#   * The repo already keeps its cron work in its own files — audit.yml
+#     (daily), e2e-full.yml (weekly), conformance.yml (weekly).
+#
+# Action pin policy: every action is sha-pinned (docs/CI_SUPPLY_CHAIN.md) and
+# matches the pin set used by .github/workflows/ci.yml.
+
+on:
+  schedule:
+    - cron: '0 8 * * *'  # Daily 08:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+  # Disk, not time, is what killed the in-CI full run: one attempt died at
+  # 22.6 minutes on the runner's own "No space left on device". Measured on a
+  # developer host this crate's `target/debug` is 67 GB, of which 42 GB is the
+  # incremental cache (Swatinem/rust-cache already sets CARGO_INCREMENTAL=0,
+  # so CI never pays that) and most of the remaining 25 GB is debuginfo across
+  # 151 test binaries. Dropping debuginfo is the cheapest large lever; the
+  # cost is backtraces without line numbers, which a discovery run can afford.
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+
+permissions:
+  contents: read
+
+jobs:
+  full-test-suite:
+    name: Full Test Suite (all features)
+    runs-on: ubuntu-latest
+    # Not an estimate: the full suite has never once run to completion, so
+    # this is a ceiling chosen to let the first verdict actually land.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Reclaim runner disk
+        run: |
+          set -euo pipefail
+          echo "=== before ==="
+          df -h /
+          # Pre-installed toolchains this job never touches. Removal is
+          # tolerated individually so a runner-image change cannot fail the
+          # job before it has run a single test.
+          for dir in \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/boost; do
+            sudo rm -rf "$dir" || true
+          done
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          echo "=== after ==="
+          df -h /
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: nightly
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16  # v2.9.1
+        with:
+          # Registry only. A ~25 GB target directory cannot be cached anyway
+          # (GitHub's per-repo cache budget is 10 GB), and restoring one is
+          # itself a way to run out of disk.
+          cache-targets: false
+
+      - name: Run all tests (all features)
+        run: |
+          set -euo pipefail
+          # --no-fail-fast: this run exists to produce a complete inventory of
+          # what fails, not to stop at the first target that does.
+          cargo test --all-features --no-fail-fast -- --nocapture 2>&1 \
+            | tee /tmp/nightly-test.log
+        env:
+          RUST_LOG: obr=debug
+
+      - name: Test failure inventory
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ ! -f /tmp/nightly-test.log ]; then
+            echo "::warning::no test log; the run did not reach the test step"
+            exit 0
+          fi
+          # `grep -c` exits 1 on zero matches, which `set -e` would turn into a
+          # false red on a fully green run — hence `|| true` on the count.
+          failed="$(grep -c '^test .* FAILED$' /tmp/nightly-test.log || true)"
+          echo "failing test executions: ${failed:-0}"
+          grep -E '^test result:' /tmp/nightly-test.log || true
+
+          # Promote the inventory to the run summary (obr-rh0). This step has
+          # always computed it, but only into the step log — which is behind two
+          # clicks in the Actions tab, and so nobody reads it. Two real failures
+          # (obr-oz9) sat here unnoticed through an entire effort that took the
+          # Doctor job from 60/65 to 65/65 fixtures. A nightly nobody looks at is
+          # not a gate.
+          {
+            echo "## Nightly test inventory"
+            echo
+            echo "Failing test executions: **${failed:-0}**"
+            if [ "${failed:-0}" -gt 0 ]; then
+              echo
+              echo "<details><summary>Failing tests</summary>"
+              echo
+              echo '```'
+              grep -E '^test .* FAILED$' /tmp/nightly-test.log | sed 's/^test //; s/ \.\.\. FAILED$//' | sort -u
+              echo '```'
+              echo
+              echo "</details>"
+            fi
+            echo
+            echo "<details><summary>Per-target results</summary>"
+            echo
+            echo '```'
+            grep -E '^test result:' /tmp/nightly-test.log || true
+            echo '```'
+            echo
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: nightly-test-log
+          path: /tmp/nightly-test.log
+          if-no-files-found: ignore
+          retention-days: 14

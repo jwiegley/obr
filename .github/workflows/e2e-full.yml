@@ -46,7 +46,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16  # v2.9.1
 
-      - name: Build br
+      - name: Build obr
         run: cargo build --release
 
       - name: Run full E2E suite
@@ -103,7 +103,7 @@ jobs:
             ${{ runner.os }}-${{ runner.arch }}-criterion-full-
             ${{ runner.os }}-${{ runner.arch }}-criterion-
 
-      - name: Build br
+      - name: Build obr
         run: cargo build --release
 
       - name: Run full benchmarks

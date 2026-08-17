@@ -467,7 +467,7 @@ impl IsolatedDataset {
         Ok(Self {
             temp_dir,
             root,
-            obr_dir: obr_dir,
+            obr_dir,
             metadata,
             source_dataset: dataset,
         })
@@ -501,7 +501,7 @@ impl IsolatedDataset {
         Ok(Self {
             temp_dir,
             root,
-            obr_dir: obr_dir,
+            obr_dir,
             metadata,
             source_dataset: KnownDataset::Obr, // Placeholder
         })
@@ -929,7 +929,7 @@ pub fn isolated_from_override(
     Ok(IsolatedDataset {
         temp_dir,
         root,
-        obr_dir: obr_dir,
+        obr_dir,
         metadata,
         source_dataset: KnownDataset::Obr, // Placeholder for overrides
     })

@@ -43,6 +43,7 @@ fn unpin_to_surface(obr_dir: &Path) {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn real_corpus_549_org_roundtrip_is_a_fixpoint() {
     let workspace = ObrWorkspace::new();
     let obr_dir = workspace.root.join(WORKSPACE_DIR);

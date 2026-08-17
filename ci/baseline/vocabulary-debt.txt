@@ -1,0 +1,35 @@
+# Known stale-vocabulary output, tolerated by tests/vocabulary_lint.rs.
+#
+# CURRENTLY EMPTY: the vocabulary gate has no exceptions. Every line below the
+# comments would be one, so an empty file is the strongest state this can be
+# in — keep it that way.
+#
+# Same contract as the other inventories here: a tightening gate. A line in
+# this file absolves any scanned output line that CONTAINS it, and nothing
+# else. Shrink it as debt is paid; never grow it to make a run pass.
+#
+# Two things that do NOT belong here:
+#
+#   * a deliberate legacy-discovery or deprecation message. Those must keep
+#     naming the legacy artifact, and they belong in
+#     DELIBERATE_LEGACY_MESSAGES in tests/vocabulary_lint.rs together with
+#     their justification, so that stripping the legacy name out of one turns
+#     `legacy_workspace_warnings_still_name_the_legacy_artifacts` red.
+#   * a string you can fix. This file is for staleness in code the current
+#     change is not allowed to touch (a concurrently owned module), recorded
+#     with the owner and expected to be deleted within the same round.
+#
+# An entry is a plain substring, one per line. `#` starts a comment.
+#
+# To find entries that are no longer produced by anything, and so should be
+# deleted:
+#
+#   cargo test --test vocabulary_lint -- --ignored \
+#     vocabulary_debt_inventory_has_no_paid_entries
+#
+# Two entries lived here during the review round that introduced this gate —
+# doctor's `binary_version` message, which hardcoded `.beads/` instead of
+# rendering the workspace it was handed, and the inherited-context `bd-abc123`
+# example id that schemars compiled into `obr schema`. Both were owned by
+# sibling slices, both were fixed, and both entries were removed. That is the
+# intended lifecycle of a line in this file.

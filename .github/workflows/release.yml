@@ -121,7 +121,7 @@ jobs:
         if: ${{ github.event_name != 'workflow_dispatch' || !inputs.skip_reliability_gates }}
         run: cargo test --locked --test workspace_failure_replay -- --nocapture
         env:
-          RUST_LOG: beads_rust=debug
+          RUST_LOG: obr=debug
 
       - name: Crash-injection sync matrix
         if: ${{ github.event_name != 'workflow_dispatch' || !inputs.skip_reliability_gates }}
@@ -283,7 +283,7 @@ jobs:
           key: release-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}
 
       - name: Build release binary
-        run: cargo build --locked --release --target ${{ matrix.target }} --features self_update
+        run: cargo build --locked --release --target ${{ matrix.target }}
         env:
           VERGEN_GIT_SHA: ${{ github.sha }}
           VERGEN_GIT_BRANCH: ${{ github.ref_name }}
@@ -296,13 +296,16 @@ jobs:
           # Manual runs use the required tag input; tag pushes derive the same
           # value from GITHUB_REF_NAME.
           TAG="${INPUT_TAG:-$GITHUB_REF_NAME}"
+          # Deliberately NOT flattened: the binary reports the true version,
+          # build metadata and all. Only asset FILE NAMES flatten `+` (see the
+          # "Determine release asset version" step).
           EXPECTED="${TAG#v}"  # strip leading v
-          BINARY="br"
+          BINARY="obr"
           if [ "${{ matrix.archive }}" = "zip" ]; then
-            BINARY="br.exe"
+            BINARY="obr.exe"
           fi
           RAW=$(./target/${{ matrix.target }}/release/${BINARY} --version 2>&1)
-          # clap outputs "br X.Y.Z"; extract the version token
+          # clap outputs "obr X.Y.Z"; extract the version token
           ACTUAL=$(echo "$RAW" | awk '{print $NF}')
           if [ "$ACTUAL" != "$EXPECTED" ]; then
             echo "ERROR: Binary reports version '$ACTUAL' (from '$RAW') but expected '$EXPECTED' (tag: $TAG)"
@@ -323,23 +326,46 @@ jobs:
         run: |
           TAG="${INPUT_TAG:-$GITHUB_REF_NAME}"
           ASSET_VERSION="${TAG#v}"
+          # Flatten semver build metadata for FILE NAMES ONLY.
+          #
+          # obr's version is `0.2.22+1`; the tag keeps that `+` verbatim and
+          # so does the binary. Asset file names must not: GitHub's release
+          # asset upload API takes the asset name as a URL QUERY parameter,
+          # where a literal `+` decodes to a space, and GitHub then stores the
+          # space back as `.` — so an uploaded `obr-0.2.22+1-*.tar.gz`
+          # lands as `obr-0.2.22.1-*.tar.gz` and every checksum line,
+          # `.minisig` name and packaging URL that reconstructs the `+` form
+          # points at a file that does not exist.
+          # (github/rest-api-description#2968; and see adoptium/temurin*-binaries,
+          # which tags `jdk-17.0.9+9.1` yet publishes zero assets containing `+`.)
+          #
+          # Doing the flattening ourselves — to the same `.` GitHub would have
+          # produced — makes the name we generate, the name we upload, the name
+          # GitHub stores and the name any downloader reconstructs one string.
+          # No `+` ever reaches the upload API, so there is nothing left to
+          # rewrite and no encoding behaviour to depend on.
+          ASSET_VERSION="${ASSET_VERSION//+/.}"
           echo "asset_version=$ASSET_VERSION" >> "$GITHUB_OUTPUT"
           echo "Release asset version: $ASSET_VERSION (tag: $TAG)"
 
       - name: Create archive (tar.gz)
         if: matrix.archive == 'tar.gz'
+        env:
+          ASSET_VERSION: ${{ steps.asset_version.outputs.asset_version }}
         run: |
           cd target/${{ matrix.target }}/release
           cp ../../../LICENSE LICENSE
-          tar -czvf ../../../br-${{ steps.asset_version.outputs.asset_version }}-${{ matrix.name }}.tar.gz br LICENSE
+          tar -czvf "../../../obr-${ASSET_VERSION}-${{ matrix.name }}.tar.gz" obr LICENSE
           cd ../../..
 
       - name: Create archive (zip)
         if: matrix.archive == 'zip'
+        env:
+          ASSET_VERSION: ${{ steps.asset_version.outputs.asset_version }}
         run: |
           cd target/${{ matrix.target }}/release
           cp ../../../LICENSE LICENSE
-          zip -j ../../../br-${{ steps.asset_version.outputs.asset_version }}-${{ matrix.name }}.zip br.exe LICENSE
+          zip -j "../../../obr-${ASSET_VERSION}-${{ matrix.name }}.zip" obr.exe LICENSE
           cd ../../..
 
       - name: Install minisign (Linux)
@@ -350,8 +376,11 @@ jobs:
 
       - name: Generate checksum (Linux)
         if: runner.os == 'Linux'
+        env:
+          ASSET_VERSION: ${{ steps.asset_version.outputs.asset_version }}
         run: |
-          sha256sum br-${{ steps.asset_version.outputs.asset_version }}-${{ matrix.name }}.${{ matrix.archive }} > br-${{ steps.asset_version.outputs.asset_version }}-${{ matrix.name }}.${{ matrix.archive }}.sha256
+          asset="obr-${ASSET_VERSION}-${{ matrix.name }}.${{ matrix.archive }}"
+          sha256sum "$asset" > "${asset}.sha256"
 
       - name: Install minisign (macOS)
         if: runner.os == 'macOS'
@@ -360,31 +389,49 @@ jobs:
 
       - name: Generate checksum (macOS)
         if: runner.os == 'macOS'
+        env:
+          ASSET_VERSION: ${{ steps.asset_version.outputs.asset_version }}
         run: |
-          shasum -a 256 br-${{ steps.asset_version.outputs.asset_version }}-${{ matrix.name }}.${{ matrix.archive }} > br-${{ steps.asset_version.outputs.asset_version }}-${{ matrix.name }}.${{ matrix.archive }}.sha256
+          asset="obr-${ASSET_VERSION}-${{ matrix.name }}.${{ matrix.archive }}"
+          shasum -a 256 "$asset" > "${asset}.sha256"
 
       - name: Verify checksum (Linux)
         if: runner.os == 'Linux'
-        run: sha256sum -c br-${{ steps.asset_version.outputs.asset_version }}-${{ matrix.name }}.${{ matrix.archive }}.sha256
+        env:
+          ASSET_VERSION: ${{ steps.asset_version.outputs.asset_version }}
+        run: sha256sum -c "obr-${ASSET_VERSION}-${{ matrix.name }}.${{ matrix.archive }}.sha256"
 
       - name: Verify checksum (macOS)
         if: runner.os == 'macOS'
-        run: shasum -a 256 -c br-${{ steps.asset_version.outputs.asset_version }}-${{ matrix.name }}.${{ matrix.archive }}.sha256
+        env:
+          ASSET_VERSION: ${{ steps.asset_version.outputs.asset_version }}
+        run: shasum -a 256 -c "obr-${ASSET_VERSION}-${{ matrix.name }}.${{ matrix.archive }}.sha256"
 
-      - name: Sign release archive with Ed25519
+      - name: Sign archive with Ed25519 (Linux/macOS)
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          # Ref and tag text reach this shell as DATA, never as source. A git
+          # refname may contain `$`, backticks, `;` and quotes, and this is the
+          # one step that has the signing key on disk, so interpolating the tag
+          # into the script body made a crafted tag command substitution with
+          # the release private key in scope.
+          ASSET_VERSION: ${{ steps.asset_version.outputs.asset_version }}
+          SIGN_REF: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           if [ -z "${MINISIGN_SECRET_KEY:-}" ]; then
             echo "::error::MINISIGN_SECRET_KEY is required for every release archive"
             exit 1
           fi
-          archive="br-${{ steps.asset_version.outputs.asset_version }}-${{ matrix.name }}.${{ matrix.archive }}"
+          signing_key="$(mktemp "${RUNNER_TEMP:?}/obr-minisign.XXXXXX")"
+          trap 'rm -f "$signing_key"' EXIT
+          chmod 600 "$signing_key"
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$signing_key"
+          archive="obr-${ASSET_VERSION}-${{ matrix.name }}.${{ matrix.archive }}"
           signature="${archive}.minisig"
           minisign -Sm "$archive" \
-            -s <(printf '%s\n' "$MINISIGN_SECRET_KEY") \
-            -t "br ${{ github.event.inputs.tag || github.ref_name }} ${{ matrix.name }}"
+            -s "$signing_key" \
+            -t "obr $SIGN_REF ${{ matrix.name }}"
           if [ ! -s "$signature" ]; then
             echo "::error::minisign did not produce required signature: $signature"
             exit 1
@@ -395,22 +442,22 @@ jobs:
         if: ${{ env.ACT != 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          name: br-${{ matrix.name }}
+          name: obr-${{ matrix.name }}
           path: |
-            br-${{ steps.asset_version.outputs.asset_version }}-${{ matrix.name }}.${{ matrix.archive }}
-            br-${{ steps.asset_version.outputs.asset_version }}-${{ matrix.name }}.${{ matrix.archive }}.sha256
-            br-${{ steps.asset_version.outputs.asset_version }}-${{ matrix.name }}.${{ matrix.archive }}.minisig
+            obr-${{ steps.asset_version.outputs.asset_version }}-${{ matrix.name }}.${{ matrix.archive }}
+            obr-${{ steps.asset_version.outputs.asset_version }}-${{ matrix.name }}.${{ matrix.archive }}.sha256
+            obr-${{ steps.asset_version.outputs.asset_version }}-${{ matrix.name }}.${{ matrix.archive }}.minisig
           retention-days: 7
 
       - name: Upload artifacts (act)
         if: ${{ env.ACT == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          name: br-${{ matrix.name }}
+          name: obr-${{ matrix.name }}
           path: |
-            br-${{ steps.asset_version.outputs.asset_version }}-${{ matrix.name }}.${{ matrix.archive }}
-            br-${{ steps.asset_version.outputs.asset_version }}-${{ matrix.name }}.${{ matrix.archive }}.sha256
-            br-${{ steps.asset_version.outputs.asset_version }}-${{ matrix.name }}.${{ matrix.archive }}.minisig
+            obr-${{ steps.asset_version.outputs.asset_version }}-${{ matrix.name }}.${{ matrix.archive }}
+            obr-${{ steps.asset_version.outputs.asset_version }}-${{ matrix.name }}.${{ matrix.archive }}.sha256
+            obr-${{ steps.asset_version.outputs.asset_version }}-${{ matrix.name }}.${{ matrix.archive }}.minisig
           retention-days: 7
 
   create-release:
@@ -440,6 +487,10 @@ jobs:
         run: |
           TAG="${INPUT_TAG:-$GITHUB_REF_NAME}"
           ASSET_VERSION="${TAG#v}"
+          # Same flattening as the build job, for the same reason: file names
+          # never carry semver build metadata's `+`, the tag always does. See
+          # the build-release job's copy of this step for the full rationale.
+          ASSET_VERSION="${ASSET_VERSION//+/.}"
           echo "asset_version=$ASSET_VERSION" >> "$GITHUB_OUTPUT"
           echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Release asset version: $ASSET_VERSION (tag: $TAG)"
@@ -448,24 +499,25 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           path: artifacts
-          pattern: br-*
+          pattern: obr-*
           merge-multiple: true
 
       - name: List artifacts
         run: ls -la artifacts/
 
       - name: Validate required artifacts present
+        env:
+          ASSET_VERSION: ${{ steps.asset_version.outputs.asset_version }}
         run: |
-          ASSET_VERSION="${{ steps.asset_version.outputs.asset_version }}"
           MISSING=()
           ARCHIVES=(
-            "artifacts/br-${ASSET_VERSION}-linux_amd64.tar.gz"
-            "artifacts/br-${ASSET_VERSION}-linux_musl_amd64.tar.gz"
-            "artifacts/br-${ASSET_VERSION}-linux_arm64.tar.gz"
-            "artifacts/br-${ASSET_VERSION}-linux_musl_arm64.tar.gz"
-            "artifacts/br-${ASSET_VERSION}-darwin_amd64.tar.gz"
-            "artifacts/br-${ASSET_VERSION}-darwin_arm64.tar.gz"
-            "artifacts/br-${ASSET_VERSION}-windows_amd64.zip"
+            "artifacts/obr-${ASSET_VERSION}-linux_amd64.tar.gz"
+            "artifacts/obr-${ASSET_VERSION}-linux_musl_amd64.tar.gz"
+            "artifacts/obr-${ASSET_VERSION}-linux_arm64.tar.gz"
+            "artifacts/obr-${ASSET_VERSION}-linux_musl_arm64.tar.gz"
+            "artifacts/obr-${ASSET_VERSION}-darwin_amd64.tar.gz"
+            "artifacts/obr-${ASSET_VERSION}-darwin_arm64.tar.gz"
+            "artifacts/obr-${ASSET_VERSION}-windows_amd64.zip"
           )
           for archive in "${ARCHIVES[@]}"; do
             for required_file in "$archive" "${archive}.sha256" "${archive}.minisig"; do
@@ -490,17 +542,18 @@ jobs:
           sudo apt-get install -y minisign
 
       - name: Verify all release signatures
+        env:
+          ASSET_VERSION: ${{ steps.asset_version.outputs.asset_version }}
         run: |
           set -euo pipefail
-          ASSET_VERSION="${{ steps.asset_version.outputs.asset_version }}"
           ARCHIVES=(
-            "artifacts/br-${ASSET_VERSION}-linux_amd64.tar.gz"
-            "artifacts/br-${ASSET_VERSION}-linux_musl_amd64.tar.gz"
-            "artifacts/br-${ASSET_VERSION}-linux_arm64.tar.gz"
-            "artifacts/br-${ASSET_VERSION}-linux_musl_arm64.tar.gz"
-            "artifacts/br-${ASSET_VERSION}-darwin_amd64.tar.gz"
-            "artifacts/br-${ASSET_VERSION}-darwin_arm64.tar.gz"
-            "artifacts/br-${ASSET_VERSION}-windows_amd64.zip"
+            "artifacts/obr-${ASSET_VERSION}-linux_amd64.tar.gz"
+            "artifacts/obr-${ASSET_VERSION}-linux_musl_amd64.tar.gz"
+            "artifacts/obr-${ASSET_VERSION}-linux_arm64.tar.gz"
+            "artifacts/obr-${ASSET_VERSION}-linux_musl_arm64.tar.gz"
+            "artifacts/obr-${ASSET_VERSION}-darwin_amd64.tar.gz"
+            "artifacts/obr-${ASSET_VERSION}-darwin_arm64.tar.gz"
+            "artifacts/obr-${ASSET_VERSION}-windows_amd64.zip"
           )
           for archive in "${ARCHIVES[@]}"; do
             minisign -Vm "$archive" -x "${archive}.minisig" -P "$MINISIGN_PUBLIC_KEY"
@@ -533,39 +586,20 @@ jobs:
         env:
           RELIABILITY_OVERRIDE_REASON: ${{ inputs.reliability_override_reason }}
           SKIP_RELIABILITY_GATES: ${{ inputs.skip_reliability_gates }}
+          ASSET_VERSION: ${{ steps.asset_version.outputs.asset_version }}
+          RELEASE_TAG: ${{ steps.asset_version.outputs.release_tag }}
         run: |
           # Get the previous tag
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
 
           if [ -n "$PREV_TAG" ]; then
-            echo "Generating changelog from $PREV_TAG to ${{ steps.asset_version.outputs.release_tag }}"
+            echo "Generating changelog from $PREV_TAG to ${RELEASE_TAG}"
             COMMITS=$(git log --pretty=format:"- %s (%h)" "${PREV_TAG}..HEAD")
             PREV_TAG_DATE=$(git log -1 --format=%ci "$PREV_TAG" 2>/dev/null | cut -d' ' -f1 || echo "")
           else
             echo "No previous tag found, generating changelog from start"
             COMMITS=$(git log --pretty=format:"- %s (%h)" HEAD~20..HEAD 2>/dev/null || git log --pretty=format:"- %s (%h)")
             PREV_TAG_DATE=""
-          fi
-
-          # Extract closed beads from JSONL since last release
-          BEADS_SECTION=""
-          if [ -f ".beads/issues.jsonl" ]; then
-            echo "Extracting closed beads from issues.jsonl..."
-            # Filter beads closed after the previous tag date
-            if [ -n "$PREV_TAG_DATE" ]; then
-              CLOSED_BEADS=$(cat .beads/issues.jsonl | jq -r --arg date "$PREV_TAG_DATE" \
-                'select(.status == "closed" and (.closed_at // .updated_at) > $date) | "- \(.id): \(.title)"' 2>/dev/null | head -50 || echo "")
-            else
-              CLOSED_BEADS=$(cat .beads/issues.jsonl | jq -r \
-                'select(.status == "closed") | "- \(.id): \(.title)"' 2>/dev/null | tail -20 || echo "")
-            fi
-            if [ -n "$CLOSED_BEADS" ]; then
-              BEADS_SECTION="### Closed Beads
-
-          $CLOSED_BEADS
-
-          "
-            fi
           fi
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "$SKIP_RELIABILITY_GATES" = "true" ]; then
@@ -599,31 +633,31 @@ jobs:
 
           ${RELIABILITY_SECTION}
           EOF
-            cat << 'EOF'
+            cat << 'EOF' | sed -e "s|@ASSET_VERSION@|${ASSET_VERSION}|g" -e "s|@RELEASE_TAG@|${RELEASE_TAG}|g"
           ## Platforms
 
           | Platform | Architecture | File |
           |----------|--------------|------|
-          | Linux | x86_64 (gnu) | `br-${{ steps.asset_version.outputs.asset_version }}-linux_amd64.tar.gz` |
-          | Linux | x86_64 (musl, static) | `br-${{ steps.asset_version.outputs.asset_version }}-linux_musl_amd64.tar.gz` |
-          | Linux | ARM64 (gnu) | `br-${{ steps.asset_version.outputs.asset_version }}-linux_arm64.tar.gz` |
-          | Linux | ARM64 (musl, static) | `br-${{ steps.asset_version.outputs.asset_version }}-linux_musl_arm64.tar.gz` |
-          | macOS | x86_64 (Intel) | `br-${{ steps.asset_version.outputs.asset_version }}-darwin_amd64.tar.gz` |
-          | macOS | ARM64 (Apple Silicon) | `br-${{ steps.asset_version.outputs.asset_version }}-darwin_arm64.tar.gz` |
-          | Windows | x86_64 | `br-${{ steps.asset_version.outputs.asset_version }}-windows_amd64.zip` |
+          | Linux | x86_64 (gnu) | `obr-@ASSET_VERSION@-linux_amd64.tar.gz` |
+          | Linux | x86_64 (musl, static) | `obr-@ASSET_VERSION@-linux_musl_amd64.tar.gz` |
+          | Linux | ARM64 (gnu) | `obr-@ASSET_VERSION@-linux_arm64.tar.gz` |
+          | Linux | ARM64 (musl, static) | `obr-@ASSET_VERSION@-linux_musl_arm64.tar.gz` |
+          | macOS | x86_64 (Intel) | `obr-@ASSET_VERSION@-darwin_amd64.tar.gz` |
+          | macOS | ARM64 (Apple Silicon) | `obr-@ASSET_VERSION@-darwin_arm64.tar.gz` |
+          | Windows | x86_64 | `obr-@ASSET_VERSION@-windows_amd64.zip` |
 
           ## Installation
 
           ### Quick Install (Recommended)
 
           ```bash
-          curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/beads_rust/main/install.sh | bash
+          curl -fsSL https://raw.githubusercontent.com/jwiegley/obr/main/install.sh | bash
           ```
 
           ### Cargo Install
 
           ```bash
-          cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --tag ${{ steps.asset_version.outputs.release_tag }} --locked
+          cargo install --git https://github.com/jwiegley/obr.git obr --tag @RELEASE_TAG@ --locked
           ```
 
           ### Manual Download
@@ -639,18 +673,20 @@ jobs:
 
           **Verify signature (optional):**
 
-          Binaries are signed with Ed25519 using minisign. Install minisign and verify:
+          Binaries are signed with Ed25519 using minisign when a signing key is
+          configured. Install minisign and verify with the project's published
+          public key:
 
           ```bash
           # Download the .minisig file for your binary
           # Public key: ${{ env.MINISIGN_PUBLIC_KEY }}
-          minisign -Vm br-${{ steps.asset_version.outputs.asset_version }}-linux_amd64.tar.gz \
+          minisign -Vm obr-${ASSET_VERSION}-linux_amd64.tar.gz \
             -P '${{ env.MINISIGN_PUBLIC_KEY }}'
           ```
 
           ## Full Changelog
 
-          See [CHANGELOG.md](https://github.com/Dicklesworthstone/beads_rust/blob/main/CHANGELOG.md) for the complete history.
+          See [CHANGELOG.md](https://github.com/jwiegley/obr/blob/main/CHANGELOG.md) for the complete history.
           EOF
           } > RELEASE_NOTES.md
 
@@ -690,23 +726,23 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-path: |
-            artifacts/br-${{ steps.asset_version.outputs.asset_version }}-*.tar.gz
-            artifacts/br-${{ steps.asset_version.outputs.asset_version }}-*.zip
+            artifacts/obr-${{ steps.asset_version.outputs.asset_version }}-*.tar.gz
+            artifacts/obr-${{ steps.asset_version.outputs.asset_version }}-*.zip
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228  # v3.0.2
         with:
-          name: br ${{ steps.asset_version.outputs.release_tag }}
+          name: obr ${{ steps.asset_version.outputs.release_tag }}
           tag_name: ${{ steps.asset_version.outputs.release_tag }}
           body_path: RELEASE_NOTES.md
           draft: false
           prerelease: ${{ contains(steps.asset_version.outputs.release_tag, '-') }}
           fail_on_unmatched_files: true
           files: |
-            artifacts/br-${{ steps.asset_version.outputs.asset_version }}-*.tar.gz
-            artifacts/br-${{ steps.asset_version.outputs.asset_version }}-*.zip
-            artifacts/br-${{ steps.asset_version.outputs.asset_version }}-*.sha256
-            artifacts/br-${{ steps.asset_version.outputs.asset_version }}-*.minisig
+            artifacts/obr-${{ steps.asset_version.outputs.asset_version }}-*.tar.gz
+            artifacts/obr-${{ steps.asset_version.outputs.asset_version }}-*.zip
+            artifacts/obr-${{ steps.asset_version.outputs.asset_version }}-*.sha256
+            artifacts/obr-${{ steps.asset_version.outputs.asset_version }}-*.minisig
             artifacts/checksums.sha256
             artifacts/sbom.cdx.json
             artifacts/sbom.spdx.json

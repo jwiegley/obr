@@ -10,18 +10,13 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 unset INSTA_UPDATE
 unset UPDATE_AGENT_BASELINE
 
-cargo_runner=()
-if [[ "${BR_AGENT_CONTRACT_USE_RCH:-0}" == "1" ]]; then
-    cargo_runner=(rch exec --)
-fi
-
 run() {
-    printf '\n==> %s\n' "$*"
-    "$@"
+	printf '\n==> %s\n' "$*"
+	"$@"
 }
 
 run_cargo() {
-    run "${cargo_runner[@]}" cargo "$@"
+	run cargo "$@"
 }
 
 run_cargo test --test snapshots schema_document_golden_ -- --nocapture

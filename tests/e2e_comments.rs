@@ -160,6 +160,7 @@ fn e2e_comments_add_multiple_verify_order() {
 /// Equal native timestamps use the local comment ID as the stable tie-breaker
 /// on both the public list and JSONL export surfaces.
 #[test]
+#[allow(clippy::too_many_lines)]
 fn e2e_comments_equal_timestamp_list_and_jsonl_order_match() {
     let _log = common::test_log("e2e_comments_equal_timestamp_list_and_jsonl_order_match");
     let workspace = ObrWorkspace::new();

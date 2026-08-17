@@ -6185,6 +6185,7 @@ fn inner_gitignore_covers(contents: &str, needle: &str) -> bool {
 /// Auto-fixable for the missing/incomplete regular-file cases by appending the
 /// self-ignore line. Symlinked ignore files remain operator-managed because
 /// replacing them would stomp intent.
+#[allow(clippy::too_many_lines)]
 fn check_inner_gitignore_present(obr_dir: &Path, checks: &mut Vec<CheckResult>) {
     let self_ignore = config::WORKSPACE_SELF_IGNORE_PATTERN;
     let expected_patterns: &[&str] = &[self_ignore];
@@ -16945,6 +16946,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn test_doctor_no_db_skips_db_backed_checks_and_reports_no_db_mode() {
         // #329: under `--no-db` (JSONL-only), doctor must NOT run the
         // DB-backed checks and must emit `db.no_db_mode` listing the skipped

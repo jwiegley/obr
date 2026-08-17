@@ -653,7 +653,9 @@ fn manifest_release_urls_split_the_tag_from_the_asset_name() -> Result<(), Strin
                     .to_string(),
             );
         }
-        if formula.contains("/obr-#{version}-") {
+        #[allow(clippy::literal_string_with_formatting_args)]
+        let raw_version_asset = "/obr-#{version}-";
+        if formula.contains(raw_version_asset) {
             return Err(
                 "Homebrew formula interpolates the raw version into an asset file name; \
                  GitHub does not publish the `+` form"

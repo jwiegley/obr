@@ -644,7 +644,7 @@ impl TestWorkspace {
         Self {
             temp_dir,
             root,
-            obr_dir: obr_dir,
+            obr_dir,
             logger,
             git_initialized: false,
         }

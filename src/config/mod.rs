@@ -3299,26 +3299,6 @@ pub(crate) fn db_sidecar_suffixes() -> impl Iterator<Item = &'static &'static st
         .chain(FSQLITE_WAL_FEC_SIDECAR_SUFFIXES.iter())
 }
 
-/// Best-effort removal of every engine sidecar belonging to `db_path`.
-///
-/// Used both to drop the pre-compaction sidecars after an atomic swap and to
-/// clean up the temp target's sidecars, which `rename` leaves behind because
-/// it only moves the main file.
-fn remove_db_sidecars(db_path: &Path) {
-    for suffix in db_sidecar_suffixes() {
-        let sidecar = PathBuf::from(format!("{}{}", db_path.to_string_lossy(), suffix));
-        if fs::symlink_metadata(&sidecar).is_ok()
-            && let Err(err) = fs::remove_file(&sidecar)
-        {
-            tracing::debug!(
-                error = %err,
-                sidecar = %sidecar.display(),
-                "Failed to remove database sidecar; next open will re-derive it"
-            );
-        }
-    }
-}
-
 /// Compact a database at `db_path` by writing a fresh copy via `VACUUM
 /// INTO` to a temp file, atomically replacing the original, and returning a
 /// reopened storage connection.
@@ -12505,7 +12485,7 @@ routing:
         let recovery = obr_dir.join("recovery");
         let preserved: Vec<_> = fs::read_dir(&recovery)
             .expect("recovery dir")
-            .filter_map(|entry| entry.ok())
+            .filter_map(std::result::Result::ok)
             .filter(|entry| {
                 fs::read(entry.path()).is_ok_and(|bytes| bytes == b"interrupted rebuild leftovers")
             })

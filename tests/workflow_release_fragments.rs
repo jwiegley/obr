@@ -66,7 +66,16 @@ fn release_workflow_uses_tagless_asset_file_names() -> Result<(), String> {
     // published as a step output.
     require_contains(&workflow, r#"ASSET_VERSION="${TAG#v}""#)?;
     require_contains(&workflow, r#"TAG="${INPUT_TAG:-$GITHUB_REF_NAME}""#)?;
-    require_contains(&workflow, "artifacts/obr-${ASSET_VERSION}-${platform}.*")?;
+    require_contains(
+        &workflow,
+        "artifacts/obr-${ASSET_VERSION}-linux_amd64.tar.gz",
+    )?;
+    require_contains(
+        &workflow,
+        "artifacts/obr-${ASSET_VERSION}-windows_amd64.zip",
+    )?;
+    require_contains(&workflow, "\"${archive}.sha256\"")?;
+    require_contains(&workflow, "\"${archive}.minisig\"")?;
     // ...and the `+` of semver build metadata never survives into a file name.
     require_contains(&workflow, r#"ASSET_VERSION="${ASSET_VERSION//+/.}""#)?;
 
@@ -146,13 +155,13 @@ fn asset_version_fragment_flattens_build_metadata_but_the_tag_keeps_it() -> Resu
             // The release job also publishes the tag; when it does, the tag is
             // the version verbatim — metadata included.
             for line in outputs.lines() {
-                if let Some(release_tag) = line.strip_prefix("release_tag=") {
-                    if release_tag != tag {
-                        return Err(format!(
-                            "job {job_name}: release_tag={release_tag:?} but the tag was {tag:?}; \
-                             the tag must never be flattened"
-                        ));
-                    }
+                if let Some(release_tag) = line.strip_prefix("release_tag=")
+                    && release_tag != tag
+                {
+                    return Err(format!(
+                        "job {job_name}: release_tag={release_tag:?} but the tag was {tag:?}; \
+                         the tag must never be flattened"
+                    ));
                 }
             }
         }
@@ -255,7 +264,10 @@ fn required_artifact_fragment_reports_missing_platforms() -> Result<(), String> 
     let asset_env = [("ASSET_VERSION", "9.9.9")];
     let complete = run_bash_step(&script, fixture.root(), &asset_env)?;
     require_success(&complete)?;
-    require_contains(&complete.stdout, "All required platform artifacts present")?;
+    require_contains(
+        &complete.stdout,
+        "All required release archives, checksums, and signatures are present",
+    )?;
 
     let missing = WorkflowFixture::new()?;
     missing.create_artifacts_dir()?;
@@ -522,10 +534,15 @@ impl WorkflowFixture {
     }
 
     fn write_release_artifact(&self, platform: &str, bytes: &[u8]) -> Result<(), String> {
-        let mut name = String::from("obr-9.9.9-");
-        name.push_str(platform);
-        name.push_str(".tar.gz");
-        self.write_artifact(&name, bytes)
+        let extension = if platform == "windows_amd64" {
+            ".zip"
+        } else {
+            ".tar.gz"
+        };
+        let name = format!("obr-9.9.9-{platform}{extension}");
+        self.write_artifact(&name, bytes)?;
+        self.write_artifact(&format!("{name}.sha256"), b"checksum\n")?;
+        self.write_artifact(&format!("{name}.minisig"), b"signature\n")
     }
 
     fn read_artifact(&self, name: &str) -> Result<String, String> {

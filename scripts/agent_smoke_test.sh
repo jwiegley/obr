@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# agent_smoke_test.sh - Minimal agent-centric smoke tests for br output surfaces.
+# agent_smoke_test.sh - Minimal agent-centric smoke tests for obr output surfaces.
 #
 # Notes:
 # - This script intentionally does NOT delete its temp workspace automatically.
@@ -13,10 +13,10 @@ log() { echo "[agent_smoke $(date +%H:%M:%S)] $*" >&2; }
 export RUST_LOG="${RUST_LOG:-error}"
 
 need_cmd() {
-    if ! command -v "$1" >/dev/null 2>&1; then
-        log "Missing required command: $1"
-        exit 1
-    fi
+	if ! command -v "$1" >/dev/null 2>&1; then
+		log "Missing required command: $1"
+		exit 1
+	fi
 }
 
 need_cmd jq
@@ -26,18 +26,18 @@ need_cmd grep
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [[ -n "${BR_BIN:-}" ]]; then
-    BR="$BR_BIN"
-elif [[ -x "$ROOT/target/debug/br" ]]; then
-    BR="$ROOT/target/debug/br"
-elif [[ -x "$ROOT/target/release/br" ]]; then
-    BR="$ROOT/target/release/br"
-elif command -v br >/dev/null 2>&1; then
-    # Fallback for environments where br is installed but the repo isn't built.
-    BR="br"
+	BR="$BR_BIN"
+elif [[ -x "$ROOT/target/debug/obr" ]]; then
+	BR="$ROOT/target/debug/obr"
+elif [[ -x "$ROOT/target/release/obr" ]]; then
+	BR="$ROOT/target/release/obr"
+elif command -v obr >/dev/null 2>&1; then
+	# Fallback for environments where obr is installed but the repo isn't built.
+	BR="obr"
 else
-    log "br binary not found. Build it with:"
-    log "  CARGO_TARGET_DIR=target cargo build"
-    exit 1
+	log "obr binary not found. Build it with:"
+	log "  CARGO_TARGET_DIR=target cargo build"
+	exit 1
 fi
 
 WORKDIR="$(mktemp -d)"
@@ -64,10 +64,10 @@ log "JSON: list/show parse"
 "$BR" show "$ID1" --format json | jq -e 'if type=="array" then (.[0] | has("id") and has("title")) else (has("id") and has("title")) end' >/dev/null
 
 log "Docs: agent quickstarts do not put --format on mutation commands"
-if grep -En 'br (update|close|create|delete|reopen|defer|undefer|label add|label remove)\b.*--format' \
-    "$ROOT/docs/agent/QUICKSTART.md" "$ROOT/docs/agent/EXAMPLES.md"; then
-    log "Unsupported --format flag found on mutation-command examples"
-    exit 1
+if grep -En 'obr (update|close|create|delete|reopen|defer|undefer|label add|label remove)\b.*--format' \
+	"$ROOT/docs/agent/QUICKSTART.md" "$ROOT/docs/agent/EXAMPLES.md"; then
+	log "Unsupported --format flag found on mutation-command examples"
+	exit 1
 fi
 
 log "JSON: mutation commands parse via global --json"
@@ -88,7 +88,7 @@ log "Error envelope (stderr JSON)"
 OUT_JSON="$WORKDIR/out.json"
 ERR_JSON="$WORKDIR/err.json"
 set +e
-"$BR" show bd-NOTEXIST --json > "$OUT_JSON" 2> "$ERR_JSON"
+"$BR" show bd-NOTEXIST --json >"$OUT_JSON" 2>"$ERR_JSON"
 EC=$?
 set -e
 test "$EC" -eq 3

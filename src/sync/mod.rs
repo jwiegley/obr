@@ -14270,39 +14270,6 @@ fn is_coarse_surface_timestamp(at: DateTime<Utc>) -> bool {
     at.second() == 0 && at.timestamp_subsec_nanos() == 0
 }
 
-/// Turn an equal-timestamp skip into an update when the record came from a
-/// truncating surface and its content genuinely differs from the stored issue.
-///
-/// [`determine_action`] breaks that tie on `content_hash`, which covers 15
-/// fields. Labels, dependencies, comments, and the scheduling and close
-/// metadata are not among them, so an edit confined to those — changing a
-/// headline's tags in Emacs is the everyday case — looked identical, was
-/// skipped, and was then reverted by the next flush.
-///
-/// [`Issue::sync_equals`] compares everything a surface can carry, including
-/// labels order-independently. The load it needs is not extra work:
-/// [`export_hash_entry_for_import_action`] already performs exactly this
-/// comparison on every skip, a few lines further down the same loop.
-fn upgrade_coarse_surface_skip(
-    storage: &SqliteStorage,
-    action: CollisionAction,
-    incoming: &Issue,
-    target_id: &str,
-) -> Result<CollisionAction> {
-    let CollisionAction::Skip { ref reason } = action else {
-        return Ok(action);
-    };
-    if !reason.starts_with("Equal timestamps")
-        || !is_coarse_surface_timestamp(incoming.updated_at)
-        || skipped_import_matches_stored_issue(storage, target_id, incoming)?
-    {
-        return Ok(action);
-    }
-    Ok(CollisionAction::Update {
-        existing_id: target_id.to_string(),
-    })
-}
-
 fn skipped_import_matches_stored_issue(
     storage: &SqliteStorage,
     target_id: &str,
@@ -18142,7 +18109,7 @@ mod tests {
         let plan = reviewed_disk_plan(&obr_dir, &database_path, &jsonl_path, &issue);
 
         let receipt = apply_reviewed_additive_reconcile(&ReviewedAdditiveReconcileRequest {
-            obr_dir: obr_dir,
+            obr_dir,
             db_override: None,
             source_path_override: None,
             allow_external_jsonl: false,
@@ -18178,7 +18145,7 @@ mod tests {
 
         let receipt = apply_reviewed_additive_reconcile_under_authority(
             &ReviewedAdditiveReconcileRequest {
-                obr_dir: obr_dir,
+                obr_dir,
                 db_override: None,
                 source_path_override: None,
                 allow_external_jsonl: false,
@@ -18277,7 +18244,7 @@ mod tests {
         let plan = reviewed_disk_plan(&obr_dir, &database_path, &jsonl_path, &issue);
 
         let receipt = apply_reviewed_additive_reconcile(&ReviewedAdditiveReconcileRequest {
-            obr_dir: obr_dir,
+            obr_dir,
             db_override: Some(database_path),
             source_path_override: None,
             allow_external_jsonl: false,
@@ -18382,7 +18349,7 @@ mod tests {
 
         SqliteStorage::arm_database_replacement_after_commit_for_test();
         let receipt = apply_reviewed_additive_reconcile(&ReviewedAdditiveReconcileRequest {
-            obr_dir: obr_dir,
+            obr_dir,
             db_override: None,
             source_path_override: None,
             allow_external_jsonl: false,
@@ -18414,6 +18381,8 @@ mod tests {
 
     #[test]
     fn database_family_lock_serializes_external_db_across_workspaces_with_one_timeout_budget() {
+        const BUDGET: Duration = Duration::from_millis(1_200);
+
         let temp = TempDir::new().unwrap();
         let first_obr = temp.path().join("first").join(".beads");
         let second_obr = temp.path().join("second").join(".beads");
@@ -18440,9 +18409,10 @@ mod tests {
         // ratio, so scaling BUDGET scales the slack without weakening what is
         // being asserted -- the ceiling is still far below the 2x that a
         // per-component budget would produce.
-        const BUDGET: Duration = Duration::from_millis(1_200);
         let release_after = BUDGET * 3 / 4;
-        let floor = release_after - Duration::from_millis(50);
+        let floor = release_after
+            .checked_sub(Duration::from_millis(50))
+            .expect("release delay exceeds lower-bound margin");
         let ceiling = BUDGET * 3 / 2;
 
         let first_authority = blocking_database_family_write_lock_with_timeout(
@@ -18694,7 +18664,7 @@ mod tests {
         symlink(&outside, obr_dir.join("beads.db")).unwrap();
 
         let err = apply_reviewed_additive_reconcile(&ReviewedAdditiveReconcileRequest {
-            obr_dir: obr_dir,
+            obr_dir,
             db_override: None,
             source_path_override: None,
             allow_external_jsonl: false,
