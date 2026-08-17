@@ -1,4 +1,4 @@
-//! MCP prompt handlers for the beads issue tracker.
+//! MCP prompt handlers for the obr issue tracker.
 //!
 //! Prompts provide guided workflows that pre-fetch project data and return
 //! structured messages to help agents perform common tasks.
@@ -16,7 +16,7 @@ use std::collections::HashSet;
 use crate::model::{Issue, IssueType, Status};
 use crate::storage::{ListFilters, SqliteStorage};
 
-use super::{BeadsState, ensure_not_shutting_down, mcp_ready_issues, to_mcp};
+use super::{ObrState, ensure_not_shutting_down, mcp_ready_issues, to_mcp};
 
 // ---------------------------------------------------------------------------
 // Display limits — extracted from magic numbers for maintainability
@@ -115,7 +115,7 @@ fn unassigned_context(storage: &SqliteStorage) -> McpResult<String> {
 }
 
 /// Gather ready-issues context as a formatted string.
-fn ready_context(state: &BeadsState, storage: &SqliteStorage) -> McpResult<String> {
+fn ready_context(state: &ObrState, storage: &SqliteStorage) -> McpResult<String> {
     let ready = mcp_ready_issues(state, storage)?;
     if ready.is_empty() {
         return Ok("No ready issues.".into());
@@ -208,9 +208,9 @@ fn triage_instruction(focus: &str) -> &'static str {
 // 1. triage — guided backlog triage workflow
 // ---------------------------------------------------------------------------
 
-pub struct TriagePrompt(Arc<BeadsState>);
+pub struct TriagePrompt(Arc<ObrState>);
 impl TriagePrompt {
-    pub fn new(state: Arc<BeadsState>) -> Self {
+    pub fn new(state: Arc<ObrState>) -> Self {
         Self(state)
     }
 }
@@ -301,9 +301,9 @@ impl PromptHandler for TriagePrompt {
 // 2. status_report — project status report generation
 // ---------------------------------------------------------------------------
 
-pub struct StatusReportPrompt(Arc<BeadsState>);
+pub struct StatusReportPrompt(Arc<ObrState>);
 impl StatusReportPrompt {
-    pub fn new(state: Arc<BeadsState>) -> Self {
+    pub fn new(state: Arc<ObrState>) -> Self {
         Self(state)
     }
 }
@@ -471,7 +471,7 @@ fn bottleneck_context(storage: &SqliteStorage) -> McpResult<String> {
 }
 
 /// Identify quick wins: high-priority, ready, with low estimated effort.
-fn quick_wins_context(state: &BeadsState, storage: &SqliteStorage) -> McpResult<String> {
+fn quick_wins_context(state: &ObrState, storage: &SqliteStorage) -> McpResult<String> {
     let ready = mcp_ready_issues(state, storage)?;
 
     if ready.is_empty() {
@@ -517,9 +517,9 @@ fn quick_wins_context(state: &BeadsState, storage: &SqliteStorage) -> McpResult<
     ))
 }
 
-pub struct PlanNextWorkPrompt(Arc<BeadsState>);
+pub struct PlanNextWorkPrompt(Arc<ObrState>);
 impl PlanNextWorkPrompt {
-    pub fn new(state: Arc<BeadsState>) -> Self {
+    pub fn new(state: Arc<ObrState>) -> Self {
         Self(state)
     }
 }
@@ -651,7 +651,7 @@ impl PromptHandler for PlanNextWorkPrompt {
 }
 
 // ---------------------------------------------------------------------------
-// 4. polish_backlog — beads-workflow-inspired quality review
+// 4. polish_backlog — quality review, after the upstream beads workflow
 // ---------------------------------------------------------------------------
 
 /// Analyze issue completeness: missing descriptions, test plans, etc.
@@ -783,9 +783,9 @@ fn dependency_health_context(storage: &SqliteStorage) -> McpResult<String> {
     Ok(parts.join("\n\n"))
 }
 
-pub struct PolishBacklogPrompt(Arc<BeadsState>);
+pub struct PolishBacklogPrompt(Arc<ObrState>);
 impl PolishBacklogPrompt {
-    pub fn new(state: Arc<BeadsState>) -> Self {
+    pub fn new(state: Arc<ObrState>) -> Self {
         Self(state)
     }
 }
@@ -797,7 +797,9 @@ impl PromptHandler for PolishBacklogPrompt {
             description: Some(
                 "Review and polish issue quality: check descriptions for completeness, \
                  validate dependencies, identify orphans and missing test plans. \
-                 Inspired by beads-workflow's 'check your beads N times' principle."
+                 Follows the upstream beads project's 'check your beads N times, \
+                 implement once' principle: review the backlog repeatedly before \
+                 implementing. In obr the units under review are issues."
                     .into(),
             ),
             arguments: vec![PromptArgument {
@@ -855,7 +857,7 @@ impl PromptHandler for PolishBacklogPrompt {
         let instruction = match focus {
             "completeness" => {
                 "Review the completeness analysis above. For each issue flagged:\n\n\
-                 1. Check if the description follows the bead anatomy structure:\n\
+                 1. Check if the description follows the issue anatomy structure:\n\
                     - Background (why this exists)\n\
                     - Technical Approach (how to implement)\n\
                     - Success Criteria (how to verify done)\n\
@@ -881,11 +883,13 @@ impl PromptHandler for PolishBacklogPrompt {
                  accurately reflects what can be worked on in parallel."
             }
             _ => {
-                "Perform a full backlog polish (beads-workflow style).\n\n\
-                 This is the 'check your beads N times, implement once' workflow.\n\n\
+                "Perform a full backlog polish.\n\n\
+                 This applies the upstream beads project's 'check your beads N times, \
+                 implement once' principle to obr's issues: review repeatedly, \
+                 implement once.\n\n\
                  Pass 1 — Completeness:\n\
                  1. Review issues with missing/short descriptions\n\
-                 2. Ensure each description follows the bead anatomy structure:\n\
+                 2. Ensure each description follows the issue anatomy structure:\n\
                     Background → Technical Approach → Success Criteria → Test Plan → Considerations\n\
                  3. Verify priorities are set deliberately, not left at defaults\n\n\
                  Pass 2 — Dependencies:\n\

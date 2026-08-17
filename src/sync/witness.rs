@@ -15,10 +15,10 @@ use std::{
 };
 
 /// Schema marker for JSONL Merkle witnesses.
-pub const JSONL_WITNESS_SCHEMA_VERSION: &str = "br.jsonl-witness.v1";
+pub const JSONL_WITNESS_SCHEMA_VERSION: &str = "obr.jsonl-witness.v1";
 
-const ROOT_DOMAIN: &[u8] = b"br:jsonl-witness:root:v1\0";
-const CHUNK_DOMAIN: &[u8] = b"br:jsonl-witness:chunk:v1\0";
+const ROOT_DOMAIN: &[u8] = b"obr:jsonl-witness:root:v1\0";
+const CHUNK_DOMAIN: &[u8] = b"obr:jsonl-witness:chunk:v1\0";
 const FIELD_SEPARATOR: &[u8] = b"\0";
 
 /// Merkle-style witness for an exact JSONL byte stream.

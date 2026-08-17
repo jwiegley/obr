@@ -1,10 +1,10 @@
-//! Inherited agent context (beads_rust#297).
+//! Inherited agent context.
 //!
-//! When a descendant bead is shown or transitioned into `in_progress`
-//! (via `br update --status in_progress` or `--claim`), the bead's
+//! When a descendant issue is shown or transitioned into `in_progress`
+//! (via `obr update --status in_progress` or `--claim`), the issue's
 //! ancestors' `agent_context` field is emitted alongside the normal
 //! output. This re-delivers governing instructions at the surface
-//! where the agent actually interacts with `br`, mitigating three
+//! where the agent actually interacts with `obr`, mitigating three
 //! failure modes:
 //!
 //! 1. **Cold-start miss** — agent claims a child and never reads the
@@ -15,9 +15,9 @@
 //!    flight but descendants read only the cold-start snapshot.
 //!
 //! Emission is **opt-in** per project (off by default for backward
-//! compatibility): set `inherited_context.enabled: true` in
-//! `.beads/config.yaml`, or set `BR_INHERITED_CONTEXT=1` in the
-//! environment. The env var wins so operators can toggle behavior
+//! compatibility): set `inherited_context.enabled: true` in the workspace's
+//! `config.yaml` (`.obr/config.yaml`), or set `OBR_INHERITED_CONTEXT=1` in
+//! the environment. The env var wins so operators can toggle behavior
 //! without committing config changes.
 //!
 //! v1 emits the **two bookends** of the ancestor chain — the immediate
@@ -39,7 +39,8 @@ use crate::storage::sqlite::SqliteStorage;
 /// One ancestor block in the inherited-context emission.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 pub struct InheritedBlock {
-    /// The ancestor's bead id (e.g. "bd-abc123").
+    /// The ancestor's issue ID, in the workspace's own prefix — for example
+    /// "obr-abc123" under the default `obr` prefix.
     pub source_id: String,
     /// "epic" when the ancestor is the root and has `issue_type = epic`,
     /// "root" when the ancestor is the root but not an epic,
@@ -59,13 +60,15 @@ pub struct InheritedBlock {
 }
 
 /// Returns true when the project has opted in to inherited-context
-/// emission. The env var `BR_INHERITED_CONTEXT` (any non-empty,
-/// non-"0", non-"false" value) wins; otherwise checks
-/// `.beads/config.yaml` for `inherited_context.enabled: true`.
+/// emission. The env var `OBR_INHERITED_CONTEXT` (any non-empty,
+/// non-"0", non-"false" value) wins; otherwise checks the workspace
+/// `config.yaml` for `inherited_context.enabled: true`.
 #[must_use]
-pub fn is_enabled(beads_dir: &Path) -> bool {
-    let env_val = std::env::var("BR_INHERITED_CONTEXT").ok();
-    is_enabled_from_inputs(env_val.as_deref(), &beads_dir.join("config.yaml"))
+pub fn is_enabled(obr_dir: &Path) -> bool {
+    let env_val = std::env::var("OBR_INHERITED_CONTEXT")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    is_enabled_from_inputs(env_val.as_deref(), &obr_dir.join("config.yaml"))
 }
 
 /// Pure helper for `is_enabled`: given the env var value (or `None`)
@@ -107,7 +110,7 @@ pub fn is_enabled_from_inputs(env_val: Option<&str>, config_yaml_path: &Path) ->
 /// root, returns a single block. Ancestors with no `agent_context` are
 /// silently skipped. Cycles stop traversal and log to stderr.
 ///
-/// Returns an empty vec when the bead has no parent or when none of
+/// Returns an empty vec when the issue has no parent or when none of
 /// the bookends supply content.
 ///
 /// # Errors
@@ -198,10 +201,11 @@ fn block_from_ancestor(issue: &Issue, role: &str) -> Option<InheritedBlock> {
 }
 
 fn find_immediate_parent_id(storage: &SqliteStorage, child_id: &str) -> Result<Option<String>> {
-    // Beads uses dependency rows to encode parent relationships. The
-    // canonical dependency type used by the bd ecosystem is
-    // `ParentChild` with the child as the dependent and the parent as
-    // the depends_on target. We use `get_dependencies_full` instead of
+    // obr encodes parent relationships as dependency rows, using the same
+    // on-disk convention as the Go `bd` implementation it interoperates
+    // with: dependency type `ParentChild`, with the child as the dependent
+    // and the parent as the depends_on target. We use
+    // `get_dependencies_full` instead of
     // touching the connection directly because the storage layer's
     // RefCell-backed prepared-statement cache is private to the
     // SqliteStorage abstraction.
@@ -234,7 +238,7 @@ fn walk_to_root(
         };
         if !visited.insert(parent_id.clone()) {
             eprintln!(
-                "br: inheritance: detected cycle in parent chain at {parent_id}; \
+                "obr: inheritance: detected cycle in parent chain at {parent_id}; \
                  stopping ancestor traversal"
             );
             break;
@@ -251,7 +255,7 @@ fn walk_to_root(
     }
 
     // Prefer the topmost epic (if any) over the chain's terminal
-    // ancestor. Per spec: "if no ancestor has type epic, br uses the
+    // ancestor. Per spec: "if no ancestor has type epic, obr uses the
     // chain's terminal ancestor".
     Ok(latest_epic.or(Some(current)))
 }
@@ -267,7 +271,7 @@ fn load_active_issue(storage: &SqliteStorage, id: &str) -> Result<Option<Issue>>
 }
 
 /// Render the inherited blocks as the canonical text-mode prefix that
-/// precedes a `br show` / `br update --status in_progress` output. The
+/// precedes a `obr show` / `obr update --status in_progress` output. The
 /// blocks are emitted root-first so the immediate parent sits adjacent
 /// to the child's content.
 #[must_use]
@@ -318,14 +322,14 @@ mod tests {
     fn render_text_emits_blocks_in_order_with_role_labels() {
         let blocks = vec![
             InheritedBlock {
-                source_id: "bd-epic".into(),
+                source_id: "obr-epic".into(),
                 source_role: "epic".into(),
                 source_title: "Auth rewrite".into(),
                 field_used: "agent_context".into(),
                 content: "{\"skills\":[\"clean-code\"]}".into(),
             },
             InheritedBlock {
-                source_id: "bd-parent".into(),
+                source_id: "obr-parent".into(),
                 source_role: "parent".into(),
                 source_title: "Token refresh".into(),
                 field_used: "agent_context".into(),
@@ -333,8 +337,8 @@ mod tests {
             },
         ];
         let out = render_text(&blocks);
-        let epic_idx = out.find("epic bd-epic").expect("epic label present");
-        let parent_idx = out.find("parent bd-parent").expect("parent label present");
+        let epic_idx = out.find("epic obr-epic").expect("epic label present");
+        let parent_idx = out.find("parent obr-parent").expect("parent label present");
         assert!(epic_idx < parent_idx, "root/epic must precede parent");
         assert!(out.contains("Auth rewrite"));
         assert!(out.contains("clean-code"));
@@ -344,7 +348,7 @@ mod tests {
     #[test]
     fn render_text_falls_back_to_raw_on_malformed_json() {
         let blocks = vec![InheritedBlock {
-            source_id: "bd-x".into(),
+            source_id: "obr-x".into(),
             source_role: "parent".into(),
             source_title: "Title".into(),
             field_used: "agent_context".into(),
@@ -391,7 +395,7 @@ mod tests {
 
         // No inherited_context section at all => disabled (back-compat
         // for projects that haven't opted in).
-        std::fs::write(&cfg, "issue_prefix: bd\n").expect("write plain config");
+        std::fs::write(&cfg, "issue_prefix: obr\n").expect("write plain config");
         assert!(!is_enabled_from_inputs(None, &cfg));
 
         // Malformed YAML => disabled (don't fail the show on bad config).

@@ -6,7 +6,6 @@ use crate::format::{format_type_label, sanitize_terminal_inline};
 use crate::model::{Dependency, DependencyType, Issue, IssueType, Priority, Status};
 use crate::output::OutputContext;
 use crate::storage::{BulkDependencyInsert, EventAttribution, SqliteStorage};
-use crate::sync::canonical_source_repo_path;
 use crate::util::id::{IdGenerationInput, IdGenerator, IdResolver, ResolverConfig, child_id};
 use crate::util::markdown_import::{parse_dependency, parse_markdown_file};
 use crate::util::time::parse_flexible_timestamp;
@@ -25,8 +24,8 @@ pub struct CreateConfig {
     pub actor: String,
     /// Stable repo identifier stamped onto new issues so cross-repo automation
     /// has a non-caller-relative anchor instead of a literal `.`. Falls back
-    /// to `None` (storage default) when the beads directory has no usable
-    /// parent name, e.g. `/.beads`.
+    /// to `None` (storage default) when the obr directory has no usable
+    /// parent name, e.g. `/.obr`.
     pub source_repo: Option<String>,
     /// Absolute canonical path of the source repository, populated alongside
     /// `source_repo` so fleet automation can disambiguate two clones of the
@@ -35,17 +34,16 @@ pub struct CreateConfig {
     pub source_repo_path: Option<String>,
 }
 
-/// Derive a stable `source_repo` value from the beads directory path: the
-/// basename of the parent of `.beads/`, normalised. Returns `None` when no
+/// Derive a stable `source_repo` value from the obr directory path: the
+/// basename of the parent of the workspace directory, normalised. Returns `None` when no
 /// useful name can be extracted, so the caller can let the legacy storage
 /// default take over.
-pub(crate) fn canonical_source_repo(beads_dir: &Path) -> Option<String> {
-    let parent = beads_dir.parent()?;
+pub(crate) fn canonical_source_repo(obr_dir: &Path) -> Option<String> {
+    let parent = obr_dir.parent()?;
     let parent = if parent.as_os_str().is_empty()
-        && beads_dir
+        && obr_dir
             .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| matches!(name, ".beads" | "_beads"))
+            .is_some_and(crate::config::is_obr_dir_name)
     {
         Path::new(".")
     } else if parent.as_os_str().is_empty() {
@@ -62,6 +60,27 @@ pub(crate) fn canonical_source_repo(beads_dir: &Path) -> Option<String> {
     } else {
         Some(name)
     }
+}
+
+/// Derive the absolute canonical path of the source repository (the
+/// parent of the workspace directory) for the `source_repo_path` field on `Issue`.
+/// Distinct from [`canonical_source_repo`], which returns just the basename.
+pub(crate) fn canonical_source_repo_path(obr_dir: &Path) -> Option<String> {
+    let parent = obr_dir.parent()?;
+    let parent = if parent.as_os_str().is_empty()
+        && obr_dir
+            .file_name()
+            .is_some_and(crate::config::is_obr_dir_name)
+    {
+        Path::new(".")
+    } else if parent.as_os_str().is_empty() {
+        return None;
+    } else {
+        parent
+    };
+    let canonical = parent.canonicalize().ok()?;
+    let path_str = canonical.to_string_lossy().into_owned();
+    (!path_str.is_empty()).then_some(path_str)
 }
 
 struct NewIdInput<'a> {
@@ -125,23 +144,23 @@ pub fn execute_with_storage(
     let mut storage_ctx = if let Some(ctx) = pre_opened {
         ctx
     } else {
-        let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-        config::open_storage_with_cli(&beads_dir, cli)?
+        let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+        config::open_storage_with_cli(&obr_dir, cli)?
     };
     let layer = storage_ctx.load_config(cli)?;
 
     // Strict status-workflow enforcement (issue #311). Reject an out-of-set
     // `--status` before any write when the project configures
     // `workflow.strict: true`. No-op when the workflow section is absent.
-    enforce_workflow_status(&storage_ctx.paths.beads_dir, args.status.as_deref())?;
+    enforce_workflow_status(&storage_ctx.paths.obr_dir, args.status.as_deref())?;
 
     let config = CreateConfig {
         id_config: config::id_config_from_layer(&layer),
         default_priority: config::default_priority_from_layer(&layer)?,
         default_issue_type: config::default_issue_type_from_layer(&layer)?,
         actor: config::resolve_actor(&layer),
-        source_repo: canonical_source_repo(&storage_ctx.paths.beads_dir),
-        source_repo_path: canonical_source_repo_path(&storage_ctx.paths.beads_dir),
+        source_repo: canonical_source_repo(&storage_ctx.paths.obr_dir),
+        source_repo_path: canonical_source_repo_path(&storage_ctx.paths.obr_dir),
     };
 
     // Resolve the description up front — before the retry closure — so the
@@ -156,7 +175,7 @@ pub fn execute_with_storage(
         })?;
     let capacity_warnings = storage_ctx.storage.take_capacity_warnings();
     let created_id = issue.id.clone();
-    let last_touched_dir = storage_ctx.paths.beads_dir.clone();
+    let last_touched_dir = storage_ctx.paths.obr_dir.clone();
     let update_last_touched_after_flush = storage_ctx.no_db;
     if !args.dry_run && !update_last_touched_after_flush {
         crate::util::set_last_touched_id(&last_touched_dir, &created_id);
@@ -240,22 +259,22 @@ pub fn execute_with_storage(
 /// Enforce the project's strict status-workflow policy (issue #311) against a
 /// caller-supplied `--status`. A `None` status (default `open`) is always
 /// permitted: an empty allowed set already forbids enforcement, and a strict
-/// set that omits `open` would otherwise make `br create` unusable. Returns
+/// set that omits `open` would otherwise make `obr create` unusable. Returns
 /// `Ok(())` when the workflow section is absent or non-strict.
 ///
 /// The *effective* starting status is validated — the explicit `--status` when
 /// given, otherwise the create default (`open`, matching the default applied
-/// below). Validating the default too keeps `br create`, `br create --status
-/// open`, and `br update --status open` consistent: if a strict workflow omits
-/// the starting status, `br create` must name a valid one rather than silently
-/// producing a bead whose status `br doctor` will immediately flag.
+/// below). Validating the default too keeps `obr create`, `obr create --status
+/// open`, and `obr update --status open` consistent: if a strict workflow omits
+/// the starting status, `obr create` must name a valid one rather than silently
+/// producing a bead whose status `obr doctor` will immediately flag.
 ///
 /// # Errors
 ///
 /// Returns a validation error when strict enforcement is configured and the
 /// effective status is not in the allowed set.
-fn enforce_workflow_status(beads_dir: &Path, raw_status: Option<&str>) -> Result<()> {
-    let policy = crate::close_policy::load_for_beads_dir(beads_dir)?;
+fn enforce_workflow_status(obr_dir: &Path, raw_status: Option<&str>) -> Result<()> {
+    let policy = crate::close_policy::load_for_obr_dir(obr_dir)?;
     if !policy.workflow.is_enforced() && !policy.workflow.transitions_enforced() {
         return Ok(());
     }
@@ -278,7 +297,7 @@ fn auto_flush_after_create(storage_ctx: &mut config::OpenStorageResult, ctx: &Ou
     if let Err(error) = storage_ctx.auto_flush_if_enabled() {
         report_auto_flush_failure(
             ctx,
-            &storage_ctx.paths.beads_dir,
+            &storage_ctx.paths.obr_dir,
             &storage_ctx.paths.jsonl_path,
             &error,
         );
@@ -333,8 +352,8 @@ fn create_issue_summary_line(id: &str, title: &str) -> String {
 /// Read a description body verbatim from a file, or from stdin when `path`
 /// is `-`. The full content is returned unchanged from disk (no paragraph
 /// truncation, no trimming), so callers get exactly the bytes on disk as a
-/// UTF-8 string. Shared by `br create --description-file` and
-/// `br update --description-file`.
+/// UTF-8 string. Shared by `obr create --description-file` and
+/// `obr update --description-file`.
 pub(crate) fn read_description_file(path: &Path) -> Result<String> {
     if path.as_os_str() == "-" {
         let mut buffer = String::new();
@@ -357,7 +376,7 @@ pub(crate) fn read_description_file(path: &Path) -> Result<String> {
     })
 }
 
-/// Resolve the effective description for `br create`, preferring
+/// Resolve the effective description for `obr create`, preferring
 /// `--description-file` (read verbatim) over inline `-d/--description`.
 /// The two are mutually exclusive; clap enforces this at parse time, and
 /// this guard re-checks it so programmatic callers cannot smuggle both.
@@ -824,20 +843,20 @@ fn execute_import(
     let mut storage_ctx = if let Some(ctx) = pre_opened {
         ctx
     } else {
-        let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-        config::open_storage_with_cli(&beads_dir, cli)?
+        let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+        config::open_storage_with_cli(&obr_dir, cli)?
     };
     let layer = storage_ctx.load_config(cli)?;
 
     // Strict status-workflow enforcement (issue #311); see `execute`.
-    enforce_workflow_status(&storage_ctx.paths.beads_dir, args.status.as_deref())?;
+    enforce_workflow_status(&storage_ctx.paths.obr_dir, args.status.as_deref())?;
 
     let id_config = config::id_config_from_layer(&layer);
     let default_priority = config::default_priority_from_layer(&layer)?;
     let default_issue_type = config::default_issue_type_from_layer(&layer)?;
     let actor = config::resolve_actor(&layer);
-    let import_source_repo = canonical_source_repo(&storage_ctx.paths.beads_dir);
-    let import_source_repo_path = canonical_source_repo_path(&storage_ctx.paths.beads_dir);
+    let import_source_repo = canonical_source_repo(&storage_ctx.paths.obr_dir);
+    let import_source_repo_path = canonical_source_repo_path(&storage_ctx.paths.obr_dir);
     let now = Utc::now();
     let _json_mode = cli.json.unwrap_or(false);
     let due_at = parse_optional_date(args.due.as_deref())?;
@@ -1383,7 +1402,7 @@ fn execute_import(
         }
     }
 
-    let last_touched_dir = storage_ctx.paths.beads_dir.clone();
+    let last_touched_dir = storage_ctx.paths.obr_dir.clone();
     let update_last_touched_after_flush = storage_ctx.no_db;
     if !update_last_touched_after_flush && let Some(last_created_id) = last_created_id.as_deref() {
         crate::util::set_last_touched_id(&last_touched_dir, last_created_id);
@@ -1549,16 +1568,16 @@ mod tests {
     fn canonical_source_repo_uses_repo_basename() {
         let temp = tempfile::tempdir().expect("tempdir");
         let repo_root = temp.path().join("widget_engine");
-        let beads_dir = repo_root.join(".beads");
-        std::fs::create_dir_all(&beads_dir).expect("create .beads");
+        let obr_dir = repo_root.join(".beads");
+        std::fs::create_dir_all(&obr_dir).expect("create .beads");
         assert_eq!(
-            canonical_source_repo(&beads_dir).as_deref(),
+            canonical_source_repo(&obr_dir).as_deref(),
             Some("widget_engine"),
         );
     }
 
     #[test]
-    fn canonical_source_repo_uses_cwd_basename_for_relative_beads_dir() {
+    fn canonical_source_repo_uses_cwd_basename_for_relative_obr_dir() {
         let expected = std::env::current_dir()
             .expect("current dir")
             .file_name()
@@ -1579,12 +1598,12 @@ mod tests {
     fn canonical_source_repo_creates_issue_with_repo_owner_value() {
         let temp = tempfile::tempdir().expect("tempdir");
         let repo_root = temp.path().join("source_repo_probe");
-        let beads_dir = repo_root.join(".beads");
-        std::fs::create_dir_all(&beads_dir).expect("create .beads");
+        let obr_dir = repo_root.join(".beads");
+        std::fs::create_dir_all(&obr_dir).expect("create .beads");
 
         let mut storage = setup_memory_storage();
         let mut config = default_config();
-        config.source_repo = canonical_source_repo(&beads_dir);
+        config.source_repo = canonical_source_repo(&obr_dir);
         let args = default_args();
 
         let issue = create_issue_impl(&mut storage, &args, &config, None).expect("create");

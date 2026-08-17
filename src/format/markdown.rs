@@ -13,8 +13,8 @@
 //! # Example
 //!
 //! ```ignore
-//! use beads_rust::format::markdown::render_markdown;
-//! use beads_rust::output::OutputContext;
+//! use obr::format::markdown::render_markdown;
+//! use obr::output::OutputContext;
 //!
 //! let content = "# Heading\n\nThis is **bold** and *italic*.";
 //! let ctx = OutputContext::detect();

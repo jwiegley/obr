@@ -1,7 +1,7 @@
 //! Explicit, bounded VCS diagnostics.
 //!
-//! This module is intentionally isolated from every sync path. `br sync` is
-//! VCS-agnostic by contract; only a direct `br vcs-status` invocation reaches
+//! This module is intentionally isolated from every sync path. `obr sync` is
+//! VCS-agnostic by contract; only a direct `obr vcs-status` invocation reaches
 //! the process capability below. The selected Git executable is trusted.
 //! Search/attribute probes neutralize hooks, filters, prompts, fsmonitor,
 //! untracked-cache writes, and inherited Git redirections; fixed-key config
@@ -28,18 +28,18 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tracing::debug;
 
-const STATUS_SCHEMA: &str = "br.vcs-export-status.v2";
+const STATUS_SCHEMA: &str = "obr.vcs-export-status.v2";
 const MAX_CAPTURE_BYTES_PER_STREAM: usize = 32 * 1024;
 const MIN_TIMEOUT_MS: u64 = 25;
 const MAX_TIMEOUT_MS: u64 = 30_000;
-const EXPLICIT_COMMAND: &str = "br vcs-status --json";
+const EXPLICIT_COMMAND: &str = "obr vcs-status --json";
 
-/// Explicit Git visibility for the configured JSONL export.
+/// Explicit Git visibility for the configured export (`.org` or `.jsonl`).
 ///
 /// Repository and index evidence remains available when a path-local
 /// worktree comparison is unsafe or unsupported. Raw worktree identities are
-/// computed in-process from one immutable, no-follow JSONL snapshot; Git
-/// filters and text conversions are never invoked.
+/// computed in-process from one immutable, no-follow snapshot of the export;
+/// Git filters and text conversions are never invoked.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct VcsExportStatus {
     pub schema: &'static str,
@@ -113,7 +113,7 @@ pub struct GitIndexStage {
     pub object_id: String,
 }
 
-/// Relationship between the securely captured JSONL leaf and the Git index.
+/// Relationship between the securely captured export leaf and the Git index.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorktreeState {
@@ -233,8 +233,8 @@ fn resolve_target(
     cli: &config::CliOverrides,
     deadline: Instant,
 ) -> Result<ResolvedGitTarget> {
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    let configured = config::resolve_paths(&beads_dir, cli.db.as_ref())?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    let configured = config::resolve_paths(&obr_dir, cli.db.as_ref())?;
     let requested = args
         .jsonl
         .clone()
@@ -256,9 +256,12 @@ fn resolve_target(
             "VCS diagnostics refuse targets inside Git metadata",
         ));
     }
-    if anchored.extension() != Some(OsStr::new("jsonl")) {
+    // The export formats are the enum's to name. Spelling the pair here was
+    // also case-SENSITIVE, so `obr vcs-status` refused a `PLAN.ORG` that sync
+    // accepts and reads.
+    if crate::sync::org_bridge::ExportFormat::declared_for_path(&anchored).is_none() {
         return Err(unsafe_target_error(
-            "the diagnostic target must have a .jsonl extension",
+            "the diagnostic target must have a .jsonl or .org extension",
         ));
     }
 
@@ -281,8 +284,12 @@ fn resolve_target(
             "VCS diagnostics refuse targets inside Git metadata",
         ));
     }
-    let canonical_beads = dunce::canonicalize(&beads_dir).unwrap_or_else(|_| beads_dir.clone());
-    let scope = if path.starts_with(&canonical_beads) {
+    let canonical_obr = dunce::canonicalize(&obr_dir).unwrap_or_else(|_| obr_dir.clone());
+    // Same definition of "internal" the sync layer authorizes against, asked
+    // rather than restated: a bare prefix test reads the tracked surface as
+    // external and demands `--allow-external-jsonl` for the workspace's own
+    // export.
+    let scope = if crate::sync::path::is_internal_sync_path(&path, &obr_dir) {
         PathScope::Workspace
     } else {
         PathScope::External
@@ -295,7 +302,7 @@ fn resolve_target(
     }
 
     let path_label = match scope {
-        PathScope::Workspace => workspace_path_label(&path, &canonical_beads),
+        PathScope::Workspace => workspace_path_label(&path, &canonical_obr),
         PathScope::External => external_path_descriptor(&path),
     };
     let (source, source_capture_timed_out) = if parent.is_dir() {
@@ -334,8 +341,8 @@ fn contains_git_component(path: &Path) -> bool {
     })
 }
 
-fn workspace_path_label(path: &Path, beads_dir: &Path) -> String {
-    let workspace_root = beads_dir.parent().unwrap_or(beads_dir);
+fn workspace_path_label(path: &Path, obr_dir: &Path) -> String {
+    let workspace_root = obr_dir.parent().unwrap_or(obr_dir);
     let relative = path.strip_prefix(workspace_root).unwrap_or(path);
     relative
         .components()
@@ -1299,6 +1306,22 @@ fn run_git_probe_with_program_options(
     run_bounded_capture(&mut command, deadline)
 }
 
+/// A `git` command hardened the way every obr git invocation must be.
+///
+/// This is the only place obr builds a `git` command. Running plain `git`
+/// inside an untrusted clone is code execution: `core.fsmonitor` and a
+/// repository `hooksPath` both name programs the repo controls, and obr reads
+/// repositories it did not create. [`hardened_git_command`] disables those,
+/// isolates system and global config, scrubs every inherited `GIT_*` and
+/// askpass variable, and closes stdin so nothing can prompt.
+///
+/// Read-only reporting commands outside this module (`orphans`, `changelog`)
+/// take this entry point rather than restating the flags — the flags are the
+/// security boundary, and a second copy is a second thing to forget.
+pub(crate) fn hardened_git(dir: &Path) -> Command {
+    hardened_git_command(OsStr::new("git"), dir, true, true)
+}
+
 fn hardened_git_command(
     program: &OsStr,
     dir: &Path,
@@ -1889,6 +1912,19 @@ mod tests {
         );
     }
 
+    /// A path safe to interpolate between single quotes in a shell fixture.
+    #[cfg(unix)]
+    fn shell_fixture_path(path: &Path) -> &str {
+        let text = path
+            .to_str()
+            .expect("temporary test path must be UTF-8 for shell fixture");
+        assert!(
+            !text.contains('\''),
+            "temporary test path must not require shell quote escaping"
+        );
+        text
+    }
+
     #[cfg(unix)]
     fn executable_script(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
         use std::os::unix::fs::PermissionsExt;
@@ -1952,10 +1988,20 @@ mod tests {
     #[test]
     fn finite_oversized_output_is_rejected_by_hard_capture_cap() {
         let temp = TempDir::new().expect("temp dir");
+        // `cat` a prepared file rather than looping 4096 times in the shell.
+        // The loop was the whole flakiness: 4096 `printf` iterations racing a
+        // 2 s deadline is fine idle and is not fine under the full parallel
+        // unit run, where the probe hit the DEADLINE instead of the capture cap
+        // and the assertion below saw the wrong ProbeFailure. Measured: it
+        // blocked two commits in a row, then passed three full runs on
+        // identical code. One exec writing bytes that already exist cannot lose
+        // that race, and the test still asserts exactly what it did before.
+        let payload = temp.path().join("oversized.bin");
+        fs::write(&payload, vec![b'x'; 4096 * 32]).expect("write oversized payload");
         let script = executable_script(
             temp.path(),
             "git-oversized",
-            "#!/bin/sh\ni=0\nwhile [ \"$i\" -lt 4096 ]; do\n  printf '0123456789abcdef0123456789abcdef'\n  i=$((i + 1))\ndone\n",
+            &format!("#!/bin/sh\nexec cat {}\n", payload.display()),
         );
         let result = run_git_probe_with_program(
             script.as_os_str(),
@@ -1973,37 +2019,59 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn inherited_descendant_output_descriptors_do_not_delay_return() {
+        // The descendant holds the direct child's inherited stdout and stderr
+        // until this test releases it, rather than for a fixed sleep. That
+        // makes the guarantee an invariant instead of a stopwatch reading:
+        // while the release file is absent the descendant is provably still
+        // alive with those descriptors open, so a capture that waited on them
+        // could not return at all — it would sit until the deadline and come
+        // back `TimedOut`. A busy machine cannot manufacture that failure, and
+        // a regression cannot hide behind an idle one.
         let temp = TempDir::new().expect("temp dir");
+        let release = temp.path().join("release-descendant");
         let marker = temp.path().join("descendant-finished");
-        let marker_text = marker
-            .to_str()
-            .expect("temporary test path must be UTF-8 for shell fixture");
-        assert!(
-            !marker_text.contains('\''),
-            "temporary test path must not require shell quote escaping"
-        );
+        let release_text = shell_fixture_path(&release);
+        let marker_text = shell_fixture_path(&marker);
+        // The iteration cap is a leak guard, not a timing assumption: if this
+        // test dies before releasing the descendant, the descendant still
+        // exits on its own rather than outliving the run. It sits far above
+        // the probe deadline below, so it can only ever fire after this test
+        // has already reached a verdict.
         let script_body = format!(
-            "#!/bin/sh\n(sleep 0.8; printf 'done' > '{marker_text}') &\nprintf 'direct child done'\nexit 0\n"
+            "#!/bin/sh\n\
+             (i=0\n\
+             while [ ! -f '{release_text}' ] && [ \"$i\" -lt 300 ]; do\n\
+               sleep 0.1\n\
+               i=$((i + 1))\n\
+             done\n\
+             printf 'done' > '{marker_text}') &\n\
+             printf 'direct child done'\n\
+             exit 0\n"
         );
         let script = executable_script(temp.path(), "git-inherited-descriptors", &script_body);
 
-        let started = Instant::now();
+        // Seconds, not milliseconds: this deadline's only job is to catch a
+        // capture that blocks outright, so it is far above any latency a
+        // loaded machine can impose on a child that has already exited.
         let output = run_git_probe_with_program(
             script.as_os_str(),
             temp.path(),
             &[],
-            started + Duration::from_secs(2),
+            Instant::now() + Duration::from_secs(5),
         )
-        .expect("direct child should complete successfully");
-        let elapsed = started.elapsed();
+        .expect("capture must not wait for the descendant's inherited descriptors");
         assert!(output.status.success(), "{output:?}");
         assert_eq!(output.stdout, b"direct child done");
         assert!(
-            elapsed < Duration::from_millis(500),
-            "capture waited for the descendant's inherited descriptors: {elapsed:?}"
+            !marker.is_file(),
+            "the descendant must still be holding the inherited descriptors when the probe returns"
         );
 
-        let marker_deadline = Instant::now() + Duration::from_secs(2);
+        // Releasing it proves the descendant was a live process all along, so
+        // the assertion above was a real observation and not a fixture that
+        // had quietly died.
+        fs::write(&release, b"go").expect("release the descendant");
+        let marker_deadline = Instant::now() + Duration::from_secs(30);
         while !marker.is_file() && Instant::now() < marker_deadline {
             std::thread::sleep(Duration::from_millis(20));
         }
@@ -2019,10 +2087,10 @@ mod tests {
         use std::os::unix::ffi::OsStringExt;
 
         let temp = TempDir::new().expect("temp dir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("obr dir");
         let file_name = OsString::from_vec(b"issues-\xff.jsonl".to_vec());
-        let path = beads_dir.join(&file_name);
+        let path = obr_dir.join(&file_name);
         fs::write(&path, b"{\"id\":\"bd-x\"}\n").expect("jsonl");
 
         let init = Command::new("git")
@@ -2070,7 +2138,7 @@ mod tests {
 
         let target = ResolvedGitTarget {
             path: path.clone(),
-            parent: beads_dir.clone(),
+            parent: obr_dir.clone(),
             file_name,
             source: Some(
                 crate::sync::capture_optional_jsonl_source(&path)
@@ -2078,7 +2146,7 @@ mod tests {
                     .expect("JSONL source must be present"),
             ),
             scope: PathScope::Workspace,
-            path_label: workspace_path_label(&path, &beads_dir),
+            path_label: workspace_path_label(&path, &obr_dir),
             source_capture_timed_out: false,
         };
         let started = Instant::now();

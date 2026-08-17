@@ -1,11 +1,13 @@
 //! `mutate()` — the single chokepoint for every disk write performed by
-//! `br doctor --repair` (R-001).
+//! `obr doctor --repair` (R-001).
 //!
 //! ## Contract
 //!
 //! Every disk-write under `--repair` flows through [`mutate`]. No
-//! exceptions. The 8-step contract (paraphrased from
-//! `references/methodology/MUTATE-CHOKEPOINT.md`):
+//! exceptions. This list is the contract itself — it was previously
+//! attributed to a `references/methodology/` document that does not exist
+//! in this repository, leaving the rule that governs every repair write
+//! with an unreachable authority:
 //!
 //! 1. Acquire a per-path advisory lock.
 //! 2. Compute SHA-256 `before_hash` (empty hash if the file does not
@@ -38,8 +40,9 @@
 //!
 //! ## DB ops
 //!
-//! [`Op::DbExec`] runs a parameterized SQL statement against
-//! `<repo>/.beads/beads.db` inside a `BEGIN IMMEDIATE` transaction.
+//! [`Op::DbExec`] runs a parameterized SQL statement against the
+//! workspace's resolved database (`<repo>/.obr/obr.db` by default) inside a
+//! `BEGIN IMMEDIATE` transaction.
 //! Before the SQL fires, every row of every table named in
 //! `affected_tables` is snapshotted as JSON to
 //! `<run-dir>/backups/db/<table>__<sha8>__<ns>[__<collision>].json`
@@ -273,12 +276,22 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
-    /// Build a default capabilities set rooted at `repo_root`. Includes
-    /// `<repo_root>/.beads/` and `<repo_root>/.doctor/`.
+    /// Build a default capabilities set rooted at `repo_root`. Covers the full
+    /// workspace-name chain — `.obr` and `_obr` plus the pre-rename `.beads`
+    /// and `_beads` — so every workspace the discovery chain can open stays
+    /// repairable, and `<repo_root>/.doctor/` for the run directory. Omitting
+    /// `_obr` made `doctor --repair` refuse every underscore workspace.
     #[must_use]
     pub fn for_repo(repo_root: &Path) -> Self {
         Self {
-            write_scopes: vec![repo_root.join(".beads"), repo_root.join(".doctor")],
+            write_scopes: vec![
+                repo_root.join(crate::config::WORKSPACE_DIR_NAME),
+                repo_root.join(crate::config::WORKSPACE_DIR_NAME_UNDERSCORE),
+                repo_root.join(".doctor"),
+                // Legacy-read: pre-rename workspaces stay repairable.
+                repo_root.join(".beads"),
+                repo_root.join("_beads"),
+            ],
         }
     }
 }
@@ -379,12 +392,12 @@ struct DbActionRecord<'a> {
     affected_predicate: Option<String>,
     /// Workspace-relative paths of the JSON snapshot files written by
     /// this DbExec, one per `affected_tables` entry. Empty for
-    /// non-DbExec ops. Recorded so `br doctor undo` can replay the
+    /// non-DbExec ops. Recorded so `obr doctor undo` can replay the
     /// exact snapshots that were taken before the SQL fired.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     db_snapshots: Vec<String>,
     /// `sha256:<hex>` digests of each `db_snapshots` body, in the same
-    /// order. Recorded so `br doctor undo` can verify that the on-disk
+    /// order. Recorded so `obr doctor undo` can verify that the on-disk
     /// snapshot file has not been tampered with between the forward
     /// DbExec and the replay. Without this binding, an attacker
     /// (or a buggy out-of-band tool) editing
@@ -561,7 +574,7 @@ fn fsync_dir(dir: &Path) -> std::io::Result<()> {
     crate::util::sync_directory_best_effort(dir)
 }
 
-/// The single disk-mutation chokepoint for `br doctor --repair`.
+/// The single disk-mutation chokepoint for `obr doctor --repair`.
 ///
 /// See the module-level documentation for the 8-step contract.
 ///
@@ -792,7 +805,7 @@ fn mutate_db(
                 // The body-level sha256 is computed by `snapshot_db_table`
                 // BEFORE the snapshot file is written and returned here in
                 // `artifact.sha256_prefixed`. Recording it in
-                // actions.jsonl is what gives `br doctor undo` a way to
+                // actions.jsonl is what gives `obr doctor undo` a way to
                 // detect snapshot-file tampering between the forward
                 // DbExec and the replay — closing the round-2 follow-up
                 // gap on hash-binding the snapshot to the action.
@@ -904,7 +917,7 @@ fn sha256_file_hex_prefixed(path: &Path) -> std::io::Result<String> {
 /// snapshotting used a separate connection: an external writer could
 /// have committed a change between `read_conn.close()` and the
 /// `BEGIN IMMEDIATE` on the writer connection, and the snapshot would
-/// have missed that data. Restoring such a snapshot during `br doctor
+/// have missed that data. Restoring such a snapshot during `obr doctor
 /// undo` would silently destroy the concurrent writer's commit.
 ///
 /// Holding the reserved/exclusive lock for the entire snapshot-then-
@@ -1002,7 +1015,7 @@ fn run_db_exec(
 /// Returned by [`snapshot_db_table`] / [`run_db_exec`]. Pairs the
 /// snapshot file's on-disk path with the `sha256:<hex>` digest of the
 /// body that was just written. The digest is recorded in
-/// `actions.jsonl` and re-verified by `br doctor undo` to detect
+/// `actions.jsonl` and re-verified by `obr doctor undo` to detect
 /// tampering of the snapshot file between the forward DbExec and the
 /// replay — closing the round-2 follow-up gap where an attacker editing
 /// the snapshot body could inject rows on undo.
@@ -1045,7 +1058,7 @@ fn snapshot_db_table(
     hasher.update(predicate.as_bytes());
     let predicate_hash = &hex_encode(&hasher.finalize())[..8];
     let snapshot_envelope = serde_json::json!({
-        "schema_version": "br.doctor.db_snapshot.v1",
+        "schema_version": "obr.doctor.db_snapshot.v1",
         "table": table,
         "predicate": affected_predicate,
         "columns": column_names,
@@ -1256,7 +1269,7 @@ fn run_db_migrate(
             // The atomic wrapper already attempted ROLLBACK. Best-effort
             // restore from the pre-migrate snapshot so the live DB is
             // in a known state for callers that don't immediately invoke
-            // `br doctor undo`. The chokepoint's actions.jsonl line is
+            // `obr doctor undo`. The chokepoint's actions.jsonl line is
             // still written by the caller — recording the failed attempt
             // is itself part of the audit contract.
             if let Err(restore_err) = fs::copy(&snapshot_path, db_path) {
@@ -1411,7 +1424,7 @@ fn execute_atomic(
 /// 5. Read each target AGAIN and compute `after_hash`.
 /// 6. Append one `actions.jsonl` line per target with `op = "legacy_op"`,
 ///    `fixer_id` = the supplied identifier, and any closure error so
-///    `br doctor undo` can replay the verbatim backup via its existing
+///    `obr doctor undo` can replay the verbatim backup via its existing
 ///    `WriteFile`-from-backup recovery (the default branch of
 ///    [`super::surface::restore_one`] handles any non-rename, non-db
 ///    op by restoring the verbatim backup).
@@ -1528,7 +1541,7 @@ where
             error: legacy_error.clone(),
         };
         let mut line = serde_json::to_string(&record).map_err(BeadsError::Json)?;
-        // Tag whether the target file existed pre-mutation so `br
+        // Tag whether the target file existed pre-mutation so `obr
         // doctor undo` (when extended) can tell the difference between
         // "restore from verbatim backup" and "remove the post-creation
         // file" — the legacy ops currently only mutate existing files,
@@ -1589,9 +1602,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         // Set up a `.beads/` dir with an existing tracked file so we
         // exercise the backup path.
-        let beads_dir = tmp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let target = beads_dir.join("foo.txt");
+        let obr_dir = tmp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let target = obr_dir.join("foo.txt");
         fs::write(&target, b"original").unwrap();
 
         let (ctx, actions_path) = make_ctx(tmp.path(), false);
@@ -1636,9 +1649,9 @@ mod tests {
     #[test]
     fn dry_run_does_not_touch_disk() {
         let tmp = tempfile::tempdir().unwrap();
-        let beads_dir = tmp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let target = beads_dir.join("dry.txt");
+        let obr_dir = tmp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let target = obr_dir.join("dry.txt");
         fs::write(&target, b"keep me").unwrap();
 
         let (ctx, actions_path) = make_ctx(tmp.path(), true);
@@ -1668,9 +1681,9 @@ mod tests {
     #[test]
     fn legacy_op_dry_run_does_not_invoke_legacy_closure() {
         let tmp = tempfile::tempdir().unwrap();
-        let beads_dir = tmp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let target = beads_dir.join("legacy.txt");
+        let obr_dir = tmp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let target = obr_dir.join("legacy.txt");
         fs::write(&target, b"original").unwrap();
 
         let (ctx, actions_path) = make_ctx(tmp.path(), true);
@@ -1707,9 +1720,9 @@ mod tests {
     #[test]
     fn legacy_op_records_closure_error_in_actions_jsonl() {
         let tmp = tempfile::tempdir().unwrap();
-        let beads_dir = tmp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let target = beads_dir.join("legacy-error.txt");
+        let obr_dir = tmp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let target = obr_dir.join("legacy-error.txt");
         fs::write(&target, b"original").unwrap();
 
         let (ctx, actions_path) = make_ctx(tmp.path(), false);
@@ -1824,9 +1837,9 @@ mod tests {
     #[test]
     fn rename_moves_file_and_after_hash_is_empty_sentinel() {
         let tmp = tempfile::tempdir().unwrap();
-        let beads_dir = tmp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let src = beads_dir.join("orphan.lock");
+        let obr_dir = tmp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let src = obr_dir.join("orphan.lock");
         fs::write(&src, b"lock-bytes").unwrap();
 
         let (ctx, _) = make_ctx(tmp.path(), false);
@@ -1850,9 +1863,9 @@ mod tests {
     #[test]
     fn append_file_preserves_backed_up_bytes_and_mode() {
         let tmp = tempfile::tempdir().unwrap();
-        let beads_dir = tmp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let target = beads_dir.join("append.log");
+        let obr_dir = tmp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let target = obr_dir.join("append.log");
         fs::write(&target, b"before").unwrap();
         fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
 
@@ -1886,8 +1899,8 @@ mod tests {
     #[test]
     fn out_of_scope_path_is_refused() {
         let tmp = tempfile::tempdir().unwrap();
-        let beads_dir = tmp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = tmp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
 
         let (ctx, _) = make_ctx(tmp.path(), false);
 
@@ -1916,9 +1929,9 @@ mod tests {
     #[test]
     fn rename_destination_outside_write_scope_is_refused() {
         let tmp = tempfile::tempdir().unwrap();
-        let beads_dir = tmp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let source = beads_dir.join("keep-inside.txt");
+        let obr_dir = tmp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let source = obr_dir.join("keep-inside.txt");
         fs::write(&source, b"keep inside").unwrap();
 
         let (ctx, actions_path) = make_ctx(tmp.path(), false);
@@ -1953,9 +1966,9 @@ mod tests {
     #[test]
     fn append_file_anchors_to_supplied_bytes_not_live_file() {
         let tmp = tempfile::tempdir().unwrap();
-        let beads_dir = tmp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let target = beads_dir.join("append.log");
+        let obr_dir = tmp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let target = obr_dir.join("append.log");
         fs::write(&target, b"hijacked\n").unwrap();
 
         execute_atomic(
@@ -1982,9 +1995,9 @@ mod tests {
     /// Set up a fresh `.beads/beads.db` with a single sample table for
     /// the DB-op tests. Returns the absolute path to the DB.
     fn setup_test_db(tmp: &Path) -> PathBuf {
-        let beads_dir = tmp.join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let db = beads_dir.join("beads.db");
+        let obr_dir = tmp.join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let db = obr_dir.join("beads.db");
         let conn = Connection::open(db.to_string_lossy().into_owned()).unwrap();
         conn.execute(
             "CREATE TABLE IF NOT EXISTS sample_widgets (
@@ -2223,11 +2236,11 @@ mod tests {
     #[test]
     fn test_db_migrate_happy_path_writes_backup_and_runs_ddl() {
         let tmp = tempfile::tempdir().unwrap();
-        let beads_dir = tmp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let db = beads_dir.join("beads.db");
+        let obr_dir = tmp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let db = obr_dir.join("beads.db");
 
-        // Stand up a real beads DB via apply_schema, then stamp
+        // Stand up a real obr DB via apply_schema, then stamp
         // user_version back to a pre-current value so the chokepoint
         // migration has a real upgrade to run.
         {
@@ -2346,9 +2359,9 @@ mod tests {
                 updated in proptest::collection::vec(any::<u8>(), 0..2048),
             ) {
                 let tmp = tempfile::tempdir().unwrap();
-                let beads_dir = tmp.path().join(".beads");
-                fs::create_dir_all(&beads_dir).unwrap();
-                let target = beads_dir.join("rt.bin");
+                let obr_dir = tmp.path().join(".beads");
+                fs::create_dir_all(&obr_dir).unwrap();
+                let target = obr_dir.join("rt.bin");
                 fs::write(&target, &original).unwrap();
 
                 let (ctx, _ap) = make_ctx(tmp.path(), false);
@@ -2380,9 +2393,9 @@ mod tests {
                 suffix in proptest::collection::vec(any::<u8>(), 0..2048),
             ) {
                 let tmp = tempfile::tempdir().unwrap();
-                let beads_dir = tmp.path().join(".beads");
-                fs::create_dir_all(&beads_dir).unwrap();
-                let target = beads_dir.join("append-rt.bin");
+                let obr_dir = tmp.path().join(".beads");
+                fs::create_dir_all(&obr_dir).unwrap();
+                let target = obr_dir.join("append-rt.bin");
                 fs::write(&target, &original).unwrap();
 
                 let (ctx, _ap) = make_ctx(tmp.path(), false);
@@ -2419,9 +2432,9 @@ mod tests {
                 m2 in 0o400u32..=0o777,
             ) {
                 let tmp = tempfile::tempdir().unwrap();
-                let beads_dir = tmp.path().join(".beads");
-                fs::create_dir_all(&beads_dir).unwrap();
-                let target = beads_dir.join("chmod-rt.bin");
+                let obr_dir = tmp.path().join(".beads");
+                fs::create_dir_all(&obr_dir).unwrap();
+                let target = obr_dir.join("chmod-rt.bin");
                 fs::write(&target, &content).unwrap();
                 fs::set_permissions(&target, fs::Permissions::from_mode(m1)).unwrap();
 
@@ -2473,7 +2486,7 @@ mod tests {
         use proptest::prelude::*;
 
         /// Build a MutateContext for repo `tmp` with a distinct `run` id.
-        /// Each `br doctor --repair` invocation gets its own run-dir, so
+        /// Each `obr doctor --repair` invocation gets its own run-dir, so
         /// modelling "repair twice" requires two distinct run-dirs — a
         /// single shared ctx would collide on the backup path (and a
         /// chmod-to-readonly would even make the shared backup
@@ -2509,9 +2522,9 @@ mod tests {
                 target_content in proptest::collection::vec(any::<u8>(), 0..1024),
             ) {
                 let tmp = tempfile::tempdir().unwrap();
-                let beads_dir = tmp.path().join(".beads");
-                fs::create_dir_all(&beads_dir).unwrap();
-                let target = beads_dir.join("idem-write.bin");
+                let obr_dir = tmp.path().join(".beads");
+                fs::create_dir_all(&obr_dir).unwrap();
+                let target = obr_dir.join("idem-write.bin");
                 fs::write(&target, &original).unwrap();
 
                 let ctx1 = ctx_with_run(tmp.path(), "run-1");
@@ -2531,9 +2544,9 @@ mod tests {
                 m in 0o400u32..=0o777,
             ) {
                 let tmp = tempfile::tempdir().unwrap();
-                let beads_dir = tmp.path().join(".beads");
-                fs::create_dir_all(&beads_dir).unwrap();
-                let target = beads_dir.join("idem-chmod.bin");
+                let obr_dir = tmp.path().join(".beads");
+                fs::create_dir_all(&obr_dir).unwrap();
+                let target = obr_dir.join("idem-chmod.bin");
                 fs::write(&target, &content).unwrap();
                 fs::set_permissions(&target, fs::Permissions::from_mode(m)).unwrap();
 
@@ -2557,9 +2570,9 @@ mod tests {
                 suffix in proptest::collection::vec(any::<u8>(), 1..512),
             ) {
                 let tmp = tempfile::tempdir().unwrap();
-                let beads_dir = tmp.path().join(".beads");
-                fs::create_dir_all(&beads_dir).unwrap();
-                let target = beads_dir.join("idem-append.bin");
+                let obr_dir = tmp.path().join(".beads");
+                fs::create_dir_all(&obr_dir).unwrap();
+                let target = obr_dir.join("idem-append.bin");
                 fs::write(&target, &original).unwrap();
 
                 let ctx1 = ctx_with_run(tmp.path(), "run-1");

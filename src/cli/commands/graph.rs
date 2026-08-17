@@ -2,8 +2,8 @@
 //!
 //! Visualizes dependency graphs with focus on reverse dependencies (dependents).
 //!
-//! - `br graph <issue-id>`: Show all dependents of an issue (what depends on it)
-//! - `br graph --all`: Show connected components for all nonterminal issues
+//! - `obr graph <issue-id>`: Show all dependents of an issue (what depends on it)
+//! - `obr graph --all`: Show connected components for all nonterminal issues
 
 use super::{
     acquire_routed_workspace_write_lock, auto_import_storage_ctx_if_stale,
@@ -81,21 +81,21 @@ enum HumanGraphRenderMode {
 ///
 /// Returns an error if database operations fail or if inputs are invalid.
 pub fn execute(args: &GraphArgs, cli: &config::CliOverrides, ctx: &OutputContext) -> Result<()> {
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    let route_cli = routed_cli_for_graph(cli, args, &beads_dir)?;
-    let (storage_ctx, _routed_write_lock) = open_storage_for_graph(args, &route_cli, &beads_dir)?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    let route_cli = routed_cli_for_graph(cli, args, &obr_dir)?;
+    let (storage_ctx, _routed_write_lock) = open_storage_for_graph(args, &route_cli, &obr_dir)?;
     execute_graph_with_storage_ctx(args, &route_cli, ctx, &storage_ctx)
 }
 
 fn routed_cli_for_graph(
     cli: &config::CliOverrides,
     args: &GraphArgs,
-    local_beads_dir: &std::path::Path,
+    local_obr_dir: &std::path::Path,
 ) -> Result<config::CliOverrides> {
     let is_external = if let Some(issue_input) = args.issue.as_deref()
         && !args.all
     {
-        config::routing::resolve_route(issue_input, local_beads_dir)?.is_external
+        config::routing::resolve_route(issue_input, local_obr_dir)?.is_external
     } else {
         false
     };
@@ -105,26 +105,26 @@ fn routed_cli_for_graph(
 fn open_storage_for_graph(
     args: &GraphArgs,
     cli: &config::CliOverrides,
-    local_beads_dir: &std::path::Path,
+    local_obr_dir: &std::path::Path,
 ) -> Result<(config::OpenStorageResult, super::RoutedWorkspaceWriteLock)> {
     if let Some(issue_input) = args.issue.as_deref()
         && !args.all
     {
-        let route = config::routing::resolve_route(issue_input, local_beads_dir)?;
+        let route = config::routing::resolve_route(issue_input, local_obr_dir)?;
         let mut route_cli = cli_for_routed_workspace(cli, route.is_external);
         let routed_write_lock = acquire_routed_workspace_write_lock(
-            &route.beads_dir,
+            &route.obr_dir,
             route.is_external,
             route_cli.lock_timeout,
         )?;
         routed_write_lock.mark_cli_write_lock_held(&mut route_cli);
-        let mut storage_ctx = config::open_storage_with_cli(&route.beads_dir, &route_cli)?;
+        let mut storage_ctx = config::open_storage_with_cli(&route.obr_dir, &route_cli)?;
         auto_import_storage_ctx_if_stale(&mut storage_ctx, &route_cli)?;
         return Ok((storage_ctx, routed_write_lock));
     }
 
     let routed_write_lock = super::RoutedWorkspaceWriteLock::local();
-    let mut storage_ctx = config::open_storage_with_cli(local_beads_dir, cli)?;
+    let mut storage_ctx = config::open_storage_with_cli(local_obr_dir, cli)?;
     auto_import_storage_ctx_if_stale(&mut storage_ctx, cli)?;
     Ok((storage_ctx, routed_write_lock))
 }
@@ -138,23 +138,19 @@ pub fn execute_with_storage_ctx(
     args: &GraphArgs,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    local_beads_dir: &std::path::Path,
+    local_obr_dir: &std::path::Path,
     storage_ctx: &config::OpenStorageResult,
 ) -> Result<()> {
     if let Some(issue_input) = args.issue.as_deref()
         && !args.all
     {
-        let route = config::routing::resolve_route(issue_input, local_beads_dir)?;
+        let route = config::routing::resolve_route(issue_input, local_obr_dir)?;
         if route.is_external {
             let mut route_cli = cli_for_routed_workspace(cli, true);
-            let routed_write_lock = acquire_routed_workspace_write_lock(
-                &route.beads_dir,
-                true,
-                route_cli.lock_timeout,
-            )?;
+            let routed_write_lock =
+                acquire_routed_workspace_write_lock(&route.obr_dir, true, route_cli.lock_timeout)?;
             routed_write_lock.mark_cli_write_lock_held(&mut route_cli);
-            let mut routed_storage_ctx =
-                config::open_storage_with_cli(&route.beads_dir, &route_cli)?;
+            let mut routed_storage_ctx = config::open_storage_with_cli(&route.obr_dir, &route_cli)?;
             auto_import_storage_ctx_if_stale(&mut routed_storage_ctx, &route_cli)?;
             return execute_graph_with_storage_ctx(args, &route_cli, ctx, &routed_storage_ctx);
         }
@@ -692,12 +688,12 @@ fn collect_single_graph(
     })
 }
 
-/// Which way `br graph <id>` walks the dependency edges (`beads_rust-mf72`).
+/// Which way `obr graph <id>` walks the dependency edges (`beads_rust-mf72`).
 ///
 /// The default is [`Self::Dependents`] — "what does closing this unblock?" —
 /// which is the triage question and a deliberate divergence from classic `bd`.
 /// `--dependencies` selects the other direction, "what is blocking this?", so
-/// one command covers both walks instead of sending the user to `br dep tree`.
+/// one command covers both walks instead of sending the user to `obr dep tree`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GraphDirection {
     /// Issues blocked by the root.
@@ -1213,7 +1209,7 @@ fn push_dot_node(out: &mut String, indent: &str, node: &GraphNode, is_root: bool
 /// Append one DOT edge statement for a dependency relationship.
 ///
 /// Edges are stored as `(dependent, dependency)`; the arrow points from the
-/// dependent to what it depends on (matching the `br dep --format mermaid`
+/// dependent to what it depends on (matching the `obr dep --format mermaid`
 /// convention), so `A -> B` reads "A depends on B".
 fn push_dot_edge(out: &mut String, dependent: &str, dependency: &str) {
     out.push_str(&format!(
@@ -2548,7 +2544,7 @@ mod tests {
     }
 
     /// `beads_rust-mf72`: `--dependencies` walks the inverse of the default
-    /// direction, so `br graph <blocked-issue> --dependencies` finally shows
+    /// direction, so `obr graph <blocked-issue> --dependencies` finally shows
     /// what is blocking it. Edges keep their canonical `(dependent,
     /// dependency)` orientation in both directions.
     #[test]

@@ -1,0 +1,68 @@
+#+TITLE: Beads Issues
+#+SEQ_TODO: TODO DOING DRAFT WAIT DEFER NOTE | DONE CANCELED
+
+* TODO [#D] Second issue
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       test-38a
+:LABELS: []
+:ISSUE_TYPE: bug
+:CREATED_AT: 2026-08-06T22:59:22.867016+00:00
+:UPDATED_AT: 2026-08-06T22:59:37.744298+00:00
+:CREATED_BY: johnw
+:SOURCE_REPO: ws1
+:SOURCE_REPO_PATH: /private/tmp/claude-501/-Users-johnw-src-obr/880cafc9-25ec-4128-bebf-087c9b355d72/scratchpad/orgrt/ws1
+:ORIGINAL_SIZE: 0
+:END:
+
+** Dependencies
+#+begin_src json
+[
+  {
+    "issue_id": "test-38a",
+    "depends_on_id": "test-815",
+    "type": "blocks",
+    "created_at": "2026-08-06T22:59:37.744181Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#C] Unicode ★ Ünïcode test    :alpha:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       test-815
+:LABELS: ["alpha","provides:parser"]
+:ISSUE_TYPE: task
+:CREATED_AT: 2026-08-06T22:59:22.754445+00:00
+:UPDATED_AT: 2026-08-06T23:33:54.858923+00:00
+:CREATED_BY: johnw
+:SOURCE_REPO: ws1
+:SOURCE_REPO_PATH: /private/tmp/claude-501/-Users-johnw-src-obr/880cafc9-25ec-4128-bebf-087c9b355d72/scratchpad/orgrt/ws1
+:ORIGINAL_SIZE: 0
+:END:
+
+Body text.
+
+- item one
+- item two
+
+#+begin_src rust
+fn main() {}
+#+end_src
+
+** Comments
+#+begin_src json
+[
+  {
+    "id": 1,
+    "issue_id": "test-815",
+    "author": "johnw",
+    "text": "A comment with *markup* and\na second line",
+    "created_at": "2026-08-06T23:00:00Z"
+  }
+]
+#+end_src
+

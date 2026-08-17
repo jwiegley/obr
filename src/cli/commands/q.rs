@@ -50,8 +50,8 @@ pub fn execute(args: QuickArgs, cli: &config::CliOverrides, ctx: &OutputContext)
         return Err(BeadsError::validation("title", "cannot be empty"));
     }
 
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    let mut storage_ctx = config::open_storage_with_cli(&beads_dir, cli)?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    let mut storage_ctx = config::open_storage_with_cli(&obr_dir, cli)?;
     let layer = storage_ctx.load_config(cli)?;
     let id_config = config::id_config_from_layer(&layer);
     let default_priority = config::default_priority_from_layer(&layer)?;
@@ -208,7 +208,7 @@ pub fn execute(args: QuickArgs, cli: &config::CliOverrides, ctx: &OutputContext)
 
     storage.create_issue(&issue, &actor)?;
     let created_id = issue.id.clone();
-    let last_touched_dir = storage_ctx.paths.beads_dir.clone();
+    let last_touched_dir = storage_ctx.paths.obr_dir.clone();
     let update_last_touched_after_flush = storage_ctx.no_db;
     if !update_last_touched_after_flush {
         crate::util::set_last_touched_id(&last_touched_dir, &created_id);

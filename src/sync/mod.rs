@@ -1,14 +1,20 @@
-//! JSONL import/export for `beads_rust`.
+//! Flat-file import/export for `obr`.
+//!
+//! Two wire formats share this pipeline, selected by the export path's
+//! extension through [`org_bridge::ExportFormat`]: Org-mode (the default, and
+//! what the git-tracked `PLAN.org` surface is written in) and JSONL (upstream's
+//! format, still used by workspaces pinned to it).
 //!
 //! This module handles:
-//! - Export: `SQLite` -> JSONL (for git tracking)
-//! - Import: JSONL -> `SQLite` (for git clone/pull)
+//! - Export: `SQLite` -> the resolved export file (for git tracking)
+//! - Import: the export file -> `SQLite` (for git clone/pull)
 //! - Dirty tracking for incremental exports
 //! - Collision detection during imports
 //! - Path validation and allowlist enforcement
 
 mod db_inode_lock;
 pub mod history;
+pub mod org_bridge;
 pub mod path;
 pub mod witness;
 
@@ -31,7 +37,7 @@ use crate::sync::history::HistoryConfig;
 use crate::util::id::{IdConfig, IdGenerator, parse_id};
 use crate::util::progress::{create_progress_bar, create_spinner};
 use crate::validation::{CommentValidator, IssueValidator};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Timelike, Utc};
 use fsqlite_types::SqliteValue;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -197,33 +203,47 @@ fn verify_expected_jsonl_source_state_observed(
     Ok(())
 }
 
-/// Acquire a blocking exclusive lock on `.beads/.write.lock`.
+/// Acquire a blocking exclusive lock on the workspace's `.write.lock`.
 ///
+/// The role name `.write.lock` failures are reported under.
+///
+/// This is a shared constant rather than a literal because the text reaches
+/// `main.rs` as *data*: the read-only doctor write-lock diagnostic recognises an
+/// unwritable lock by substring-matching the error message across the module
+/// boundary. When this role was renamed from "write lock" to "workspace write
+/// lock" (251b501b), the emitter changed and the matcher did not, so
+/// `obr doctor` stopped diagnosing an unwritable `.write.lock` and simply died
+/// on it — for six weeks, with a green unit test that hand-built the old string.
+///
+/// Both sides now build their text from here, so the next rename is a compile
+/// error instead of a silently disabled detector.
+pub const WORKSPACE_WRITE_LOCK_ROLE: &str = "workspace write lock";
+
 /// This serializes all mutating operations across processes, preventing
 /// concurrent-write deadlocks in the underlying SQLite engine. Uses a fast-path
 /// `try_lock()` for the uncontended case, then polls with a bounded timeout for
 /// contended locks. The lock is held until the returned `File` drops.
 #[allow(clippy::incompatible_msrv)]
-pub fn blocking_write_lock(beads_dir: &Path) -> Result<File> {
-    blocking_write_lock_with_timeout(beads_dir, None)
+pub fn blocking_write_lock(obr_dir: &Path) -> Result<File> {
+    blocking_write_lock_with_timeout(obr_dir, None)
 }
 
-/// Acquire a bounded exclusive lock on `.beads/.write.lock`.
+/// Acquire a bounded exclusive lock on the workspace's `.write.lock`.
 ///
 /// `lock_timeout_ms` uses the same millisecond setting as `--lock-timeout`.
 /// When unset, a 30s default prevents a stuck writer from parking every
 /// subsequent mutating command indefinitely.
 #[allow(clippy::incompatible_msrv)]
 pub fn blocking_write_lock_with_timeout(
-    beads_dir: &Path,
+    obr_dir: &Path,
     lock_timeout_ms: Option<u64>,
 ) -> Result<File> {
-    let lock_path = beads_dir.join(".write.lock");
+    let lock_path = obr_dir.join(".write.lock");
     open_and_lock_regular_file(
         &lock_path,
         lock_timeout_ms,
         true,
-        "workspace write lock",
+        WORKSPACE_WRITE_LOCK_ROLE,
         false,
         ExclusiveLockMechanism::LockSidecar,
     )
@@ -548,7 +568,7 @@ impl DatabaseFamilyWriteLock {
         verify_locked_file_identity(
             &self.workspace_lock,
             &self.workspace_lock_path,
-            "workspace write lock",
+            WORKSPACE_WRITE_LOCK_ROLE,
             false,
         )?;
         verify_locked_file_identity(
@@ -642,6 +662,26 @@ impl DatabaseFamilyWriteLock {
                 database_path_descriptor(&self.canonical_database_path)
             ))),
         }
+    }
+
+    /// Report whether the entire database family is absent: the main file and
+    /// every sidecar that could still hold committed pages.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a sidecar exists but cannot be inspected.
+    pub fn database_family_is_absent(&self) -> Result<bool> {
+        database_family_is_absent_at(&self.canonical_database_path)
+    }
+
+    /// Report whether any classic sidecar of the authorized database family
+    /// could still hold committed pages.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a sidecar exists but cannot be inspected.
+    pub fn database_sidecars_may_hold_committed_bytes(&self) -> Result<bool> {
+        database_sidecars_may_hold_committed_bytes_at(&self.canonical_database_path)
     }
 
     /// Rebind the inode component after a caller-authorized atomic database
@@ -1182,6 +1222,171 @@ impl DatabaseFamilyWriteLock {
     }
 }
 
+/// Report whether an entire database family is absent: the main file and every
+/// sidecar that could still hold committed pages.
+///
+/// [`DatabaseFamilyWriteLock::bind_database_inode_for_mutation`] stats only the
+/// main database file, so on its own it cannot separate two states that both
+/// look like "there is no database":
+///
+/// * a genuinely empty workspace, which is safe to rebuild; and
+/// * a workspace whose main file was removed while a write-ahead log still
+///   holds committed frames.
+///
+/// The second state is not hypothetical. `SqliteStorage`'s `Drop` impl runs
+/// `PRAGMA wal_checkpoint(TRUNCATE)` only when the process both mutated and
+/// exited normally, so a process killed between `COMMIT` and that checkpoint
+/// leaves the committed bytes -- including a `sync --merge` receipt -- in the
+/// WAL alone. Classifying that as "no database" would let a repair truncate the
+/// WAL and silently discard the merge.
+///
+/// A WAL of at most `WAL_HEADER_LEN` bytes carries no frames and a zero-length
+/// rollback journal carries no undo image; both are ordinary post-checkpoint
+/// resting states. The `-shm` file is a reconstructible index over the WAL,
+/// never a source of committed truth, so it is never on its own a reason to
+/// refuse. Anything else -- a longer WAL, a hot journal, or a sidecar that is
+/// not a regular file -- fails closed. Only the classic sidecars are consulted:
+/// fsqlite's `-fsqlite-ns-*` namespace-admission files are non-empty in a
+/// perfectly healthy workspace and outlive the database they admit.
+///
+/// # Errors
+///
+/// Returns an error if a sidecar exists but cannot be inspected.
+pub fn database_family_is_absent_at(database_path: &Path) -> Result<bool> {
+    if fs::symlink_metadata(database_path).is_ok() {
+        return Ok(false);
+    }
+    let sidecars_may_hold_committed_bytes =
+        database_sidecars_may_hold_committed_bytes_at(database_path)?;
+    Ok(!sidecars_may_hold_committed_bytes)
+}
+
+/// Report whether `path` provably holds no SQLite database at all.
+///
+/// This is the positive test: every `true` is a proof, and every uncertain
+/// outcome -- a permission or I/O error, a non-regular file -- is `false`, so
+/// uncertainty keeps failing closed.
+///
+/// Deliberately a fifth reader of the header magic rather than a call to
+/// `storage::sqlite::database_header_user_version`,
+/// `doctor_subsystems::refuse_gates::header_user_version`,
+/// `doctor::db_file_has_sqlite_header`, or the inline check in
+/// `health::classify_file_state`. Every one of those conflates "not a
+/// database" with "could not read it" in its `None`/`false` arm, so reusing
+/// one -- including by negating `db_file_has_sqlite_header`, otherwise this
+/// function's mirror image -- would call an unreadable file provably-not-a-
+/// database and let the sync-merge gate wave through a workspace it could not
+/// inspect. Consolidating all five behind one richer answer is the right fix
+/// and is upstream's to make.
+///
+/// Length is checked before magic, and that ordering is the point. A SQLite
+/// database begins with a 100-byte header, so a shorter file provably is not
+/// one -- including the zero-length file a crash or an ENOSPC truncation
+/// leaves behind, which is the most common real corruption there is. Reading
+/// magic bytes alone cannot classify it: the read simply fails, which is
+/// indistinguishable from a permission error, and the workspace would stay
+/// bricked for exactly the failure this is meant to rescue.
+#[must_use]
+pub fn database_file_is_provably_not_a_database(path: &Path) -> bool {
+    const SQLITE_MAGIC: [u8; 16] = *b"SQLite format 3\0";
+    const SQLITE_HEADER_LEN: u64 = 100;
+
+    if path == Path::new(":memory:") {
+        return false;
+    }
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    if metadata.len() < SQLITE_HEADER_LEN {
+        return true;
+    }
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut magic = [0_u8; 16];
+    if std::io::Read::read_exact(&mut file, &mut magic).is_err() {
+        return false;
+    }
+    magic != SQLITE_MAGIC
+}
+
+/// Report whether any classic sidecar beside `database_path` could still hold
+/// committed pages, independent of whether the main database file exists.
+///
+/// This is the sidecar half of [`database_family_is_absent_at`] and applies
+/// exactly the same policy: a WAL of at most `WAL_HEADER_LEN` bytes carries no
+/// frames, a zero-length rollback journal carries no undo image, `-shm` is a
+/// reconstructible index and never a source of truth, and anything that is not
+/// a regular file fails closed.
+///
+/// # Errors
+///
+/// Returns an error if a sidecar exists but cannot be inspected.
+pub fn database_sidecars_may_hold_committed_bytes_at(database_path: &Path) -> Result<bool> {
+    // A SQLite WAL header is 32 bytes; a WAL of exactly this length holds zero
+    // frames.
+    const WAL_HEADER_LEN: u64 = 32;
+
+    // Every engine sidecar, not just the classic three, so the name of this
+    // function and the "no sidecar can carry committed pages" claim at its call
+    // site are true of what it actually inspects. The fsqlite-specific arms are
+    // `false` for reasons that live in the engine rather than here, so they are
+    // written down: `-fsqlite-ns-use` is a fixed 40-byte admission record
+    // (`fsqlite-vfs`'s `RECORD_BYTES`, whose writer truncates to zero and
+    // rewrites exactly 40 bytes and whose reader rejects any other length), and
+    // `-fsqlite-ns-gate` is an advisory-lock inode that is never written at
+    // all. Neither can hold a page, let alone the `metadata` row a sync-merge
+    // receipt lives in.
+    for suffix in crate::config::db_sidecar_suffixes() {
+        let sidecar = PathBuf::from(format!("{}{suffix}", database_path.to_string_lossy()));
+        let metadata = match fs::symlink_metadata(&sidecar) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(BeadsError::Config(format!(
+                    "Could not inspect database sidecar {}: {error}",
+                    sidecar.display()
+                )));
+            }
+        };
+        if !metadata.is_file() {
+            return Ok(true);
+        }
+        let carries_committed_bytes = match *suffix {
+            "-wal" => metadata.len() > WAL_HEADER_LEN,
+            "-journal" => metadata.len() > 0,
+            // `-shm` is a reconstructible index and never a source of truth;
+            // the two fsqlite namespace files are fixed-size admission state;
+            // and `-wal-fec` carries only RaptorQ repair symbols, because
+            // fsqlite keeps every source symbol in the `.wal` frames and never
+            // duplicates one into the sidecar. With a WAL at or under its
+            // 32-byte header there are no source symbols for those repair
+            // symbols to reconstruct anything from.
+            // The parallel-WAL durability certificates (fsqlite 0.2+, carried
+            // into this fork with upstream 7bf01cf6) are records of which WAL
+            // frames are durable — magic, version, declared length, frame
+            // range, checksums (`fsqlite-core`'s `wal_adapter`
+            // `DURABLE_CERTIFICATE_RECORD`). They contain no page image, so
+            // they cannot hold the `metadata` row a sync-merge receipt lives
+            // in, and with the `-wal` gone there are no frames for them to
+            // certify.
+            "-shm" | "-fsqlite-ns-gate" | "-fsqlite-ns-use" | "-wal-fec" | "-wal-cert"
+            | "-wal-cert-head" => false,
+            // A suffix `db_sidecar_suffixes()` grew that nobody classified.
+            // Fail closed: an unclassified sidecar of unknown content is
+            // exactly the uncertainty this gate exists to refuse.
+            _ => true,
+        };
+        if carries_committed_bytes {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn additive_path_descriptor(path: &Path, role: &str) -> String {
     let digest = hex_encode(&Sha256::digest(path.to_string_lossy().as_bytes()));
     format!("<{role} sha256={digest}>")
@@ -1332,7 +1537,17 @@ fn jsonl_write_authority_path(jsonl_path: &Path) -> Result<PathBuf> {
     hasher.update(b"beads-rust-jsonl-write-authority-v1\0");
     update_sync_path_digest(&mut hasher, &canonical_key);
     let digest = hex_encode(&hasher.finalize());
-    Ok(parent.join(format!(".br-jsonl-write-{}.lock", &digest[..24])))
+    // The lock's IDENTITY stays the digest of the canonical export path, but it
+    // is stored in the workspace cache dir rather than beside the export. Under
+    // D-SURFACE the export lives in the tracked project tree, and authority
+    // sidecars must not accumulate there. Legacy in-dir layouts are unaffected:
+    // their export already sits in `.obr/`, which is where this resolves to.
+    let lock_dir = [parent, parent.parent().unwrap_or(parent)]
+        .into_iter()
+        .map(crate::config::workspace_dir_in)
+        .find(|dir| dir.is_dir())
+        .unwrap_or_else(|| parent.to_path_buf());
+    Ok(lock_dir.join(format!(".br-jsonl-write-{}.lock", &digest[..24])))
 }
 
 fn database_opener_lease_path(database_path: &Path) -> Result<PathBuf> {
@@ -1579,7 +1794,7 @@ pub fn database_write_authority_sha256(database_path: &Path) -> Result<String> {
 /// and reviewed reconciliation mutation paths.
 #[allow(clippy::too_many_lines)]
 pub fn blocking_database_family_write_lock_with_timeout(
-    beads_dir: &Path,
+    obr_dir: &Path,
     database_path: &Path,
     lock_timeout_ms: Option<u64>,
 ) -> Result<DatabaseFamilyWriteLock> {
@@ -1591,8 +1806,8 @@ pub fn blocking_database_family_write_lock_with_timeout(
         total_timeout_ms.saturating_sub(elapsed_ms)
     };
     let routed_database_path = reject_unsafe_database_routing_leaf(database_path)?;
-    let workspace_lock_path = beads_dir.join(".write.lock");
-    let workspace_lock = blocking_write_lock_with_timeout(beads_dir, Some(remaining_timeout_ms()))?;
+    let workspace_lock_path = obr_dir.join(".write.lock");
+    let workspace_lock = blocking_write_lock_with_timeout(obr_dir, Some(remaining_timeout_ms()))?;
     let canonical_database_path = canonical_database_authority_key(database_path)?;
     let authority_path = database_write_authority_path(database_path)?;
     let authority_path_sha256 = database_write_authority_sha256(database_path)?;
@@ -1785,8 +2000,8 @@ fn open_and_lock_regular_file(
     loop {
         if start.elapsed() >= timeout {
             return Err(write_lock_timeout_error(
-                &lock_path_display,
                 role,
+                &lock_path_display,
                 timeout_ms,
             ));
         }
@@ -1938,12 +2153,62 @@ fn verify_database_authority_path_still_missing(path: &Path) -> Result<()> {
     }
 }
 
-fn write_lock_timeout_error(lock_path_display: &str, role: &str, timeout_ms: u64) -> BeadsError {
+/// Public so that the consumers which recognise this message by substring —
+/// `is_write_lock_contention_error` in `main.rs` and the tests around it — can
+/// build their fixtures from the real producer instead of hand-spelling it. A
+/// hand-spelled copy is what let the sibling "Failed to open write lock" matcher
+/// die silently for six weeks (b35507be).
+#[must_use]
+pub fn write_lock_timeout_error(
+    role: &str,
+    lock_path_display: &str,
+    timeout_ms: u64,
+) -> BeadsError {
+    // The first sentence is a contract: `reported_write_lock_timeout_ms` parses
+    // it, so the figure, the phrase "ms waiting for write lock at ", the path,
+    // and the '.' that terminates it must stay exactly where they are.
+    //
+    // The role goes in its own sentence because it was missing entirely, and
+    // its absence was a real defect rather than a cosmetic one: the redacted
+    // descriptor is produced by `database_path_descriptor`, which says
+    // "database-authority" for EVERY lock, so a JSONL-family timeout reported
+    // itself as a database one. Anyone reading it — or a test asserting which
+    // lock it hit — was told the wrong thing.
     BeadsError::Config(format!(
-        "Timed out after {timeout_ms}ms waiting for write lock ({role}) at {}. \
-         Another br process may be holding that authority; retry after it exits or investigate a stuck process.",
+        "Timed out after {timeout_ms}ms waiting for write lock at {}. \
+         Lock role: {role}. \
+         Another obr process may be holding it; retry after it exits or investigate a stuck process.",
         lock_path_display
     ))
+}
+
+/// The millisecond figure a write-lock timeout reports for `lock_path`, or
+/// `None` when `message` is not that timeout for that lock.
+///
+/// Tests must not pin the figure to a literal. A composite authority such as
+/// [`blocking_database_family_write_lock_with_timeout`] spends ONE budget
+/// across its components, so each component is handed `budget - elapsed`: the
+/// figure a later component reports is anything in `0..=budget`, decided by how
+/// fast the machine was, and a literal turns a busy machine into a test
+/// failure. What a caller is actually owed is that the wait timed out on the
+/// lock it named, within the budget it asked for — which is what this parser
+/// lets a test assert. It lives beside [`write_lock_timeout_error`] so a reword
+/// of that message breaks one place rather than silently weakening the tests
+/// that read it.
+#[cfg(test)]
+pub(crate) fn reported_write_lock_timeout_ms(message: &str, lock_path: &Path) -> Option<u64> {
+    let (_, after_prefix) = message.split_once("Timed out after ")?;
+    let (figure, after_figure) = after_prefix.split_once("ms waiting for write lock at ")?;
+    // The trailing '.' ends the sentence naming the lock, so a path that is
+    // merely a PREFIX of the one reported (`.write.lock` vs `.write.lock.bak`)
+    // is not accepted as a match.
+    if !after_figure
+        .strip_prefix(lock_path.display().to_string().as_str())
+        .is_some_and(|tail| tail.starts_with('.'))
+    {
+        return None;
+    }
+    figure.parse().ok()
 }
 
 #[must_use]
@@ -1951,15 +2216,26 @@ pub const fn default_write_lock_timeout_ms() -> u64 {
     DEFAULT_WRITE_LOCK_TIMEOUT_MS
 }
 
-/// Try to acquire an exclusive advisory lock on `.beads/.sync.lock`.
+/// Filename of the workspace's advisory sync lock, inside the workspace
+/// directory. Callers that need to NAME the lock in a message must go through
+/// [`sync_lock_path`] so the message quotes the path that is actually locked.
+pub const SYNC_LOCK_FILENAME: &str = ".sync.lock";
+
+/// Path of the advisory sync lock inside `obr_dir`.
+#[must_use]
+pub fn sync_lock_path(obr_dir: &Path) -> PathBuf {
+    obr_dir.join(SYNC_LOCK_FILENAME)
+}
+
+/// Try to acquire an exclusive advisory lock on the workspace's sync lock file.
 ///
 /// Returns the lock file on success. The lock is held until the returned
 /// `File` is dropped. If another process already holds the lock, returns
 /// `Ok(None)` (non-blocking). Lock-file open or OS lock errors are returned
 /// separately so callers do not confuse a broken lock path with contention.
 #[allow(clippy::incompatible_msrv)]
-pub fn try_sync_lock(beads_dir: &Path) -> Result<Option<File>> {
-    let lock_path = beads_dir.join(".sync.lock");
+pub fn try_sync_lock(obr_dir: &Path) -> Result<Option<File>> {
+    let lock_path = sync_lock_path(obr_dir);
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -2000,6 +2276,36 @@ impl TempFileGuard {
             path,
             persist: true,
         }
+    }
+
+    /// Retain a staged file on failure only where the litter is harmless and
+    /// something eventually cleans it up: inside the workspace directory,
+    /// which ignores itself wholesale in git and which `doctor`'s orphan-tmp
+    /// check walks.
+    ///
+    /// Staging happens beside the target so the publishing `rename` stays
+    /// within one directory (and therefore one filesystem — `.obr/` may be
+    /// redirected elsewhere by `OBR_CACHE_DIR`, so moving the staging area
+    /// there could make the rename cross devices and fail). Under D-SURFACE
+    /// the target is the tracked `PLAN.org`, so "beside the target" is the
+    /// directory the user is asked to commit: a retained
+    /// `doc/PLAN.org.<pid>.tmp` is untracked noise in `git status` that
+    /// nothing removes — `check_orphan_tmp_files` only walks `.obr/`, and the
+    /// doctor's repair write-scopes exclude the surface directory outright.
+    /// So outside the workspace directory the staged file is discarded, with
+    /// its path logged for forensics.
+    fn new_retained_inside_workspace_dir_only(path: PathBuf) -> Self {
+        let persist = path
+            .parent()
+            .and_then(std::path::Path::file_name)
+            .is_some_and(crate::config::is_obr_dir_name);
+        if !persist {
+            tracing::debug!(
+                path = %path.display(),
+                "Staged export will be discarded on failure: it is outside the workspace directory"
+            );
+        }
+        Self { path, persist }
     }
 
     fn persist(&mut self) {
@@ -2638,26 +2944,55 @@ pub(crate) fn export_temp_path(output_path: &Path) -> PathBuf {
 }
 
 fn export_temp_path_for_attempt(output_path: &Path, attempt: u32) -> PathBuf {
+    // `with_extension` replaces the final extension, so the format's own wire
+    // extension must be re-stated or an issues.org target would silently
+    // stage Org bytes in an issues.jsonl.<pid>.tmp file.
+    let wire_ext = org_bridge::ExportFormat::for_path(output_path).wire_extension();
     let pid = std::process::id();
     if attempt == 0 {
-        return output_path.with_extension(format!("jsonl.{pid}.tmp"));
+        return output_path.with_extension(format!("{wire_ext}.{pid}.tmp"));
     }
 
     let retry_suffix = u64::from(pid)
         .saturating_mul(100)
         .saturating_add(u64::from(attempt));
-    output_path.with_extension(format!("jsonl.{retry_suffix}.tmp"))
+    output_path.with_extension(format!("{wire_ext}.{retry_suffix}.tmp"))
+}
+
+/// True when `file_name` has exactly the shape
+/// [`export_temp_path_for_attempt`] produces for `output_path`:
+/// `<stem>.<wire-ext>.<digits>.tmp`.
+///
+/// Deliberately as narrow as the producer. Under D-SURFACE the export stages
+/// its temp beside the TARGET, so `doctor`'s orphan sweep has to look in the
+/// user's own tree (`<repo>/PLAN.org.<pid>.tmp`) — and there a generic
+/// `*.tmp` glob would be pointing a "these look abandoned" report at files
+/// `obr` never wrote. Lives next to the producer so the two cannot drift;
+/// `test_export_temp_names_are_recognized_as_temp_siblings` pins them
+/// together.
+pub(crate) fn is_export_temp_name_for(file_name: &str, output_path: &Path) -> bool {
+    let wire_ext = org_bridge::ExportFormat::for_path(output_path).wire_extension();
+    let Some(stem) = output_path.file_stem().and_then(|stem| stem.to_str()) else {
+        return false;
+    };
+    let Some(rest) = file_name.strip_prefix(&format!("{stem}.{wire_ext}.")) else {
+        return false;
+    };
+    let Some(digits) = rest.strip_suffix(".tmp") else {
+        return false;
+    };
+    !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
 }
 
 fn create_jsonl_temp_file(output_path: &Path, config: &ExportConfig) -> Result<(PathBuf, File)> {
     for attempt in 0..MAX_JSONL_TEMP_PATH_ATTEMPTS {
         let temp_path = export_temp_path_for_attempt(output_path, attempt);
 
-        if let Some(ref beads_dir) = config.beads_dir {
+        if let Some(ref obr_dir) = config.obr_dir {
             validate_temp_file_path(
                 &temp_path,
                 output_path,
-                beads_dir,
+                obr_dir,
                 config.allow_external_jsonl,
             )?;
             tracing::debug!(
@@ -2740,11 +3075,11 @@ fn create_full_export_temp_file_under_authority(
         output_path,
         jsonl_authority,
         |temp_path| {
-            if let Some(ref beads_dir) = config.beads_dir {
+            if let Some(ref obr_dir) = config.obr_dir {
                 validate_temp_file_path(
                     temp_path,
                     output_path,
-                    beads_dir,
+                    obr_dir,
                     config.allow_external_jsonl,
                 )?;
                 tracing::debug!(
@@ -2799,6 +3134,17 @@ pub struct ExpectedStagedExport {
     pub issue_hashes: AdditiveTableWitness,
 }
 
+/// The prefix to record in the Org header: the caller's explicit hint when set,
+/// otherwise the prefix of the first exported issue id.
+fn org_header_prefix<'a>(config: &'a ExportConfig, export_ids: &'a [String]) -> Option<&'a str> {
+    config.issue_prefix.as_deref().or_else(|| {
+        export_ids
+            .first()
+            .and_then(|id| id.rsplit_once('-'))
+            .map(|(prefix, _)| prefix)
+    })
+}
+
 /// Configuration for JSONL export.
 #[derive(Debug, Clone, Default)]
 #[allow(clippy::struct_excessive_bools)]
@@ -2817,12 +3163,16 @@ pub struct ExportConfig {
     /// preparing any issue. Resume paths set this explicitly so replay emits
     /// the same bytes as the original committed merge.
     pub export_as_of: Option<DateTime<Utc>>,
-    /// The `.beads` directory path for path validation.
+    /// The workspace directory path for path validation.
     /// If None, path validation is skipped (for backwards compatibility).
-    pub beads_dir: Option<PathBuf>,
-    /// Allow JSONL path outside `.beads/` directory (requires explicit opt-in).
+    pub obr_dir: Option<PathBuf>,
+    /// Allow an export path outside the allowlist (requires explicit opt-in).
     /// Even with this flag, git paths are ALWAYS rejected.
     pub allow_external_jsonl: bool,
+    /// Issue prefix to record as `#+ISSUE_PREFIX:` in the Org header, so a
+    /// fresh clone can bootstrap from the tracked file alone. When None the
+    /// writer falls back to the prefix of the first exported issue id.
+    pub issue_prefix: Option<String>,
     /// Show progress indicators for long-running operations.
     pub show_progress: bool,
     /// Configuration for history backups.
@@ -3155,10 +3505,10 @@ pub struct ImportConfig {
     pub orphan_mode: OrphanMode,
     /// Force upsert even if timestamps are equal or older.
     pub force_upsert: bool,
-    /// The `.beads` directory path for path validation.
+    /// The workspace directory path for path validation.
     /// If None, path validation is skipped (for backwards compatibility).
-    pub beads_dir: Option<PathBuf>,
-    /// Allow JSONL path outside `.beads/` directory (requires explicit opt-in).
+    pub obr_dir: Option<PathBuf>,
+    /// Allow an export path outside the allowlist (requires explicit opt-in).
     /// Even with this flag, git paths are ALWAYS rejected.
     pub allow_external_jsonl: bool,
     /// Show progress indicators for long-running operations.
@@ -3173,7 +3523,7 @@ impl Default for ImportConfig {
             clear_duplicate_external_refs: false,
             orphan_mode: OrphanMode::Strict,
             force_upsert: false,
-            beads_dir: None,
+            obr_dir: None,
             allow_external_jsonl: false,
             show_progress: false,
         }
@@ -3256,7 +3606,7 @@ pub struct ImportResult {
 }
 
 /// Versioned receipt schema for lossless additive JSONL reconciliation.
-pub const ADDITIVE_RECONCILE_SCHEMA: &str = "br.sync.additive-reconciliation.v2";
+pub const ADDITIVE_RECONCILE_SCHEMA: &str = "obr.sync.additive-reconciliation.v2";
 const ADDITIVE_RECONCILE_ALGORITHM: &str =
     "exact-id-additive-create-monotonic-closure-explicit-scalar-v2";
 
@@ -4378,7 +4728,7 @@ pub struct AdditiveReconcileReceipt {
 /// Path/safety policy for additive reconciliation.
 #[derive(Debug, Clone, Default)]
 pub struct AdditiveReconcileConfig {
-    pub beads_dir: Option<PathBuf>,
+    pub obr_dir: Option<PathBuf>,
     pub database_path: Option<PathBuf>,
     pub allow_external_jsonl: bool,
     /// Exact shared IDs for which reviewed source scalar fields override SQLite.
@@ -4393,12 +4743,12 @@ pub struct AdditiveReconcileConfig {
 /// corruption recovery, JSONL export, or implicit merge.
 #[derive(Debug, Clone)]
 pub struct ReviewedAdditiveReconcileRequest {
-    pub beads_dir: PathBuf,
+    pub obr_dir: PathBuf,
     /// Optional database override with the same precedence and path semantics
     /// as the CLI's `--db` flag.
     pub db_override: Option<PathBuf>,
     /// Optional JSONL override. When absent, startup configuration resolves the
-    /// same source path as `br sync`.
+    /// same source path as `obr sync`.
     pub source_path_override: Option<PathBuf>,
     pub allow_external_jsonl: bool,
     pub source_authoritative_ids: BTreeSet<String>,
@@ -4410,7 +4760,7 @@ pub struct ReviewedAdditiveReconcileRequest {
 /// consumed by [`apply_reviewed_additive_reconcile`].
 #[derive(Debug, Clone)]
 pub struct ReviewedAdditiveReconcilePlanRequest {
-    pub beads_dir: PathBuf,
+    pub obr_dir: PathBuf,
     pub db_override: Option<PathBuf>,
     pub source_path_override: Option<PathBuf>,
     pub allow_external_jsonl: bool,
@@ -4465,10 +4815,10 @@ fn additive_file_identity(path: &Path) -> Result<(u64, u64)> {
 }
 
 fn resolve_reviewed_additive_workspace(
-    beads_dir: &Path,
+    obr_dir: &Path,
     db_override: Option<&PathBuf>,
 ) -> Result<(PathBuf, PathBuf, PathBuf, (u64, u64))> {
-    for raw_path in std::iter::once(beads_dir).chain(db_override.map(PathBuf::as_path)) {
+    for raw_path in std::iter::once(obr_dir).chain(db_override.map(PathBuf::as_path)) {
         let validation = validate_no_git_path(raw_path);
         if !validation.is_allowed() {
             return Err(BeadsError::Config(format!(
@@ -4477,21 +4827,21 @@ fn resolve_reviewed_additive_workspace(
             )));
         }
     }
-    let terminal_beads = redact_reviewed_path_result(
-        crate::config::routing::follow_redirects(beads_dir, 10),
-        beads_dir,
+    let terminal_obr = redact_reviewed_path_result(
+        crate::config::routing::follow_redirects(obr_dir, 10),
+        obr_dir,
         "workspace",
         "resolve redirects for",
     )?;
-    let canonical_beads = fs::canonicalize(&terminal_beads).map_err(|error| {
+    let canonical_obr = fs::canonicalize(&terminal_obr).map_err(|error| {
         BeadsError::Config(format!(
-            "Could not canonicalize reviewed beads directory {}: {error}",
-            additive_path_descriptor(&terminal_beads, "reviewed-workspace")
+            "Could not canonicalize reviewed obr directory {}: {error}",
+            additive_path_descriptor(&terminal_obr, "reviewed-workspace")
         ))
     })?;
     let startup = redact_reviewed_path_result(
-        crate::config::load_startup_config_with_paths_uncached(&canonical_beads, db_override),
-        &canonical_beads,
+        crate::config::load_startup_config_with_paths_uncached(&canonical_obr, db_override),
+        &canonical_obr,
         "workspace",
         "load startup configuration for",
     )?;
@@ -4509,7 +4859,7 @@ fn resolve_reviewed_additive_workspace(
             })?
             .join(&database_path)
     };
-    for path in [&canonical_beads, &database_path] {
+    for path in [&canonical_obr, &database_path] {
         let validation = validate_no_git_path(path);
         if !validation.is_allowed() {
             return Err(BeadsError::Config(format!(
@@ -4542,17 +4892,26 @@ fn resolve_reviewed_additive_workspace(
             database_path_descriptor(&database_path)
         ))
     })?;
-    if absolute_database_path.starts_with(&canonical_beads)
-        && !canonical_database.starts_with(&canonical_beads)
+    if absolute_database_path.starts_with(&canonical_obr)
+        && !canonical_database.starts_with(&canonical_obr)
     {
         return Err(BeadsError::Config(format!(
-            "Reviewed database path {} escapes its locked beads directory {} through a symlink",
+            "Reviewed database path {} escapes its locked obr directory {} through a symlink",
             database_path_descriptor(&canonical_database),
-            additive_path_descriptor(&canonical_beads, "reviewed-workspace")
+            additive_path_descriptor(&canonical_obr, "reviewed-workspace")
         )));
     }
     let identity = additive_file_identity(&canonical_database)?;
-    Ok((canonical_beads, canonical_database, jsonl_path, identity))
+    if org_bridge::ExportFormat::for_path(&jsonl_path).is_org() {
+        return Err(BeadsError::Config(
+            "reviewed-additive reconcile requires a JSONL source: its strict \
+             unknown-field semantics are undefined for the Org drawer, which \
+             ignores unknown properties by design. Pass --jsonl <path.jsonl> \
+             or pin metadata.json's jsonl_export to a .jsonl path."
+                .to_string(),
+        ));
+    }
+    Ok((canonical_obr, canonical_database, jsonl_path, identity))
 }
 
 /// Build a reviewed additive plan without creating, migrating, repairing, or
@@ -4560,8 +4919,8 @@ fn resolve_reviewed_additive_workspace(
 pub fn plan_reviewed_additive_reconcile(
     request: &ReviewedAdditiveReconcilePlanRequest,
 ) -> Result<AdditiveReconcilePlan> {
-    let (canonical_beads, canonical_database, configured_source, database_identity) =
-        resolve_reviewed_additive_workspace(&request.beads_dir, request.db_override.as_ref())?;
+    let (canonical_obr, canonical_database, configured_source, database_identity) =
+        resolve_reviewed_additive_workspace(&request.obr_dir, request.db_override.as_ref())?;
     let storage = redact_reviewed_path_result(
         SqliteStorage::open_current_read_only(&canonical_database),
         &canonical_database,
@@ -4586,7 +4945,7 @@ pub fn plan_reviewed_additive_reconcile(
         .unwrap_or(&configured_source);
     let allow_external_jsonl = request.allow_external_jsonl
         || crate::config::implicit_external_jsonl_allowed(
-            &canonical_beads,
+            &canonical_obr,
             &canonical_database,
             source_path,
         );
@@ -4594,15 +4953,15 @@ pub fn plan_reviewed_additive_reconcile(
         &storage,
         source_path,
         &AdditiveReconcileConfig {
-            beads_dir: Some(canonical_beads.clone()),
+            obr_dir: Some(canonical_obr.clone()),
             database_path: Some(canonical_database.clone()),
             allow_external_jsonl,
             source_authoritative_ids: request.source_authoritative_ids.clone(),
         },
     )?;
-    let (beads_after, database_after, source_after, identity_after) =
-        resolve_reviewed_additive_workspace(&request.beads_dir, request.db_override.as_ref())?;
-    if beads_after != canonical_beads
+    let (obr_after, database_after, source_after, identity_after) =
+        resolve_reviewed_additive_workspace(&request.obr_dir, request.db_override.as_ref())?;
+    if obr_after != canonical_obr
         || database_after != canonical_database
         || source_after != configured_source
         || identity_after != database_identity
@@ -4652,11 +5011,11 @@ pub(crate) fn apply_reviewed_additive_reconcile_under_authority(
         ));
     }
 
-    let (canonical_beads, canonical_database, configured_source, database_identity) =
-        resolve_reviewed_additive_workspace(&request.beads_dir, request.db_override.as_ref())?;
+    let (canonical_obr, canonical_database, configured_source, database_identity) =
+        resolve_reviewed_additive_workspace(&request.obr_dir, request.db_override.as_ref())?;
     let write_authority = if let Some(authority) = retained_write_authority {
         authority.verify_database_authority()?;
-        let expected_workspace_lock = canonical_beads.join(".write.lock");
+        let expected_workspace_lock = canonical_obr.join(".write.lock");
         let expected_authority_lock = database_write_authority_path(&canonical_database)?;
         if authority.workspace_lock_path != expected_workspace_lock
             || authority.authority_lock_path != expected_authority_lock
@@ -4670,18 +5029,18 @@ pub(crate) fn apply_reviewed_additive_reconcile_under_authority(
         Arc::clone(authority)
     } else {
         Arc::new(blocking_database_family_write_lock_with_timeout(
-            &canonical_beads,
+            &canonical_obr,
             &canonical_database,
             request.lock_timeout_ms,
         )?)
     };
     let (
-        beads_after_authority_lock,
+        obr_after_authority_lock,
         database_after_authority_lock,
         configured_source_after_authority_lock,
         database_identity_after_authority_lock,
-    ) = resolve_reviewed_additive_workspace(&request.beads_dir, request.db_override.as_ref())?;
-    if beads_after_authority_lock != canonical_beads
+    ) = resolve_reviewed_additive_workspace(&request.obr_dir, request.db_override.as_ref())?;
+    if obr_after_authority_lock != canonical_obr
         || database_after_authority_lock != canonical_database
         || database_identity_after_authority_lock != database_identity
         || (request.source_path_override.is_none()
@@ -4718,19 +5077,19 @@ pub(crate) fn apply_reviewed_additive_reconcile_under_authority(
         .unwrap_or(&configured_source_after_authority_lock);
     let allow_external_jsonl = request.allow_external_jsonl
         || crate::config::implicit_external_jsonl_allowed(
-            &canonical_beads,
+            &canonical_obr,
             &canonical_database,
             source_path,
         );
     redact_reviewed_path_result(
-        validate_sync_path_with_external(source_path, &canonical_beads, allow_external_jsonl),
+        validate_sync_path_with_external(source_path, &canonical_obr, allow_external_jsonl),
         source_path,
         "source",
         "validate path policy for",
     )?;
     let _sync_authority = redact_reviewed_path_result(
-        try_sync_lock(&canonical_beads),
-        &canonical_beads,
+        try_sync_lock(&canonical_obr),
+        &canonical_obr,
         "workspace",
         "acquire sync authority for",
     )?
@@ -4747,7 +5106,7 @@ pub(crate) fn apply_reviewed_additive_reconcile_under_authority(
     source_family_authority.verify_jsonl_authority()?;
     let _source_inode_witness = acquire_reviewed_additive_source_lock(source_path)?;
     let config = AdditiveReconcileConfig {
-        beads_dir: Some(canonical_beads.clone()),
+        obr_dir: Some(canonical_obr.clone()),
         database_path: Some(canonical_database.clone()),
         allow_external_jsonl,
         source_authoritative_ids: request.source_authoritative_ids.clone(),
@@ -4768,11 +5127,11 @@ pub(crate) fn apply_reviewed_additive_reconcile_under_authority(
     )?;
     source_family_authority.verify_jsonl_authority()?;
     let post_resolution =
-        resolve_reviewed_additive_workspace(&request.beads_dir, request.db_override.as_ref());
+        resolve_reviewed_additive_workspace(&request.obr_dir, request.db_override.as_ref());
     let workspace_authority_preserved = post_resolution
         .as_ref()
-        .is_ok_and(|(beads_after, _, _, _)| beads_after == &canonical_beads)
-        && additive_path_identity_sha256(&canonical_beads, "workspace")
+        .is_ok_and(|(obr_after, _, _, _)| obr_after == &canonical_obr)
+        && additive_path_identity_sha256(&canonical_obr, "workspace")
             .is_ok_and(|identity| identity == receipt.workspace_identity_sha256);
     let configured_source_preserved = request.source_path_override.is_some()
         || post_resolution
@@ -5767,9 +6126,9 @@ fn additive_source_snapshot(
     input_path: &Path,
     config: &AdditiveReconcileConfig,
 ) -> Result<AdditiveSourceSnapshot> {
-    if let Some(beads_dir) = &config.beads_dir {
+    if let Some(obr_dir) = &config.obr_dir {
         redact_reviewed_path_result(
-            validate_sync_path_with_external(input_path, beads_dir, config.allow_external_jsonl),
+            validate_sync_path_with_external(input_path, obr_dir, config.allow_external_jsonl),
             input_path,
             "source",
             "validate path policy for",
@@ -6632,7 +6991,7 @@ fn require_healthy_additive_database(health: &AdditiveDatabaseHealth, phase: &st
 
 fn additive_provenance_path(
     path: Option<&Path>,
-    beads_dir: Option<&Path>,
+    obr_dir: Option<&Path>,
     role: &str,
 ) -> Result<(String, String)> {
     let Some(path) = path else {
@@ -6651,7 +7010,7 @@ fn additive_provenance_path(
         &canonical.to_string_lossy().as_ref(),
         "canonical provenance path",
     )?;
-    let display_path = beads_dir
+    let display_path = obr_dir
         .and_then(Path::parent)
         .and_then(|project_root| fs::canonicalize(project_root).ok())
         .and_then(|project_root| {
@@ -7494,6 +7853,12 @@ fn plan_additive_reconcile_in_snapshot(
                     )?;
                     continue;
                 }
+                // Strictly newer, so an equal `updated_at` is not "newer" and
+                // falls through to `equal_timestamp_shared_scalar_drift`
+                // below — a conflict the operator resolves, never a silent
+                // pick. That matters more than it used to: the Org surface
+                // stores `updated_at` to the minute (`[YYYY-MM-DD Ddd
+                // HH:MM]`), so two edits in the same minute now tie.
                 let source_is_newer = issue.updated_at > existing.updated_at;
                 let source_is_authoritative = config.source_authoritative_ids.contains(&issue.id);
                 let monotonic_closure =
@@ -8088,18 +8453,18 @@ fn plan_additive_reconcile_in_snapshot(
     let expected_sqlite_sequence_payload_sha256 =
         additive_sha256(&expected_sqlite_sequence, "expected sqlite sequence")?;
     let (workspace_path, workspace_path_sha256) = additive_provenance_path(
-        config.beads_dir.as_deref(),
-        config.beads_dir.as_deref(),
+        config.obr_dir.as_deref(),
+        config.obr_dir.as_deref(),
         "workspace",
     )?;
     let workspace_identity_sha256 = config
-        .beads_dir
+        .obr_dir
         .as_deref()
         .map(|path| additive_path_identity_sha256(path, "workspace"))
         .transpose()?
         .unwrap_or_else(|| workspace_path_sha256.clone());
     let (source_path, source_path_sha256) =
-        additive_provenance_path(Some(input_path), config.beads_dir.as_deref(), "source")?;
+        additive_provenance_path(Some(input_path), config.obr_dir.as_deref(), "source")?;
     if source_path_sha256 != source.witness.canonical_path_sha256 {
         return Err(BeadsError::Config(
             "Canonical source path changed between snapshot and plan provenance binding"
@@ -8108,7 +8473,7 @@ fn plan_additive_reconcile_in_snapshot(
     }
     let (database_path, database_path_sha256) = additive_provenance_path(
         config.database_path.as_deref(),
-        config.beads_dir.as_deref(),
+        config.obr_dir.as_deref(),
         "database",
     )?;
     let database_identity_sha256 = config
@@ -8859,7 +9224,7 @@ pub(crate) fn apply_additive_reconcile(
                     .to_string(),
             });
         }
-        if let Some(workspace_path) = config.beads_dir.as_deref()
+        if let Some(workspace_path) = config.obr_dir.as_deref()
             && additive_path_identity_sha256(workspace_path, "workspace")?
                 != plan.receipt.workspace_identity_sha256
         {
@@ -9160,16 +9525,64 @@ fn validate_jsonl_issue_records_from_reader(
     Ok(summary)
 }
 
+/// Org counterpart of `validate_jsonl_issue_records_from_reader`: the same
+/// normalization + validation + duplicate detection per record, with heading
+/// ordinals in place of line numbers.
+fn validate_org_issue_records_from_reader(
+    mut reader: impl BufRead,
+) -> Result<JsonlIssueValidationSummary> {
+    let mut text = String::new();
+    reader.read_to_string(&mut text)?;
+
+    let mut summary = JsonlIssueValidationSummary::default();
+    let (issues, failures) = org_bridge::parse_issues_collecting_failures(&text);
+    summary.record_count = issues.len() + failures.len();
+
+    for (ordinal, message) in failures {
+        summary.push_failure(ordinal, message);
+    }
+
+    let mut seen_ids = HashSet::new();
+    for (ordinal, mut issue) in issues {
+        normalize_issue(&mut issue);
+        if !seen_ids.insert(issue.id.clone()) {
+            summary.push_failure(ordinal, format!("Duplicate issue id '{}'", issue.id));
+            continue;
+        }
+        if let Err(errors) = IssueValidator::validate(&issue) {
+            summary.push_failure(
+                ordinal,
+                errors
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+        }
+    }
+
+    Ok(summary)
+}
+
 pub(crate) fn validate_jsonl_issue_records(path: &Path) -> Result<JsonlIssueValidationSummary> {
     let file = File::open(path)?;
     path::validate_jsonl_fd_metadata(&file, path)?;
-    validate_jsonl_issue_records_from_reader(BufReader::with_capacity(2 * 1024 * 1024, file))
+    let reader = BufReader::with_capacity(2 * 1024 * 1024, file);
+    if org_bridge::ExportFormat::for_path(path).is_org() {
+        validate_org_issue_records_from_reader(reader)
+    } else {
+        validate_jsonl_issue_records_from_reader(reader)
+    }
 }
 
 pub(crate) fn validate_jsonl_snapshot_issue_records(
     source: &JsonlSourceSnapshot,
 ) -> Result<JsonlIssueValidationSummary> {
-    validate_jsonl_issue_records_from_reader(source.reader())
+    if org_bridge::ExportFormat::for_path(source.display_path()).is_org() {
+        validate_org_issue_records_from_reader(source.reader())
+    } else {
+        validate_jsonl_issue_records_from_reader(source.reader())
+    }
 }
 
 /// One source record explicitly rejected by JSONL salvage.
@@ -9245,7 +9658,7 @@ pub(crate) fn salvage_invalid_jsonl_records_under_authority(
     ensure_no_conflict_markers_snapshot(source)?;
 
     let export_config = ExportConfig {
-        beads_dir: Some(beads_dir.to_path_buf()),
+        obr_dir: Some(beads_dir.to_path_buf()),
         allow_external_jsonl,
         ..ExportConfig::default()
     };
@@ -9337,8 +9750,8 @@ pub(crate) fn salvage_invalid_jsonl_records_under_authority(
 /// Run preflight checks for export operation.
 ///
 /// This function is read-only and validates:
-/// - Beads directory exists
-/// - Output path is within allowlist (not in .git, within `beads_dir`)
+/// - Obr directory exists
+/// - Output path is within allowlist (not in .git, within `obr_dir`)
 /// - Database is accessible
 /// - Export won't cause data loss (empty db over non-empty JSONL, stale db)
 ///
@@ -9366,39 +9779,38 @@ pub fn preflight_export(
 
     tracing::debug!(
         output_path = %output_path.display(),
-        beads_dir = ?config.beads_dir,
+        obr_dir = ?config.obr_dir,
         "Running export preflight checks"
     );
 
-    // Check 1: Beads directory exists
-    if let Some(ref beads_dir) = config.beads_dir {
-        if beads_dir.is_dir() {
+    // Check 1: Obr directory exists
+    if let Some(ref obr_dir) = config.obr_dir {
+        if obr_dir.is_dir() {
             result.add(PreflightCheck::pass(
-                "beads_dir_exists",
-                "Beads directory exists",
-                format!("Found: {}", beads_dir.display()),
+                "obr_dir_exists",
+                "Obr directory exists",
+                format!("Found: {}", obr_dir.display()),
             ));
-            tracing::debug!(beads_dir = %beads_dir.display(), "Beads directory check: PASS");
+            tracing::debug!(obr_dir = %obr_dir.display(), "Obr directory check: PASS");
         } else {
             result.add(PreflightCheck::fail(
-                "beads_dir_exists",
-                "Beads directory exists",
-                format!("Not found: {}", beads_dir.display()),
-                "Run 'br init' to initialize the beads directory.",
+                "obr_dir_exists",
+                "Obr directory exists",
+                format!("Not found: {}", obr_dir.display()),
+                "Run 'obr init' to initialize the obr directory.",
             ));
-            tracing::debug!(beads_dir = %beads_dir.display(), "Beads directory check: FAIL");
+            tracing::debug!(obr_dir = %obr_dir.display(), "Obr directory check: FAIL");
         }
     }
 
     // Check 2: Output path validation (PC-1, PC-2, PC-3, NGI-3)
-    if let Some(ref beads_dir) = config.beads_dir {
+    if let Some(ref obr_dir) = config.obr_dir {
         // Determine if the path is external (outside .beads/)
-        let canonical_beads = dunce::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.clone());
+        let canonical_obr = dunce::canonicalize(obr_dir).unwrap_or_else(|_| obr_dir.clone());
         let is_external =
-            !output_path.starts_with(beads_dir) && !output_path.starts_with(&canonical_beads);
+            !output_path.starts_with(obr_dir) && !output_path.starts_with(&canonical_obr);
 
-        match validate_sync_path_with_external(output_path, beads_dir, config.allow_external_jsonl)
-        {
+        match validate_sync_path_with_external(output_path, obr_dir, config.allow_external_jsonl) {
             Ok(()) => {
                 let msg = format!(
                     "Path {} validated (external={})",
@@ -9562,8 +9974,8 @@ pub fn preflight_export(
 /// Run preflight checks for import operation.
 ///
 /// This function is read-only and validates:
-/// - Beads directory exists
-/// - Input path is within allowlist (not in .git, within `beads_dir`)
+/// - Obr directory exists
+/// - Input path is within allowlist (not in .git, within `obr_dir`)
 /// - Input file exists and is readable
 /// - No merge conflict markers in input file
 /// - JSONL is parseable (basic syntax check)
@@ -9624,38 +10036,38 @@ fn preflight_import_impl(
 
     tracing::debug!(
         input_path = %input_path.display(),
-        beads_dir = ?config.beads_dir,
+        obr_dir = ?config.obr_dir,
         "Running import preflight checks"
     );
 
-    // Check 1: Beads directory exists
-    if let Some(ref beads_dir) = config.beads_dir {
-        if beads_dir.is_dir() {
+    // Check 1: Obr directory exists
+    if let Some(ref obr_dir) = config.obr_dir {
+        if obr_dir.is_dir() {
             result.add(PreflightCheck::pass(
-                "beads_dir_exists",
-                "Beads directory exists",
-                format!("Found: {}", beads_dir.display()),
+                "obr_dir_exists",
+                "Obr directory exists",
+                format!("Found: {}", obr_dir.display()),
             ));
-            tracing::debug!(beads_dir = %beads_dir.display(), "Beads directory check: PASS");
+            tracing::debug!(obr_dir = %obr_dir.display(), "Obr directory check: PASS");
         } else {
             result.add(PreflightCheck::fail(
-                "beads_dir_exists",
-                "Beads directory exists",
-                format!("Not found: {}", beads_dir.display()),
-                "Run 'br init' to initialize the beads directory.",
+                "obr_dir_exists",
+                "Obr directory exists",
+                format!("Not found: {}", obr_dir.display()),
+                "Run 'obr init' to initialize the obr directory.",
             ));
-            tracing::debug!(beads_dir = %beads_dir.display(), "Beads directory check: FAIL");
+            tracing::debug!(obr_dir = %obr_dir.display(), "Obr directory check: FAIL");
         }
     }
 
     // Check 2: Input path validation (PC-1, PC-2, PC-3, NGI-3)
-    if let Some(ref beads_dir) = config.beads_dir {
+    if let Some(ref obr_dir) = config.obr_dir {
         // Determine if the path is external (outside .beads/)
-        let canonical_beads = dunce::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.clone());
+        let canonical_obr = dunce::canonicalize(obr_dir).unwrap_or_else(|_| obr_dir.clone());
         let is_external =
-            !input_path.starts_with(beads_dir) && !input_path.starts_with(&canonical_beads);
+            !input_path.starts_with(obr_dir) && !input_path.starts_with(&canonical_obr);
 
-        match validate_sync_path_with_external(input_path, beads_dir, config.allow_external_jsonl) {
+        match validate_sync_path_with_external(input_path, obr_dir, config.allow_external_jsonl) {
             Ok(()) => {
                 let msg = format!(
                     "Path {} validated (external={})",
@@ -10074,6 +10486,9 @@ fn analyze_jsonl_from_reader(
     display_path: &Path,
     mut reader: impl BufRead,
 ) -> Result<(usize, HashSet<String>)> {
+    if org_bridge::ExportFormat::for_path(display_path).is_org() {
+        return analyze_org_from_reader(display_path, reader);
+    }
     let mut count = 0;
     let mut ids = HashSet::new();
     let mut line_buf = String::new();
@@ -10109,6 +10524,33 @@ fn analyze_jsonl_from_reader(
     Ok((count, ids))
 }
 
+/// Org counterpart of `analyze_jsonl_from_reader`: count level-1 headings and
+/// collect their ids, hard-erroring on duplicates with heading ordinals
+/// (duplicate-id parity with the JSONL readers is mandatory — without it Org
+/// would be strictly less safe than the format it replaces).
+fn analyze_org_from_reader(
+    display_path: &Path,
+    mut reader: impl BufRead,
+) -> Result<(usize, HashSet<String>)> {
+    let mut text = String::new();
+    reader.read_to_string(&mut text)?;
+    let heading_ids = org_bridge::org_heading_ids(&text)
+        .map_err(|err| BeadsError::Config(format!("Invalid Org export: {err}")))?;
+
+    let mut ids = HashSet::with_capacity(heading_ids.len());
+    for (ordinal, id) in heading_ids {
+        if !ids.insert(id.clone()) {
+            return Err(BeadsError::Config(format!(
+                "Duplicate issue id '{}' in {} at heading #{}",
+                id,
+                display_path.display(),
+                ordinal
+            )));
+        }
+    }
+    Ok((ids.len(), ids))
+}
+
 pub(crate) fn analyze_jsonl_snapshot(
     source: &JsonlSourceSnapshot,
 ) -> Result<(usize, HashSet<String>)> {
@@ -10133,6 +10575,9 @@ fn verify_exported_jsonl_snapshot_integrity(
     source: &JsonlSourceSnapshot,
     expected_ids: &[String],
 ) -> Result<()> {
+    if org_bridge::ExportFormat::for_path(source.display_path()).is_org() {
+        return verify_exported_org_snapshot_integrity(source, expected_ids);
+    }
     let expected: HashSet<&str> = expected_ids.iter().map(String::as_str).collect();
     let mut observed = HashSet::with_capacity(expected_ids.len());
     let mut reader = source.reader();
@@ -10210,6 +10655,62 @@ fn verify_exported_jsonl_snapshot_integrity(
         };
         return Err(BeadsError::Config(format!(
             "Export verification failed: JSONL is missing expected issue id(s): {preview}{more}"
+        )));
+    }
+
+    Ok(())
+}
+
+/// Org counterpart of the exported-snapshot integrity check: the staged text
+/// must contain exactly the expected issue ids, each on one level-1 heading.
+/// Keeps the `"Export verification failed:"` prefix — doctor string-matches
+/// on it.
+fn verify_exported_org_snapshot_integrity(
+    source: &JsonlSourceSnapshot,
+    expected_ids: &[String],
+) -> Result<()> {
+    use std::io::Read;
+
+    let mut text = String::new();
+    source.reader().read_to_string(&mut text)?;
+    let heading_ids = org_bridge::org_heading_ids(&text)
+        .map_err(|err| BeadsError::Config(format!("Export verification failed: {err}")))?;
+
+    let expected: HashSet<&str> = expected_ids.iter().map(String::as_str).collect();
+    let mut observed = HashSet::with_capacity(expected_ids.len());
+
+    for (ordinal, id) in heading_ids {
+        if !expected.contains(id.as_str()) {
+            return Err(BeadsError::Config(format!(
+                "Export verification failed: unexpected issue id '{id}' at heading #{ordinal}"
+            )));
+        }
+        if !observed.insert(id.clone()) {
+            return Err(BeadsError::Config(format!(
+                "Export verification failed: duplicate issue id '{id}' at heading #{ordinal}"
+            )));
+        }
+    }
+
+    if observed.len() != expected_ids.len() {
+        let missing: Vec<&str> = expected_ids
+            .iter()
+            .map(String::as_str)
+            .filter(|id| !observed.contains(*id))
+            .collect();
+        let preview = missing
+            .iter()
+            .take(10)
+            .copied()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let more = if missing.len() > 10 {
+            format!(" ... and {} more", missing.len() - 10)
+        } else {
+            String::new()
+        };
+        return Err(BeadsError::Config(format!(
+            "Export verification failed: Org export is missing expected issue id(s): {preview}{more}"
         )));
     }
 
@@ -10434,27 +10935,48 @@ fn populate_export_issue_relations(
     }
 }
 
+/// Serialize one issue as a complete export record for `format`: a JSON line
+/// (with trailing newline) or an Org heading block (with trailing separator).
+fn serialize_export_issue_record(
+    issue: &Issue,
+    format: org_bridge::ExportFormat,
+    style: &org_bridge::OrgStyle,
+    buffer: &mut Vec<u8>,
+) -> std::result::Result<(), String> {
+    buffer.clear();
+    match format {
+        org_bridge::ExportFormat::Jsonl => {
+            serde_json::to_writer(&mut *buffer, issue).map_err(|err| err.to_string())?;
+            buffer.push(b'\n');
+        }
+        org_bridge::ExportFormat::Org => {
+            let record = org_bridge::emit_issue_record_styled(issue, style)
+                .map_err(|err| err.to_string())?;
+            buffer.extend_from_slice(&record);
+        }
+    }
+    Ok(())
+}
+
 fn write_export_issue_jsonl<W: Write>(
     writer: &mut W,
     issue: &Issue,
+    format: org_bridge::ExportFormat,
+    style: &org_bridge::OrgStyle,
     hasher: &mut Sha256,
     buffer: &mut Vec<u8>,
     ctx: &mut ExportContext,
 ) -> Result<bool> {
-    buffer.clear();
-    if let Err(err) = serde_json::to_writer(&mut *buffer, issue) {
+    if let Err(err) = serialize_export_issue_record(issue, format, style, buffer) {
         ctx.handle_error(ExportError::new(
             ExportEntityType::Issue,
             issue.id.clone(),
-            err.to_string(),
+            err,
         ))?;
         return Ok(false);
     }
 
-    if let Err(err) = writer
-        .write_all(buffer)
-        .and_then(|()| writer.write_all(b"\n"))
-    {
+    if let Err(err) = writer.write_all(buffer) {
         ctx.handle_error(ExportError::new(
             ExportEntityType::Issue,
             issue.id.clone(),
@@ -10464,14 +10986,13 @@ fn write_export_issue_jsonl<W: Write>(
     }
 
     hasher.update(&*buffer);
-    hasher.update(b"\n");
 
     Ok(true)
 }
 
 struct PreparedExportIssue {
     id: String,
-    jsonl_line: Vec<u8>,
+    record_bytes: Vec<u8>,
     content_hash: String,
     dependency_count: usize,
     label_count: usize,
@@ -10501,7 +11022,7 @@ fn effective_export_parallelism(config: &ExportConfig) -> usize {
 }
 
 fn export_parallelism_disabled_by_env() -> bool {
-    std::env::var_os("BR_DISABLE_PARALLEL_JSONL_EXPORT").is_some_and(|value| {
+    std::env::var_os("OBR_DISABLE_PARALLEL_JSONL_EXPORT").is_some_and(|value| {
         let value = value.to_string_lossy();
         value != "0" && !value.eq_ignore_ascii_case("false")
     })
@@ -10513,6 +11034,8 @@ const fn should_prepare_export_issues_parallel(issue_count: usize, max_paralleli
 
 fn prepare_export_issue_jsonl(
     issue: &Issue,
+    format: org_bridge::ExportFormat,
+    style: &org_bridge::OrgStyle,
     retention_days: Option<u64>,
     export_as_of: &DateTime<Utc>,
 ) -> PreparedExportEntry {
@@ -10520,19 +11043,18 @@ fn prepare_export_issue_jsonl(
         return PreparedExportEntry::SkippedTombstone(issue.id.clone());
     }
 
-    let mut jsonl_line = Vec::with_capacity(1024);
-    if let Err(err) = serde_json::to_writer(&mut jsonl_line, issue) {
+    let mut record_bytes = Vec::with_capacity(1024);
+    if let Err(err) = serialize_export_issue_record(issue, format, style, &mut record_bytes) {
         return PreparedExportEntry::Error(ExportError::new(
             ExportEntityType::Issue,
             issue.id.clone(),
-            err.to_string(),
+            err,
         ));
     }
-    jsonl_line.push(b'\n');
 
     PreparedExportEntry::Issue(PreparedExportIssue {
         id: issue.id.clone(),
-        jsonl_line,
+        record_bytes,
         content_hash: issue
             .content_hash
             .clone()
@@ -10545,17 +11067,21 @@ fn prepare_export_issue_jsonl(
 
 fn prepare_export_issue_chunk(
     issues: &[Issue],
+    format: org_bridge::ExportFormat,
+    style: &org_bridge::OrgStyle,
     retention_days: Option<u64>,
     export_as_of: &DateTime<Utc>,
 ) -> Vec<PreparedExportEntry> {
     issues
         .iter()
-        .map(|issue| prepare_export_issue_jsonl(issue, retention_days, export_as_of))
+        .map(|issue| prepare_export_issue_jsonl(issue, format, style, retention_days, export_as_of))
         .collect()
 }
 
 fn prepare_export_issues_jsonl_parallel(
     issues: &[Issue],
+    format: org_bridge::ExportFormat,
+    style: &org_bridge::OrgStyle,
     retention_days: Option<u64>,
     export_as_of: &DateTime<Utc>,
     max_parallelism: usize,
@@ -10563,6 +11089,8 @@ fn prepare_export_issues_jsonl_parallel(
     if !should_prepare_export_issues_parallel(issues.len(), max_parallelism) {
         return Ok(prepare_export_issue_chunk(
             issues,
+            format,
+            style,
             retention_days,
             export_as_of,
         ));
@@ -10578,7 +11106,7 @@ fn prepare_export_issues_jsonl_parallel(
             handles.push(scope.spawn(move || {
                 (
                     start_index,
-                    prepare_export_issue_chunk(chunk, retention_days, export_as_of),
+                    prepare_export_issue_chunk(chunk, format, style, retention_days, export_as_of),
                 )
             }));
         }
@@ -10617,7 +11145,7 @@ fn write_prepared_export_entries<W: Write>(
     for entry in prepared_entries {
         match entry {
             PreparedExportEntry::Issue(prepared) => {
-                if let Err(err) = writer.write_all(&prepared.jsonl_line) {
+                if let Err(err) = writer.write_all(&prepared.record_bytes) {
                     ctx.handle_error(ExportError::new(
                         ExportEntityType::Issue,
                         prepared.id,
@@ -10627,7 +11155,7 @@ fn write_prepared_export_entries<W: Write>(
                     continue;
                 }
 
-                hasher.update(&prepared.jsonl_line);
+                hasher.update(&prepared.record_bytes);
                 exported_ids.push(prepared.id.clone());
                 issue_hashes.push((prepared.id, prepared.content_hash));
                 report.issues_exported += 1;
@@ -10685,7 +11213,7 @@ pub fn export_to_jsonl(
 /// # Errors
 ///
 /// Returns an error if:
-/// - Path validation fails (git path, outside `beads_dir` without opt-in)
+/// - Path validation fails (git path, outside `obr_dir` without opt-in)
 /// - Database queries fail and the policy requires strict handling
 /// - Safety guards are violated (empty/stale export without `force`)
 /// - File I/O fails
@@ -10768,11 +11296,11 @@ fn export_to_jsonl_with_policy_expected_authority(
     let export_as_of = config.export_as_of.unwrap_or_else(Utc::now);
 
     // Path validation (PC-1, PC-2, PC-3, NGI-3)
-    if let Some(ref beads_dir) = config.beads_dir {
-        validate_sync_path_with_external(output_path, beads_dir, config.allow_external_jsonl)?;
+    if let Some(ref obr_dir) = config.obr_dir {
+        validate_sync_path_with_external(output_path, obr_dir, config.allow_external_jsonl)?;
         tracing::debug!(
             output_path = %output_path.display(),
-            beads_dir = %beads_dir.display(),
+            obr_dir = %obr_dir.display(),
             allow_external = config.allow_external_jsonl,
             "Export path validated"
         );
@@ -10838,10 +11366,10 @@ fn export_to_jsonl_with_policy_expected_authority(
         JsonlSourceSnapshot::state_witness,
     );
 
-    if let (Some(beads_dir), Some(previous_source)) = (config.beads_dir.as_ref(), previous_source) {
-        // Perform backup before overwriting (if enabled and we have a beads_dir).
+    if let (Some(obr_dir), Some(previous_source)) = (config.obr_dir.as_ref(), previous_source) {
+        // Perform backup before overwriting (if enabled and we have a obr_dir).
         // We backup any JSONL file that has been validated as safe for sync,
-        // even if it's outside the .beads/ directory (e.g., in repo root).
+        // even if it's outside the workspace directory (e.g., in repo root).
         let output_abs = if output_path.is_absolute() {
             output_path.to_path_buf()
         } else if let Ok(cwd) = std::env::current_dir() {
@@ -10851,7 +11379,7 @@ fn export_to_jsonl_with_policy_expected_authority(
         };
 
         history::backup_before_export_snapshot(
-            beads_dir,
+            obr_dir,
             &config.history,
             &output_abs,
             previous_source,
@@ -10939,11 +11467,26 @@ fn export_to_jsonl_with_policy_expected_authority(
     // Write to temp file for atomic rename
     let (temp_path, pinned_temp, temp_file) =
         create_full_export_temp_file_under_authority(output_path, config, jsonl_authority)?;
-    let temp_guard = TempFileGuard::new_retained(temp_path.clone());
+    let temp_guard = TempFileGuard::new_retained_inside_workspace_dir_only(temp_path.clone());
     let mut writer = BufWriter::new(temp_file);
 
-    // Write JSONL and compute hash
+    // Write records and compute hash
+    let format = org_bridge::ExportFormat::for_path(output_path);
+    // Read the surface's own rendering preferences before overwriting it. The
+    // export writes to a temp file and renames, so `output_path` still holds
+    // the previous generation here. Absent or unreadable means "no declared
+    // style", which reproduces the historical output exactly.
+    let style = org_bridge::style_from_surface(output_path);
     let mut hasher = Sha256::new();
+    if format.is_org() {
+        // The file header is the only cross-record state in Org emission; it
+        // must reach both the writer and the hasher so the staged-bytes
+        // digest matches the file's canonical (raw-bytes) hash.
+        let header =
+            org_bridge::org_file_header_styled(org_header_prefix(config, &export_ids), &style);
+        writer.write_all(&header)?;
+        hasher.update(&header);
+    }
     let mut exported_ids = Vec::with_capacity(export_ids.len());
     let mut skipped_tombstone_ids = Vec::new(); // Usually small
     let mut issue_hashes = Vec::with_capacity(export_ids.len());
@@ -10955,6 +11498,8 @@ fn export_to_jsonl_with_policy_expected_authority(
         if should_prepare_export_issues_parallel(issues.len(), max_parallelism) {
             let prepared = prepare_export_issues_jsonl_parallel(
                 &issues,
+                format,
+                &style,
                 config.retention_days,
                 &export_as_of,
                 max_parallelism,
@@ -10982,6 +11527,8 @@ fn export_to_jsonl_with_policy_expected_authority(
                 if !write_export_issue_jsonl(
                     &mut writer,
                     issue,
+                    format,
+                    &style,
                     &mut hasher,
                     &mut buffer,
                     &mut ctx,
@@ -11011,6 +11558,8 @@ fn export_to_jsonl_with_policy_expected_authority(
             if should_prepare_export_issues_parallel(issues.len(), max_parallelism) {
                 let prepared = prepare_export_issues_jsonl_parallel(
                     &issues,
+                    format,
+                    &style,
                     config.retention_days,
                     &export_as_of,
                     max_parallelism,
@@ -11038,6 +11587,8 @@ fn export_to_jsonl_with_policy_expected_authority(
                     if !write_export_issue_jsonl(
                         &mut writer,
                         issue,
+                        format,
+                        &style,
                         &mut hasher,
                         &mut buffer,
                         &mut ctx,
@@ -11106,16 +11657,16 @@ fn export_to_jsonl_with_policy_expected_authority(
         }
     }
 
-    if let Some(ref beads_dir) = config.beads_dir {
+    if let Some(ref obr_dir) = config.obr_dir {
         require_safe_sync_overwrite_path(
             &temp_path,
-            beads_dir,
+            obr_dir,
             config.allow_external_jsonl,
             "rename temp file",
         )?;
         require_safe_sync_overwrite_path(
             output_path,
-            beads_dir,
+            obr_dir,
             config.allow_external_jsonl,
             "overwrite JSONL output",
         )?;
@@ -11196,6 +11747,10 @@ pub(crate) fn export_to_writer_with_policy_and_retention<W: Write>(
         policy,
         retention_days,
         Utc::now(),
+        org_bridge::ExportFormat::Jsonl,
+        // A writer has no surface to read a declared style from, and this
+        // overload is JSONL anyway.
+        &org_bridge::OrgStyle::default(),
     )
 }
 
@@ -11205,6 +11760,8 @@ pub(crate) fn export_to_writer_with_policy_and_retention_at<W: Write>(
     policy: ExportErrorPolicy,
     retention_days: Option<u64>,
     export_as_of: DateTime<Utc>,
+    format: org_bridge::ExportFormat,
+    style: &org_bridge::OrgStyle,
 ) -> Result<(ExportResult, ExportReport)> {
     let export_ids = export_issue_ids(storage)?;
 
@@ -11212,6 +11769,18 @@ pub(crate) fn export_to_writer_with_policy_and_retention_at<W: Write>(
     let mut report = ExportReport::new(policy);
 
     let mut hasher = Sha256::new();
+    if format.is_org() {
+        // This writer takes explicit params rather than an ExportConfig, so the
+        // prefix can only come from the exported ids.
+        let header = org_bridge::org_file_header_for(
+            export_ids
+                .first()
+                .and_then(|id| id.rsplit_once('-'))
+                .map(|(prefix, _)| prefix),
+        );
+        writer.write_all(&header)?;
+        hasher.update(&header);
+    }
     let mut exported_ids = Vec::with_capacity(export_ids.len());
     let mut skipped_tombstone_ids = Vec::new();
     let mut issue_hashes = Vec::with_capacity(export_ids.len());
@@ -11224,7 +11793,15 @@ pub(crate) fn export_to_writer_with_policy_and_retention_at<W: Write>(
                 skipped_tombstone_ids.push(issue.id.clone());
                 continue;
             }
-            if !write_export_issue_jsonl(writer, issue, &mut hasher, &mut buffer, &mut ctx)? {
+            if !write_export_issue_jsonl(
+                writer,
+                issue,
+                format,
+                style,
+                &mut hasher,
+                &mut buffer,
+                &mut ctx,
+            )? {
                 continue;
             }
 
@@ -11249,7 +11826,15 @@ pub(crate) fn export_to_writer_with_policy_and_retention_at<W: Write>(
                     skipped_tombstone_ids.push(issue.id.clone());
                     continue;
                 }
-                if !write_export_issue_jsonl(writer, issue, &mut hasher, &mut buffer, &mut ctx)? {
+                if !write_export_issue_jsonl(
+                    writer,
+                    issue,
+                    format,
+                    style,
+                    &mut hasher,
+                    &mut buffer,
+                    &mut ctx,
+                )? {
                     continue;
                 }
 
@@ -11378,12 +11963,12 @@ pub fn compute_staleness_refreshing_witnesses(
 /// fails. Opportunistic witness refresh failures are logged and ignored.
 pub fn auto_import_probe_refreshing_witnesses(
     storage: &mut SqliteStorage,
-    beads_dir: &Path,
+    obr_dir: &Path,
     jsonl_path: &Path,
     allow_external_jsonl: bool,
 ) -> Result<bool> {
     if jsonl_path.exists() {
-        validate_sync_path_with_external(jsonl_path, beads_dir, allow_external_jsonl)?;
+        validate_sync_path_with_external(jsonl_path, obr_dir, allow_external_jsonl)?;
     }
     let probe = compute_jsonl_newer_impl(storage, jsonl_path)?;
     if let Some(observed) = probe.refresh_witness {
@@ -11406,12 +11991,12 @@ pub fn auto_import_probe_refreshing_witnesses(
 /// fails.
 pub fn auto_import_probe(
     storage: &SqliteStorage,
-    beads_dir: &Path,
+    obr_dir: &Path,
     jsonl_path: &Path,
     allow_external_jsonl: bool,
 ) -> Result<bool> {
     if jsonl_path.exists() {
-        validate_sync_path_with_external(jsonl_path, beads_dir, allow_external_jsonl)?;
+        validate_sync_path_with_external(jsonl_path, obr_dir, allow_external_jsonl)?;
     }
     compute_jsonl_newer_impl(storage, jsonl_path).map(|probe| probe.jsonl_newer)
 }
@@ -11516,6 +12101,46 @@ fn record_observed_jsonl_witness_in_tx(
     storage.set_metadata_in_tx(METADATA_JSONL_SIZE, &observed.size.to_string())
 }
 
+/// Certify the zero-byte surface that `obr init` seeds, so a fresh workspace
+/// can flush.
+///
+/// `init` writes an empty surface (D-SURFACE) so discovery and auto-import
+/// have a well-defined empty export from the first command onward, but the
+/// schema seeds `jsonl_content_hash` *empty* and only an export or import
+/// fills it. That left a fresh workspace seeded-but-uncertified: with nothing
+/// dirty and a surface present, `obr sync --flush-only` takes the no-op branch
+/// and fails closed on the missing hash, so `obr init && obr sync
+/// --flush-only` — the first two commands anyone runs — exits 7 with
+/// "Cannot certify a no-op flush". The evidence was not absent because the
+/// state was suspect; it was absent because nobody wrote it down.
+///
+/// The certificate is sound only when the database is empty: an empty surface
+/// is the correct export of exactly zero issues, and both export formats agree
+/// on that digest (Org hashes raw bytes, JSONL hashes canonicalized lines, and
+/// for zero bytes those coincide). Both preconditions are checked here rather
+/// than trusted, because the same call would otherwise stamp "certified" on a
+/// surface whose issues went missing — exactly the drift the gate exists to
+/// catch. A caller that violates them gets a no-op, not a false certificate.
+///
+/// Deliberately does NOT touch `jsonl_mtime` / `jsonl_size`. Those are the
+/// fast-path staleness witness, not the proof the gate reads, and writing them
+/// here would flip `compute_jsonl_newer_impl` to "not newer" and suppress the
+/// first-command auto-import that the seeded surface exists to feed. The first
+/// real export sets all three together.
+pub(crate) fn certify_seeded_empty_surface(
+    storage: &mut SqliteStorage,
+    surface_path: &Path,
+) -> Result<()> {
+    if storage.count_issues()? != 0 {
+        return Ok(());
+    }
+    if fs::symlink_metadata(surface_path)?.len() != 0 {
+        return Ok(());
+    }
+    let empty_digest = crate::sync::path::compute_jsonl_content_sha256_from_bytes(b"");
+    storage.set_metadata(METADATA_JSONL_CONTENT_HASH, &empty_digest)
+}
+
 fn maybe_refresh_jsonl_witness(
     storage: &mut SqliteStorage,
     jsonl_path: &Path,
@@ -11563,7 +12188,7 @@ pub struct AutoImportResult {
 /// Returns an error if staleness checks, metadata reads, or import steps fail.
 pub fn auto_import_if_stale(
     storage: &mut SqliteStorage,
-    beads_dir: &Path,
+    obr_dir: &Path,
     jsonl_path: &Path,
     expected_prefix: Option<&str>,
     allow_external_jsonl: bool,
@@ -11581,14 +12206,14 @@ pub fn auto_import_if_stale(
     if let Some(receipt) = storage.pending_sync_merge_receipt()? {
         return Err(BeadsError::SyncConflict {
             message: format!(
-                "Committed sync merge {} is pending {:?} reconciliation; refusing auto-import. Run `br sync --merge` first.",
+                "Committed sync merge {} is pending {:?} reconciliation; refusing auto-import. Run `obr sync --merge` first.",
                 receipt.receipt_id, receipt.phase
             ),
         });
     }
 
     if jsonl_path.exists() {
-        validate_sync_path_with_external(jsonl_path, beads_dir, allow_external_jsonl)?;
+        validate_sync_path_with_external(jsonl_path, obr_dir, allow_external_jsonl)?;
     }
     let staleness = compute_staleness_refreshing_witnesses(storage, jsonl_path)?;
     if !staleness.jsonl_newer {
@@ -11597,18 +12222,18 @@ pub fn auto_import_if_stale(
 
     // When both JSONL and DB have changed, skip the auto-import with a
     // warning instead of failing the command.  This prevents spurious
-    // SyncConflict errors when ≥3 concurrent `br` processes race: one
+    // SyncConflict errors when ≥3 concurrent `obr` processes race: one
     // process flushes JSONL while another has pending local writes,
     // causing both `jsonl_newer` and `db_newer` to be true.
     //
-    // Explicit `br sync --merge` still detects this as a hard conflict so the
+    // Explicit `obr sync --merge` still detects this as a hard conflict so the
     // user can reconcile manually.
     if staleness.db_newer && !allow_stale {
         tracing::warn!(
             dirty_count = staleness.dirty_count,
             jsonl_mtime = ?staleness.jsonl_mtime,
             "Skipping auto-import: JSONL changed externally while {} local change(s) are pending. \
-             Run `br sync --merge` to reconcile.",
+             Run `obr sync --merge` to reconcile.",
             staleness.dirty_count,
         );
         return Ok(AutoImportResult::default());
@@ -11618,7 +12243,7 @@ pub fn auto_import_if_stale(
         // The configured prefix is the default for new IDs, not a project-wide
         // invariant. Auto-import should preserve mixed-prefix workspaces.
         skip_prefix_validation: true,
-        beads_dir: Some(beads_dir.to_path_buf()),
+        obr_dir: Some(obr_dir.to_path_buf()),
         allow_external_jsonl,
         show_progress: false,
         ..Default::default()
@@ -11839,9 +12464,9 @@ fn normalize_issue_for_export(issue: &mut Issue) {
             left.issue_id
                 .cmp(&right.issue_id)
                 .then_with(|| left.created_at.cmp(&right.created_at))
+                .then_with(|| left.id.cmp(&right.id))
                 .then_with(|| left.author.cmp(&right.author))
                 .then_with(|| left.body.cmp(&right.body))
-                .then_with(|| left.id.cmp(&right.id))
         });
     }
 }
@@ -12121,10 +12746,10 @@ fn scan_existing_jsonl_replacements(
 }
 
 fn prepare_jsonl_temp_output(output_path: &Path, config: &ExportConfig) -> Result<JsonlTempOutput> {
-    if let Some(ref beads_dir) = config.beads_dir {
-        validate_sync_path_with_external(output_path, beads_dir, config.allow_external_jsonl)?;
+    if let Some(ref obr_dir) = config.obr_dir {
+        validate_sync_path_with_external(output_path, obr_dir, config.allow_external_jsonl)?;
         let output_abs = absolute_or_current_dir_join(output_path);
-        history::backup_before_export(beads_dir, &config.history, &output_abs)?;
+        history::backup_before_export(obr_dir, &config.history, &output_abs)?;
     }
 
     let parent_dir = output_path.parent().ok_or_else(|| {
@@ -12159,16 +12784,16 @@ fn rename_jsonl_temp_output(
     output_path: &Path,
     config: &ExportConfig,
 ) -> Result<()> {
-    if let Some(ref beads_dir) = config.beads_dir {
+    if let Some(ref obr_dir) = config.obr_dir {
         require_safe_sync_overwrite_path(
             temp_path,
-            beads_dir,
+            obr_dir,
             config.allow_external_jsonl,
             "rename temp file",
         )?;
         require_safe_sync_overwrite_path(
             output_path,
-            beads_dir,
+            obr_dir,
             config.allow_external_jsonl,
             "overwrite JSONL output",
         )?;
@@ -12199,7 +12824,7 @@ fn try_write_existing_jsonl_replacements_atomically(
         // GitHub #404: a replacement id the file does not already contain is a
         // newly created issue. Substituting matched rows in place can only put
         // it at the tail, which leaves the JSONL non-canonically ordered until
-        // the next `br sync --force`. Decline so the caller takes the sorted
+        // the next `obr sync --force`. Decline so the caller takes the sorted
         // full-rewrite path; updates (every id already present) keep the cheap
         // in-place write.
         return Ok(ExistingJsonlReplacementWrite::Declined);
@@ -12488,11 +13113,18 @@ fn apply_incremental_auto_flush_changes(
 
 fn try_incremental_auto_flush(
     storage: &mut SqliteStorage,
-    beads_dir: &Path,
+    obr_dir: &Path,
     jsonl_path: &Path,
     allow_external_jsonl: bool,
 ) -> Result<Option<AutoFlushResult>> {
     if !jsonl_path.exists() {
+        return Ok(None);
+    }
+    if org_bridge::ExportFormat::for_path(jsonl_path) != org_bridge::ExportFormat::Jsonl {
+        // The incremental path splices individual JSONL *lines* in place;
+        // every step assumes one issue = one line, which is meaningless for
+        // multi-line Org records. Decline, and the caller falls through to
+        // the full exporter (accepted Org perf trade — docs/research/upgrade/DECISIONS.md U6).
         return Ok(None);
     }
 
@@ -12523,7 +13155,7 @@ fn try_incremental_auto_flush(
     let changes = collect_incremental_auto_flush_changes(storage, dirty_metadata)?;
     let export_config = ExportConfig {
         force: false,
-        beads_dir: Some(beads_dir.to_path_buf()),
+        obr_dir: Some(obr_dir.to_path_buf()),
         allow_external_jsonl,
         ..Default::default()
     };
@@ -12608,7 +13240,7 @@ pub struct AutoFlushResult {
 /// # Arguments
 ///
 /// * `storage` - Mutable reference to the `SQLite` storage
-/// * `beads_dir` - Path to the .beads directory
+/// * `obr_dir` - Path to the workspace directory
 /// * `jsonl_path` - Resolved JSONL export target for this workspace
 ///
 /// # Errors
@@ -12616,7 +13248,7 @@ pub struct AutoFlushResult {
 /// Returns an error if the export fails.
 pub fn auto_flush(
     storage: &mut SqliteStorage,
-    beads_dir: &Path,
+    obr_dir: &Path,
     jsonl_path: &Path,
     allow_external_jsonl: bool,
 ) -> Result<AutoFlushResult> {
@@ -12629,7 +13261,7 @@ pub fn auto_flush(
     if !pending.permits_automatic_mutation() {
         return Err(BeadsError::SyncConflict {
             message: format!(
-                "{}; automatic JSONL export is disabled until `br sync --merge` reconciles and clears the pending state",
+                "{}; automatic JSONL export is disabled until `obr sync --merge` reconciles and clears the pending state",
                 pending.diagnostic()
             ),
         });
@@ -12644,14 +13276,14 @@ pub fn auto_flush(
         return Ok(AutoFlushResult::default());
     }
 
-    validate_sync_path_with_external(jsonl_path, beads_dir, allow_external_jsonl)?;
+    validate_sync_path_with_external(jsonl_path, obr_dir, allow_external_jsonl)?;
 
     // Refuse to auto-flush over a JSONL that still holds unresolved
     // merge-conflict markers. The downstream export path would otherwise
     // silently overwrite the `<<<<<<<` / `=======` / `>>>>>>>` regions
     // (along with the remote side of the merge the operator hadn't yet
     // looked at) every time a mutating CLI command returns. Explicit
-    // `br sync --flush-only` already has a `--force` escape hatch for this
+    // `obr sync --flush-only` already has a `--force` escape hatch for this
     // case; auto-flush has no such surface, so the only safe default is to
     // stop, log clearly, and let the next explicit sync surface the error.
     if jsonl_exists {
@@ -12660,7 +13292,7 @@ pub fn auto_flush(
             tracing::warn!(
                 jsonl_path = %jsonl_path.display(),
                 marker_count = conflict_markers.len(),
-                "Skipping auto-flush: JSONL contains merge-conflict markers. Resolve them (or run `br sync --flush-only --force` to override) before the next write.",
+                "Skipping auto-flush: JSONL contains merge-conflict markers. Resolve them (or run `obr sync --flush-only --force` to override) before the next write.",
             );
             return Ok(AutoFlushResult::default());
         }
@@ -12673,7 +13305,7 @@ pub fn auto_flush(
     );
 
     if !needs_flush {
-        match try_incremental_auto_flush(storage, beads_dir, jsonl_path, allow_external_jsonl) {
+        match try_incremental_auto_flush(storage, obr_dir, jsonl_path, allow_external_jsonl) {
             Ok(Some(result)) => {
                 tracing::info!(
                     flushed = result.flushed,
@@ -12689,7 +13321,7 @@ pub fn auto_flush(
         }
     }
 
-    // Configure export with defaults, including beads_dir for path validation.
+    // Configure export with defaults, including obr_dir for path validation.
     // `needs_flush` is deliberately NOT passed as `force` (#405): doing so
     // disabled the exporter's data-loss guards, and the import path also arms
     // `needs_flush` when a local record wins over JSONL — a state in which a
@@ -12699,7 +13331,7 @@ pub fn auto_flush(
     // computation.
     let export_config = ExportConfig {
         force: false,
-        beads_dir: Some(beads_dir.to_path_buf()),
+        obr_dir: Some(obr_dir.to_path_buf()),
         allow_external_jsonl,
         ..Default::default()
     };
@@ -12739,16 +13371,46 @@ pub fn auto_flush(
 ///
 /// Returns an error if the file cannot be read or contains invalid JSON.
 pub fn read_issues_from_jsonl(path: &Path) -> Result<Vec<Issue>> {
-    let file = File::open(path)?;
+    let mut file = File::open(path)?;
     path::validate_jsonl_fd_metadata(&file, path)?;
+    if org_bridge::ExportFormat::for_path(path).is_org() {
+        use std::io::Read;
+        let mut text = String::new();
+        file.read_to_string(&mut text)?;
+        return read_issues_from_org_text(path, &text);
+    }
     let file_size = file.metadata().map_or(0, |m| m.len());
     let estimated_count = (file_size / 500) as usize;
     read_issues_from_jsonl_reader(path, estimated_count, BufReader::new(file))
 }
 
 pub(crate) fn read_issues_from_jsonl_snapshot(source: &JsonlSourceSnapshot) -> Result<Vec<Issue>> {
+    if org_bridge::ExportFormat::for_path(source.display_path()).is_org() {
+        use std::io::Read;
+        let mut text = String::new();
+        source.reader().read_to_string(&mut text)?;
+        return read_issues_from_org_text(source.display_path(), &text);
+    }
     let estimated_count = (source.size() / 500) as usize;
     read_issues_from_jsonl_reader(source.display_path(), estimated_count, source.reader())
+}
+
+/// Org counterpart of `read_issues_from_jsonl_reader`: parse plus the same
+/// duplicate-id hard error, with heading ordinals in the diagnostics.
+fn read_issues_from_org_text(display_path: &Path, text: &str) -> Result<Vec<Issue>> {
+    let issues = org_bridge::org_text_to_issues(text)?;
+    let mut seen_ids = HashSet::with_capacity(issues.len());
+    for (ordinal, issue) in issues.iter().enumerate() {
+        if !seen_ids.insert(issue.id.clone()) {
+            return Err(BeadsError::Config(format!(
+                "Duplicate issue id '{}' in {} at heading {}",
+                issue.id,
+                display_path.display(),
+                ordinal + 1
+            )));
+        }
+    }
+    Ok(issues)
 }
 
 fn read_issues_from_jsonl_reader(
@@ -12878,6 +13540,7 @@ fn determine_action(
     collision: &CollisionResult,
     incoming: &Issue,
     meta_by_id: &std::collections::HashMap<String, crate::storage::sqlite::IssueMetadata>,
+    computed_hash: &str,
     force_upsert: bool,
 ) -> Result<CollisionAction> {
     match collision {
@@ -12904,11 +13567,71 @@ fn determine_action(
                 });
             }
 
-            // Last-write-wins: compare updated_at
-            match incoming.updated_at.cmp(&existing_meta.updated_at) {
+            // Last-write-wins: compare updated_at. The tie is spelled out
+            // rather than folded into one of the inequalities. Minute-precision
+            // `updated_at` off the Org surface makes the `Equal` arm ordinary
+            // rather than vanishingly rare, so it decides on content.
+            //
+            // Keeping what is stored is the safe answer only when the two
+            // sides agree. When they do NOT, "safe" is an illusion on an
+            // Org surface: the record is skipped, and then the next flush
+            // rewrites the file from the database — so a hand edit made in
+            // the same minute as an obr write is silently reverted. The Org
+            // file is the tracked source of truth and `.obr` is a rebuildable
+            // cache, so on a genuine tie the file wins.
+            //
+            // Only a *known* difference flips the tie: with no stored hash
+            // there is no evidence either way, and the historical answer
+            // stands. Note the tie-break sees `content_hash`'s 15 fields
+            // (see `crate::util::content_hash`), so an equal-timestamp edit
+            // confined to labels, dependencies, comments, or the scheduling
+            // and close metadata is still skipped — `--force` remains the
+            // escape hatch for those.
+            // Compare at the incoming record's own precision. The Org surface
+            // renders `:MODIFIED:` at minute precision (`org-timestamp-formats`
+            // is a defconst with no seconds field), so a timestamp that has
+            // round-tripped through a file is strictly LESS than the sub-minute
+            // instant the database holds for the very same write. Comparing raw
+            // therefore fires "Existing is newer" on every hand edit forever,
+            // not merely inside the minute of the last flush — the record is
+            // skipped and the next flush reverts the file.
+            //
+            // A minute-aligned incoming timestamp is the signal: nothing but a
+            // truncating surface produces one. A JSONL instant that lands on an
+            // exact minute is possible but astronomically rare, and the only
+            // consequence there is a coarser comparison for that one record.
+            // Minute-aligned to the nanosecond is the signal that the value
+            // round-tripped through a truncating surface; `Utc::now()` never
+            // produces one, so a JSONL workspace is untouched by everything
+            // below and keeps its existing conflict semantics — including the
+            // deliberate "content drift at equal timestamps is an uncertified
+            // local win" behavior that re-flushes the file from the database.
+            let from_coarse_surface = is_coarse_surface_timestamp(incoming.updated_at);
+            let existing_updated = if from_coarse_surface {
+                existing_meta
+                    .updated_at
+                    .with_second(0)
+                    .and_then(|t| t.with_nanosecond(0))
+                    .unwrap_or(existing_meta.updated_at)
+            } else {
+                existing_meta.updated_at
+            };
+
+            match incoming.updated_at.cmp(&existing_updated) {
                 std::cmp::Ordering::Greater => Ok(CollisionAction::Update {
                     existing_id: existing_id.clone(),
                 }),
+                std::cmp::Ordering::Equal
+                    if from_coarse_surface
+                        && existing_meta
+                            .content_hash
+                            .as_deref()
+                            .is_some_and(|stored| stored != computed_hash) =>
+                {
+                    Ok(CollisionAction::Update {
+                        existing_id: existing_id.clone(),
+                    })
+                }
                 std::cmp::Ordering::Equal => Ok(CollisionAction::Skip {
                     reason: format!("Equal timestamps: {existing_id}"),
                 }),
@@ -13012,8 +13735,23 @@ fn normalize_issue(issue: &mut Issue) -> usize {
         issue.ephemeral = true;
     }
 
-    // Repair closed_at invariant: if status is terminal (closed/tombstone), ensure closed_at is set
-    if issue.status.is_terminal() && issue.closed_at.is_none() {
+    // Repair closed_at invariant: a closed issue must carry closed_at (the
+    // schema CHECK requires it). A tombstone must not have one invented: the
+    // delete path deliberately leaves closed_at NULL — deleted_at is the
+    // tombstone's timestamp — and the schema CHECK exempts tombstones for
+    // exactly that reason. Back-filling one here made a deleted issue gain a
+    // close-time property (`:FINISHED:` on the Org surface) that the flush
+    // before the import never wrote, so a fresh-clone or `--rebuild` round
+    // trip was not a fixpoint. A tombstone that really was closed before it
+    // was deleted keeps its own closed_at; only the invention is dropped.
+    //
+    // NOTE for the Closed case below: this back-fill is also what makes a
+    // heading closed by hand in Emacs (DONE + a `CLOSED:` planning line obr
+    // does not read) acquire `closed_at = updated_at` — a close time obr
+    // never observed. Documented in docs/RESIDUALS.md under the
+    // org-special-properties section; close through `obr close` when the
+    // timestamp matters.
+    if issue.status == crate::model::Status::Closed && issue.closed_at.is_none() {
         issue.closed_at = Some(issue.updated_at);
     }
 
@@ -13088,10 +13826,75 @@ fn parse_normalized_import_issue(trimmed: &str, line_num: usize) -> Result<(Issu
     Ok((issue, exact_duplicate_comments_deduplicated))
 }
 
+/// The noun used in positional import diagnostics: JSONL records live on
+/// lines, Org records on level-1 headings.
+fn import_record_noun(source: &JsonlSourceSnapshot) -> &'static str {
+    if org_bridge::ExportFormat::for_path(source.display_path()).is_org() {
+        "heading"
+    } else {
+        "line"
+    }
+}
+
+thread_local! {
+    /// One-entry parse cache for Org imports, keyed by the snapshot's raw
+    /// content hash. Import makes three passes over the same immutable
+    /// snapshot; without this each pass would re-run the orgize parse, which
+    /// has an O(n^2) worst case. Content-addressed keying makes staleness
+    /// impossible; imports are single-threaded per command.
+    static ORG_IMPORT_PARSE_CACHE: std::cell::RefCell<Option<(String, Vec<Issue>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Parse an Org snapshot into issues, memoized on the snapshot's content.
+fn cached_org_import_issues(source: &JsonlSourceSnapshot) -> Result<Vec<Issue>> {
+    use std::io::Read;
+
+    let key = source.raw_sha256().to_string();
+    let cached = ORG_IMPORT_PARSE_CACHE.with(|cache| {
+        cache
+            .borrow()
+            .as_ref()
+            .filter(|(cached_key, _)| *cached_key == key)
+            .map(|(_, issues)| issues.clone())
+    });
+    if let Some(issues) = cached {
+        return Ok(issues);
+    }
+
+    let mut text = String::new();
+    source.reader().read_to_string(&mut text)?;
+    let issues = org_bridge::org_text_to_issues(&text)?;
+    ORG_IMPORT_PARSE_CACHE.with(|cache| {
+        *cache.borrow_mut() = Some((key, issues.clone()));
+    });
+    Ok(issues)
+}
+
 fn for_each_jsonl_import_issue(
     source: &JsonlSourceSnapshot,
     mut handle_issue: impl FnMut(usize, Issue, usize) -> Result<()>,
 ) -> Result<()> {
+    if org_bridge::ExportFormat::for_path(source.display_path()).is_org() {
+        for (ordinal, mut issue) in cached_org_import_issues(source)?.into_iter().enumerate() {
+            let ordinal = ordinal + 1;
+            normalize_issue(&mut issue);
+            if let Err(errors) = IssueValidator::validate(&issue) {
+                let details = errors
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(BeadsError::Config(format!(
+                    "Validation failed for issue {} at heading {}: {}",
+                    issue.id, ordinal, details
+                )));
+            }
+            handle_issue(ordinal, issue, 0)?;
+        }
+        return Ok(());
+    }
+
     let mut reader = source.reader();
     let mut line = String::new();
     let mut line_num = 0usize;
@@ -13117,6 +13920,7 @@ fn collect_import_validation_plan(
 ) -> Result<ImportValidationPlan> {
     let mut plan = ImportValidationPlan::default();
     let mut seen_ids = HashSet::new();
+    let record_noun = import_record_noun(source);
 
     for_each_jsonl_import_issue(source, |line_num, issue, _| {
         let prefix_mismatch = !config.skip_prefix_validation
@@ -13127,7 +13931,8 @@ fn collect_import_validation_plan(
 
         if prefix_mismatch && !config.rename_on_import {
             return Err(BeadsError::Config(format!(
-                "Prefix mismatch at line {}: expected '{}', found issue '{}'",
+                "Prefix mismatch at {} {}: expected '{}', found issue '{}'",
+                record_noun,
                 line_num,
                 expected_prefix.unwrap_or_default(),
                 issue.id
@@ -13136,9 +13941,10 @@ fn collect_import_validation_plan(
 
         if !seen_ids.insert(issue.id.clone()) {
             return Err(BeadsError::Config(format!(
-                "Duplicate issue id '{}' in {} at line {}",
+                "Duplicate issue id '{}' in {} at {} {}",
                 issue.id,
                 source.display_path().display(),
+                record_noun,
                 line_num
             )));
         }
@@ -13387,6 +14193,7 @@ fn scan_import_collision_renames(
             &collision,
             &issue,
             &metadata.meta_by_id,
+            &computed_hash,
             config.force_upsert,
         )?;
         let target_id = match &collision {
@@ -13453,6 +14260,47 @@ fn cleanup_import_orphans_in_tx(storage: &SqliteStorage) -> Result<usize> {
     }
 
     Ok(orphans_cleaned)
+}
+
+/// True when a timestamp lost its sub-minute component, which is the mark of a
+/// surface that truncates — the Org file renders `:MODIFIED:` through
+/// `org-timestamp-formats`, which has no seconds field. `Utc::now()` does not
+/// produce such a value, so JSONL workspaces never take the paths gated on it.
+fn is_coarse_surface_timestamp(at: DateTime<Utc>) -> bool {
+    at.second() == 0 && at.timestamp_subsec_nanos() == 0
+}
+
+/// Turn an equal-timestamp skip into an update when the record came from a
+/// truncating surface and its content genuinely differs from the stored issue.
+///
+/// [`determine_action`] breaks that tie on `content_hash`, which covers 15
+/// fields. Labels, dependencies, comments, and the scheduling and close
+/// metadata are not among them, so an edit confined to those — changing a
+/// headline's tags in Emacs is the everyday case — looked identical, was
+/// skipped, and was then reverted by the next flush.
+///
+/// [`Issue::sync_equals`] compares everything a surface can carry, including
+/// labels order-independently. The load it needs is not extra work:
+/// [`export_hash_entry_for_import_action`] already performs exactly this
+/// comparison on every skip, a few lines further down the same loop.
+fn upgrade_coarse_surface_skip(
+    storage: &SqliteStorage,
+    action: CollisionAction,
+    incoming: &Issue,
+    target_id: &str,
+) -> Result<CollisionAction> {
+    let CollisionAction::Skip { ref reason } = action else {
+        return Ok(action);
+    };
+    if !reason.starts_with("Equal timestamps")
+        || !is_coarse_surface_timestamp(incoming.updated_at)
+        || skipped_import_matches_stored_issue(storage, target_id, incoming)?
+    {
+        return Ok(action);
+    }
+    Ok(CollisionAction::Update {
+        existing_id: target_id.to_string(),
+    })
 }
 
 fn skipped_import_matches_stored_issue(
@@ -13541,6 +14389,7 @@ fn stream_import_actions_in_tx(
                 &collision,
                 &issue,
                 &metadata.meta_by_id,
+                &computed_hash,
                 config.force_upsert,
             )?;
             let target_id = match &collision {
@@ -13669,7 +14518,7 @@ fn verify_applied_import_issue_semantics(
 /// Import issues from a JSONL file.
 ///
 /// Implements classic bd import semantics:
-/// 0. Path validation - reject git paths and outside-beads paths without opt-in
+/// 0. Path validation - reject git paths and outside-obr paths without opt-in
 /// 1. Conflict marker scan - abort if found
 /// 2. Parse JSONL with 2MB buffer
 /// 3. Normalize issues (recompute `content_hash`, set defaults)
@@ -13685,7 +14534,7 @@ fn verify_applied_import_issue_semantics(
 /// # Errors
 ///
 /// Returns an error if:
-/// - Path validation fails (git path, outside `beads_dir` without opt-in)
+/// - Path validation fails (git path, outside `obr_dir` without opt-in)
 /// - Conflict markers are detected
 /// - File cannot be read
 /// - Prefix validation fails
@@ -13698,11 +14547,11 @@ pub fn import_from_jsonl(
     expected_prefix: Option<&str>,
 ) -> Result<ImportResult> {
     // Step 0: Path validation (PC-1, PC-2, PC-3, NGI-3) - BEFORE any file operations
-    if let Some(ref beads_dir) = config.beads_dir {
-        validate_sync_path_with_external(input_path, beads_dir, config.allow_external_jsonl)?;
+    if let Some(ref obr_dir) = config.obr_dir {
+        validate_sync_path_with_external(input_path, obr_dir, config.allow_external_jsonl)?;
         tracing::debug!(
             input_path = %input_path.display(),
-            beads_dir = %beads_dir.display(),
+            obr_dir = %obr_dir.display(),
             allow_external = config.allow_external_jsonl,
             "Import path validated"
         );
@@ -13754,10 +14603,10 @@ fn import_from_jsonl_snapshot_impl(
         storage.verify_fresh_database_replacement_witness(witness)?;
     }
 
-    if let Some(ref beads_dir) = config.beads_dir {
+    if let Some(ref obr_dir) = config.obr_dir {
         validate_sync_path_with_external(
             source.display_path(),
-            beads_dir,
+            obr_dir,
             config.allow_external_jsonl,
         )?;
     }
@@ -14007,7 +14856,25 @@ pub(crate) fn compute_jsonl_snapshot_content_hash(source: &JsonlSourceSnapshot) 
     Ok(source.content_sha256().to_string())
 }
 
+/// Compute the canonical raw-bytes hash used for Org exports (the Org
+/// canonical form is the file's exact bytes; see
+/// `capture_opened_jsonl_source_snapshot_with_verifier`).
+fn compute_raw_hash_from_reader(mut reader: impl std::io::Read) -> Result<String> {
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0_u8; 64 * 1024];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hex_encode(&hasher.finalize()))
+}
+
 /// Finalize an import by computing the canonical content hash of the file.
+/// Format-aware: JSONL uses the line-canonical digest, Org the raw-bytes
+/// digest — matching what the snapshot capture layer stores.
 ///
 /// # Errors
 ///
@@ -14015,15 +14882,22 @@ pub(crate) fn compute_jsonl_snapshot_content_hash(source: &JsonlSourceSnapshot) 
 pub fn compute_jsonl_hash(path: &Path) -> Result<String> {
     let file = std::fs::File::open(path)?;
     self::path::validate_jsonl_fd_metadata(&file, path)?;
-    compute_jsonl_hash_from_reader(std::io::BufReader::new(file))
+    match org_bridge::ExportFormat::for_path(path) {
+        org_bridge::ExportFormat::Jsonl => {
+            compute_jsonl_hash_from_reader(std::io::BufReader::new(file))
+        }
+        org_bridge::ExportFormat::Org => {
+            compute_raw_hash_from_reader(std::io::BufReader::new(file))
+        }
+    }
 }
 
 // ============================================================================
 // Additive Reconciliation (beads_rust-3r45)
 // ============================================================================
 
-/// Schema marker for `br sync --reconcile` receipts.
-pub const SYNC_RECONCILE_SCHEMA_VERSION: &str = "br.sync.reconcile.v1";
+/// Schema marker for `obr sync --reconcile` receipts.
+pub const SYNC_RECONCILE_SCHEMA_VERSION: &str = "obr.sync.reconcile.v1";
 
 /// Per-row action kind planned by additive reconciliation.
 ///
@@ -14236,7 +15110,13 @@ where
             &metadata.meta_by_id,
             &computed_hash,
         );
-        let action = determine_action(&collision, &issue, &metadata.meta_by_id, false)?;
+        let action = determine_action(
+            &collision,
+            &issue,
+            &metadata.meta_by_id,
+            &computed_hash,
+            false,
+        )?;
         let target_id = match &collision {
             CollisionResult::Match { existing_id, .. } => existing_id.clone(),
             CollisionResult::NewIssue => issue.id.clone(),
@@ -14270,8 +15150,8 @@ pub fn plan_sync_reconcile(
     input_path: &Path,
     config: &ImportConfig,
 ) -> Result<ReconcilePlan> {
-    if let Some(ref beads_dir) = config.beads_dir {
-        validate_sync_path_with_external(input_path, beads_dir, config.allow_external_jsonl)?;
+    if let Some(ref obr_dir) = config.obr_dir {
+        validate_sync_path_with_external(input_path, obr_dir, config.allow_external_jsonl)?;
     }
     if !input_path.is_file() {
         return Err(reconcile_config_error(format!(
@@ -14398,8 +15278,8 @@ pub fn apply_sync_reconcile(
     config: &ImportConfig,
     plan: &ReconcilePlan,
 ) -> Result<ReconcileApplyOutcome> {
-    if let Some(ref beads_dir) = config.beads_dir {
-        validate_sync_path_with_external(input_path, beads_dir, config.allow_external_jsonl)?;
+    if let Some(ref obr_dir) = config.obr_dir {
+        validate_sync_path_with_external(input_path, obr_dir, config.allow_external_jsonl)?;
     }
     ensure_no_conflict_markers(input_path)?;
 
@@ -14766,6 +15646,44 @@ pub enum ConflictResolution {
     Manual,
 }
 
+/// Resolve one [`ConflictResolution::PreferNewer`] comparison, including the
+/// tie, and name the outcome truthfully.
+///
+/// Once an issue has been through the Org surface its `updated_at` is
+/// minute-precision — `org_bridge` writes `[YYYY-MM-DD Ddd HH:MM]` and there
+/// is nowhere in an Org timestamp to put seconds — so two edits in the same
+/// minute now compare EQUAL where they used to differ. The tie is common
+/// enough to need a stated rule, and it is this one:
+///
+/// **On equal `updated_at`, the local side is kept, and the note says the
+/// timestamps were equal.**
+///
+/// Deterministic in the strong sense: the outcome is a function of the two
+/// issues alone, never of iteration order or of when the merge ran. Keeping
+/// local is a bias rather than a coin flip, and a deliberate one — it is the
+/// side [`MergeResult::Keep`] already picks when only one side changed, and
+/// it is stable when the same merge is repeated. Breaking the tie on a
+/// content hash would be symmetric between the two sides, but it would
+/// discard a local edit on the strength of a hash comparison nobody can
+/// predict, which is a worse answer for the person who made the edit.
+///
+/// The note text is load-bearing: it previously read "kept local (newer)"
+/// for a tie, which was false and hid the discarded edit in the merge report.
+fn resolve_prefer_newer(l: &Issue, r: &Issue, situation: &str) -> MergeResult {
+    match l.updated_at.cmp(&r.updated_at) {
+        std::cmp::Ordering::Greater => {
+            MergeResult::KeepWithNote(l.clone(), format!("{situation} - kept local (newer)"))
+        }
+        std::cmp::Ordering::Less => {
+            MergeResult::KeepWithNote(r.clone(), format!("{situation} - kept external (newer)"))
+        }
+        std::cmp::Ordering::Equal => MergeResult::KeepWithNote(
+            l.clone(),
+            format!("{situation} - kept local (equal timestamps)"),
+        ),
+    }
+}
+
 /// Merge a single issue given its state in base, left (local), and right (external).
 ///
 /// This implements the core 3-way merge logic for a single issue:
@@ -14878,19 +15796,7 @@ pub fn merge_issue(
                         r.clone(),
                         "Both modified - kept external".to_string(),
                     ),
-                    ConflictResolution::PreferNewer => {
-                        if l.updated_at >= r.updated_at {
-                            MergeResult::KeepWithNote(
-                                l.clone(),
-                                "Both modified - kept local (newer)".to_string(),
-                            )
-                        } else {
-                            MergeResult::KeepWithNote(
-                                r.clone(),
-                                "Both modified - kept external (newer)".to_string(),
-                            )
-                        }
-                    }
+                    ConflictResolution::PreferNewer => resolve_prefer_newer(l, r, "Both modified"),
                     ConflictResolution::Manual => MergeResult::Conflict(ConflictType::BothModified),
                 },
             }
@@ -14913,17 +15819,7 @@ pub fn merge_issue(
                         "Convergent creation - kept external".to_string(),
                     ),
                     ConflictResolution::PreferNewer => {
-                        if l.updated_at >= r.updated_at {
-                            MergeResult::KeepWithNote(
-                                l.clone(),
-                                "Convergent creation - kept local (newer)".to_string(),
-                            )
-                        } else {
-                            MergeResult::KeepWithNote(
-                                r.clone(),
-                                "Convergent creation - kept external (newer)".to_string(),
-                            )
-                        }
+                        resolve_prefer_newer(l, r, "Convergent creation")
                     }
                     ConflictResolution::Manual => {
                         MergeResult::Conflict(ConflictType::ConvergentCreation)
@@ -15028,7 +15924,7 @@ fn write_base_snapshot_atomically<WriteSnapshot>(
 where
     WriteSnapshot: FnOnce(&mut BufWriter<File>) -> Result<()>,
 {
-    let snapshot_path = jsonl_dir.join("beads.base.jsonl");
+    let snapshot_path = jsonl_dir.join(crate::config::MERGE_BASE_JSONL_FILENAME);
     let authority = blocking_jsonl_family_write_lock_with_timeout(&snapshot_path, None)?;
     let previous_source = authority.capture_optional_target()?;
     let expected_previous_state = previous_source.as_ref().map_or(
@@ -15060,7 +15956,7 @@ fn write_base_snapshot_atomically_under_authority<WriteSnapshot>(
 where
     WriteSnapshot: FnOnce(&mut BufWriter<File>) -> Result<()>,
 {
-    let snapshot_path = jsonl_dir.join("beads.base.jsonl");
+    let snapshot_path = jsonl_dir.join(crate::config::MERGE_BASE_JSONL_FILENAME);
     authority.verify_jsonl_authority()?;
     let (temp_path, pinned_temp, temp_file) =
         create_base_snapshot_temp_file_under_authority(&snapshot_path, jsonl_dir, authority)?;
@@ -15102,20 +15998,10 @@ pub fn save_base_snapshot<S: ::std::hash::BuildHasher>(
     issues: &std::collections::HashMap<String, Issue, S>,
     jsonl_dir: &Path,
 ) -> Result<()> {
-    let mut ordered_issues: Vec<_> = issues.values().collect();
-    ordered_issues.sort_by(|left, right| left.id.cmp(&right.id));
+    let mut ordered_issues = issues.values().cloned().collect::<Vec<_>>();
 
     write_base_snapshot_atomically(jsonl_dir, |writer| {
-        let mut buffer = Vec::new();
-        for issue in ordered_issues {
-            buffer.clear();
-            serde_json::to_writer(&mut buffer, issue).map_err(|e| {
-                BeadsError::Config(format!("Failed to serialize issue {}: {}", issue.id, e))
-            })?;
-            writer.write_all(&buffer).map_err(BeadsError::Io)?;
-            writer.write_all(b"\n").map_err(BeadsError::Io)?;
-        }
-        Ok(())
+        write_issues_sorted_as_base_jsonl(writer, &mut ordered_issues)
     })
 }
 
@@ -15149,12 +16035,12 @@ pub(crate) fn save_base_snapshot_from_jsonl_snapshot(
 /// Refresh `beads.base.jsonl` with the exact bytes of a finalized flush
 /// export (issue #378).
 ///
-/// After a clean `br sync --flush-only`, the database and the JSONL agree, so
+/// After a clean `obr sync --flush-only`, the database and the JSONL agree, so
 /// the JSONL that just reached disk IS the new common state future 3-way
 /// merges should diff against. Historically only the merge path wrote the
 /// anchor, which left flush-only workspaces (the common agent workflow)
-/// permanently anchor-less: `br doctor` warned `base_jsonl.missing_post_flush`
-/// forever while `br sync --status` reported "In sync".
+/// permanently anchor-less: `obr doctor` warned `base_jsonl.missing_post_flush`
+/// forever while `obr sync --status` reported "In sync".
 ///
 /// This is a byte copy (not a parse + re-serialize) so the anchor matches the
 /// on-disk export exactly. The write goes through the same validated
@@ -15172,11 +16058,67 @@ pub fn refresh_base_snapshot_from_flushed_jsonl(jsonl_path: &Path, jsonl_dir: &P
     refresh_base_snapshot_from_flushed_jsonl_snapshot(&source, jsonl_dir)
 }
 
+/// Serialize issues, id-sorted, as canonical JSONL lines — the base-anchor
+/// wire form regardless of the workspace's export format.
+fn write_issues_sorted_as_base_jsonl<W: Write>(writer: &mut W, issues: &mut [Issue]) -> Result<()> {
+    issues.sort_by(|left, right| left.id.cmp(&right.id));
+    let mut buffer = Vec::new();
+    for issue in issues.iter_mut() {
+        normalize_issue_for_export(issue);
+        buffer.clear();
+        serde_json::to_writer(&mut buffer, &*issue).map_err(|e| {
+            BeadsError::Config(format!("Failed to serialize issue {}: {}", issue.id, e))
+        })?;
+        writer.write_all(&buffer).map_err(BeadsError::Io)?;
+        writer.write_all(b"\n").map_err(BeadsError::Io)?;
+    }
+    Ok(())
+}
+
+/// The `content_sha256` the merge-base anchor must carry for `source`.
+///
+/// The anchor (`merge.base.jsonl`) is always JSONL, whatever the workspace's
+/// export format is. For a JSONL export that makes the anchor a byte copy of
+/// the export, so the two digests are simply equal. For an Org export the
+/// anchor is *derived*: `refresh_base_snapshot_from_flushed_jsonl_snapshot*`
+/// parses the Org file and re-serializes the issues through
+/// `write_issues_sorted_as_base_jsonl`. Byte identity therefore cannot hold —
+/// an Org snapshot's `content_sha256()` is the digest of its raw Org bytes
+/// (`capture_opened_jsonl_source_snapshot_with_verifier`), which is a
+/// different artifact entirely.
+///
+/// So the witness an Org workspace must verify the anchor against is the JSONL
+/// generation derived from the same issue set, never the Org file's own bytes.
+/// This function produces exactly that digest, by running the same
+/// parse-and-re-serialize into memory and taking the canonical JSONL digest of
+/// the result.
+pub(crate) fn expected_base_anchor_content_sha256(source: &JsonlSourceSnapshot) -> Result<String> {
+    if !org_bridge::ExportFormat::for_path(source.display_path()).is_org() {
+        return Ok(source.content_sha256().to_string());
+    }
+    let mut issues = read_issues_from_jsonl_snapshot(source)?;
+    let mut rendered = Vec::new();
+    write_issues_sorted_as_base_jsonl(&mut rendered, &mut issues)?;
+    Ok(path::compute_jsonl_content_sha256_from_bytes(&rendered))
+}
+
 pub(crate) fn refresh_base_snapshot_from_flushed_jsonl_snapshot(
     source: &JsonlSourceSnapshot,
     jsonl_dir: &Path,
 ) -> Result<()> {
     ensure_no_conflict_markers_snapshot(source)?;
+    // The anchor file is beads.base.jsonl and is always parsed as JSONL. A
+    // byte copy of an Org export would silently store Org text under a
+    // .jsonl name and give every future 3-way merge an erroring base, so Org
+    // sources are parsed and re-serialized instead. The byte-copy fast path
+    // is preserved for JSONL, where "anchor is byte-identical to the export"
+    // still holds.
+    if org_bridge::ExportFormat::for_path(source.display_path()).is_org() {
+        let mut issues = read_issues_from_jsonl_snapshot(source)?;
+        return write_base_snapshot_atomically(jsonl_dir, |writer| {
+            write_issues_sorted_as_base_jsonl(writer, &mut issues)
+        });
+    }
     write_base_snapshot_atomically(jsonl_dir, |writer| {
         std::io::copy(&mut source.reader(), writer).map_err(BeadsError::Io)?;
         Ok(())
@@ -15190,6 +16132,15 @@ pub(crate) fn refresh_base_snapshot_from_flushed_jsonl_snapshot_under_authority(
     authority: &JsonlFamilyWriteLock,
 ) -> Result<ExportPublicationReceipt> {
     ensure_no_conflict_markers_snapshot(source)?;
+    if org_bridge::ExportFormat::for_path(source.display_path()).is_org() {
+        let mut issues = read_issues_from_jsonl_snapshot(source)?;
+        return write_base_snapshot_atomically_under_authority(
+            jsonl_dir,
+            expected_previous_state,
+            authority,
+            |writer| write_issues_sorted_as_base_jsonl(writer, &mut issues),
+        );
+    }
     write_base_snapshot_atomically_under_authority(
         jsonl_dir,
         expected_previous_state,
@@ -15230,7 +16181,7 @@ pub(crate) fn load_base_snapshot_from_source(
 ///
 /// Returns an error if the file exists but cannot be read or parsed.
 pub fn load_base_snapshot(jsonl_dir: &Path) -> Result<std::collections::HashMap<String, Issue>> {
-    let snapshot_path = jsonl_dir.join("beads.base.jsonl");
+    let snapshot_path = jsonl_dir.join(crate::config::MERGE_BASE_JSONL_FILENAME);
     require_valid_sync_path(&snapshot_path, jsonl_dir)?;
     let source = capture_optional_jsonl_source(&snapshot_path)?;
     load_base_snapshot_from_source(source.as_ref())
@@ -15419,7 +16370,7 @@ pub(crate) fn restore_tombstones_after_rebuild(
              deletions that had not yet been flushed to the JSONL are gone. \
              Re-running the command is idempotent and safe (the rebuild itself \
              completed successfully). If the underlying cause is lock contention, \
-             wait for other `br` processes to finish and try again."
+             wait for other `obr` processes to finish and try again."
         ),
         source: Box::new(err),
     })
@@ -15453,7 +16404,7 @@ pub(crate) fn restore_dirty_issues_after_rebuild(
              local creations or edits that had not yet been flushed to the JSONL \
              are gone. Re-running the command is idempotent and safe (the rebuild \
              itself completed successfully). If the underlying cause is lock \
-             contention, wait for other `br` processes to finish and try again."
+             contention, wait for other `obr` processes to finish and try again."
         ),
         source: Box::new(err),
     })
@@ -15590,7 +16541,11 @@ pub(crate) fn tombstones_missing_from_jsonl_tombstones(
 /// 2. JSONL has this ID live: preserve only when the local row's
 ///    `updated_at` is strictly newer than the JSONL row's — i.e. there is
 ///    an unflushed local edit. When the JSONL copy is as new or newer,
-///    the rebuild's own import restores an equal-or-better row.
+///    the rebuild's own import restores an equal-or-better row. The
+///    comparison is strict on purpose, so an equal `updated_at` takes the
+///    "the export already has it" branch; with the Org surface storing
+///    `updated_at` to the minute, equal is a normal case, and preferring the
+///    flushed copy is the branch that cannot lose a flushed edit.
 ///
 /// 3. JSONL doesn't have this ID at all: the issue has never been flushed
 ///    anywhere. Always preserve — this is the `--no-auto-flush` data-loss
@@ -15647,15 +16602,59 @@ pub(crate) fn dirty_issues_missing_from_jsonl(
 /// has duplicate IDs across lines.
 #[cfg(test)]
 pub(crate) fn scan_jsonl_for_tombstone_filter(path: &Path) -> Result<JsonlTombstoneFilter> {
-    let file = File::open(path)?;
+    let mut file = File::open(path)?;
     path::validate_jsonl_fd_metadata(&file, path)?;
+    if org_bridge::ExportFormat::for_path(path).is_org() {
+        use std::io::Read;
+        let mut text = String::new();
+        file.read_to_string(&mut text)?;
+        return scan_org_text_for_tombstone_filter(path, &text);
+    }
     scan_jsonl_for_tombstone_filter_from_reader(path, BufReader::new(file))
 }
 
 pub(crate) fn scan_jsonl_snapshot_for_tombstone_filter(
     source: &JsonlSourceSnapshot,
 ) -> Result<JsonlTombstoneFilter> {
+    if org_bridge::ExportFormat::for_path(source.display_path()).is_org() {
+        use std::io::Read;
+        let mut text = String::new();
+        source.reader().read_to_string(&mut text)?;
+        return scan_org_text_for_tombstone_filter(source.display_path(), &text);
+    }
     scan_jsonl_for_tombstone_filter_from_reader(source.display_path(), source.reader())
+}
+
+/// Org counterpart of the tombstone-filter scan: same duplicate-id contract,
+/// heading ordinals in the diagnostics.
+fn scan_org_text_for_tombstone_filter(
+    display_path: &Path,
+    text: &str,
+) -> Result<JsonlTombstoneFilter> {
+    let issues = org_bridge::org_text_to_issues(text)?;
+    let mut seen_ids = HashSet::with_capacity(issues.len());
+    let mut filter = JsonlTombstoneFilter::default();
+
+    for (ordinal, issue) in issues.into_iter().enumerate() {
+        if !seen_ids.insert(issue.id.clone()) {
+            return Err(BeadsError::Config(format!(
+                "Duplicate issue id '{}' in {} at heading {}",
+                issue.id,
+                display_path.display(),
+                ordinal + 1
+            )));
+        }
+
+        if issue.status == crate::model::Status::Tombstone {
+            filter.tombstone_ids.insert(issue.id);
+        } else {
+            filter
+                .non_tombstone_updated_at
+                .insert(issue.id, issue.updated_at);
+        }
+    }
+
+    Ok(filter)
 }
 
 fn scan_jsonl_for_tombstone_filter_from_reader(
@@ -15705,6 +16704,61 @@ fn scan_jsonl_for_tombstone_filter_from_reader(
 }
 
 #[cfg(test)]
+mod provably_not_a_database_tests {
+    use super::database_file_is_provably_not_a_database;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn probe(name: &str, bytes: &[u8]) -> bool {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join(name);
+        fs::write(&path, bytes).expect("write probe file");
+        database_file_is_provably_not_a_database(&path)
+    }
+
+    #[test]
+    fn a_file_too_short_to_hold_a_header_is_proof() {
+        // The zero-length case is the one that matters: a crash or an ENOSPC
+        // truncation leaves exactly this, and it is the most common real
+        // corruption there is. Classifying it by reading magic bytes cannot
+        // work -- the read just fails, indistinguishably from a permission
+        // error -- so the length test has to come first.
+        assert!(probe("empty.db", b""));
+        assert!(probe("short.db", b"not a sqlite database"));
+        assert!(probe("just-under.db", &[b'x'; 99]));
+    }
+
+    #[test]
+    fn a_long_file_without_the_magic_is_proof() {
+        assert!(probe("long.db", &[b'x'; 4096]));
+    }
+
+    #[test]
+    fn a_real_sqlite_header_is_never_proof() {
+        let mut bytes = b"SQLite format 3\0".to_vec();
+        bytes.resize(4096, 0);
+        assert!(!probe("real.db", &bytes));
+    }
+
+    #[test]
+    fn every_uncertain_outcome_answers_false_so_callers_fail_closed() {
+        let dir = TempDir::new().expect("tempdir");
+        assert!(
+            !database_file_is_provably_not_a_database(&dir.path().join("absent.db")),
+            "a missing file is the absent-family question, not this one"
+        );
+        assert!(
+            !database_file_is_provably_not_a_database(dir.path()),
+            "a directory is not a proof of anything"
+        );
+        assert!(
+            !database_file_is_provably_not_a_database(std::path::Path::new(":memory:")),
+            "the in-memory sentinel names no file to inspect"
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::{Comment, Dependency, DependencyType, Issue, IssueType, Priority, Status};
@@ -15715,6 +16769,389 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::symlink;
     use tempfile::TempDir;
+
+    /// A failed export must not leave a staged file in the tracked tree.
+    ///
+    /// Retention is for forensics, and it is only defensible where something
+    /// cleans up: inside the workspace directory, which git ignores wholesale
+    /// and `doctor` sweeps. Beside the tracked surface it is untracked noise
+    /// in the directory the user is asked to commit, and nothing removes it.
+    #[test]
+    fn staged_export_is_discarded_on_failure_outside_the_workspace_dir() {
+        let temp = TempDir::new().expect("temp dir");
+        let root = temp.path();
+        let obr_dir = root.join(crate::config::WORKSPACE_DIR_NAME);
+        fs::create_dir_all(&obr_dir).expect("workspace dir");
+
+        // Beside the tracked surface: discarded when the guard drops.
+        let surface_temp = root.join("PLAN.org.4242.tmp");
+        fs::write(&surface_temp, b"staged").expect("stage surface temp");
+        drop(TempFileGuard::new_retained_inside_workspace_dir_only(
+            surface_temp.clone(),
+        ));
+        assert!(
+            !surface_temp.exists(),
+            "a staged export beside the tracked surface must not survive a failure"
+        );
+
+        // Inside the workspace directory: retained for forensics, where the
+        // doctor's orphan-tmp sweep can find it and git never sees it.
+        let in_dir_temp = obr_dir.join("issues.jsonl.4242.tmp");
+        fs::write(&in_dir_temp, b"staged").expect("stage in-dir temp");
+        drop(TempFileGuard::new_retained_inside_workspace_dir_only(
+            in_dir_temp.clone(),
+        ));
+        assert!(
+            in_dir_temp.exists(),
+            "in-workspace staging must still be retained for diagnosis"
+        );
+    }
+
+    #[test]
+    fn export_temp_path_keeps_the_target_wire_extension() {
+        let pid = std::process::id();
+
+        let jsonl = export_temp_path_for_attempt(Path::new("/ws/.beads/issues.jsonl"), 0);
+        assert_eq!(
+            jsonl,
+            Path::new(&format!("/ws/.beads/issues.jsonl.{pid}.tmp")),
+            "jsonl temp naming must be unchanged"
+        );
+
+        // An issues.org target must stage into issues.org.<pid>.tmp — with a
+        // bare with_extension("jsonl...") it would silently stage Org bytes
+        // under a .jsonl.<pid>.tmp name.
+        let org = export_temp_path_for_attempt(Path::new("/ws/.beads/issues.org"), 0);
+        assert_eq!(org, Path::new(&format!("/ws/.beads/issues.org.{pid}.tmp")));
+
+        for (path, attempt) in [("issues.jsonl", 3), ("issues.org", 3)] {
+            let temp = export_temp_path_for_attempt(Path::new(path), attempt);
+            let name = temp.file_name().unwrap().to_str().unwrap().to_string();
+            assert!(
+                crate::sync::path::is_allowed_export_temp_name(&name),
+                "{name} must be accepted by the temp-name validator"
+            );
+        }
+    }
+
+    /// `doctor`'s orphan-tmp sweep looks for abandoned export temps beside
+    /// the D-SURFACE target, in the user's own tree. It must recognize
+    /// exactly what the exporter writes there and nothing else, so pin the
+    /// recognizer to the producer rather than to a literal shape.
+    #[test]
+    fn test_export_temp_names_are_recognized_as_temp_siblings() {
+        let mut recognized = 0_usize;
+        for target in [
+            "/repo/PLAN.org",
+            "/repo/doc/PLAN.org",
+            "/repo/.obr/issues.jsonl",
+            "/repo/.obr/issues.org",
+        ] {
+            let target = Path::new(target);
+            for attempt in [0_u32, 1, 7, 63] {
+                let temp = export_temp_path_for_attempt(target, attempt);
+                let name = temp.file_name().unwrap().to_str().unwrap();
+                assert_eq!(
+                    temp.parent(),
+                    target.parent(),
+                    "the exporter stages beside the target; the sweep looks there"
+                );
+                assert!(
+                    is_export_temp_name_for(name, target),
+                    "{name} is what the exporter writes for {}",
+                    target.display()
+                );
+                recognized += 1;
+            }
+        }
+        assert_eq!(recognized, 16, "every producer/attempt pair was exercised");
+
+        // Nothing else in a user's tree may be claimed. In particular a bare
+        // `*.tmp`, a foreign base, a missing pid segment, and a non-numeric
+        // pid segment are all outside the producer's shape.
+        let surface = Path::new("/repo/PLAN.org");
+        for name in [
+            "PLAN.org.tmp",
+            "PLAN.org",
+            "NOTES.org.123.tmp",
+            "PLAN.org.abc.tmp",
+            "PLAN.org.123.tmp.bak",
+            "PLAN.jsonl.123.tmp",
+            "draft.tmp",
+        ] {
+            assert!(
+                !is_export_temp_name_for(name, surface),
+                "{name} is not an export temp the surface exporter writes"
+            );
+        }
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn org_export_end_to_end_roundtrips_and_is_deterministic() {
+        let temp = TempDir::new().unwrap();
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let obr_dir = obr_dir.canonicalize().unwrap();
+        let output_path = obr_dir.join("issues.org");
+
+        let mut storage = SqliteStorage::open_memory().unwrap();
+        for (id, title) in [
+            ("bd-a1", "First issue"),
+            ("bd-b2", "Second issue with *markup*"),
+            ("bd-c3", "Third"),
+        ] {
+            let mut issue = make_test_issue(id, title);
+            issue.labels = vec!["alpha".to_string(), "provides:cap".to_string()];
+            issue.description = Some("Body text.\n\n- item one\n- item two".to_string());
+            storage.create_issue(&issue, "test").unwrap();
+        }
+
+        let config = ExportConfig {
+            force: true,
+            obr_dir: Some(obr_dir.clone()),
+            ..Default::default()
+        };
+        let result = export_to_jsonl(&storage, &output_path, &config).unwrap();
+        assert_eq!(result.exported_count, 3);
+
+        let bytes = fs::read(&output_path).unwrap();
+        assert!(
+            bytes.starts_with(&org_bridge::org_file_header_for(Some("bd"))),
+            "export must start with the Org file header carrying the prefix"
+        );
+
+        // The staged-bytes digest must equal the file's canonical (raw) hash.
+        assert_eq!(
+            result.content_hash,
+            compute_jsonl_hash(&output_path).unwrap()
+        );
+
+        // Parse back: every issue exactly once, id-sorted.
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        let parsed = crate::sync::org_bridge::org_text_to_issues(&text).unwrap();
+        let parsed_ids: Vec<&str> = parsed.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(parsed_ids, vec!["bd-a1", "bd-b2", "bd-c3"]);
+        assert_eq!(
+            parsed[0].labels,
+            vec!["alpha".to_string(), "provides:cap".to_string()]
+        );
+
+        // A second export is byte-identical.
+        let result2 = export_to_jsonl(&storage, &output_path, &config).unwrap();
+        assert_eq!(result2.content_hash, result.content_hash);
+        assert_eq!(fs::read(&output_path).unwrap(), bytes);
+    }
+
+    fn canonical_test_obr_dir(temp: &TempDir) -> PathBuf {
+        let dir = temp.path().join(".beads");
+        fs::create_dir_all(&dir).unwrap();
+        dir.canonicalize().unwrap()
+    }
+
+    fn write_org_fixture(path: &Path, headings: &[(&str, &str)]) {
+        let mut text = String::from("#+TITLE: Beads Issues\n\n");
+        for (id, title) in headings {
+            text.push_str(&format!(
+                "* TODO [#C] {title}\n:PROPERTIES:\n:ID:       {id}\n\
+                 :CREATED_AT: 2023-11-14T22:13:20+00:00\n\
+                 :UPDATED_AT: 2023-11-14T22:13:20+00:00\n:END:\n\n"
+            ));
+        }
+        fs::write(path, text).unwrap();
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn org_import_end_to_end_populates_database() {
+        let temp = TempDir::new().unwrap();
+        let obr_dir = canonical_test_obr_dir(&temp);
+        let org_path = obr_dir.join("issues.org");
+        write_org_fixture(&org_path, &[("bd-one", "First"), ("bd-two", "Second")]);
+
+        let mut storage = SqliteStorage::open_memory().unwrap();
+        let result = import_from_jsonl(
+            &mut storage,
+            &org_path,
+            &ImportConfig::default(),
+            Some("bd-"),
+        )
+        .unwrap();
+        assert_eq!(result.created_count, 2);
+
+        let one = storage.get_issue("bd-one").unwrap().unwrap();
+        assert_eq!(one.title, "First");
+        let two = storage.get_issue("bd-two").unwrap().unwrap();
+        assert_eq!(two.title, "Second");
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn org_import_duplicate_id_is_a_hard_error_with_heading_ordinal() {
+        let temp = TempDir::new().unwrap();
+        let obr_dir = canonical_test_obr_dir(&temp);
+        let org_path = obr_dir.join("issues.org");
+        write_org_fixture(&org_path, &[("bd-dup", "First"), ("bd-dup", "Second")]);
+
+        let mut storage = SqliteStorage::open_memory().unwrap();
+        let err = import_from_jsonl(
+            &mut storage,
+            &org_path,
+            &ImportConfig::default(),
+            Some("bd-"),
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Duplicate issue id 'bd-dup'"), "{msg}");
+        assert!(
+            msg.contains("heading 2"),
+            "must name the heading ordinal: {msg}"
+        );
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn org_import_prefix_mismatch_names_the_heading() {
+        let temp = TempDir::new().unwrap();
+        let obr_dir = canonical_test_obr_dir(&temp);
+        let org_path = obr_dir.join("issues.org");
+        write_org_fixture(&org_path, &[("other-1", "Foreign prefix")]);
+
+        let mut storage = SqliteStorage::open_memory().unwrap();
+        let err = import_from_jsonl(
+            &mut storage,
+            &org_path,
+            &ImportConfig::default(),
+            Some("bd-"),
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Prefix mismatch at heading 1"), "{msg}");
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn incremental_auto_flush_declines_org_exports() {
+        let temp = TempDir::new().unwrap();
+        let obr_dir = canonical_test_obr_dir(&temp);
+        let org_path = obr_dir.join("issues.org");
+        write_org_fixture(&org_path, &[("bd-one", "First")]);
+
+        let mut storage = SqliteStorage::open_memory().unwrap();
+        let issue = make_test_issue("bd-two", "Dirty issue");
+        storage.create_issue(&issue, "test").unwrap();
+
+        // Decline means Ok(None): the caller falls through to the full
+        // exporter. The line-splice machinery must never touch an Org file.
+        let result = try_incremental_auto_flush(&mut storage, &obr_dir, &org_path, false).unwrap();
+        assert!(
+            result.is_none(),
+            "Org exports must decline the incremental path"
+        );
+
+        // The file is untouched by the declined incremental pass.
+        let text = std::fs::read_to_string(&org_path).unwrap();
+        assert!(text.contains("bd-one"));
+        assert!(!text.contains("bd-two"));
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn org_flush_re_serializes_the_merge_base_anchor_as_jsonl() {
+        let temp = TempDir::new().unwrap();
+        let obr_dir = canonical_test_obr_dir(&temp);
+        let org_path = obr_dir.join("issues.org");
+        write_org_fixture(&org_path, &[("bd-b", "Second"), ("bd-a", "First")]);
+
+        refresh_base_snapshot_from_flushed_jsonl(&org_path, &obr_dir).unwrap();
+
+        // The anchor must be valid, id-sorted JSONL — a byte copy would have
+        // stored Org text under a .jsonl name and silently broken every
+        // future 3-way merge.
+        let base = load_base_snapshot(&obr_dir).unwrap();
+        let mut ids: Vec<&str> = base.keys().map(String::as_str).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec!["bd-a", "bd-b"]);
+        let anchor_text =
+            fs::read_to_string(crate::config::merge_base_jsonl_path(&obr_dir)).unwrap();
+        assert!(
+            anchor_text.lines().all(|l| l.trim_start().starts_with('{')),
+            "anchor must be JSONL lines: {anchor_text}"
+        );
+
+        // JSONL sources keep the byte-copy property.
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        fs::write(&jsonl_path, "{\"id\":\"bd-z\",\"title\":\"Z\",\"created_at\":\"2023-11-14T22:13:20Z\",\"updated_at\":\"2023-11-14T22:13:20Z\"}\n").unwrap();
+        refresh_base_snapshot_from_flushed_jsonl(&jsonl_path, &obr_dir).unwrap();
+        assert_eq!(
+            fs::read(crate::config::merge_base_jsonl_path(&obr_dir)).unwrap(),
+            fs::read(&jsonl_path).unwrap(),
+            "JSONL anchor refresh must remain a byte copy"
+        );
+    }
+
+    #[test]
+    fn org_validation_summary_collects_failures_with_heading_ordinals() {
+        let temp = TempDir::new().unwrap();
+        let org_path = temp.path().join("issues.org");
+        std::fs::write(
+            &org_path,
+            "#+TITLE: Beads Issues\n\n\
+             * TODO [#C] Good\n:PROPERTIES:\n:ID:       bd-1\n\
+             :CREATED_AT: 2023-11-14T22:13:20+00:00\n:UPDATED_AT: 2023-11-14T22:13:20+00:00\n:END:\n\n\
+             * TODO [#C] No id\n:PROPERTIES:\n:OWNER: x\n:END:\n\n\
+             * TODO [#C] Duplicate\n:PROPERTIES:\n:ID:       bd-1\n\
+             :CREATED_AT: 2023-11-14T22:13:20+00:00\n:UPDATED_AT: 2023-11-14T22:13:20+00:00\n:END:\n",
+        )
+        .unwrap();
+
+        let summary = validate_jsonl_issue_records(&org_path).unwrap();
+        assert_eq!(summary.record_count, 3);
+        assert_eq!(summary.failures.len(), 2);
+        let messages: Vec<String> = summary
+            .failures
+            .iter()
+            .map(|f| format!("line {}: {}", f.line, f.message))
+            .collect();
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.starts_with("line 2:") && m.contains(":ID:")),
+            "missing-id failure must carry heading ordinal 2: {messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.starts_with("line 3:") && m.contains("Duplicate")),
+            "duplicate failure must carry heading ordinal 3: {messages:?}"
+        );
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn compute_hash_matches_snapshot_content_hash_for_both_formats() {
+        let temp = TempDir::new().unwrap();
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
+        // Dodge the macOS /var -> /private/var symlink, which the capture
+        // layer rejects (same cause as several baseline failures).
+        let obr_dir = obr_dir.canonicalize().unwrap();
+
+        let org_path = obr_dir.join("issues.org");
+        std::fs::write(&org_path, b"#+TITLE: x\n\n* TODO [#C] T\n\n  indented\n").unwrap();
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        std::fs::write(&jsonl_path, b"  {\"id\":\"br-a\"}  \n\n{\"id\":\"br-b\"}\n").unwrap();
+
+        for path in [&org_path, &jsonl_path] {
+            let snapshot = crate::sync::path::capture_jsonl_source_snapshot(path).unwrap();
+            assert_eq!(
+                compute_jsonl_hash(path).unwrap(),
+                snapshot.content_sha256(),
+                "import-side and snapshot-side canonical hashes must agree for {}",
+                path.display()
+            );
+        }
+    }
 
     fn make_test_issue(id: &str, title: &str) -> Issue {
         Issue {
@@ -16150,10 +17587,10 @@ mod tests {
     #[test]
     fn blocking_write_lock_errors_when_lock_path_cannot_open() {
         let temp_dir = TempDir::new().unwrap();
-        let beads_dir = temp_dir.path().join(".beads");
-        fs::create_dir_all(beads_dir.join(".write.lock")).unwrap();
+        let obr_dir = temp_dir.path().join(".beads");
+        fs::create_dir_all(obr_dir.join(".write.lock")).unwrap();
 
-        let err = blocking_write_lock(&beads_dir).unwrap_err();
+        let err = blocking_write_lock(&obr_dir).unwrap_err();
         assert!(
             matches!(
                 &err,
@@ -16169,13 +17606,13 @@ mod tests {
     #[test]
     fn blocking_write_lock_rejects_symlink_leaf_without_touching_target() {
         let temp_dir = TempDir::new().unwrap();
-        let beads_dir = temp_dir.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp_dir.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
         let target = temp_dir.path().join("outside.lock");
         fs::write(&target, b"sentinel").unwrap();
-        symlink(&target, beads_dir.join(".write.lock")).unwrap();
+        symlink(&target, obr_dir.join(".write.lock")).unwrap();
 
-        let err = blocking_write_lock(&beads_dir).unwrap_err();
+        let err = blocking_write_lock(&obr_dir).unwrap_err();
         assert!(err.to_string().contains("unsafe workspace write lock path"));
         assert_eq!(fs::read(&target).unwrap(), b"sentinel");
     }
@@ -16191,13 +17628,13 @@ mod tests {
     #[allow(clippy::incompatible_msrv)]
     fn database_family_authority_does_not_whole_file_lock_the_database_inode() {
         let temp_dir = TempDir::new().unwrap();
-        let beads_dir = temp_dir.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp_dir.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let db_path = obr_dir.join("beads.db");
         drop(SqliteStorage::open(&db_path).expect("create fresh database"));
 
         let _authority =
-            blocking_database_family_write_lock_with_timeout(&beads_dir, &db_path, Some(2_000))
+            blocking_database_family_write_lock_with_timeout(&obr_dir, &db_path, Some(2_000))
                 .expect("family authority");
 
         let probe = OpenOptions::new()
@@ -16221,13 +17658,13 @@ mod tests {
     #[test]
     fn engine_opens_and_queries_under_held_family_authority() {
         let temp_dir = TempDir::new().unwrap();
-        let beads_dir = temp_dir.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp_dir.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let db_path = obr_dir.join("beads.db");
         drop(SqliteStorage::open(&db_path).expect("create fresh database"));
 
         let authority = Arc::new(
-            blocking_database_family_write_lock_with_timeout(&beads_dir, &db_path, Some(2_000))
+            blocking_database_family_write_lock_with_timeout(&obr_dir, &db_path, Some(2_000))
                 .expect("family authority"),
         );
 
@@ -16264,20 +17701,20 @@ mod tests {
     #[test]
     fn family_authority_still_excludes_hard_link_aliases() {
         let temp_dir = TempDir::new().unwrap();
-        let beads_dir_a = temp_dir.path().join("a");
-        let beads_dir_b = temp_dir.path().join("b");
-        fs::create_dir_all(&beads_dir_a).unwrap();
-        fs::create_dir_all(&beads_dir_b).unwrap();
-        let db_a = beads_dir_a.join("beads.db");
-        let db_b = beads_dir_b.join("beads.db");
+        let obr_dir_a = temp_dir.path().join("a");
+        let obr_dir_b = temp_dir.path().join("b");
+        fs::create_dir_all(&obr_dir_a).unwrap();
+        fs::create_dir_all(&obr_dir_b).unwrap();
+        let db_a = obr_dir_a.join("beads.db");
+        let db_b = obr_dir_b.join("beads.db");
         drop(SqliteStorage::open(&db_a).expect("create fresh database"));
         fs::hard_link(&db_a, &db_b).expect("hard link alias");
 
         let _authority_a =
-            blocking_database_family_write_lock_with_timeout(&beads_dir_a, &db_a, Some(2_000))
+            blocking_database_family_write_lock_with_timeout(&obr_dir_a, &db_a, Some(2_000))
                 .expect("first family authority");
 
-        let err = blocking_database_family_write_lock_with_timeout(&beads_dir_b, &db_b, Some(50))
+        let err = blocking_database_family_write_lock_with_timeout(&obr_dir_b, &db_b, Some(50))
             .expect_err("hard-link alias must not acquire a second authority");
         assert!(
             err.to_string().contains("Timed out"),
@@ -16289,9 +17726,9 @@ mod tests {
     #[allow(clippy::incompatible_msrv)]
     fn blocking_write_lock_with_timeout_errors_when_lock_is_held() {
         let temp_dir = TempDir::new().unwrap();
-        let beads_dir = temp_dir.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let lock_path = beads_dir.join(".write.lock");
+        let obr_dir = temp_dir.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let lock_path = obr_dir.join(".write.lock");
         let held_lock = OpenOptions::new()
             .read(true)
             .write(true)
@@ -16302,7 +17739,7 @@ mod tests {
         held_lock.lock().expect("hold write lock");
 
         let start = Instant::now();
-        let err = blocking_write_lock_with_timeout(&beads_dir, Some(25)).unwrap_err();
+        let err = blocking_write_lock_with_timeout(&obr_dir, Some(25)).unwrap_err();
         assert!(
             start.elapsed() < Duration::from_secs(1),
             "timeout should fail promptly"
@@ -16320,17 +17757,17 @@ mod tests {
 
         drop(held_lock);
         let acquired =
-            blocking_write_lock_with_timeout(&beads_dir, Some(25)).expect("lock after release");
+            blocking_write_lock_with_timeout(&obr_dir, Some(25)).expect("lock after release");
         drop(acquired);
     }
 
     #[test]
     fn try_sync_lock_errors_when_lock_path_cannot_open() {
         let temp_dir = TempDir::new().unwrap();
-        let beads_dir = temp_dir.path().join(".beads");
-        fs::create_dir_all(beads_dir.join(".sync.lock")).unwrap();
+        let obr_dir = temp_dir.path().join(".beads");
+        fs::create_dir_all(obr_dir.join(".sync.lock")).unwrap();
 
-        let err = try_sync_lock(&beads_dir).unwrap_err();
+        let err = try_sync_lock(&obr_dir).unwrap_err();
         assert!(
             matches!(
                 &err,
@@ -16346,9 +17783,9 @@ mod tests {
     #[allow(clippy::incompatible_msrv)]
     fn try_sync_lock_returns_none_when_lock_is_held() {
         let temp_dir = TempDir::new().unwrap();
-        let beads_dir = temp_dir.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let lock_path = beads_dir.join(".sync.lock");
+        let obr_dir = temp_dir.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let lock_path = obr_dir.join(".sync.lock");
         let held_lock = OpenOptions::new()
             .read(true)
             .write(true)
@@ -16358,10 +17795,10 @@ mod tests {
             .expect("open held sync lock");
         held_lock.lock().expect("hold sync lock");
 
-        assert!(try_sync_lock(&beads_dir).unwrap().is_none());
+        assert!(try_sync_lock(&obr_dir).unwrap().is_none());
 
         drop(held_lock);
-        let acquired = try_sync_lock(&beads_dir)
+        let acquired = try_sync_lock(&obr_dir)
             .expect("sync lock after release")
             .expect("uncontended lock should be acquired");
         drop(acquired);
@@ -16438,16 +17875,16 @@ mod tests {
     }
 
     fn additive_test_paths(temp: &TempDir) -> (PathBuf, PathBuf, AdditiveReconcileConfig) {
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create test beads directory");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create test obr directory");
+        let jsonl_path = obr_dir.join("issues.jsonl");
         let config = AdditiveReconcileConfig {
-            beads_dir: Some(beads_dir.clone()),
+            obr_dir: Some(obr_dir.clone()),
             database_path: None,
             allow_external_jsonl: false,
             source_authoritative_ids: BTreeSet::new(),
         };
-        (beads_dir, jsonl_path, config)
+        (obr_dir, jsonl_path, config)
     }
 
     fn write_additive_issues(path: &Path, issues: &[Issue]) {
@@ -16535,7 +17972,7 @@ mod tests {
     #[test]
     fn additive_reconcile_repairs_content_hash_only_drift_then_is_a_true_noop() {
         let temp = TempDir::new().unwrap();
-        let (_beads_dir, jsonl_path, config) = additive_test_paths(&temp);
+        let (_obr_dir, jsonl_path, config) = additive_test_paths(&temp);
         let mut storage = SqliteStorage::open_memory().unwrap();
         let issue = make_issue_at("bd-hash-repair", "Hash repair", fixed_time(100));
         let null_issue = make_issue_at("bd-hash-null", "Null hash repair", fixed_time(101));
@@ -16600,7 +18037,7 @@ mod tests {
     #[test]
     fn additive_reconcile_binds_full_raw_poststate_for_scalar_updates() {
         let temp = TempDir::new().unwrap();
-        let (_beads_dir, jsonl_path, mut config) = additive_test_paths(&temp);
+        let (_obr_dir, jsonl_path, mut config) = additive_test_paths(&temp);
         let mut storage = SqliteStorage::open_memory().unwrap();
         let local = make_issue_at("bd-raw-poststate", "Before", fixed_time(100));
         storage.upsert_issue_for_import(&local).unwrap();
@@ -16638,7 +18075,7 @@ mod tests {
     #[test]
     fn additive_reconcile_token_binds_requested_resolution_set_even_when_inapplicable() {
         let temp = TempDir::new().unwrap();
-        let (_beads_dir, jsonl_path, config) = additive_test_paths(&temp);
+        let (_obr_dir, jsonl_path, config) = additive_test_paths(&temp);
         let storage = SqliteStorage::open_memory().unwrap();
         let issue = make_issue_at("bd-equal", "Equal", fixed_time(100));
         storage.upsert_issue_for_import(&issue).unwrap();
@@ -16676,7 +18113,7 @@ mod tests {
     }
 
     fn reviewed_disk_plan(
-        beads_dir: &Path,
+        obr_dir: &Path,
         database_path: &Path,
         jsonl_path: &Path,
         issue: &Issue,
@@ -16685,9 +18122,9 @@ mod tests {
         storage.upsert_issue_for_import(issue).unwrap();
         write_additive_issues(jsonl_path, std::slice::from_ref(issue));
         let config = AdditiveReconcileConfig {
-            beads_dir: Some(beads_dir.to_path_buf()),
+            obr_dir: Some(obr_dir.to_path_buf()),
             database_path: Some(database_path.to_path_buf()),
-            allow_external_jsonl: !jsonl_path.starts_with(beads_dir),
+            allow_external_jsonl: !jsonl_path.starts_with(obr_dir),
             source_authoritative_ids: BTreeSet::new(),
         };
         plan_additive_reconcile(&storage, jsonl_path, &config).unwrap()
@@ -16696,16 +18133,16 @@ mod tests {
     #[test]
     fn reviewed_additive_wrapper_resolves_and_locks_configured_database() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let database_path = beads_dir.join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let database_path = obr_dir.join("beads.db");
+        let jsonl_path = obr_dir.join("issues.jsonl");
         let mut issue = make_issue_at("bd-reviewed", "Reviewed", fixed_time(100));
         set_content_hash(&mut issue);
-        let plan = reviewed_disk_plan(&beads_dir, &database_path, &jsonl_path, &issue);
+        let plan = reviewed_disk_plan(&obr_dir, &database_path, &jsonl_path, &issue);
 
         let receipt = apply_reviewed_additive_reconcile(&ReviewedAdditiveReconcileRequest {
-            beads_dir,
+            obr_dir: obr_dir,
             db_override: None,
             source_path_override: None,
             allow_external_jsonl: false,
@@ -16723,25 +18160,25 @@ mod tests {
     #[test]
     fn reviewed_additive_wrapper_reuses_the_cli_startup_authority() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let database_path = beads_dir.join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let database_path = obr_dir.join("beads.db");
+        let jsonl_path = obr_dir.join("issues.jsonl");
         let mut issue = make_issue_at(
             "bd-retained-authority",
             "Retained authority",
             fixed_time(100),
         );
         set_content_hash(&mut issue);
-        let plan = reviewed_disk_plan(&beads_dir, &database_path, &jsonl_path, &issue);
+        let plan = reviewed_disk_plan(&obr_dir, &database_path, &jsonl_path, &issue);
         let retained_authority = Arc::new(
-            blocking_database_family_write_lock_with_timeout(&beads_dir, &database_path, Some(100))
+            blocking_database_family_write_lock_with_timeout(&obr_dir, &database_path, Some(100))
                 .unwrap(),
         );
 
         let receipt = apply_reviewed_additive_reconcile_under_authority(
             &ReviewedAdditiveReconcileRequest {
-                beads_dir,
+                obr_dir: obr_dir,
                 db_override: None,
                 source_path_override: None,
                 allow_external_jsonl: false,
@@ -16763,10 +18200,10 @@ mod tests {
     #[test]
     fn additive_health_attestation_stays_outside_the_read_snapshot_transaction() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let database_path = beads_dir.join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let database_path = obr_dir.join("beads.db");
+        let jsonl_path = obr_dir.join("issues.jsonl");
         let mut storage = SqliteStorage::open(&database_path).unwrap();
         let mut survivor = make_issue_at("bd-freelist-000", "Survivor", fixed_time(100));
         set_content_hash(&mut survivor);
@@ -16798,7 +18235,7 @@ mod tests {
 
         write_additive_issues(&jsonl_path, std::slice::from_ref(&survivor));
         let config = AdditiveReconcileConfig {
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             database_path: Some(database_path),
             allow_external_jsonl: false,
             source_authoritative_ids: BTreeSet::new(),
@@ -16829,18 +18266,18 @@ mod tests {
     #[test]
     fn reviewed_additive_wrapper_preserves_explicit_external_database_support() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let cache_dir = temp.path().join("cache");
-        fs::create_dir_all(&beads_dir).unwrap();
+        fs::create_dir_all(&obr_dir).unwrap();
         fs::create_dir_all(&cache_dir).unwrap();
         let database_path = cache_dir.join("beads.db");
         let jsonl_path = cache_dir.join("issues.jsonl");
         let mut issue = make_issue_at("bd-external-db", "External DB", fixed_time(100));
         set_content_hash(&mut issue);
-        let plan = reviewed_disk_plan(&beads_dir, &database_path, &jsonl_path, &issue);
+        let plan = reviewed_disk_plan(&obr_dir, &database_path, &jsonl_path, &issue);
 
         let receipt = apply_reviewed_additive_reconcile(&ReviewedAdditiveReconcileRequest {
-            beads_dir,
+            obr_dir: obr_dir,
             db_override: Some(database_path),
             source_path_override: None,
             allow_external_jsonl: false,
@@ -16857,10 +18294,10 @@ mod tests {
                 pre-merge snapshot); tracked for completion by the owning workstream"]
     fn reviewed_apply_reports_composable_postcommit_source_drift_and_allows_replan() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let database_path = beads_dir.join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let database_path = obr_dir.join("beads.db");
+        let jsonl_path = obr_dir.join("issues.jsonl");
         let existing = make_issue_at("bd-existing", "Existing", fixed_time(100));
         let incoming = make_issue_at("bd-incoming", "Incoming", fixed_time(200));
         {
@@ -16869,7 +18306,7 @@ mod tests {
         }
         write_additive_issues(&jsonl_path, &[existing, incoming.clone()]);
         let plan_request = ReviewedAdditiveReconcilePlanRequest {
-            beads_dir: beads_dir.clone(),
+            obr_dir: obr_dir.clone(),
             db_override: None,
             source_path_override: None,
             allow_external_jsonl: false,
@@ -16880,7 +18317,7 @@ mod tests {
 
         ADDITIVE_TEST_DRIFT_SOURCE_AFTER_FINAL_CHECK.with(|flag| flag.set(true));
         let receipt = apply_reviewed_additive_reconcile(&ReviewedAdditiveReconcileRequest {
-            beads_dir: beads_dir.clone(),
+            obr_dir: obr_dir.clone(),
             db_override: None,
             source_path_override: None,
             allow_external_jsonl: false,
@@ -16922,10 +18359,10 @@ mod tests {
     #[test]
     fn reviewed_apply_reports_committed_database_authority_loss_as_non_retryable_receipt() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let database_path = beads_dir.join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let database_path = obr_dir.join("beads.db");
+        let jsonl_path = obr_dir.join("issues.jsonl");
         let existing = make_issue_at("bd-existing", "Existing", fixed_time(100));
         let incoming = make_issue_at("bd-incoming", "Incoming", fixed_time(200));
         {
@@ -16934,7 +18371,7 @@ mod tests {
         }
         write_additive_issues(&jsonl_path, &[existing, incoming]);
         let plan_request = ReviewedAdditiveReconcilePlanRequest {
-            beads_dir: beads_dir.clone(),
+            obr_dir: obr_dir.clone(),
             db_override: None,
             source_path_override: None,
             allow_external_jsonl: false,
@@ -16945,7 +18382,7 @@ mod tests {
 
         SqliteStorage::arm_database_replacement_after_commit_for_test();
         let receipt = apply_reviewed_additive_reconcile(&ReviewedAdditiveReconcileRequest {
-            beads_dir,
+            obr_dir: obr_dir,
             db_override: None,
             source_path_override: None,
             allow_external_jsonl: false,
@@ -16978,33 +18415,54 @@ mod tests {
     #[test]
     fn database_family_lock_serializes_external_db_across_workspaces_with_one_timeout_budget() {
         let temp = TempDir::new().unwrap();
-        let first_beads = temp.path().join("first").join(".beads");
-        let second_beads = temp.path().join("second").join(".beads");
+        let first_obr = temp.path().join("first").join(".beads");
+        let second_obr = temp.path().join("second").join(".beads");
         let external_dir = temp.path().join("shared-cache");
-        fs::create_dir_all(&first_beads).unwrap();
-        fs::create_dir_all(&second_beads).unwrap();
+        fs::create_dir_all(&first_obr).unwrap();
+        fs::create_dir_all(&second_obr).unwrap();
         fs::create_dir_all(&external_dir).unwrap();
         let database_path = external_dir.join("shared.db");
         drop(SqliteStorage::open(&database_path).unwrap());
 
+        // The invariant is temporal, so it cannot be asserted without a clock:
+        // `blocking_database_family_write_lock_with_timeout` recomputes
+        // `remaining_timeout_ms()` from one `acquisition_started`, so its
+        // components share ONE budget. If each got a fresh one the call would
+        // take about twice as long, and telling those apart is what the bounds
+        // below do.
+        //
+        // Both bounds are therefore derived from BUDGET rather than written as
+        // literals, and BUDGET is large enough that the gap between them
+        // survives a loaded machine. At the previous 400 ms the ceiling sat
+        // 200 ms above the expected time, which the scheduler ate under the
+        // full 2800-test parallel run: measured 3 passes and 2 failures on
+        // identical code, and 5 of 5 in isolation. The discrimination is a
+        // ratio, so scaling BUDGET scales the slack without weakening what is
+        // being asserted -- the ceiling is still far below the 2x that a
+        // per-component budget would produce.
+        const BUDGET: Duration = Duration::from_millis(1_200);
+        let release_after = BUDGET * 3 / 4;
+        let floor = release_after - Duration::from_millis(50);
+        let ceiling = BUDGET * 3 / 2;
+
         let first_authority = blocking_database_family_write_lock_with_timeout(
-            &first_beads,
+            &first_obr,
             &database_path,
-            Some(1_000),
+            Some(4_000),
         )
         .unwrap();
         let second_workspace_lock =
-            blocking_write_lock_with_timeout(&second_beads, Some(1_000)).unwrap();
+            blocking_write_lock_with_timeout(&second_obr, Some(4_000)).unwrap();
         let releaser = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(300));
+            std::thread::sleep(release_after);
             drop(second_workspace_lock);
         });
 
         let started = Instant::now();
         let error = blocking_database_family_write_lock_with_timeout(
-            &second_beads,
+            &second_obr,
             &database_path,
-            Some(400),
+            Some(u64::try_from(BUDGET.as_millis()).expect("budget fits u64")),
         )
         .unwrap_err();
         let elapsed = started.elapsed();
@@ -17016,18 +18474,19 @@ mod tests {
             "unexpected contention error: {error}"
         );
         assert!(
-            elapsed >= Duration::from_millis(350),
-            "composite authority returned before its shared timeout budget: {elapsed:?}"
+            elapsed >= floor,
+            "composite authority returned before its shared timeout budget: {elapsed:?} < {floor:?}"
         );
         assert!(
-            elapsed < Duration::from_millis(600),
-            "each component appears to have received a fresh timeout instead of one shared budget: {elapsed:?}"
+            elapsed < ceiling,
+            "each component appears to have received a fresh timeout instead of one shared budget: {elapsed:?} >= {ceiling:?} (a per-component budget would take about {:?})",
+            BUDGET * 2
         );
 
         let first_authority_sha256 = first_authority.authority_path_sha256().to_string();
         drop(first_authority);
         let second_authority = blocking_database_family_write_lock_with_timeout(
-            &second_beads,
+            &second_obr,
             &database_path,
             Some(1_000),
         )
@@ -17045,21 +18504,18 @@ mod tests {
     #[test]
     fn database_family_lock_binds_a_new_database_inode_before_hardlink_aliases_can_write() {
         let temp = TempDir::new().unwrap();
-        let first_beads = temp.path().join("first").join(".beads");
-        let second_beads = temp.path().join("second").join(".beads");
+        let first_obr = temp.path().join("first").join(".beads");
+        let second_obr = temp.path().join("second").join(".beads");
         let external_dir = temp.path().join("shared-cache");
-        fs::create_dir_all(&first_beads).unwrap();
-        fs::create_dir_all(&second_beads).unwrap();
+        fs::create_dir_all(&first_obr).unwrap();
+        fs::create_dir_all(&second_obr).unwrap();
         fs::create_dir_all(&external_dir).unwrap();
         let database_path = external_dir.join("created-under-lock.db");
         let hardlink_alias = external_dir.join("alias.db");
 
-        let first_authority = blocking_database_family_write_lock_with_timeout(
-            &first_beads,
-            &database_path,
-            Some(100),
-        )
-        .expect("first authority protects the future database family");
+        let first_authority =
+            blocking_database_family_write_lock_with_timeout(&first_obr, &database_path, Some(100))
+                .expect("first authority protects the future database family");
         assert!(
             !database_path.exists(),
             "acquiring authority alone must not materialize a missing database"
@@ -17078,7 +18534,7 @@ mod tests {
         fs::hard_link(&database_path, &hardlink_alias).expect("create competing hard-link alias");
 
         let error = blocking_database_family_write_lock_with_timeout(
-            &second_beads,
+            &second_obr,
             &hardlink_alias,
             Some(25),
         )
@@ -17097,7 +18553,7 @@ mod tests {
 
         drop(first_authority);
         let alias_authority = blocking_database_family_write_lock_with_timeout(
-            &second_beads,
+            &second_obr,
             &hardlink_alias,
             Some(100),
         )
@@ -17170,31 +18626,24 @@ mod tests {
     #[test]
     fn database_family_authority_detects_workspace_lock_replacement() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let external_dir = temp.path().join("external");
-        fs::create_dir_all(&beads_dir).unwrap();
+        fs::create_dir_all(&obr_dir).unwrap();
         fs::create_dir_all(&external_dir).unwrap();
         let first_database = external_dir.join("first.db");
         let second_database = external_dir.join("second.db");
-        let first_authority = blocking_database_family_write_lock_with_timeout(
-            &beads_dir,
-            &first_database,
-            Some(100),
-        )
-        .unwrap();
+        let first_authority =
+            blocking_database_family_write_lock_with_timeout(&obr_dir, &first_database, Some(100))
+                .unwrap();
 
-        let workspace_lock_path = beads_dir.join(".write.lock");
-        fs::rename(
-            &workspace_lock_path,
-            beads_dir.join(".write.lock.displaced"),
-        )
-        .expect("move held workspace lock without destroying it");
-        let second_authority = blocking_database_family_write_lock_with_timeout(
-            &beads_dir,
-            &second_database,
-            Some(100),
-        )
-        .expect("replacement workspace lock demonstrates why the first guard must re-witness");
+        let workspace_lock_path = obr_dir.join(".write.lock");
+        fs::rename(&workspace_lock_path, obr_dir.join(".write.lock.displaced"))
+            .expect("move held workspace lock without destroying it");
+        let second_authority =
+            blocking_database_family_write_lock_with_timeout(&obr_dir, &second_database, Some(100))
+                .expect(
+                    "replacement workspace lock demonstrates why the first guard must re-witness",
+                );
         assert!(
             first_authority.verify_database_authority().is_err(),
             "the original guard must fail closed after its workspace lock pathname is replaced"
@@ -17206,13 +18655,13 @@ mod tests {
     #[test]
     fn database_family_authority_detects_sidecar_lock_replacement() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let external_dir = temp.path().join("external");
-        fs::create_dir_all(&beads_dir).unwrap();
+        fs::create_dir_all(&obr_dir).unwrap();
         fs::create_dir_all(&external_dir).unwrap();
         let database_path = external_dir.join("beads.db");
         let authority =
-            blocking_database_family_write_lock_with_timeout(&beads_dir, &database_path, Some(100))
+            blocking_database_family_write_lock_with_timeout(&obr_dir, &database_path, Some(100))
                 .unwrap();
         let sidecar_path = database_write_authority_path(&database_path).unwrap();
         let displaced_path = sidecar_path.with_extension("lock.displaced");
@@ -17238,14 +18687,14 @@ mod tests {
     #[test]
     fn reviewed_additive_wrapper_rejects_symlinked_database_leaf() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
         let outside = temp.path().join("outside.db");
         drop(SqliteStorage::open(&outside).unwrap());
-        symlink(&outside, beads_dir.join("beads.db")).unwrap();
+        symlink(&outside, obr_dir.join("beads.db")).unwrap();
 
         let err = apply_reviewed_additive_reconcile(&ReviewedAdditiveReconcileRequest {
-            beads_dir,
+            obr_dir: obr_dir,
             db_override: None,
             source_path_override: None,
             allow_external_jsonl: false,
@@ -17261,17 +18710,17 @@ mod tests {
     #[test]
     fn database_family_authority_rejects_symlinked_parent_with_regular_leaf() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let outside_dir = temp.path().join("outside");
         let routed_parent = temp.path().join("routed");
-        fs::create_dir_all(&beads_dir).unwrap();
+        fs::create_dir_all(&obr_dir).unwrap();
         fs::create_dir_all(&outside_dir).unwrap();
         let outside_database = outside_dir.join("beads.db");
         drop(SqliteStorage::open(&outside_database).unwrap());
         symlink(&outside_dir, &routed_parent).unwrap();
 
         let error = blocking_database_family_write_lock_with_timeout(
-            &beads_dir,
+            &obr_dir,
             &routed_parent.join("beads.db"),
             Some(100),
         )
@@ -17287,15 +18736,15 @@ mod tests {
     #[test]
     fn database_family_authority_rejects_symlinked_parent_with_missing_leaf() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let outside_dir = temp.path().join("outside");
         let routed_parent = temp.path().join("routed");
-        fs::create_dir_all(&beads_dir).unwrap();
+        fs::create_dir_all(&obr_dir).unwrap();
         fs::create_dir_all(&outside_dir).unwrap();
         symlink(&outside_dir, &routed_parent).unwrap();
 
         let error = blocking_database_family_write_lock_with_timeout(
-            &beads_dir,
+            &obr_dir,
             &routed_parent.join("not-yet-created.db"),
             Some(100),
         )
@@ -17314,7 +18763,7 @@ mod tests {
     #[test]
     fn additive_reconcile_exact_ids_are_read_only_until_apply_and_preserve_events() {
         let temp = TempDir::new().unwrap();
-        let (beads_dir, jsonl_path, config) = additive_test_paths(&temp);
+        let (obr_dir, jsonl_path, config) = additive_test_paths(&temp);
         let mut storage = SqliteStorage::open_memory().unwrap();
         let existing = make_issue_at("bd-existing", "Same payload", fixed_time(100));
         storage.create_issue(&existing, "test-actor").unwrap();
@@ -17371,8 +18820,8 @@ mod tests {
         );
         assert_eq!(storage.get_all_events(0).unwrap(), events_before);
         assert_eq!(fs::read(&jsonl_path).unwrap(), source_before);
-        assert!(!beads_dir.join("beads.base.jsonl").exists());
-        assert!(!beads_dir.join("merge.json").exists());
+        assert!(!crate::config::merge_base_jsonl_path(&obr_dir).exists());
+        assert!(!obr_dir.join("merge.json").exists());
 
         let idempotent_plan = plan_additive_reconcile(&storage, &jsonl_path, &config).unwrap();
         assert_eq!(
@@ -17387,7 +18836,7 @@ mod tests {
     #[test]
     fn additive_reconcile_rolls_back_exactly_at_early_mid_and_late_fault_phases() {
         let temp = TempDir::new().unwrap();
-        let (_beads_dir, jsonl_path, config) = additive_test_paths(&temp);
+        let (_obr_dir, jsonl_path, config) = additive_test_paths(&temp);
         let mut storage = SqliteStorage::open_memory().unwrap();
         let incoming = make_issue_at("bd-fault", "Fault rollback", fixed_time(100));
         write_additive_issues(&jsonl_path, std::slice::from_ref(&incoming));
@@ -17433,7 +18882,7 @@ mod tests {
     #[test]
     fn additive_reconcile_rejects_schema_version_drift_inside_transaction() {
         let temp = TempDir::new().unwrap();
-        let (_beads_dir, jsonl_path, config) = additive_test_paths(&temp);
+        let (_obr_dir, jsonl_path, config) = additive_test_paths(&temp);
         let mut storage = SqliteStorage::open_memory().unwrap();
         let incoming = make_issue_at("bd-schema-drift", "Schema drift", fixed_time(100));
         write_additive_issues(&jsonl_path, std::slice::from_ref(&incoming));
@@ -17465,7 +18914,7 @@ mod tests {
     #[test]
     fn additive_reconcile_applies_relations_and_rebuilds_derived_caches() {
         let temp = TempDir::new().unwrap();
-        let (_beads_dir, jsonl_path, config) = additive_test_paths(&temp);
+        let (_obr_dir, jsonl_path, config) = additive_test_paths(&temp);
         let mut storage = SqliteStorage::open_memory().unwrap();
         let target = make_issue_at("bd-target", "Target", fixed_time(100));
         storage.upsert_issue_for_import(&target).unwrap();
@@ -17546,7 +18995,7 @@ mod tests {
     #[test]
     fn additive_reconcile_conflicts_on_equal_timestamp_drift_and_resurrection() {
         let temp = TempDir::new().unwrap();
-        let (_beads_dir, jsonl_path, config) = additive_test_paths(&temp);
+        let (_obr_dir, jsonl_path, config) = additive_test_paths(&temp);
         let mut storage = SqliteStorage::open_memory().unwrap();
         let local = make_issue_at("bd-drift", "Local", fixed_time(100));
         storage.upsert_issue_for_import(&local).unwrap();
@@ -17616,7 +19065,7 @@ mod tests {
     #[test]
     fn additive_reconcile_binds_relation_deltas_for_shared_and_tombstone_conflicts() {
         let temp = TempDir::new().unwrap();
-        let (_beads_dir, jsonl_path, config) = additive_test_paths(&temp);
+        let (_obr_dir, jsonl_path, config) = additive_test_paths(&temp);
         let storage = SqliteStorage::open_memory().unwrap();
 
         let mut local = make_issue_at("bd-relation", "Same scalars", fixed_time(100));
@@ -17682,7 +19131,7 @@ mod tests {
     #[test]
     fn additive_reconcile_requires_explicit_resolution_for_database_newer_rows() {
         let temp = TempDir::new().unwrap();
-        let (_beads_dir, jsonl_path, config) = additive_test_paths(&temp);
+        let (_obr_dir, jsonl_path, config) = additive_test_paths(&temp);
         let mut storage = SqliteStorage::open_memory().unwrap();
         let local_newer = make_issue_at("bd-shared", "Local newer", fixed_time(300));
         let db_only = make_issue_at("bd-db-only", "Database only", fixed_time(200));
@@ -17768,7 +19217,7 @@ mod tests {
     #[test]
     fn additive_reconcile_reports_relation_and_external_identity_conflicts() {
         let temp = TempDir::new().unwrap();
-        let (_beads_dir, jsonl_path, config) = additive_test_paths(&temp);
+        let (_obr_dir, jsonl_path, config) = additive_test_paths(&temp);
         let storage = SqliteStorage::open_memory().unwrap();
         let mut owner = make_issue_at("bd-owner", "Owner", fixed_time(100));
         owner.external_ref = Some("EXT-1".to_string());
@@ -17838,7 +19287,7 @@ mod tests {
     #[test]
     fn additive_reconcile_reports_safe_comment_validation_subcodes_and_full_payload_hash() {
         let temp = TempDir::new().unwrap();
-        let (_beads_dir, jsonl_path, config) = additive_test_paths(&temp);
+        let (_obr_dir, jsonl_path, config) = additive_test_paths(&temp);
         let storage = SqliteStorage::open_memory().unwrap();
         let mut invalid = make_issue_at("bd-invalid-comment", "Invalid comment", fixed_time(200));
         let comment = Comment {
@@ -17882,7 +19331,7 @@ mod tests {
     #[test]
     fn additive_reconcile_rejects_projected_cycles_and_remaps_comment_ids() {
         let temp = TempDir::new().unwrap();
-        let (_beads_dir, jsonl_path, config) = additive_test_paths(&temp);
+        let (_obr_dir, jsonl_path, config) = additive_test_paths(&temp);
         let mut storage = SqliteStorage::open_memory().unwrap();
         let mut first = make_issue_at("bd-cycle-a", "Cycle A", fixed_time(100));
         let mut second = make_issue_at("bd-cycle-b", "Cycle B", fixed_time(100));
@@ -17984,7 +19433,7 @@ mod tests {
     #[test]
     fn additive_reconcile_preserves_preexisting_cycles_without_misclassifying_them_as_new() {
         let temp = TempDir::new().unwrap();
-        let (_beads_dir, jsonl_path, config) = additive_test_paths(&temp);
+        let (_obr_dir, jsonl_path, config) = additive_test_paths(&temp);
         let mut storage = SqliteStorage::open_memory().unwrap();
         let mut first = make_issue_at("bd-existing-cycle-a", "Cycle A", fixed_time(100));
         let mut second = make_issue_at("bd-existing-cycle-b", "Cycle B", fixed_time(100));
@@ -18041,7 +19490,7 @@ mod tests {
     #[test]
     fn additive_reconcile_rejects_duplicate_ids_and_stale_source_or_database() {
         let temp = TempDir::new().unwrap();
-        let (_beads_dir, jsonl_path, config) = additive_test_paths(&temp);
+        let (_obr_dir, jsonl_path, config) = additive_test_paths(&temp);
         let mut storage = SqliteStorage::open_memory().unwrap();
         let incoming = make_issue_at("bd-new", "New", fixed_time(100));
         write_additive_issues(&jsonl_path, &[incoming.clone(), incoming.clone()]);
@@ -19119,24 +20568,24 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let output_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let output_path = obr_dir.join("issues.jsonl");
         let storage = SqliteStorage::open_memory().unwrap();
         let config = ExportConfig {
-            beads_dir: Some(beads_dir.clone()),
+            obr_dir: Some(obr_dir.clone()),
             ..ExportConfig::default()
         };
 
         export_to_jsonl(&storage, &output_path, &config).unwrap();
-        save_base_snapshot(&HashMap::<String, Issue>::new(), &beads_dir).unwrap();
+        save_base_snapshot(&HashMap::<String, Issue>::new(), &obr_dir).unwrap();
 
         assert_eq!(
             fs::metadata(&output_path).unwrap().permissions().mode() & 0o777,
             0o600
         );
         assert_eq!(
-            fs::metadata(beads_dir.join("beads.base.jsonl"))
+            fs::metadata(crate::config::merge_base_jsonl_path(&obr_dir))
                 .unwrap()
                 .permissions()
                 .mode()
@@ -19148,9 +20597,9 @@ mod tests {
     #[test]
     fn expected_staged_output_mismatch_never_replaces_live_jsonl() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let output_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let output_path = obr_dir.join("issues.jsonl");
         let mut storage = SqliteStorage::open_memory().unwrap();
         let issue = make_test_issue("bd-reviewed-output", "Reviewed output");
         storage.create_issue(&issue, "test").unwrap();
@@ -19189,7 +20638,7 @@ mod tests {
         for (attempt, expected_staged_output) in mismatches.into_iter().enumerate() {
             let config = ExportConfig {
                 force: true,
-                beads_dir: Some(beads_dir.clone()),
+                obr_dir: Some(obr_dir.clone()),
                 expected_staged_output: Some(expected_staged_output),
                 ..Default::default()
             };
@@ -19222,10 +20671,10 @@ mod tests {
     #[test]
     fn test_save_base_snapshot_skips_stale_regular_temp_file() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
 
-        let snapshot_path = beads_dir.join("beads.base.jsonl");
+        let snapshot_path = crate::config::merge_base_jsonl_path(&obr_dir);
         fs::write(&snapshot_path, "old-snapshot\n").unwrap();
         let stale_temp_path = export_temp_path_for_attempt(&snapshot_path, 0);
         let retry_temp_path = export_temp_path_for_attempt(&snapshot_path, 1);
@@ -19241,7 +20690,7 @@ mod tests {
             },
         );
 
-        save_base_snapshot(&issues, &beads_dir).unwrap();
+        save_base_snapshot(&issues, &obr_dir).unwrap();
 
         let snapshot = fs::read_to_string(&snapshot_path).unwrap();
         assert!(
@@ -19263,20 +20712,25 @@ mod tests {
     #[test]
     fn test_save_base_snapshot_rejects_existing_temp_symlink() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let outside_dir = temp.path().join("outside");
-        fs::create_dir_all(&beads_dir).unwrap();
+        fs::create_dir_all(&obr_dir).unwrap();
         fs::create_dir_all(&outside_dir).unwrap();
 
-        let snapshot_path = beads_dir.join("beads.base.jsonl");
+        let snapshot_path = crate::config::merge_base_jsonl_path(&obr_dir);
         fs::write(&snapshot_path, "old-snapshot\n").unwrap();
 
         let temp_target = outside_dir.join("captured.txt");
         fs::write(&temp_target, "do-not-touch").unwrap();
         let pid = std::process::id();
+        let anchor_name = crate::config::merge_base_jsonl_path(&obr_dir)
+            .file_name()
+            .expect("anchor file name")
+            .to_string_lossy()
+            .into_owned();
         symlink(
             &temp_target,
-            beads_dir.join(format!("beads.base.jsonl.{pid}.tmp")),
+            obr_dir.join(format!("{anchor_name}.{pid}.tmp")),
         )
         .unwrap();
 
@@ -19290,7 +20744,7 @@ mod tests {
             },
         );
 
-        let err = save_base_snapshot(&issues, &beads_dir).unwrap_err();
+        let err = save_base_snapshot(&issues, &obr_dir).unwrap_err();
         let message = err.to_string();
         assert!(
             message.contains("regular file")
@@ -19314,8 +20768,9 @@ mod tests {
     #[test]
     fn test_save_base_snapshot_sorts_issues_deterministically() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let tied_at = fixed_time(100);
 
         let mut issues = HashMap::new();
         issues.insert(
@@ -19331,13 +20786,29 @@ mod tests {
             Issue {
                 id: "bd-a".to_string(),
                 title: "First".to_string(),
+                comments: vec![
+                    Comment {
+                        id: 9,
+                        issue_id: "bd-a".to_string(),
+                        author: "alice".to_string(),
+                        body: "alphabetically first".to_string(),
+                        created_at: tied_at,
+                    },
+                    Comment {
+                        id: 2,
+                        issue_id: "bd-a".to_string(),
+                        author: "zara".to_string(),
+                        body: "alphabetically last".to_string(),
+                        created_at: tied_at,
+                    },
+                ],
                 ..Issue::default()
             },
         );
 
-        save_base_snapshot(&issues, &beads_dir).unwrap();
+        save_base_snapshot(&issues, &obr_dir).unwrap();
 
-        let lines: Vec<_> = fs::read_to_string(beads_dir.join("beads.base.jsonl"))
+        let lines: Vec<_> = fs::read_to_string(crate::config::merge_base_jsonl_path(&obr_dir))
             .unwrap()
             .lines()
             .map(str::to_string)
@@ -19348,15 +20819,62 @@ mod tests {
         let second: Issue = serde_json::from_str(&lines[1]).unwrap();
         assert_eq!(first.id, "bd-a");
         assert_eq!(second.id, "bd-z");
+        assert_eq!(
+            first
+                .comments
+                .iter()
+                .map(|comment| comment.id)
+                .collect::<Vec<_>>(),
+            vec![2, 9]
+        );
+    }
+
+    #[test]
+    fn write_issues_sorted_as_base_jsonl_orders_equal_timestamp_comments_by_id() {
+        let tied_at = fixed_time(100);
+        let mut issues = vec![Issue {
+            id: "bd-base".to_string(),
+            title: "Base".to_string(),
+            comments: vec![
+                Comment {
+                    id: 9,
+                    issue_id: "bd-base".to_string(),
+                    author: "alice".to_string(),
+                    body: "alphabetically first".to_string(),
+                    created_at: tied_at,
+                },
+                Comment {
+                    id: 2,
+                    issue_id: "bd-base".to_string(),
+                    author: "zara".to_string(),
+                    body: "alphabetically last".to_string(),
+                    created_at: tied_at,
+                },
+            ],
+            ..Issue::default()
+        }];
+        let mut rendered = Vec::new();
+
+        write_issues_sorted_as_base_jsonl(&mut rendered, &mut issues).unwrap();
+
+        let saved: Issue = serde_json::from_slice(rendered.strip_suffix(b"\n").unwrap()).unwrap();
+        assert_eq!(
+            saved
+                .comments
+                .iter()
+                .map(|comment| comment.id)
+                .collect::<Vec<_>>(),
+            vec![2, 9]
+        );
     }
 
     #[test]
     fn test_save_base_snapshot_from_jsonl_uses_finalized_export_contents() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
 
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let jsonl_path = obr_dir.join("issues.jsonl");
         let issue = Issue {
             id: "bd-final".to_string(),
             title: "Finalized".to_string(),
@@ -19375,9 +20893,9 @@ mod tests {
         )
         .unwrap();
 
-        save_base_snapshot_from_jsonl(&jsonl_path, &beads_dir).unwrap();
+        save_base_snapshot_from_jsonl(&jsonl_path, &obr_dir).unwrap();
 
-        let base = load_base_snapshot(&beads_dir).unwrap();
+        let base = load_base_snapshot(&obr_dir).unwrap();
         let saved = base.get("bd-final").expect("saved base issue");
         assert_eq!(saved.comments.len(), 1);
         assert_eq!(saved.comments[0].body, "merge note written after report");
@@ -19386,18 +20904,18 @@ mod tests {
     #[test]
     fn conditional_publication_preserves_exact_base_bytes_across_replacement() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        let base_path = beads_dir.join("beads.base.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        let base_path = crate::config::merge_base_jsonl_path(&obr_dir);
         let exact_bytes = b" \t{\"id\":\"bd-exact\",\"title\":\"Exact bytes\"} \r\n\r\n";
         fs::write(&jsonl_path, exact_bytes).unwrap();
         fs::write(&base_path, b"{\"id\":\"old\"}\n").unwrap();
 
-        refresh_base_snapshot_from_flushed_jsonl(&jsonl_path, &beads_dir).unwrap();
+        refresh_base_snapshot_from_flushed_jsonl(&jsonl_path, &obr_dir).unwrap();
         assert_eq!(fs::read(&base_path).unwrap(), exact_bytes);
 
-        refresh_base_snapshot_from_flushed_jsonl(&jsonl_path, &beads_dir).unwrap();
+        refresh_base_snapshot_from_flushed_jsonl(&jsonl_path, &obr_dir).unwrap();
         assert_eq!(
             fs::read(&base_path).unwrap(),
             exact_bytes,
@@ -19409,16 +20927,20 @@ mod tests {
     #[test]
     fn test_load_base_snapshot_rejects_symlink_escape() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let outside_dir = temp.path().join("outside");
-        fs::create_dir_all(&beads_dir).unwrap();
+        fs::create_dir_all(&obr_dir).unwrap();
         fs::create_dir_all(&outside_dir).unwrap();
 
         let outside_snapshot = outside_dir.join("beads.base.jsonl");
         fs::write(&outside_snapshot, "{\"id\":\"bd-outside\"}\n").unwrap();
-        symlink(&outside_snapshot, beads_dir.join("beads.base.jsonl")).unwrap();
+        symlink(
+            &outside_snapshot,
+            crate::config::merge_base_jsonl_path(&obr_dir),
+        )
+        .unwrap();
 
-        let err = load_base_snapshot(&beads_dir).unwrap_err();
+        let err = load_base_snapshot(&obr_dir).unwrap_err();
         let message = err.to_string();
         assert!(
             message.contains("symlink") || message.contains("Symlink") || message.contains("Path"),
@@ -19731,10 +21253,10 @@ mod tests {
     fn test_auto_import_if_stale_skips_probe_for_allow_stale() {
         let mut storage = SqliteStorage::open_memory().unwrap();
         let temp_dir = TempDir::new().unwrap();
-        let beads_dir = temp_dir.path().join(".beads");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp_dir.path().join(".beads");
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
-        fs::create_dir_all(&beads_dir).unwrap();
+        fs::create_dir_all(&obr_dir).unwrap();
         fs::write(&jsonl_path, [0xFF_u8, b'\n']).unwrap();
         storage
             .set_metadata(METADATA_JSONL_CONTENT_HASH, "stale-hash")
@@ -19742,7 +21264,7 @@ mod tests {
 
         let result = auto_import_if_stale(
             &mut storage,
-            &beads_dir,
+            &obr_dir,
             &jsonl_path,
             None,
             false,
@@ -19758,10 +21280,10 @@ mod tests {
     fn test_auto_import_if_stale_skips_probe_for_no_auto_import() {
         let mut storage = SqliteStorage::open_memory().unwrap();
         let temp_dir = TempDir::new().unwrap();
-        let beads_dir = temp_dir.path().join(".beads");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp_dir.path().join(".beads");
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
-        fs::create_dir_all(&beads_dir).unwrap();
+        fs::create_dir_all(&obr_dir).unwrap();
         fs::write(&jsonl_path, [0xFF_u8, b'\n']).unwrap();
         storage
             .set_metadata(METADATA_JSONL_CONTENT_HASH, "stale-hash")
@@ -19769,7 +21291,7 @@ mod tests {
 
         let result = auto_import_if_stale(
             &mut storage,
-            &beads_dir,
+            &obr_dir,
             &jsonl_path,
             None,
             false,
@@ -19785,34 +21307,30 @@ mod tests {
     fn test_auto_import_probe_validates_external_path_before_hashing() {
         let mut storage = SqliteStorage::open_memory().unwrap();
         let temp_dir = TempDir::new().unwrap();
-        let beads_dir = temp_dir.path().join(".beads");
+        let obr_dir = temp_dir.path().join(".beads");
         let external_jsonl = temp_dir.path().join("external").join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).unwrap();
+        fs::create_dir_all(&obr_dir).unwrap();
         fs::create_dir_all(&external_jsonl).unwrap();
         storage
             .set_metadata(METADATA_JSONL_CONTENT_HASH, "stale-hash")
             .unwrap();
 
-        let err = auto_import_probe(&storage, &beads_dir, &external_jsonl, false).unwrap_err();
+        let err = auto_import_probe(&storage, &obr_dir, &external_jsonl, false).unwrap_err();
         let message = err.to_string();
         assert!(
-            message.contains("is outside .beads")
-                || message.contains("outside the beads directory")
+            message.contains("is outside the workspace")
+                || message.contains("outside the obr directory")
                 || message.contains("regular file"),
             "unexpected error: {err}"
         );
 
-        let err = auto_import_probe_refreshing_witnesses(
-            &mut storage,
-            &beads_dir,
-            &external_jsonl,
-            false,
-        )
-        .unwrap_err();
+        let err =
+            auto_import_probe_refreshing_witnesses(&mut storage, &obr_dir, &external_jsonl, false)
+                .unwrap_err();
         let message = err.to_string();
         assert!(
-            message.contains("is outside .beads")
-                || message.contains("outside the beads directory")
+            message.contains("is outside the workspace")
+                || message.contains("outside the obr directory")
                 || message.contains("regular file"),
             "unexpected error: {err}"
         );
@@ -19822,9 +21340,9 @@ mod tests {
     fn test_auto_import_if_stale_validates_external_path_before_hashing() {
         let mut storage = SqliteStorage::open_memory().unwrap();
         let temp_dir = TempDir::new().unwrap();
-        let beads_dir = temp_dir.path().join(".beads");
+        let obr_dir = temp_dir.path().join(".beads");
         let external_jsonl = temp_dir.path().join("external").join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).unwrap();
+        fs::create_dir_all(&obr_dir).unwrap();
         fs::create_dir_all(&external_jsonl).unwrap();
         storage
             .set_metadata(METADATA_JSONL_CONTENT_HASH, "stale-hash")
@@ -19832,7 +21350,7 @@ mod tests {
 
         let err = auto_import_if_stale(
             &mut storage,
-            &beads_dir,
+            &obr_dir,
             &external_jsonl,
             None,
             false,
@@ -19842,8 +21360,8 @@ mod tests {
         .unwrap_err();
         let message = err.to_string();
         assert!(
-            message.contains("is outside .beads")
-                || message.contains("outside the beads directory")
+            message.contains("is outside the workspace")
+                || message.contains("outside the obr directory")
                 || message.contains("regular file"),
             "unexpected error: {err}"
         );
@@ -20009,14 +21527,14 @@ mod tests {
     fn test_auto_flush_propagates_jsonl_scan_io_errors() {
         let mut storage = SqliteStorage::open_memory().unwrap();
         let temp_dir = TempDir::new().unwrap();
-        let beads_dir = temp_dir.path().join(".beads");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp_dir.path().join(".beads");
+        let jsonl_path = obr_dir.join("issues.jsonl");
         fs::create_dir_all(&jsonl_path).unwrap();
 
         let issue = make_test_issue("bd-scan-error", "Dirty issue");
         storage.create_issue(&issue, "tester").unwrap();
 
-        let err = auto_flush(&mut storage, &beads_dir, &jsonl_path, false).unwrap_err();
+        let err = auto_flush(&mut storage, &obr_dir, &jsonl_path, false).unwrap_err();
         assert!(
             err.to_string().contains("directory")
                 || err.to_string().contains("Is a directory")
@@ -20035,18 +21553,18 @@ mod tests {
     fn test_auto_flush_validates_path_before_reading_existing_jsonl() {
         let mut storage = SqliteStorage::open_memory().unwrap();
         let temp_dir = TempDir::new().unwrap();
-        let beads_dir = temp_dir.path().join(".beads");
+        let obr_dir = temp_dir.path().join(".beads");
         let outside_jsonl_path = temp_dir.path().join("outside.jsonl");
-        fs::create_dir_all(&beads_dir).unwrap();
+        fs::create_dir_all(&obr_dir).unwrap();
         fs::write(&outside_jsonl_path, "<<<<<<< HEAD\n").unwrap();
 
         let issue = make_test_issue("bd-auto-flush-path", "Dirty issue");
         storage.create_issue(&issue, "tester").unwrap();
 
-        let err = auto_flush(&mut storage, &beads_dir, &outside_jsonl_path, false).unwrap_err();
+        let err = auto_flush(&mut storage, &obr_dir, &outside_jsonl_path, false).unwrap_err();
         assert!(
-            err.to_string().contains("is outside .beads")
-                || err.to_string().contains("outside the beads directory"),
+            err.to_string().contains("is outside the workspace")
+                || err.to_string().contains("outside the obr directory"),
             "unexpected error: {err}"
         );
         assert_eq!(
@@ -20060,17 +21578,17 @@ mod tests {
     fn test_auto_flush_refuses_clean_pending_merge_before_no_op_probe() {
         let mut storage = SqliteStorage::open_memory().unwrap();
         let temp_dir = TempDir::new().unwrap();
-        let beads_dir = temp_dir.path().join(".beads");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp_dir.path().join(".beads");
+        let jsonl_path = obr_dir.join("issues.jsonl");
         storage
             .set_metadata(METADATA_SYNC_MERGE_PENDING_LEGACY, "legacy-receipt")
             .unwrap();
 
-        let err = auto_flush(&mut storage, &beads_dir, &jsonl_path, false).unwrap_err();
+        let err = auto_flush(&mut storage, &obr_dir, &jsonl_path, false).unwrap_err();
 
         assert!(matches!(&err, BeadsError::SyncConflict { .. }));
         assert!(
-            err.to_string().contains("br sync --merge"),
+            err.to_string().contains("obr sync --merge"),
             "refusal must be actionable: {err}"
         );
         assert!(
@@ -20091,9 +21609,9 @@ mod tests {
     fn test_auto_flush_refuses_dirty_pending_merge_without_touching_jsonl_or_dirty_state() {
         let mut storage = SqliteStorage::open_memory().unwrap();
         let temp_dir = TempDir::new().unwrap();
-        let beads_dir = temp_dir.path().join(".beads");
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp_dir.path().join(".beads");
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        fs::create_dir_all(&obr_dir).unwrap();
         let original_jsonl = b"{\"id\":\"bd-existing\",\"title\":\"unchanged\"}\n";
         fs::write(&jsonl_path, original_jsonl).unwrap();
         storage
@@ -20107,7 +21625,7 @@ mod tests {
             .unwrap();
         let dirty_before = storage.get_dirty_issue_metadata().unwrap();
 
-        let err = auto_flush(&mut storage, &beads_dir, &jsonl_path, false).unwrap_err();
+        let err = auto_flush(&mut storage, &obr_dir, &jsonl_path, false).unwrap_err();
 
         assert!(matches!(err, BeadsError::SyncConflict { .. }));
         assert_eq!(
@@ -21384,7 +22902,8 @@ mod tests {
             phase: 3,
         };
         let (_, _, meta_by_id) = build_collision_maps(&storage);
-        let action = determine_action(&collision, &incoming, &meta_by_id, false).unwrap();
+        let hash = crate::util::content_hash(&incoming);
+        let action = determine_action(&collision, &incoming, &meta_by_id, &hash, false).unwrap();
         assert!(
             matches!(action, CollisionAction::Skip { .. }),
             "expected tombstone skip"
@@ -21407,15 +22926,20 @@ mod tests {
         };
         let (_, _, meta_by_id) = build_collision_maps(&storage);
 
+        let act = |issue: &Issue| {
+            let hash = crate::util::content_hash(issue);
+            determine_action(&collision, issue, &meta_by_id, &hash, false).unwrap()
+        };
+
         let newer = make_issue_at("bd-1", "Incoming", fixed_time(200));
-        let action = determine_action(&collision, &newer, &meta_by_id, false).unwrap();
         assert!(
-            matches!(action, CollisionAction::Update { .. }),
+            matches!(act(&newer), CollisionAction::Update { .. }),
             "expected update action"
         );
 
-        let equal = make_issue_at("bd-1", "Incoming", fixed_time(100));
-        let action = determine_action(&collision, &equal, &meta_by_id, false).unwrap();
+        // A tie with matching content is a genuine no-op: keep what is stored.
+        let same = make_issue_at("bd-1", "Existing", fixed_time(100));
+        let action = act(&same);
         assert!(
             matches!(action, CollisionAction::Skip { .. }),
             "expected equal timestamp skip"
@@ -21424,14 +22948,49 @@ mod tests {
             assert!(reason.contains("Equal timestamps"));
         }
 
-        let older = make_issue_at("bd-1", "Incoming", fixed_time(50));
-        let action = determine_action(&collision, &older, &meta_by_id, false).unwrap();
+        // A sub-minute timestamp did not come through a truncating surface, so
+        // equal-timestamp content drift keeps the stored copy exactly as
+        // before — that is the JSONL contract asserted by
+        // `content_hash_only_drift_is_uncertified_local_win`.
+        let drifted = make_issue_at("bd-1", "Incoming", fixed_time(100));
         assert!(
-            matches!(action, CollisionAction::Skip { .. }),
-            "expected older timestamp skip"
+            matches!(act(&drifted), CollisionAction::Skip { .. }),
+            "JSONL drift at equal timestamps must still be an uncertified local win"
         );
-        if let CollisionAction::Skip { reason } = action {
-            assert!(reason.contains("Existing is newer"));
+
+        // The Org surface renders `:MODIFIED:` at minute precision, so a
+        // record read back from a file carries 00:01:00 where the database
+        // holds 00:01:40 for the very same write. Compared raw it looks older
+        // forever; compared at its own precision it is a tie, and a content
+        // difference in that tie is a real hand edit. Skipping it would revert
+        // the user's file on the next flush.
+        let org_edit = make_issue_at("bd-1", "Edited in Emacs", fixed_time(60));
+        assert!(
+            matches!(act(&org_edit), CollisionAction::Update { .. }),
+            "a hand edit whose :MODIFIED: was not bumped must not be discarded"
+        );
+
+        // Same surface, same coarse instant, unchanged content: still a no-op,
+        // so re-importing an untouched file does not churn every record.
+        let org_noop = make_issue_at("bd-1", "Existing", fixed_time(60));
+        assert!(
+            matches!(act(&org_noop), CollisionAction::Skip { .. }),
+            "an unchanged Org record must not be rewritten"
+        );
+
+        // A genuinely older record still loses, coarse surface or not.
+        for older in [
+            make_issue_at("bd-1", "Incoming", fixed_time(50)),
+            make_issue_at("bd-1", "Incoming", fixed_time(0)),
+        ] {
+            let action = act(&older);
+            assert!(
+                matches!(action, CollisionAction::Skip { .. }),
+                "expected older timestamp skip"
+            );
+            if let CollisionAction::Skip { reason } = action {
+                assert!(reason.contains("Existing is newer"));
+            }
         }
     }
 
@@ -21582,9 +23141,22 @@ mod tests {
         issues[2].status = Status::Tombstone;
         issues[2].deleted_at = Some(export_as_of - ttl + chrono::Duration::nanoseconds(1));
 
-        let serial = prepare_export_issue_chunk(&issues, Some(30), &export_as_of);
-        let parallel =
-            prepare_export_issues_jsonl_parallel(&issues, Some(30), &export_as_of, 4).unwrap();
+        let serial = prepare_export_issue_chunk(
+            &issues,
+            org_bridge::ExportFormat::Jsonl,
+            &org_bridge::OrgStyle::default(),
+            Some(30),
+            &export_as_of,
+        );
+        let parallel = prepare_export_issues_jsonl_parallel(
+            &issues,
+            org_bridge::ExportFormat::Jsonl,
+            &org_bridge::OrgStyle::default(),
+            Some(30),
+            &export_as_of,
+            4,
+        )
+        .unwrap();
 
         assert_eq!(serial.len(), parallel.len());
         for (serial_entry, parallel_entry) in serial.iter().zip(&parallel) {
@@ -21594,7 +23166,7 @@ mod tests {
                     PreparedExportEntry::Issue(parallel_issue),
                 ) => {
                     assert_eq!(serial_issue.id, parallel_issue.id);
-                    assert_eq!(serial_issue.jsonl_line, parallel_issue.jsonl_line);
+                    assert_eq!(serial_issue.record_bytes, parallel_issue.record_bytes);
                     assert_eq!(serial_issue.content_hash, parallel_issue.content_hash);
                     assert_eq!(
                         serial_issue.dependency_count,
@@ -21628,22 +23200,22 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_issue_for_export_orders_identical_comments_by_id() {
+    fn test_normalize_issue_for_export_orders_equal_timestamp_comments_by_id() {
         let timestamp = fixed_time(100);
         let mut issue = make_test_issue("bd-1", "Ordering");
         issue.comments = vec![
             Comment {
                 id: 9,
                 issue_id: issue.id.clone(),
-                author: "tester".to_string(),
-                body: "same".to_string(),
+                author: "alice".to_string(),
+                body: "alphabetically first".to_string(),
                 created_at: timestamp,
             },
             Comment {
                 id: 2,
                 issue_id: issue.id.clone(),
-                author: "tester".to_string(),
-                body: "same".to_string(),
+                author: "zara".to_string(),
+                body: "alphabetically last".to_string(),
                 created_at: timestamp,
             },
         ];
@@ -21831,14 +23403,14 @@ mod tests {
     fn test_auto_flush_clears_byte_identical_dirty_marker_without_rewrite() {
         let mut storage = SqliteStorage::open_memory().unwrap();
         let temp_dir = TempDir::new().unwrap();
-        let beads_dir = temp_dir.path().join(".beads");
-        let output_path = beads_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp_dir.path().join(".beads");
+        let output_path = obr_dir.join("issues.jsonl");
+        fs::create_dir_all(&obr_dir).unwrap();
 
         let issue = make_test_issue("bd-noop", "No-op dirty marker");
         storage.create_issue(&issue, "test").unwrap();
 
-        let first = auto_flush(&mut storage, &beads_dir, &output_path, false).unwrap();
+        let first = auto_flush(&mut storage, &obr_dir, &output_path, false).unwrap();
         assert!(first.flushed);
         let before = fs::read_to_string(&output_path).unwrap();
 
@@ -21846,7 +23418,7 @@ mod tests {
             .replace_dirty_issue_marker("bd-noop", "manual-dirty-marker")
             .unwrap();
 
-        let second = auto_flush(&mut storage, &beads_dir, &output_path, false).unwrap();
+        let second = auto_flush(&mut storage, &obr_dir, &output_path, false).unwrap();
         assert!(
             !second.flushed,
             "byte-identical dirty markers should not rewrite JSONL"
@@ -21972,19 +23544,21 @@ mod tests {
             ExportErrorPolicy::Strict,
             Some(30),
             export_as_of,
+            org_bridge::ExportFormat::Jsonl,
+            &org_bridge::OrgStyle::default(),
         )
         .unwrap();
 
         let temp_dir = TempDir::new().unwrap();
-        let beads_dir = temp_dir.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let output_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp_dir.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let output_path = obr_dir.join("issues.jsonl");
         let config = ExportConfig {
             force: true,
             error_policy: ExportErrorPolicy::Strict,
             retention_days: Some(30),
             export_as_of: Some(export_as_of),
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             max_parallel_workers: 1,
             ..Default::default()
         };
@@ -22189,12 +23763,12 @@ mod tests {
     #[test]
     fn test_preflight_import_rejects_nonexistent_file() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
-        let jsonl_path = beads_dir.join("nonexistent.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
+        let jsonl_path = obr_dir.join("nonexistent.jsonl");
 
         let config = ImportConfig {
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             ..Default::default()
         };
 
@@ -22207,9 +23781,9 @@ mod tests {
     #[test]
     fn test_preflight_import_rejects_conflict_markers() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         // Write a file with conflict markers
         let mut file = std::fs::File::create(&jsonl_path).unwrap();
@@ -22223,7 +23797,7 @@ mod tests {
         writeln!(file, ">>>>>>> branch").unwrap();
 
         let config = ImportConfig {
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             ..Default::default()
         };
 
@@ -22241,13 +23815,13 @@ mod tests {
     #[test]
     fn test_preflight_import_does_not_inspect_rejected_path() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
         let outside_jsonl_path = temp.path().join("outside.jsonl");
         std::fs::write(&outside_jsonl_path, "not json\n").unwrap();
 
         let config = ImportConfig {
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             allow_external_jsonl: false,
             ..Default::default()
         };
@@ -22275,9 +23849,9 @@ mod tests {
     #[test]
     fn test_preflight_import_passes_valid_jsonl() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         // Write valid JSONL
         let issue = make_test_issue("bd-001", "Test Issue");
@@ -22285,7 +23859,7 @@ mod tests {
         std::fs::write(&jsonl_path, format!("{json}\n")).unwrap();
 
         let config = ImportConfig {
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             ..Default::default()
         };
 
@@ -22298,13 +23872,13 @@ mod tests {
     #[test]
     fn test_preflight_export_passes_with_valid_setup() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         let storage = SqliteStorage::open_memory().unwrap();
         let config = ExportConfig {
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             ..Default::default()
         };
 
@@ -22327,9 +23901,9 @@ mod tests {
     #[test]
     fn test_preflight_import_rejects_invalid_json_lines() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         // Write JSONL with invalid lines
         let issue1 = make_test_issue("bd-001", "Good issue");
@@ -22340,7 +23914,7 @@ mod tests {
         std::fs::write(&jsonl_path, content).unwrap();
 
         let config = ImportConfig {
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             ..Default::default()
         };
 
@@ -22359,9 +23933,9 @@ mod tests {
     #[test]
     fn test_preflight_import_passes_valid_json_lines() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         let issue1 = make_test_issue("bd-001", "First");
         let issue2 = make_test_issue("bd-002", "Second");
@@ -22373,7 +23947,7 @@ mod tests {
         std::fs::write(&jsonl_path, content).unwrap();
 
         let config = ImportConfig {
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             ..Default::default()
         };
 
@@ -22410,16 +23984,16 @@ mod tests {
     #[test]
     fn test_preflight_import_rejects_duplicate_issue_ids_during_validation() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         let issue = make_test_issue("bd-dup", "Duplicate");
         let issue_json = serde_json::to_string(&issue).unwrap();
         std::fs::write(&jsonl_path, format!("{issue_json}\n{issue_json}\n")).unwrap();
 
         let config = ImportConfig {
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             ..Default::default()
         };
 
@@ -22441,9 +24015,9 @@ mod tests {
     #[test]
     fn test_preflight_import_rejects_semantically_invalid_issue_records() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         let mut invalid_issue = make_test_issue("bd-001", "");
         invalid_issue.title.clear();
@@ -22454,7 +24028,7 @@ mod tests {
         .unwrap();
 
         let config = ImportConfig {
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             ..Default::default()
         };
 
@@ -22476,9 +24050,9 @@ mod tests {
     #[test]
     fn test_preflight_import_rejects_prefix_mismatch() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         // Write issues with wrong prefix
         let issue1 = make_test_issue("xx-001", "Wrong prefix 1");
@@ -22491,7 +24065,7 @@ mod tests {
         std::fs::write(&jsonl_path, content).unwrap();
 
         let config = ImportConfig {
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             ..Default::default()
         };
 
@@ -22510,16 +24084,16 @@ mod tests {
     #[test]
     fn test_preflight_import_rejects_shared_prefix_superset() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         let issue = make_test_issue("bdx-001", "Wrong shared prefix");
         let json = serde_json::to_string(&issue).unwrap();
         std::fs::write(&jsonl_path, format!("{json}\n")).unwrap();
 
         let config = ImportConfig {
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             ..Default::default()
         };
 
@@ -22537,9 +24111,9 @@ mod tests {
     #[test]
     fn test_preflight_import_prefix_check_skipped_when_override() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         // Write issues with wrong prefix
         let issue = make_test_issue("xx-001", "Wrong prefix");
@@ -22548,7 +24122,7 @@ mod tests {
 
         let config = ImportConfig {
             skip_prefix_validation: true,
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             ..Default::default()
         };
 
@@ -22570,9 +24144,9 @@ mod tests {
     #[test]
     fn test_preflight_import_prefix_passes_matching_prefix() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         let issue1 = make_test_issue("bd-001", "Correct prefix 1");
         let issue2 = make_test_issue("bd-002", "Correct prefix 2");
@@ -22584,7 +24158,7 @@ mod tests {
         std::fs::write(&jsonl_path, content).unwrap();
 
         let config = ImportConfig {
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             ..Default::default()
         };
 
@@ -22605,16 +24179,16 @@ mod tests {
     #[test]
     fn test_preflight_import_prefix_accepts_slugged_ids() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         let issue = make_test_issue("bd-survey-my-thing-abc123", "Slugged issue");
         let json = serde_json::to_string(&issue).unwrap();
         std::fs::write(&jsonl_path, format!("{json}\n")).unwrap();
 
         let config = ImportConfig {
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             ..Default::default()
         };
 
@@ -22649,16 +24223,16 @@ mod tests {
     #[test]
     fn test_preflight_import_prefix_no_check_without_expected() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         let issue = make_test_issue("xx-001", "Any prefix");
         let json = serde_json::to_string(&issue).unwrap();
         std::fs::write(&jsonl_path, format!("{json}\n")).unwrap();
 
         let config = ImportConfig {
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             ..Default::default()
         };
 
@@ -22675,9 +24249,9 @@ mod tests {
     #[test]
     fn test_preflight_import_conflict_markers_mixed_content() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         // Valid JSONL with embedded conflict markers
         let issue = make_test_issue("bd-001", "Good issue");
@@ -22688,7 +24262,7 @@ mod tests {
         std::fs::write(&jsonl_path, content).unwrap();
 
         let config = ImportConfig {
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             ..Default::default()
         };
 
@@ -22712,9 +24286,9 @@ mod tests {
     #[test]
     fn test_preflight_import_success_path_all_checks() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         // Write valid JSONL with correct prefix
         let issue1 = make_test_issue("bd-001", "Issue One");
@@ -22727,7 +24301,7 @@ mod tests {
         std::fs::write(&jsonl_path, content).unwrap();
 
         let config = ImportConfig {
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             ..Default::default()
         };
 
@@ -22749,8 +24323,8 @@ mod tests {
         // Verify all expected checks ran
         let check_names: Vec<&str> = result.checks.iter().map(|c| c.name.as_str()).collect();
         assert!(
-            check_names.contains(&"beads_dir_exists"),
-            "Should check beads dir: {check_names:?}"
+            check_names.contains(&"obr_dir_exists"),
+            "Should check obr dir: {check_names:?}"
         );
         assert!(
             check_names.contains(&"file_readable"),
@@ -22773,9 +24347,9 @@ mod tests {
     #[test]
     fn test_preflight_import_mixed_prefix_partial_mismatch() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         // Mix of correct and incorrect prefix
         let good_issue = make_test_issue("bd-001", "Good prefix");
@@ -22788,7 +24362,7 @@ mod tests {
         std::fs::write(&jsonl_path, content).unwrap();
 
         let config = ImportConfig {
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             ..Default::default()
         };
 
@@ -22809,9 +24383,9 @@ mod tests {
     #[test]
     fn test_preflight_import_prefix_skips_tombstones() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         // Create a tombstone with wrong prefix — should be silently ignored
         let mut tombstone = make_test_issue("xx-001", "Foreign tombstone");
@@ -22825,7 +24399,7 @@ mod tests {
         std::fs::write(&jsonl_path, content).unwrap();
 
         let config = ImportConfig {
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             ..Default::default()
         };
 
@@ -22844,15 +24418,15 @@ mod tests {
     #[test]
     fn test_preflight_import_empty_file_passes_json_check() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         // Empty file
         std::fs::write(&jsonl_path, "").unwrap();
 
         let config = ImportConfig {
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             ..Default::default()
         };
 
@@ -22867,15 +24441,15 @@ mod tests {
     #[test]
     fn test_preflight_import_only_blank_lines_passes_json_check() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         // Only whitespace/blank lines
         std::fs::write(&jsonl_path, "\n\n  \n\t\n").unwrap();
 
         let config = ImportConfig {
-            beads_dir: Some(beads_dir),
+            obr_dir: Some(obr_dir),
             ..Default::default()
         };
 
@@ -23424,6 +24998,65 @@ mod tests {
         assert_eq!(report.kept.len(), 1);
         assert_eq!(report.notes.len(), 1);
         assert!(report.notes[0].1.contains("Both modified"));
+    }
+
+    /// Minute-precision `updated_at` (what the Org surface stores) makes a
+    /// `PreferNewer` tie an everyday case. It must resolve the same way every
+    /// time, and the note must not claim the winner was newer.
+    #[test]
+    fn prefer_newer_tie_is_deterministic_and_honestly_reported() {
+        let same_minute = fixed_time_merge(200);
+        let base = make_issue_with_hash("bd-001", "Base", fixed_time_merge(100), Some("base"));
+        let local = make_issue_with_hash("bd-001", "Local edit", same_minute, Some("local"));
+        let external = make_issue_with_hash("bd-001", "External edit", same_minute, Some("ext"));
+
+        // Both-modified (case 6) and convergent creation (case 7).
+        for base_state in [Some(&base), None] {
+            let first = merge_issue(
+                base_state,
+                Some(&local),
+                Some(&external),
+                ConflictResolution::PreferNewer,
+            );
+            let MergeResult::KeepWithNote(kept, note) = first.clone() else {
+                panic!("a tie must still resolve, got {first:?}");
+            };
+            assert_eq!(kept.title, "Local edit", "the tie keeps the local side");
+            assert!(
+                note.contains("equal timestamps"),
+                "the note must not claim the winner was newer: {note}"
+            );
+            assert!(!note.contains("(newer)"), "got: {note}");
+
+            // Same inputs, same answer — no wall-clock or iteration-order
+            // component anywhere in the decision.
+            let again = merge_issue(
+                base_state,
+                Some(&local),
+                Some(&external),
+                ConflictResolution::PreferNewer,
+            );
+            assert_eq!(format!("{first:?}"), format!("{again:?}"));
+        }
+
+        // A real difference still wins, and is still called "newer".
+        let newer_external = make_issue_with_hash(
+            "bd-001",
+            "External edit",
+            fixed_time_merge(300),
+            Some("ext"),
+        );
+        let result = merge_issue(
+            Some(&base),
+            Some(&local),
+            Some(&newer_external),
+            ConflictResolution::PreferNewer,
+        );
+        let MergeResult::KeepWithNote(kept, note) = result else {
+            panic!("expected a resolved merge");
+        };
+        assert_eq!(kept.title, "External edit");
+        assert!(note.contains("kept external (newer)"), "got: {note}");
     }
 
     #[test]

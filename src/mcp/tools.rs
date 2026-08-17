@@ -1,4 +1,4 @@
-//! MCP tool handlers for the beads issue tracker.
+//! MCP tool handlers for the obr issue tracker.
 //!
 //! Seven tools — one per high-frequency agent workflow — following the
 //! "≤ 7 tools per cluster" principle from the MCP design guide.
@@ -20,7 +20,7 @@ use crate::model::{Comment, DependencyType, Issue, IssueType, Priority, Status};
 use crate::storage::{IssueUpdate, ListFilters, SqliteStorage};
 use crate::validation::{CommentValidator, IssueValidator, LabelValidator};
 
-use super::{BeadsState, ensure_not_shutting_down, mcp_ready_issues};
+use super::{ObrState, ensure_not_shutting_down, mcp_ready_issues};
 
 // ---------------------------------------------------------------------------
 // Constants — pre-computed sets for O(1) placeholder detection
@@ -104,6 +104,18 @@ const LIST_ISSUES_SINGLE_ARG_KEYS: &[&str] = &[
     "sort",
 ];
 
+/// The issue-ID prefix this workspace actually mints IDs with.
+///
+/// Every agent-facing string that shows an example ID must go through this,
+/// so the example matches the IDs the client will really see instead of a
+/// hard-coded prefix from some earlier name of the tool.
+pub(super) fn resolved_issue_prefix(state: &ObrState) -> &str {
+    state
+        .issue_prefix
+        .as_deref()
+        .unwrap_or(crate::util::id::DEFAULT_ISSUE_PREFIX)
+}
+
 // ---------------------------------------------------------------------------
 // Placeholder detection
 // ---------------------------------------------------------------------------
@@ -172,7 +184,7 @@ fn tombstone_issue_err(id: &str) -> McpError {
 /// Returns fuzzy suggestions with `suggested_tool_calls` if not found.
 fn require_valid_issue(storage: &SqliteStorage, id: &str) -> McpResult<()> {
     // Check DB first: if the ID exists, it's real regardless of name.
-    if let Some(issue) = storage.get_issue(id).map_err(beads_to_mcp)? {
+    if let Some(issue) = storage.get_issue(id).map_err(obr_to_mcp)? {
         if issue.status == Status::Tombstone {
             return Err(tombstone_issue_err(id));
         }
@@ -248,11 +260,11 @@ where
     F: Fn(&str) -> Result<bool, BeadsError>,
 {
     let id_gen = crate::util::id::IdGenerator::new(
-        crate::util::id::IdConfig::with_prefix(prefix).map_err(beads_to_mcp)?,
+        crate::util::id::IdConfig::with_prefix(prefix).map_err(obr_to_mcp)?,
     );
     match id_gen.generate(title, None, Some(actor), now, issue_count, id_exists) {
         Ok(id) => Ok(id),
-        Err(err @ BeadsError::IdCollision { .. }) => Err(beads_to_mcp(err)),
+        Err(err @ BeadsError::IdCollision { .. }) => Err(obr_to_mcp(err)),
         Err(err) => Err(id_lookup_failed("hash ID generation", &err)),
     }
 }
@@ -263,9 +275,9 @@ where
 
 /// Convert a `BeadsError` into a structured `McpError` with machine-readable
 /// data payload, recovery hints, and fuzzy-match suggestions.
-fn beads_to_mcp(err: impl Into<crate::BeadsError>) -> McpError {
-    let beads_err = err.into();
-    let structured = StructuredError::from_error(&beads_err);
+fn obr_to_mcp(err: impl Into<crate::BeadsError>) -> McpError {
+    let obr_err = err.into();
+    let structured = StructuredError::from_error(&obr_err);
 
     let mcp_code = match structured.code {
         // Validation errors → invalid params
@@ -341,13 +353,13 @@ fn beads_to_mcp(err: impl Into<crate::BeadsError>) -> McpError {
             if let Some(object) = data.as_object_mut() {
                 object.insert(
                     "recovery".to_string(),
-                    json!("Retry after starting a fresh br serve process"),
+                    json!("Retry after starting a fresh obr serve process"),
                 );
             }
         }
         _ => {
             data["discovery_hint"] =
-                json!("Use list_issues tool or beads://labels resource to find valid values");
+                json!("Use list_issues tool or obr://labels resource to find valid values");
         }
     }
 
@@ -357,7 +369,7 @@ fn beads_to_mcp(err: impl Into<crate::BeadsError>) -> McpError {
 /// Build a structured "issue not found" `McpError` with fuzzy ID suggestions
 /// and `suggested_tool_calls` pointing to the best next action.
 fn issue_not_found_err(storage: &SqliteStorage, id: &str) -> McpResult<McpError> {
-    let all_ids = storage.get_all_ids().map_err(beads_to_mcp)?;
+    let all_ids = storage.get_all_ids().map_err(obr_to_mcp)?;
     let structured = StructuredError::issue_not_found(id, &all_ids);
 
     let mut data = json!({
@@ -418,11 +430,11 @@ fn storage_read_warning(operation: &str, err: &crate::BeadsError) -> serde_json:
     warning
 }
 
-fn open(state: &BeadsState) -> McpResult<SqliteStorage> {
-    state.open_read_storage().map_err(beads_to_mcp)
+fn open(state: &ObrState) -> McpResult<SqliteStorage> {
+    state.open_read_storage().map_err(obr_to_mcp)
 }
 
-fn cached_read_json<F>(state: &BeadsState, key: String, build: F) -> McpResult<Value>
+fn cached_read_json<F>(state: &ObrState, key: String, build: F) -> McpResult<Value>
 where
     F: FnOnce(&SqliteStorage) -> McpResult<Value>,
 {
@@ -833,7 +845,7 @@ fn validate_mcp_comment(issue_id: &str, author: &str, body: &str) -> McpResult<(
 
     CommentValidator::validate(&comment)
         .map_err(BeadsError::from_validation_errors)
-        .map_err(beads_to_mcp)
+        .map_err(obr_to_mcp)
 }
 
 /// Parse update fields from JSON args into an `IssueUpdate` + coercion warnings.
@@ -1055,16 +1067,16 @@ fn list_issues_json(storage: &SqliteStorage, args: &Value) -> McpResult<Value> {
 
     let issues = if let Some(raw_q) = search_query.as_deref() {
         if let Some(q) = sanitize_search(raw_q) {
-            storage.search_issues(&q, &filters).map_err(beads_to_mcp)?
+            storage.search_issues(&q, &filters).map_err(obr_to_mcp)?
         } else {
             // Bare wildcard — fall back to list (no search filter)
             coercions.push(format!(
                 "search '{raw_q}' was a bare wildcard, returning all"
             ));
-            storage.list_issues(&filters).map_err(beads_to_mcp)?
+            storage.list_issues(&filters).map_err(obr_to_mcp)?
         }
     } else {
-        storage.list_issues(&filters).map_err(beads_to_mcp)?
+        storage.list_issues(&filters).map_err(obr_to_mcp)?
     };
 
     let mut result = json!({
@@ -1174,9 +1186,9 @@ fn list_issues_batch_json(storage: &SqliteStorage, queries: &[Value]) -> Value {
     })
 }
 
-pub struct ListIssuesTool(Arc<BeadsState>);
+pub struct ListIssuesTool(Arc<ObrState>);
 impl ListIssuesTool {
-    pub fn new(state: Arc<BeadsState>) -> Self {
+    pub fn new(state: Arc<ObrState>) -> Self {
         Self(state)
     }
 }
@@ -1187,7 +1199,7 @@ impl ToolHandler for ListIssuesTool {
             name: "list_issues".into(),
             description: Some(
                 "List issues matching filters, or run multiple filtered list queries in one batch. Returns JSON issue summaries.\n\n\
-                 Discovery: Use beads://schema for accepted status/type/priority values and beads://labels for valid label values.\n\
+                 Discovery: Use obr://schema for accepted status/type/priority values and obr://labels for valid label values.\n\
                  When to use: Exploring the backlog, finding issues by status/type/priority/label.\n\
                  NOT for: Getting full details on one issue — use show_issue instead.\n\
                  Do: Start broad (no filters) then narrow down. Use limit to cap output, or pass queries[] for a per-item batch envelope.\n\
@@ -1219,7 +1231,7 @@ impl ToolHandler for ListIssuesTool {
                     },
                     "labels": {
                         "type": "string",
-                        "description": "Filter by labels (comma-separated, AND logic). See beads://labels for valid values."
+                        "description": "Filter by labels (comma-separated, AND logic). See obr://labels for valid values."
                     },
                     "title": {
                         "type": "string",
@@ -1300,9 +1312,9 @@ impl ToolHandler for ListIssuesTool {
 // 2. show_issue
 // ---------------------------------------------------------------------------
 
-pub struct ShowIssueTool(Arc<BeadsState>);
+pub struct ShowIssueTool(Arc<ObrState>);
 impl ShowIssueTool {
-    pub fn new(state: Arc<BeadsState>) -> Self {
+    pub fn new(state: Arc<ObrState>) -> Self {
         Self(state)
     }
 }
@@ -1310,7 +1322,7 @@ impl ShowIssueTool {
 fn show_issue_json(storage: &SqliteStorage, id: &str) -> McpResult<Value> {
     let maybe_details = storage
         .get_issue_details(id, true, true, 20)
-        .map_err(beads_to_mcp)?;
+        .map_err(obr_to_mcp)?;
     let Some(details) = maybe_details else {
         return Err(issue_not_found_err(storage, id)?);
     };
@@ -1485,7 +1497,10 @@ impl ToolHandler for ShowIssueTool {
                 "properties": {
                     "id": {
                         "type": "string",
-                        "description": "Issue ID (e.g. 'br-1a2b3c'). MUST be an exact ID from list_issues. Placeholder values are rejected."
+                        "description": format!(
+                            "Issue ID (e.g. '{}-1a2b3c'). MUST be an exact ID from list_issues. Placeholder values are rejected.",
+                            resolved_issue_prefix(&self.0)
+                        )
                     },
                     "ids": {
                         "type": "array",
@@ -1542,9 +1557,9 @@ impl ToolHandler for ShowIssueTool {
 // 3. create_issue
 // ---------------------------------------------------------------------------
 
-pub struct CreateIssueTool(Arc<BeadsState>);
+pub struct CreateIssueTool(Arc<ObrState>);
 impl CreateIssueTool {
-    pub fn new(state: Arc<BeadsState>) -> Self {
+    pub fn new(state: Arc<ObrState>) -> Self {
         Self(state)
     }
 }
@@ -1583,7 +1598,7 @@ fn create_issue_result_json(
 
 fn create_issue_json(
     storage: &mut SqliteStorage,
-    state: &BeadsState,
+    state: &ObrState,
     args: &Value,
 ) -> McpResult<Value> {
     let title = required_str_arg(args, "title")?;
@@ -1613,17 +1628,17 @@ fn create_issue_json(
     let labels_to_add = optional_label_array_arg(args, "labels")?;
 
     let now = chrono::Utc::now();
-    let prefix = state.issue_prefix.as_deref().unwrap_or("br");
+    let prefix = resolved_issue_prefix(state);
 
     if let Some(ref pid) = parent_id {
         require_valid_issue(storage, pid)?;
     }
 
     let id = if let Some(ref pid) = parent_id {
-        let next_num = storage.next_child_number(pid).map_err(beads_to_mcp)?;
+        let next_num = storage.next_child_number(pid).map_err(obr_to_mcp)?;
         next_available_child_id(pid, next_num, |candidate| storage.id_exists(candidate))?
     } else {
-        let issue_count = storage.count_issues().map_err(beads_to_mcp)?;
+        let issue_count = storage.count_issues().map_err(obr_to_mcp)?;
         generate_issue_id_with_checked_lookup(
             &title,
             &state.actor,
@@ -1650,22 +1665,22 @@ fn create_issue_json(
 
     IssueValidator::validate(&issue)
         .map_err(BeadsError::from_validation_errors)
-        .map_err(beads_to_mcp)?;
+        .map_err(obr_to_mcp)?;
 
     storage
         .create_issue(&issue, &state.actor)
-        .map_err(beads_to_mcp)?;
+        .map_err(obr_to_mcp)?;
 
     for label in &labels_to_add {
         storage
             .add_label(&id, label, &state.actor)
-            .map_err(beads_to_mcp)?;
+            .map_err(obr_to_mcp)?;
     }
 
     if let Some(ref pid) = parent_id {
         storage
             .add_dependency(&id, pid, "parent-child", &state.actor)
-            .map_err(beads_to_mcp)?;
+            .map_err(obr_to_mcp)?;
     }
 
     Ok(create_issue_result_json(
@@ -1740,7 +1755,7 @@ fn create_issue_batch_error_item(index: usize, args: &Value, err: McpError) -> V
 
 fn create_issue_batch_json(
     storage: &mut SqliteStorage,
-    state: &BeadsState,
+    state: &ObrState,
     items: &[Value],
 ) -> Value {
     let mut ok_count = 0_u64;
@@ -1780,7 +1795,7 @@ impl ToolHandler for CreateIssueTool {
             name: "create_issue".into(),
             description: Some(
                 "Create one issue, or create multiple issues in one batch. Returns created issue IDs.\n\n\
-                 Discovery: See beads://schema for valid types/priorities, beads://labels for labels.\n\
+                 Discovery: See obr://schema for valid types/priorities, obr://labels for labels.\n\
                  When to use: Recording a new bug, feature, task, or work item.\n\
                  NOT for: Updating existing issues — use update_issue instead.\n\
                  Do: Provide a clear title (1-500 chars), or pass issues[] for a per-item batch envelope. Search with list_issues first to avoid dupes.\n\
@@ -1816,7 +1831,7 @@ impl ToolHandler for CreateIssueTool {
                     "labels": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Labels to attach. See beads://labels for existing labels."
+                        "description": "Labels to attach. See obr://labels for existing labels."
                     },
                     "parent": {
                         "type": "string",
@@ -1875,9 +1890,9 @@ impl ToolHandler for CreateIssueTool {
 // 4. update_issue
 // ---------------------------------------------------------------------------
 
-pub struct UpdateIssueTool(Arc<BeadsState>);
+pub struct UpdateIssueTool(Arc<ObrState>);
 impl UpdateIssueTool {
-    pub fn new(state: Arc<BeadsState>) -> Self {
+    pub fn new(state: Arc<ObrState>) -> Self {
         Self(state)
     }
 }
@@ -1901,7 +1916,7 @@ fn update_issue_result_json(issue: &Issue, coercions: &[String]) -> Value {
 
 fn apply_update_issue_json(
     storage: &mut SqliteStorage,
-    state: &BeadsState,
+    state: &ObrState,
     args: &Value,
 ) -> McpResult<Value> {
     let id = required_str_arg(args, "id")?;
@@ -1928,11 +1943,11 @@ fn apply_update_issue_json(
     let issue = if has_field_updates {
         storage
             .update_issue(&id, &updates, &state.actor)
-            .map_err(beads_to_mcp)?
+            .map_err(obr_to_mcp)?
     } else if has_side_effects {
         match storage
             .get_issue_details(&id, false, false, 0)
-            .map_err(beads_to_mcp)?
+            .map_err(obr_to_mcp)?
         {
             Some(details) => details.issue,
             None => return Err(issue_not_found_err(storage, &id)?),
@@ -1956,12 +1971,12 @@ fn apply_update_issue_json(
     for label in &labels_to_add {
         storage
             .add_label(&id, label, &state.actor)
-            .map_err(beads_to_mcp)?;
+            .map_err(obr_to_mcp)?;
     }
     for label in &labels_to_remove {
         storage
             .remove_label(&id, label, &state.actor)
-            .map_err(beads_to_mcp)?;
+            .map_err(obr_to_mcp)?;
     }
 
     // Add comment if provided.
@@ -1970,7 +1985,7 @@ fn apply_update_issue_json(
     {
         storage
             .add_comment(&id, &state.actor, comment)
-            .map_err(beads_to_mcp)?;
+            .map_err(obr_to_mcp)?;
     }
 
     Ok(update_issue_result_json(&issue, &coercions))
@@ -2029,7 +2044,7 @@ fn update_issue_batch_error_item(index: usize, args: &Value, err: McpError) -> V
 
 fn update_issue_batch_json(
     storage: &mut SqliteStorage,
-    state: &BeadsState,
+    state: &ObrState,
     items: &[Value],
 ) -> Value {
     let mut ok_count = 0_u64;
@@ -2068,7 +2083,7 @@ impl ToolHandler for UpdateIssueTool {
             name: "update_issue".into(),
             description: Some(
                 "Update fields on an existing issue. Only provided fields are changed.\n\n\
-                 Discovery: Get IDs from list_issues. See beads://schema for valid values.\n\
+                 Discovery: Get IDs from list_issues. See obr://schema for valid values.\n\
                  When to use: Changing status, priority, assignee, adding comments.\n\
                  NOT for: Closing issues — use close_issue for proper close tracking.\n\
                  Do: Provide only the fields you want to change, or pass updates[] for a per-item batch envelope.\n\
@@ -2132,7 +2147,7 @@ impl ToolHandler for UpdateIssueTool {
                     "labels_add": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Labels to add. See beads://labels for existing labels."
+                        "description": "Labels to add. See obr://labels for existing labels."
                     },
                     "labels_remove": {
                         "type": "array",
@@ -2195,16 +2210,16 @@ impl ToolHandler for UpdateIssueTool {
 // 5. close_issue
 // ---------------------------------------------------------------------------
 
-pub struct CloseIssueTool(Arc<BeadsState>);
+pub struct CloseIssueTool(Arc<ObrState>);
 impl CloseIssueTool {
-    pub fn new(state: Arc<BeadsState>) -> Self {
+    pub fn new(state: Arc<ObrState>) -> Self {
         Self(state)
     }
 }
 
 fn close_issue_json(
     storage: &mut SqliteStorage,
-    state: &BeadsState,
+    state: &ObrState,
     id: &str,
     reason: Option<&str>,
 ) -> McpResult<Value> {
@@ -2214,7 +2229,7 @@ fn close_issue_json(
     // Idempotency: if already closed, return existing state without error.
     if let Some(details) = storage
         .get_issue_details(id, false, false, 0)
-        .map_err(beads_to_mcp)?
+        .map_err(obr_to_mcp)?
         && details.issue.status == Status::Closed
     {
         let issue = details.issue;
@@ -2239,7 +2254,7 @@ fn close_issue_json(
 
     let issue = storage
         .update_issue(id, &close_update, &state.actor)
-        .map_err(beads_to_mcp)?;
+        .map_err(obr_to_mcp)?;
 
     let mut warnings = Vec::new();
 
@@ -2326,7 +2341,7 @@ fn close_issue_batch_error_item(index: usize, id: &str, err: McpError) -> Value 
 
 fn close_issue_batch_json(
     storage: &mut SqliteStorage,
-    state: &BeadsState,
+    state: &ObrState,
     ids: &[String],
     reason: Option<&str>,
 ) -> Value {
@@ -2441,9 +2456,9 @@ impl ToolHandler for CloseIssueTool {
 // 6. manage_dependencies
 // ---------------------------------------------------------------------------
 
-pub struct ManageDependenciesTool(Arc<BeadsState>);
+pub struct ManageDependenciesTool(Arc<ObrState>);
 impl ManageDependenciesTool {
-    pub fn new(state: Arc<BeadsState>) -> Self {
+    pub fn new(state: Arc<ObrState>) -> Self {
         Self(state)
     }
 }
@@ -2477,8 +2492,8 @@ fn invalid_dependency_action_error(action: &str) -> McpError {
 
 fn manage_dependencies_list_json(storage: &SqliteStorage, id: &str) -> McpResult<Value> {
     require_valid_issue(storage, id)?;
-    let deps = storage.get_dependencies_full(id).map_err(beads_to_mcp)?;
-    let dependents = storage.get_dependents(id).map_err(beads_to_mcp)?;
+    let deps = storage.get_dependencies_full(id).map_err(obr_to_mcp)?;
+    let dependents = storage.get_dependents(id).map_err(obr_to_mcp)?;
 
     Ok(json!({
         "id": id,
@@ -2512,16 +2527,14 @@ fn manage_dependency_cycle_error(id: &str, depends_on: &str) -> McpError {
 
 fn manage_dependencies_add_json(
     storage: &mut SqliteStorage,
-    state: &BeadsState,
+    state: &ObrState,
     id: &str,
     depends_on: &str,
     dep_type_raw: Option<&str>,
 ) -> McpResult<Value> {
     let dep_type_raw = dep_type_raw.unwrap_or("blocks");
     let (dep_type_str, dep_coercion) = parse_dep_type(dep_type_raw)?;
-    let dep_type = dep_type_str
-        .parse::<DependencyType>()
-        .map_err(beads_to_mcp)?;
+    let dep_type = dep_type_str.parse::<DependencyType>().map_err(obr_to_mcp)?;
 
     require_valid_issue(storage, id)?;
     if depends_on.starts_with("external:") {
@@ -2536,11 +2549,11 @@ fn manage_dependencies_add_json(
         if dep_type == DependencyType::ParentChild {
             storage
                 .would_create_parent_child_cycle(id, depends_on, true)
-                .map_err(beads_to_mcp)?
+                .map_err(obr_to_mcp)?
         } else {
             storage
                 .would_create_cycle(id, depends_on, true)
-                .map_err(beads_to_mcp)?
+                .map_err(obr_to_mcp)?
         }
     } else {
         false
@@ -2552,7 +2565,7 @@ fn manage_dependencies_add_json(
 
     let added = storage
         .add_dependency(id, depends_on, &dep_type_str, &state.actor)
-        .map_err(beads_to_mcp)?;
+        .map_err(obr_to_mcp)?;
 
     let mut result = json!({
         "added": added,
@@ -2569,7 +2582,7 @@ fn manage_dependencies_add_json(
 
 fn manage_dependencies_remove_json(
     storage: &mut SqliteStorage,
-    state: &BeadsState,
+    state: &ObrState,
     id: &str,
     depends_on: &str,
 ) -> McpResult<Value> {
@@ -2581,7 +2594,7 @@ fn manage_dependencies_remove_json(
 
     let removed = storage
         .remove_dependency(id, depends_on, &state.actor)
-        .map_err(beads_to_mcp)?;
+        .map_err(obr_to_mcp)?;
 
     Ok(json!({
         "removed": removed,
@@ -2592,7 +2605,7 @@ fn manage_dependencies_remove_json(
 
 fn manage_dependencies_operation_json(
     storage: &mut SqliteStorage,
-    state: &BeadsState,
+    state: &ObrState,
     args: &Value,
 ) -> McpResult<Value> {
     let action = required_dependency_action_arg(args)?;
@@ -2682,7 +2695,7 @@ fn manage_dependencies_batch_error_item(index: usize, args: &Value, err: McpErro
 
 fn manage_dependencies_batch_json(
     storage: &mut SqliteStorage,
-    state: &BeadsState,
+    state: &ObrState,
     items: &[Value],
 ) -> Value {
     let mut ok_count = 0_u64;
@@ -2721,9 +2734,9 @@ impl ToolHandler for ManageDependenciesTool {
             name: "manage_dependencies".into(),
             description: Some(
                 "Add, remove, or list dependencies between issues, with optional batching for graph-edit bursts.\n\n\
-                 Discovery: Get issue IDs from list_issues. See beads://schema for dep types.\n\
+                 Discovery: Get issue IDs from list_issues. See obr://schema for dep types.\n\
                  When to use: Linking related issues, establishing blocking relationships.\n\
-                 NOT for: Viewing blocked issues overview — use beads://issues/blocked resource.\n\
+                 NOT for: Viewing blocked issues overview — use obr://issues/blocked resource.\n\
                  Do: Use 'list' action first to see existing deps before modifying, or operations[] for ordered batch work.\n\
                  Don't: Create circular deps — the system will reject them with guidance.\n\
                  Common mistakes: Swapping source/target for 'blocks' type; using placeholder IDs.\n\
@@ -2854,14 +2867,14 @@ impl ToolHandler for ManageDependenciesTool {
 // 7. project_overview
 // ---------------------------------------------------------------------------
 
-fn project_overview_json(state: &BeadsState, storage: &SqliteStorage) -> McpResult<Value> {
-    let total = storage.count_all_issues().map_err(beads_to_mcp)?;
-    let active = storage.count_active_issues().map_err(beads_to_mcp)?;
+fn project_overview_json(state: &ObrState, storage: &SqliteStorage) -> McpResult<Value> {
+    let total = storage.count_all_issues().map_err(obr_to_mcp)?;
+    let active = storage.count_active_issues().map_err(obr_to_mcp)?;
     let labels = storage
         .get_unique_labels_with_counts()
-        .map_err(beads_to_mcp)?;
-    let blocked = storage.get_blocked_issues().map_err(beads_to_mcp)?;
-    let dirty = storage.get_dirty_issue_count().map_err(beads_to_mcp)?;
+        .map_err(obr_to_mcp)?;
+    let blocked = storage.get_blocked_issues().map_err(obr_to_mcp)?;
+    let dirty = storage.get_dirty_issue_count().map_err(obr_to_mcp)?;
 
     let ready = mcp_ready_issues(state, storage)?;
 
@@ -2874,7 +2887,7 @@ fn project_overview_json(state: &BeadsState, storage: &SqliteStorage) -> McpResu
     };
     let in_progress = storage
         .list_issues(&in_progress_filters)
-        .map_err(beads_to_mcp)?;
+        .map_err(obr_to_mcp)?;
 
     let deferred_filters = ListFilters {
         statuses: Some(vec![Status::Deferred]),
@@ -2883,15 +2896,13 @@ fn project_overview_json(state: &BeadsState, storage: &SqliteStorage) -> McpResu
         limit: Some(50),
         ..ListFilters::default()
     };
-    let deferred = storage
-        .list_issues(&deferred_filters)
-        .map_err(beads_to_mcp)?;
+    let deferred = storage.list_issues(&deferred_filters).map_err(obr_to_mcp)?;
 
-    let prefix = state.issue_prefix.as_deref().unwrap_or("br");
+    let prefix = resolved_issue_prefix(state);
 
     Ok(json!({
         "project": {
-            "beads_dir": state.beads_dir.display().to_string(),
+            "obr_dir": state.obr_dir.display().to_string(),
             "issue_prefix": prefix,
         },
         "counts": {
@@ -2923,17 +2934,17 @@ fn project_overview_json(state: &BeadsState, storage: &SqliteStorage) -> McpResu
         }).collect::<Vec<_>>(),
         "discovery": {
             "resources": [
-                "beads://schema — valid field values, aliases, and bead anatomy guidance",
-                "beads://labels — all labels with counts",
-                "beads://issues/ready — actionable work",
-                "beads://issues/blocked — stuck items with blockers",
-                "beads://coordination/status — stale-claim diagnosis using br.coordination.v1",
-                "beads://issues/bottlenecks — highest-impact blockers (bv-style)",
-                "beads://graph/health — dependency graph health metrics",
-                "beads://issues/in_progress — current work",
-                "beads://issues/deferred — deferred items",
-                "beads://events/recent — latest audit trail",
-                "beads://project/info — project metadata"
+                "obr://schema — valid field values, aliases, and issue anatomy guidance",
+                "obr://labels — all labels with counts",
+                "obr://issues/ready — actionable work",
+                "obr://issues/blocked — stuck items with blockers",
+                "obr://coordination/status — stale-claim diagnosis using obr.coordination.v1",
+                "obr://issues/bottlenecks — highest-impact blockers (bv-style)",
+                "obr://graph/health — dependency graph health metrics",
+                "obr://issues/in_progress — current work",
+                "obr://issues/deferred — deferred items",
+                "obr://events/recent — latest audit trail",
+                "obr://project/info — project metadata"
             ],
             "prompts": [
                 "triage — guided backlog triage workflow",
@@ -2950,9 +2961,9 @@ fn project_overview_json(state: &BeadsState, storage: &SqliteStorage) -> McpResu
     }))
 }
 
-pub struct ProjectOverviewTool(Arc<BeadsState>);
+pub struct ProjectOverviewTool(Arc<ObrState>);
 impl ProjectOverviewTool {
-    pub fn new(state: Arc<BeadsState>) -> Self {
+    pub fn new(state: Arc<ObrState>) -> Self {
         Self(state)
     }
 }
@@ -2963,8 +2974,8 @@ impl ToolHandler for ProjectOverviewTool {
             name: "project_overview".into(),
             description: Some(
                 "Get a high-level project summary: counts by status, top labels, blocked/ready work.\n\n\
-                 Discovery: Pairs with beads://project/info, beads://schema, beads://issues/ready, \
-                 and beads://coordination/status for the documented MCP orientation surface.\n\
+                 Discovery: Pairs with obr://project/info, obr://schema, obr://issues/ready, \
+                 and obr://coordination/status for the documented MCP orientation surface.\n\
                  When to use: Starting a session, getting oriented, understanding project health.\n\
                  NOT for: Detailed filtering — use list_issues with filters instead.\n\
                  Do: Call this first when you connect to understand the project state.\n\
@@ -2995,7 +3006,7 @@ impl ToolHandler for ProjectOverviewTool {
         ensure_not_shutting_down()?;
 
         let _ = args;
-        let storage = self.0.open_read_storage().map_err(beads_to_mcp)?;
+        let storage = self.0.open_read_storage().map_err(obr_to_mcp)?;
         let result = project_overview_json(&self.0, &storage)?;
         Ok(vec![Content::text(result.to_string())])
     }
@@ -3012,7 +3023,7 @@ mod tests {
         show_issue_batch_json, show_issue_json, storage_read_warning,
     };
     use crate::error::BeadsError;
-    use crate::mcp::{BeadsState, McpReadSnapshotCache};
+    use crate::mcp::{McpReadSnapshotCache, ObrState};
     use crate::model::{DependencyType, Issue, IssueType, Priority, Status};
     use crate::storage::{IssueUpdate, SqliteStorage};
     use chrono::{TimeZone, Utc};
@@ -3021,19 +3032,19 @@ mod tests {
     use std::{cell::Cell, fs, sync::Arc, time::Instant};
     use tempfile::TempDir;
 
-    fn mcp_test_state(temp: &TempDir) -> Arc<BeadsState> {
+    fn mcp_test_state(temp: &TempDir) -> Arc<ObrState> {
         mcp_test_state_with_read_snapshot(temp, false)
     }
 
-    fn mcp_test_state_with_read_snapshot(temp: &TempDir, read_snapshot: bool) -> Arc<BeadsState> {
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
-        let db_path = beads_dir.join("beads.db");
+    fn mcp_test_state_with_read_snapshot(temp: &TempDir, read_snapshot: bool) -> Arc<ObrState> {
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
+        let db_path = obr_dir.join(crate::config::DEFAULT_DB_FILENAME);
         SqliteStorage::open(&db_path).expect("initialize storage");
-        Arc::new(BeadsState {
+        Arc::new(ObrState {
             db_path,
-            beads_dir: beads_dir.clone(),
-            jsonl_path: beads_dir.join("issues.jsonl"),
+            obr_dir: obr_dir.clone(),
+            jsonl_path: obr_dir.join("issues.jsonl"),
             // Generous enough to ride out a concurrent auto-flush holding
             // .write.lock under heavy parallel-test load; no test here asserts
             // the timeout path, so a short value only produces spurious
@@ -3041,13 +3052,13 @@ mod tests {
             write_lock_timeout_ms: Some(5_000),
             allow_external_jsonl: false,
             actor: "mcp-test".to_string(),
-            issue_prefix: Some("br".to_string()),
+            issue_prefix: Some("obr".to_string()),
             read_snapshot_cache: read_snapshot
                 .then(|| std::sync::Mutex::new(McpReadSnapshotCache::default())),
         })
     }
 
-    fn insert_test_issue(state: &BeadsState, id: &str, title: &str) {
+    fn insert_test_issue(state: &ObrState, id: &str, title: &str) {
         let mut storage = SqliteStorage::open(&state.db_path).expect("open storage");
         let now = Utc::now();
         let issue = Issue {
@@ -3177,6 +3188,64 @@ mod tests {
         assert_eq!(batch["error_count"].as_u64(), Some(errors));
     }
 
+    fn state_with_issue_prefix(state: &ObrState, prefix: Option<&str>) -> Arc<ObrState> {
+        Arc::new(ObrState {
+            db_path: state.db_path.clone(),
+            obr_dir: state.obr_dir.clone(),
+            jsonl_path: state.jsonl_path.clone(),
+            write_lock_timeout_ms: state.write_lock_timeout_ms,
+            allow_external_jsonl: state.allow_external_jsonl,
+            actor: state.actor.clone(),
+            issue_prefix: prefix.map(str::to_string),
+            read_snapshot_cache: None,
+        })
+    }
+
+    fn show_issue_id_description(state: &Arc<ObrState>) -> String {
+        ShowIssueTool::new(Arc::clone(state))
+            .definition()
+            .input_schema["properties"]["id"]["description"]
+            .as_str()
+            .expect("show_issue id description")
+            .to_string()
+    }
+
+    /// Every example ID an MCP client is shown must carry the prefix this
+    /// workspace actually mints. The published example was `obr-1a2b3c` — a
+    /// prefix from an earlier name of the tool that no obr workspace ever
+    /// produces — sitting beside a state that knew the real one.
+    #[test]
+    fn mcp_tool_schema_example_id_uses_the_workspace_issue_prefix() {
+        let temp = TempDir::new().expect("tempdir");
+        let state = mcp_test_state(&temp);
+
+        let configured = state_with_issue_prefix(&state, Some("proj"));
+        let described = show_issue_id_description(&configured);
+        assert!(
+            described.contains("'proj-1a2b3c'"),
+            "example ID must use the configured prefix: {described}"
+        );
+
+        // Negative control: a different prefix must change the example, so
+        // this cannot pass against a hard-coded string.
+        let other = state_with_issue_prefix(&state, Some("acme"));
+        assert!(
+            show_issue_id_description(&other).contains("'acme-1a2b3c'"),
+            "example ID must be derived per workspace, not fixed"
+        );
+
+        // Unconfigured workspaces fall back to the same default the ID
+        // generator uses, not to a literal typed at this call site.
+        let unset = state_with_issue_prefix(&state, None);
+        assert!(
+            show_issue_id_description(&unset).contains(&format!(
+                "'{}-1a2b3c'",
+                crate::util::id::DEFAULT_ISSUE_PREFIX
+            )),
+            "unconfigured workspaces must use the generator's default prefix"
+        );
+    }
+
     #[test]
     fn mcp_contract_tool_metadata_matches_docs_and_discovery_contract() {
         let temp = TempDir::new().expect("tempdir");
@@ -3216,7 +3285,7 @@ mod tests {
                 .iter()
                 .find(|tool| tool.name == "list_issues")
                 .expect("list_issues tool"),
-            &["beads://schema", "beads://labels", "project_overview"],
+            &["obr://schema", "obr://labels", "project_overview"],
         );
         assert_tool_description_mentions(
             tools
@@ -3230,14 +3299,14 @@ mod tests {
                 .iter()
                 .find(|tool| tool.name == "create_issue")
                 .expect("create_issue tool"),
-            &["beads://schema", "beads://labels", "list_issues"],
+            &["obr://schema", "obr://labels", "list_issues"],
         );
         assert_tool_description_mentions(
             tools
                 .iter()
                 .find(|tool| tool.name == "update_issue")
                 .expect("update_issue tool"),
-            &["list_issues", "beads://schema"],
+            &["list_issues", "obr://schema"],
         );
         assert_tool_description_mentions(
             tools
@@ -3251,7 +3320,7 @@ mod tests {
                 .iter()
                 .find(|tool| tool.name == "manage_dependencies")
                 .expect("manage_dependencies tool"),
-            &["list_issues", "beads://schema", "beads://issues/blocked"],
+            &["list_issues", "obr://schema", "obr://issues/blocked"],
         );
         assert_tool_description_mentions(
             tools
@@ -3259,10 +3328,10 @@ mod tests {
                 .find(|tool| tool.name == "project_overview")
                 .expect("project_overview tool"),
             &[
-                "beads://project/info",
-                "beads://schema",
-                "beads://issues/ready",
-                "beads://coordination/status",
+                "obr://project/info",
+                "obr://schema",
+                "obr://issues/ready",
+                "obr://coordination/status",
                 "local SQLite/JSONL",
             ],
         );
@@ -3274,7 +3343,7 @@ mod tests {
         let state = mcp_test_state(&temp);
         insert_test_issue(
             &state,
-            "br-mcp-contract-overview",
+            "obr-mcp-contract-overview",
             "overview contract issue",
         );
         let storage = SqliteStorage::open(&state.db_path).expect("open storage");
@@ -3290,14 +3359,14 @@ mod tests {
         assert_eq!(overview["counts"]["ready"].as_u64(), Some(1));
         assert_eq!(
             overview["ready_issues"][0]["id"].as_str(),
-            Some("br-mcp-contract-overview")
+            Some("obr-mcp-contract-overview")
         );
 
         for expected in [
-            "beads://project/info",
-            "beads://schema",
-            "beads://issues/ready",
-            "beads://coordination/status",
+            "obr://project/info",
+            "obr://schema",
+            "obr://issues/ready",
+            "obr://coordination/status",
         ] {
             assert!(
                 resources.iter().any(|entry| entry.starts_with(expected)),
@@ -3323,7 +3392,7 @@ mod tests {
     fn project_overview_snapshot_matches_direct_json_and_invalidates() {
         let temp = TempDir::new().expect("tempdir");
         let state = mcp_test_state_with_read_snapshot(&temp, true);
-        insert_test_issue(&state, "br-mcp-cache-1", "cached overview first issue");
+        insert_test_issue(&state, "obr-mcp-cache-1", "cached overview first issue");
         let ctx = McpContext::new(Cx::for_testing(), 1);
         let tool = ProjectOverviewTool::new(Arc::clone(&state));
 
@@ -3337,8 +3406,8 @@ mod tests {
         };
         assert_eq!(first, direct);
 
-        insert_test_issue(&state, "br-mcp-cache-2", "cached overview second issue");
-        fs::write(&state.jsonl_path, "{\"id\":\"br-mcp-cache-2\"}\n")
+        insert_test_issue(&state, "obr-mcp-cache-2", "cached overview second issue");
+        fs::write(&state.jsonl_path, "{\"id\":\"obr-mcp-cache-2\"}\n")
             .expect("update jsonl witness");
 
         let second_content = tool
@@ -3354,14 +3423,14 @@ mod tests {
         let state = mcp_test_state(&temp);
         insert_test_issue(
             &state,
-            "br-mcp-external-blocked-ready",
+            "obr-mcp-external-blocked-ready",
             "externally blocked overview candidate",
         );
-        insert_test_issue(&state, "br-mcp-local-ready", "local overview candidate");
+        insert_test_issue(&state, "obr-mcp-local-ready", "local overview candidate");
         let mut storage = SqliteStorage::open(&state.db_path).expect("open storage");
         storage
             .add_dependency(
-                "br-mcp-external-blocked-ready",
+                "obr-mcp-external-blocked-ready",
                 "external:missing:capability",
                 "blocks",
                 "mcp-test",
@@ -3375,14 +3444,14 @@ mod tests {
         let overview = content_json(&content);
 
         assert_eq!(overview["counts"]["ready"].as_u64(), Some(1));
-        assert_eq!(overview["ready_issues"][0]["id"], "br-mcp-local-ready");
+        assert_eq!(overview["ready_issues"][0]["id"], "obr-mcp-local-ready");
     }
 
     #[test]
     fn list_issues_snapshot_matches_direct_json_and_invalidates() {
         let temp = TempDir::new().expect("tempdir");
         let state = mcp_test_state_with_read_snapshot(&temp, true);
-        insert_test_issue(&state, "br-mcp-list-1", "cached list first issue");
+        insert_test_issue(&state, "obr-mcp-list-1", "cached list first issue");
         let ctx = McpContext::new(Cx::for_testing(), 1);
         let tool = ListIssuesTool::new(Arc::clone(&state));
         let args = json!({"limit": 10, "sort": "created"});
@@ -3397,8 +3466,9 @@ mod tests {
         };
         assert_eq!(first, direct);
 
-        insert_test_issue(&state, "br-mcp-list-2", "cached list second issue");
-        fs::write(&state.jsonl_path, "{\"id\":\"br-mcp-list-2\"}\n").expect("update jsonl witness");
+        insert_test_issue(&state, "obr-mcp-list-2", "cached list second issue");
+        fs::write(&state.jsonl_path, "{\"id\":\"obr-mcp-list-2\"}\n")
+            .expect("update jsonl witness");
 
         let second_content = tool
             .call(&ctx, args)
@@ -3411,8 +3481,8 @@ mod tests {
     fn list_issues_legacy_single_result_shape_is_unchanged() {
         let temp = TempDir::new().expect("tempdir");
         let state = mcp_test_state(&temp);
-        insert_test_issue(&state, "br-mcp-list-single-1", "legacy list single first");
-        insert_test_issue(&state, "br-mcp-list-single-2", "legacy list single second");
+        insert_test_issue(&state, "obr-mcp-list-single-1", "legacy list single first");
+        insert_test_issue(&state, "obr-mcp-list-single-2", "legacy list single second");
         let ctx = McpContext::new(Cx::for_testing(), 1);
         let tool = ListIssuesTool::new(state);
 
@@ -3432,13 +3502,13 @@ mod tests {
     fn list_issues_batch_returns_ordered_items_partial_errors_and_coercions() {
         let temp = TempDir::new().expect("tempdir");
         let state = mcp_test_state(&temp);
-        insert_test_issue(&state, "br-mcp-list-batch-1", "batch list first issue");
-        insert_test_issue(&state, "br-mcp-list-batch-2", "batch list second issue");
+        insert_test_issue(&state, "obr-mcp-list-batch-1", "batch list first issue");
+        insert_test_issue(&state, "obr-mcp-list-batch-2", "batch list second issue");
         {
             let mut storage = SqliteStorage::open(&state.db_path).expect("open storage");
             storage
                 .update_issue(
-                    "br-mcp-list-batch-2",
+                    "obr-mcp-list-batch-2",
                     &IssueUpdate {
                         status: Some(Status::InProgress),
                         ..IssueUpdate::default()
@@ -3509,7 +3579,7 @@ mod tests {
         let state = mcp_test_state_with_read_snapshot(&temp, true);
         insert_test_issue(
             &state,
-            "br-mcp-list-batch-cache-1",
+            "obr-mcp-list-batch-cache-1",
             "cached batch list first",
         );
         let ctx = McpContext::new(Cx::for_testing(), 1);
@@ -3529,12 +3599,12 @@ mod tests {
 
         insert_test_issue(
             &state,
-            "br-mcp-list-batch-cache-2",
+            "obr-mcp-list-batch-cache-2",
             "cached batch list second",
         );
         fs::write(
             &state.jsonl_path,
-            "{\"id\":\"br-mcp-list-batch-cache-2\"}\n",
+            "{\"id\":\"obr-mcp-list-batch-cache-2\"}\n",
         )
         .expect("update jsonl witness");
 
@@ -3547,7 +3617,7 @@ mod tests {
     fn show_issue_snapshot_matches_direct_json_and_invalidates() {
         let temp = TempDir::new().expect("tempdir");
         let state = mcp_test_state_with_read_snapshot(&temp, true);
-        let id = "br-mcp-show-1";
+        let id = "obr-mcp-show-1";
         insert_test_issue(&state, id, "cached show first title");
         let ctx = McpContext::new(Cx::for_testing(), 1);
         let tool = ShowIssueTool::new(Arc::clone(&state));
@@ -3578,7 +3648,8 @@ mod tests {
                 .update_issue(id, &update, "mcp-test")
                 .expect("update issue title");
         }
-        fs::write(&state.jsonl_path, "{\"id\":\"br-mcp-show-1\"}\n").expect("update jsonl witness");
+        fs::write(&state.jsonl_path, "{\"id\":\"obr-mcp-show-1\"}\n")
+            .expect("update jsonl witness");
 
         let second_content = tool
             .call(&ctx, args)
@@ -3591,11 +3662,11 @@ mod tests {
     fn show_issue_batch_returns_ordered_items_and_per_item_errors() {
         let temp = TempDir::new().expect("tempdir");
         let state = mcp_test_state(&temp);
-        insert_test_issue(&state, "br-mcp-batch-1", "batch first issue");
-        insert_test_issue(&state, "br-mcp-batch-2", "batch second issue");
+        insert_test_issue(&state, "obr-mcp-batch-1", "batch first issue");
+        insert_test_issue(&state, "obr-mcp-batch-2", "batch second issue");
         let ctx = McpContext::new(Cx::for_testing(), 1);
         let tool = ShowIssueTool::new(Arc::clone(&state));
-        let args = json!({"ids": ["br-mcp-batch-1", "missing-id", "YOUR_ID", "br-mcp-batch-2"]});
+        let args = json!({"ids": ["obr-mcp-batch-1", "missing-id", "YOUR_ID", "obr-mcp-batch-2"]});
 
         let content = tool.call(&ctx, args.clone()).expect("batch show_issue");
         let batch = content_json(&content);
@@ -3604,10 +3675,10 @@ mod tests {
             show_issue_batch_json(
                 &storage,
                 &[
-                    "br-mcp-batch-1".to_string(),
+                    "obr-mcp-batch-1".to_string(),
                     "missing-id".to_string(),
                     "YOUR_ID".to_string(),
-                    "br-mcp-batch-2".to_string(),
+                    "obr-mcp-batch-2".to_string(),
                 ],
             )
         };
@@ -3616,7 +3687,7 @@ mod tests {
         assert_eq!(batch["count"].as_u64(), Some(4));
         assert_eq!(batch["ok_count"].as_u64(), Some(2));
         assert_eq!(batch["error_count"].as_u64(), Some(2));
-        assert_eq!(batch["items"][0]["id"].as_str(), Some("br-mcp-batch-1"));
+        assert_eq!(batch["items"][0]["id"].as_str(), Some("obr-mcp-batch-1"));
         assert_eq!(
             batch["items"][1]["error"]["data"]["error_type"].as_str(),
             Some("ISSUE_NOT_FOUND")
@@ -3635,7 +3706,7 @@ mod tests {
         let tool = ShowIssueTool::new(state);
 
         let err = tool
-            .call(&ctx, json!({"id": "br-one", "ids": ["br-two"]}))
+            .call(&ctx, json!({"id": "obr-one", "ids": ["obr-two"]}))
             .expect_err("id and ids together should fail");
 
         assert_eq!(err.code, McpErrorCode::InvalidParams);
@@ -3646,13 +3717,13 @@ mod tests {
     fn show_issue_batch_snapshot_matches_direct_json_and_invalidates() {
         let temp = TempDir::new().expect("tempdir");
         let state = mcp_test_state_with_read_snapshot(&temp, true);
-        insert_test_issue(&state, "br-mcp-batch-cache-1", "cached batch first title");
-        insert_test_issue(&state, "br-mcp-batch-cache-2", "cached batch second title");
+        insert_test_issue(&state, "obr-mcp-batch-cache-1", "cached batch first title");
+        insert_test_issue(&state, "obr-mcp-batch-cache-2", "cached batch second title");
         let ctx = McpContext::new(Cx::for_testing(), 1);
         let tool = ShowIssueTool::new(Arc::clone(&state));
         let ids = vec![
-            "br-mcp-batch-cache-1".to_string(),
-            "br-mcp-batch-cache-2".to_string(),
+            "obr-mcp-batch-cache-1".to_string(),
+            "obr-mcp-batch-cache-2".to_string(),
         ];
         let args = json!({"ids": ids});
 
@@ -3667,7 +3738,7 @@ mod tests {
             let mut storage = SqliteStorage::open(&state.db_path).expect("open storage");
             storage
                 .update_issue(
-                    "br-mcp-batch-cache-2",
+                    "obr-mcp-batch-cache-2",
                     &IssueUpdate {
                         title: Some("cached batch updated title".to_string()),
                         ..IssueUpdate::default()
@@ -3676,7 +3747,7 @@ mod tests {
                 )
                 .expect("update issue title");
         }
-        fs::write(&state.jsonl_path, "{\"id\":\"br-mcp-batch-cache-2\"}\n")
+        fs::write(&state.jsonl_path, "{\"id\":\"obr-mcp-batch-cache-2\"}\n")
             .expect("update jsonl witness");
 
         let second = content_json(&tool.call(&ctx, args).expect("fresh batch"));
@@ -3725,7 +3796,7 @@ mod tests {
     fn create_issue_batch_returns_ordered_items_partial_errors_and_flushes() {
         let temp = TempDir::new().expect("tempdir");
         let state = mcp_test_state(&temp);
-        insert_test_issue(&state, "br-mcp-create-parent", "batch parent issue");
+        insert_test_issue(&state, "obr-mcp-create-parent", "batch parent issue");
         let ctx = McpContext::new(Cx::for_testing(), 1);
         let tool = CreateIssueTool::new(Arc::clone(&state));
 
@@ -3743,7 +3814,7 @@ mod tests {
                         {"title": ""},
                         {
                             "title": "batch create child",
-                            "parent": "br-mcp-create-parent",
+                            "parent": "obr-mcp-create-parent",
                             "labels": ["team:child"]
                         },
                         {
@@ -3771,7 +3842,7 @@ mod tests {
         );
         assert_eq!(
             batch["items"][2]["result"]["parent"].as_str(),
-            Some("br-mcp-create-parent")
+            Some("obr-mcp-create-parent")
         );
         assert_eq!(
             batch["items"][3]["error"]["data"]["error_type"].as_str(),
@@ -3793,7 +3864,7 @@ mod tests {
             .get_dependencies_full(child_id)
             .expect("child dependencies");
         assert!(child_deps.iter().any(|dep| {
-            dep.depends_on_id == "br-mcp-create-parent"
+            dep.depends_on_id == "obr-mcp-create-parent"
                 && dep.dep_type == DependencyType::ParentChild
         }));
 
@@ -3892,7 +3963,7 @@ mod tests {
     fn update_issue_legacy_single_result_shape_is_unchanged() {
         let temp = TempDir::new().expect("tempdir");
         let state = mcp_test_state(&temp);
-        insert_test_issue(&state, "br-mcp-update-single", "single update original");
+        insert_test_issue(&state, "obr-mcp-update-single", "single update original");
         let ctx = McpContext::new(Cx::for_testing(), 1);
         let tool = UpdateIssueTool::new(Arc::clone(&state));
 
@@ -3900,14 +3971,14 @@ mod tests {
             .call(
                 &ctx,
                 json!({
-                    "id": "br-mcp-update-single",
+                    "id": "obr-mcp-update-single",
                     "title": "single update changed",
                 }),
             )
             .expect("single update");
         let result = content_json(&content);
 
-        assert_eq!(result["id"].as_str(), Some("br-mcp-update-single"));
+        assert_eq!(result["id"].as_str(), Some("obr-mcp-update-single"));
         assert_eq!(result["title"].as_str(), Some("single update changed"));
         assert!(result.get("items").is_none());
         assert!(result.get("count").is_none());
@@ -3917,8 +3988,8 @@ mod tests {
     fn update_issue_batch_returns_ordered_items_partial_errors_and_flushes() {
         let temp = TempDir::new().expect("tempdir");
         let state = mcp_test_state(&temp);
-        insert_test_issue(&state, "br-mcp-update-batch-1", "batch first original");
-        insert_test_issue(&state, "br-mcp-update-batch-2", "batch second original");
+        insert_test_issue(&state, "obr-mcp-update-batch-1", "batch first original");
+        insert_test_issue(&state, "obr-mcp-update-batch-2", "batch second original");
         let ctx = McpContext::new(Cx::for_testing(), 1);
         let tool = UpdateIssueTool::new(Arc::clone(&state));
 
@@ -3927,11 +3998,11 @@ mod tests {
                 &ctx,
                 json!({
                     "updates": [
-                        {"id": "br-mcp-update-batch-1", "title": "batch first changed"},
+                        {"id": "obr-mcp-update-batch-1", "title": "batch first changed"},
                         {"id": "missing-id", "title": "missing should fail"},
                         {"id": "YOUR_ID", "title": "placeholder should fail"},
                         {
-                            "id": "br-mcp-update-batch-2",
+                            "id": "obr-mcp-update-batch-2",
                             "status": "wip",
                             "labels_add": ["team:batch"],
                             "comment": "batch comment"
@@ -3964,21 +4035,23 @@ mod tests {
 
         let storage = SqliteStorage::open(&state.db_path).expect("open storage");
         let first = storage
-            .get_issue("br-mcp-update-batch-1")
+            .get_issue("obr-mcp-update-batch-1")
             .expect("get first issue")
             .expect("first issue exists");
         let second = storage
-            .get_issue("br-mcp-update-batch-2")
+            .get_issue("obr-mcp-update-batch-2")
             .expect("get second issue")
             .expect("second issue exists");
         assert_eq!(first.title, "batch first changed");
         assert_eq!(second.status, Status::InProgress);
         assert_eq!(
-            storage.get_labels("br-mcp-update-batch-2").expect("labels"),
+            storage
+                .get_labels("obr-mcp-update-batch-2")
+                .expect("labels"),
             vec!["team:batch".to_string()]
         );
         let comments = storage
-            .get_comments("br-mcp-update-batch-2")
+            .get_comments("obr-mcp-update-batch-2")
             .expect("comments");
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].author, "mcp-test");
@@ -4000,8 +4073,8 @@ mod tests {
             .call(
                 &ctx,
                 json!({
-                    "id": "br-one",
-                    "updates": [{"id": "br-two", "title": "two"}]
+                    "id": "obr-one",
+                    "updates": [{"id": "obr-two", "title": "two"}]
                 }),
             )
             .expect_err("id and updates together should fail");
@@ -4018,7 +4091,7 @@ mod tests {
         // explicitly supported); use NUL-byte poison to stay invariant.
         let temp = TempDir::new().expect("tempdir");
         let state = mcp_test_state(&temp);
-        insert_test_issue(&state, "br-mcp-update-invalid-comment", "comment original");
+        insert_test_issue(&state, "obr-mcp-update-invalid-comment", "comment original");
         let ctx = McpContext::new(Cx::for_testing(), 1);
         let tool = UpdateIssueTool::new(Arc::clone(&state));
 
@@ -4027,7 +4100,7 @@ mod tests {
                 &ctx,
                 json!({
                     "updates": [{
-                        "id": "br-mcp-update-invalid-comment",
+                        "id": "obr-mcp-update-invalid-comment",
                         "title": "should not mutate",
                         "comment": "valid prefix\0NUL byte poisons this comment"
                     }]
@@ -4046,13 +4119,13 @@ mod tests {
 
         let storage = SqliteStorage::open(&state.db_path).expect("open storage");
         let issue = storage
-            .get_issue("br-mcp-update-invalid-comment")
+            .get_issue("obr-mcp-update-invalid-comment")
             .expect("get issue")
             .expect("issue exists");
         assert_eq!(issue.title, "comment original");
         assert!(
             storage
-                .get_comments("br-mcp-update-invalid-comment")
+                .get_comments("obr-mcp-update-invalid-comment")
                 .expect("comments")
                 .is_empty(),
             "invalid batch comment must not be inserted"
@@ -4063,7 +4136,7 @@ mod tests {
     fn close_issue_legacy_single_result_shape_is_unchanged() {
         let temp = TempDir::new().expect("tempdir");
         let state = mcp_test_state(&temp);
-        insert_test_issue(&state, "br-mcp-close-single", "single close original");
+        insert_test_issue(&state, "obr-mcp-close-single", "single close original");
         let ctx = McpContext::new(Cx::for_testing(), 1);
         let tool = CloseIssueTool::new(Arc::clone(&state));
 
@@ -4071,14 +4144,14 @@ mod tests {
             .call(
                 &ctx,
                 json!({
-                    "id": "br-mcp-close-single",
+                    "id": "obr-mcp-close-single",
                     "reason": "single close done",
                 }),
             )
             .expect("single close");
         let result = content_json(&content);
 
-        assert_eq!(result["id"].as_str(), Some("br-mcp-close-single"));
+        assert_eq!(result["id"].as_str(), Some("obr-mcp-close-single"));
         assert_eq!(result["status"].as_str(), Some("closed"));
         assert_eq!(result["close_reason"].as_str(), Some("single close done"));
         assert!(result.get("items").is_none());
@@ -4086,7 +4159,7 @@ mod tests {
 
         let storage = SqliteStorage::open(&state.db_path).expect("open storage");
         let issue = storage
-            .get_issue("br-mcp-close-single")
+            .get_issue("obr-mcp-close-single")
             .expect("get issue")
             .expect("issue exists");
         assert_eq!(issue.status, Status::Closed);
@@ -4096,19 +4169,19 @@ mod tests {
     fn close_issue_batch_returns_ordered_items_partial_errors_and_flushes() {
         let temp = TempDir::new().expect("tempdir");
         let state = mcp_test_state(&temp);
-        insert_test_issue(&state, "br-mcp-close-batch-1", "batch first close");
-        insert_test_issue(&state, "br-mcp-close-batch-2", "batch second close");
+        insert_test_issue(&state, "obr-mcp-close-batch-1", "batch first close");
+        insert_test_issue(&state, "obr-mcp-close-batch-2", "batch second close");
         insert_test_issue(
             &state,
-            "br-mcp-close-dependent",
+            "obr-mcp-close-dependent",
             "dependent unblocked by second close",
         );
         {
             let mut storage = SqliteStorage::open(&state.db_path).expect("open storage");
             storage
                 .add_dependency(
-                    "br-mcp-close-dependent",
-                    "br-mcp-close-batch-2",
+                    "obr-mcp-close-dependent",
+                    "obr-mcp-close-batch-2",
                     "blocks",
                     "mcp-test",
                 )
@@ -4122,10 +4195,10 @@ mod tests {
                 &ctx,
                 json!({
                     "ids": [
-                        "br-mcp-close-batch-1",
+                        "obr-mcp-close-batch-1",
                         "missing-id",
                         "YOUR_ID",
-                        "br-mcp-close-batch-2"
+                        "obr-mcp-close-batch-2"
                     ],
                     "reason": "batch close done",
                 }),
@@ -4153,11 +4226,11 @@ mod tests {
                 .as_array()
                 .is_some_and(|items| items
                     .iter()
-                    .any(|id| id.as_str() == Some("br-mcp-close-dependent")))
+                    .any(|id| id.as_str() == Some("obr-mcp-close-dependent")))
         );
 
         let storage = SqliteStorage::open(&state.db_path).expect("open storage");
-        for id in ["br-mcp-close-batch-1", "br-mcp-close-batch-2"] {
+        for id in ["obr-mcp-close-batch-1", "obr-mcp-close-batch-2"] {
             let issue = storage
                 .get_issue(id)
                 .expect("get issue")
@@ -4170,8 +4243,8 @@ mod tests {
 
         let jsonl = fs::read_to_string(&state.jsonl_path).expect("read auto-flushed jsonl");
         assert!(jsonl.contains("batch close done"));
-        assert!(jsonl.contains("br-mcp-close-batch-1"));
-        assert!(jsonl.contains("br-mcp-close-batch-2"));
+        assert!(jsonl.contains("obr-mcp-close-batch-1"));
+        assert!(jsonl.contains("obr-mcp-close-batch-2"));
     }
 
     #[test]
@@ -4185,8 +4258,8 @@ mod tests {
             .call(
                 &ctx,
                 json!({
-                    "id": "br-one",
-                    "ids": ["br-two"],
+                    "id": "obr-one",
+                    "ids": ["obr-two"],
                 }),
             )
             .expect_err("id and ids together should fail");
@@ -4218,7 +4291,7 @@ mod tests {
         for index in 0..150 {
             insert_test_issue(
                 &state,
-                &format!("br-mcp-list-batch-perf-{index:04}"),
+                &format!("obr-mcp-list-batch-perf-{index:04}"),
                 &format!("MCP list batch perf issue {index:04}"),
             );
         }
@@ -4281,16 +4354,16 @@ mod tests {
     ) -> Vec<(String, Vec<String>)> {
         (0..iterations)
             .map(|round| {
-                let blocker = format!("br-mcp-dep-{prefix}-perf-blocker-{round}");
+                let blocker = format!("obr-mcp-dep-{prefix}-perf-blocker-{round}");
                 let ids = (0..issue_count)
-                    .map(|index| format!("br-mcp-dep-{prefix}-perf-{round}-{index:04}"))
+                    .map(|index| format!("obr-mcp-dep-{prefix}-perf-{round}-{index:04}"))
                     .collect::<Vec<_>>();
                 (blocker, ids)
             })
             .collect()
     }
 
-    fn seed_dependency_perf_rounds(state: &BeadsState, rounds: &[(String, Vec<String>)]) {
+    fn seed_dependency_perf_rounds(state: &ObrState, rounds: &[(String, Vec<String>)]) {
         for (blocker, ids) in rounds {
             insert_test_issue(
                 state,
@@ -4303,7 +4376,7 @@ mod tests {
         }
     }
 
-    fn assert_dependency_perf_rounds(state: &BeadsState, rounds: &[(String, Vec<String>)]) {
+    fn assert_dependency_perf_rounds(state: &ObrState, rounds: &[(String, Vec<String>)]) {
         let storage = SqliteStorage::open(&state.db_path).expect("open batch storage");
         for (blocker, ids) in rounds {
             for id in ids {
@@ -4323,7 +4396,7 @@ mod tests {
         for index in 0..250 {
             insert_test_issue(
                 &state,
-                &format!("br-mcp-perf-{index:04}"),
+                &format!("obr-mcp-perf-{index:04}"),
                 &format!("MCP perf issue {index:04}"),
             );
         }
@@ -4333,7 +4406,7 @@ mod tests {
         let list_tool = ListIssuesTool::new(Arc::clone(&state));
         let show_tool = ShowIssueTool::new(Arc::clone(&state));
         let list_args = json!({"limit": 250, "sort": "created"});
-        let show_args = json!({"id": "br-mcp-perf-0000"});
+        let show_args = json!({"id": "obr-mcp-perf-0000"});
         let iterations = 250_u32;
 
         let direct_overview = time_repeated_json_reads(iterations, || {
@@ -4374,7 +4447,7 @@ mod tests {
 
         let direct_show = time_repeated_json_reads(iterations, || {
             let storage = SqliteStorage::open(&state.db_path).expect("open storage");
-            show_issue_json(&storage, "br-mcp-perf-0000").expect("direct show")
+            show_issue_json(&storage, "obr-mcp-perf-0000").expect("direct show")
         });
 
         let first_cached_show = show_tool
@@ -4427,7 +4500,7 @@ mod tests {
         let temp = TempDir::new().expect("tempdir");
         let state = mcp_test_state(&temp);
         let ids: Vec<String> = (0..25)
-            .map(|index| format!("br-mcp-batch-perf-{index:04}"))
+            .map(|index| format!("obr-mcp-batch-perf-{index:04}"))
             .collect();
         for id in &ids {
             insert_test_issue(&state, id, &format!("MCP batch perf issue {id}"));
@@ -4472,7 +4545,7 @@ mod tests {
     #[ignore = "perf probe for MCP update_issue batch evidence"]
     fn mcp_update_issue_batch_perf_probe() {
         let ids = (0..25)
-            .map(|index| format!("br-mcp-update-batch-perf-{index:04}"))
+            .map(|index| format!("obr-mcp-update-batch-perf-{index:04}"))
             .collect::<Vec<_>>();
         let iterations = 5_u32;
 
@@ -4559,7 +4632,7 @@ mod tests {
         let repeated_ids = (0..iterations)
             .map(|round| {
                 (0..issue_count)
-                    .map(|index| format!("br-mcp-close-single-perf-{round}-{index:04}"))
+                    .map(|index| format!("obr-mcp-close-single-perf-{round}-{index:04}"))
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
@@ -4586,7 +4659,7 @@ mod tests {
         let batch_ids = (0..iterations)
             .map(|round| {
                 (0..issue_count)
-                    .map(|index| format!("br-mcp-close-batch-perf-{round}-{index:04}"))
+                    .map(|index| format!("obr-mcp-close-batch-perf-{round}-{index:04}"))
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
@@ -4930,7 +5003,7 @@ mod tests {
     fn manage_dependencies_allows_external_targets() {
         let temp = TempDir::new().expect("tempdir");
         let state = mcp_test_state(&temp);
-        insert_test_issue(&state, "br-mcp-external-src", "external dependency source");
+        insert_test_issue(&state, "obr-mcp-external-src", "external dependency source");
         let ctx = McpContext::new(Cx::for_testing(), 1);
         let tool = ManageDependenciesTool::new(Arc::clone(&state));
 
@@ -4940,7 +5013,7 @@ mod tests {
                     &ctx,
                     json!({
                         "action": "add",
-                        "id": "br-mcp-external-src",
+                        "id": "obr-mcp-external-src",
                         "depends_on": "external:api:auth",
                         "dep_type": "blocks"
                     }),
@@ -4956,7 +5029,7 @@ mod tests {
                     &ctx,
                     json!({
                         "action": "list",
-                        "id": "br-mcp-external-src",
+                        "id": "obr-mcp-external-src",
                     }),
                 )
                 .expect("list dependencies"),
@@ -4980,7 +5053,7 @@ mod tests {
                     &ctx,
                     json!({
                         "action": "remove",
-                        "id": "br-mcp-external-src",
+                        "id": "obr-mcp-external-src",
                         "depends_on": "external:api:auth",
                     }),
                 )
@@ -4993,8 +5066,8 @@ mod tests {
     fn manage_dependencies_legacy_single_result_shapes_are_unchanged() {
         let temp = TempDir::new().expect("tempdir");
         let state = mcp_test_state(&temp);
-        insert_test_issue(&state, "br-mcp-dep-single-a", "single dependency source");
-        insert_test_issue(&state, "br-mcp-dep-single-b", "single dependency target");
+        insert_test_issue(&state, "obr-mcp-dep-single-a", "single dependency source");
+        insert_test_issue(&state, "obr-mcp-dep-single-b", "single dependency target");
         let ctx = McpContext::new(Cx::for_testing(), 1);
         let tool = ManageDependenciesTool::new(Arc::clone(&state));
 
@@ -5004,16 +5077,16 @@ mod tests {
                     &ctx,
                     json!({
                         "action": "add",
-                        "id": "br-mcp-dep-single-a",
-                        "depends_on": "br-mcp-dep-single-b",
+                        "id": "obr-mcp-dep-single-a",
+                        "depends_on": "obr-mcp-dep-single-b",
                         "dep_type": "parent_child"
                     }),
                 )
                 .expect("single add dependency"),
         );
         assert_eq!(add["added"].as_bool(), Some(true));
-        assert_eq!(add["from"].as_str(), Some("br-mcp-dep-single-a"));
-        assert_eq!(add["to"].as_str(), Some("br-mcp-dep-single-b"));
+        assert_eq!(add["from"].as_str(), Some("obr-mcp-dep-single-a"));
+        assert_eq!(add["to"].as_str(), Some("obr-mcp-dep-single-b"));
         assert_eq!(add["dep_type"].as_str(), Some("parent-child"));
         assert!(add.get("items").is_none());
         assert!(add.get("count").is_none());
@@ -5024,12 +5097,12 @@ mod tests {
                     &ctx,
                     json!({
                         "action": "list",
-                        "id": "br-mcp-dep-single-a",
+                        "id": "obr-mcp-dep-single-a",
                     }),
                 )
                 .expect("single list dependencies"),
         );
-        assert_eq!(list["id"].as_str(), Some("br-mcp-dep-single-a"));
+        assert_eq!(list["id"].as_str(), Some("obr-mcp-dep-single-a"));
         assert!(list.get("items").is_none());
         assert!(list.get("count").is_none());
     }
@@ -5038,19 +5111,19 @@ mod tests {
     fn manage_dependencies_batch_returns_ordered_items_partial_errors_and_flushes() {
         let temp = TempDir::new().expect("tempdir");
         let state = mcp_test_state(&temp);
-        insert_test_issue(&state, "br-mcp-dep-batch-a", "batch dependency source a");
-        insert_test_issue(&state, "br-mcp-dep-batch-b", "batch dependency target b");
+        insert_test_issue(&state, "obr-mcp-dep-batch-a", "batch dependency source a");
+        insert_test_issue(&state, "obr-mcp-dep-batch-b", "batch dependency target b");
         insert_test_issue(
             &state,
-            "br-mcp-dep-batch-remove",
+            "obr-mcp-dep-batch-remove",
             "batch dependency pre-existing remove target",
         );
         {
             let mut storage = SqliteStorage::open(&state.db_path).expect("open storage");
             storage
                 .add_dependency(
-                    "br-mcp-dep-batch-a",
-                    "br-mcp-dep-batch-remove",
+                    "obr-mcp-dep-batch-a",
+                    "obr-mcp-dep-batch-remove",
                     "blocks",
                     "mcp-test",
                 )
@@ -5066,27 +5139,27 @@ mod tests {
                     "operations": [
                         {
                             "action": "add",
-                            "id": "br-mcp-dep-batch-a",
-                            "depends_on": "br-mcp-dep-batch-b"
+                            "id": "obr-mcp-dep-batch-a",
+                            "depends_on": "obr-mcp-dep-batch-b"
                         },
                         {
                             "action": "add",
-                            "id": "br-mcp-dep-batch-b",
-                            "depends_on": "br-mcp-dep-batch-a"
+                            "id": "obr-mcp-dep-batch-b",
+                            "depends_on": "obr-mcp-dep-batch-a"
                         },
                         {
                             "action": "add",
-                            "id": "br-mcp-dep-batch-a",
+                            "id": "obr-mcp-dep-batch-a",
                             "depends_on": "YOUR_ID"
                         },
                         {
                             "action": "remove",
-                            "id": "br-mcp-dep-batch-a",
-                            "depends_on": "br-mcp-dep-batch-remove"
+                            "id": "obr-mcp-dep-batch-a",
+                            "depends_on": "obr-mcp-dep-batch-remove"
                         },
                         {
                             "action": "list",
-                            "id": "br-mcp-dep-batch-a"
+                            "id": "obr-mcp-dep-batch-a"
                         }
                     ]
                 }),
@@ -5111,30 +5184,30 @@ mod tests {
             .as_array()
             .expect("list result dependencies");
         assert!(listed.iter().any(|dep| {
-            dep["id"].as_str() == Some("br-mcp-dep-batch-b")
+            dep["id"].as_str() == Some("obr-mcp-dep-batch-b")
                 && dep["dep_type"].as_str() == Some("blocks")
         }));
         assert!(
             listed
                 .iter()
-                .all(|dep| dep["id"].as_str() != Some("br-mcp-dep-batch-remove"))
+                .all(|dep| dep["id"].as_str() != Some("obr-mcp-dep-batch-remove"))
         );
 
         let storage = SqliteStorage::open(&state.db_path).expect("open storage");
         let deps = storage
-            .get_dependencies_full("br-mcp-dep-batch-a")
+            .get_dependencies_full("obr-mcp-dep-batch-a")
             .expect("load dependencies");
         assert!(
             deps.iter()
-                .any(|dep| dep.depends_on_id == "br-mcp-dep-batch-b")
+                .any(|dep| dep.depends_on_id == "obr-mcp-dep-batch-b")
         );
         assert!(
             deps.iter()
-                .all(|dep| dep.depends_on_id != "br-mcp-dep-batch-remove")
+                .all(|dep| dep.depends_on_id != "obr-mcp-dep-batch-remove")
         );
         let jsonl = fs::read_to_string(&state.jsonl_path).expect("read auto-flushed jsonl");
-        assert!(jsonl.contains("br-mcp-dep-batch-a"));
-        assert!(jsonl.contains("br-mcp-dep-batch-b"));
+        assert!(jsonl.contains("obr-mcp-dep-batch-a"));
+        assert!(jsonl.contains("obr-mcp-dep-batch-b"));
     }
 
     #[test]
@@ -5149,8 +5222,8 @@ mod tests {
                 &ctx,
                 json!({
                     "action": "list",
-                    "id": "br-one",
-                    "operations": [{"action": "list", "id": "br-two"}]
+                    "id": "obr-one",
+                    "operations": [{"action": "list", "id": "obr-two"}]
                 }),
             )
             .expect_err("single and batch args together should fail");
@@ -5170,7 +5243,7 @@ mod tests {
             let mut storage = SqliteStorage::open(&state.db_path).expect("open storage");
             let now = Utc::now();
             let parent = Issue {
-                id: "br-parent".to_string(),
+                id: "obr-parent".to_string(),
                 title: "Deleted parent".to_string(),
                 status: Status::Open,
                 priority: Priority::MEDIUM,
@@ -5183,7 +5256,7 @@ mod tests {
                 .create_issue(&parent, "mcp-test")
                 .expect("create parent");
             storage
-                .delete_issue("br-parent", "mcp-test", "delete parent", None)
+                .delete_issue("obr-parent", "mcp-test", "delete parent", None)
                 .expect("delete parent");
         }
 
@@ -5192,7 +5265,7 @@ mod tests {
                 &ctx,
                 json!({
                     "title": "Child should not persist",
-                    "parent": "br-parent"
+                    "parent": "obr-parent"
                 }),
             )
             .expect_err("MCP create must reject tombstone parents before mutating");
@@ -5206,7 +5279,7 @@ mod tests {
         let storage = SqliteStorage::open(&state.db_path).expect("open storage");
         assert!(
             storage
-                .get_issue("br-parent.1")
+                .get_issue("obr-parent.1")
                 .expect("lookup child")
                 .is_none(),
             "child issue must not be persisted after tombstone parent rejection"
@@ -5283,7 +5356,7 @@ mod tests {
             .execute_raw("DROP TABLE issues")
             .expect("drop issues table");
 
-        let err = issue_not_found_err(&storage, "bd-missing")
+        let err = issue_not_found_err(&storage, "obr-missing")
             .expect_err("ID scan failure must be returned to MCP clients");
 
         assert!(
@@ -5304,7 +5377,7 @@ mod tests {
             "MCP lookup failure",
             "mcp-test",
             now,
-            "br",
+            "obr",
             0,
             |_| {
                 let call = calls.get();
@@ -5343,7 +5416,7 @@ mod tests {
             .expect("valid timestamp");
         let issue_count = 100_000;
         let expected_length = crate::util::id::IdGenerator::new(
-            crate::util::id::IdConfig::with_prefix("br").expect("valid prefix"),
+            crate::util::id::IdConfig::with_prefix("obr").expect("valid prefix"),
         )
         .optimal_length(issue_count);
 
@@ -5351,7 +5424,7 @@ mod tests {
             "MCP adaptive length",
             "mcp-test",
             now,
-            "br",
+            "obr",
             issue_count,
             |_| Ok(false),
         )
@@ -5364,7 +5437,7 @@ mod tests {
 
     #[test]
     fn child_id_generation_reports_lookup_failure() {
-        let err = next_available_child_id("br-parent", 1, |_| {
+        let err = next_available_child_id("obr-parent", 1, |_| {
             Err(BeadsError::Config("child lookup unavailable".to_string()))
         })
         .expect_err("child ID lookup error must be returned");
@@ -5388,7 +5461,7 @@ mod tests {
 
     #[test]
     fn child_id_generation_bounds_collision_retries() {
-        let err = next_available_child_id("br-parent", 7, |_| Ok(true))
+        let err = next_available_child_id("obr-parent", 7, |_| Ok(true))
             .expect_err("fully occupied child ID window must fail explicitly");
 
         assert_eq!(err.code, fastmcp_rust::McpErrorCode::ToolExecutionError);

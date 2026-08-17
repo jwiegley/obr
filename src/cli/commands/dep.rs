@@ -35,15 +35,15 @@ pub fn execute(
     cli: &config::CliOverrides,
     ctx: &OutputContext,
 ) -> Result<()> {
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
     match command {
-        DepCommands::Add(args) => execute_dep_add(args, json, cli, ctx, &beads_dir),
-        DepCommands::Import(args) => execute_dep_import(args, json, cli, ctx, &beads_dir),
-        DepCommands::Remove(args) => execute_dep_remove(args, json, cli, ctx, &beads_dir),
-        DepCommands::List(args) => execute_dep_list(args, cli, ctx, &beads_dir),
-        DepCommands::Tree(args) => execute_dep_tree(args, json, cli, ctx, &beads_dir),
+        DepCommands::Add(args) => execute_dep_add(args, json, cli, ctx, &obr_dir),
+        DepCommands::Import(args) => execute_dep_import(args, json, cli, ctx, &obr_dir),
+        DepCommands::Remove(args) => execute_dep_remove(args, json, cli, ctx, &obr_dir),
+        DepCommands::List(args) => execute_dep_list(args, cli, ctx, &obr_dir),
+        DepCommands::Tree(args) => execute_dep_tree(args, json, cli, ctx, &obr_dir),
         DepCommands::Cycles(args) => {
-            let storage_ctx = config::open_storage_with_cli(&beads_dir, cli)?;
+            let storage_ctx = config::open_storage_with_cli(&obr_dir, cli)?;
             dep_cycles(args, &storage_ctx.storage, json, ctx)
         }
     }
@@ -61,15 +61,15 @@ pub fn execute_with_storage_ctx(
     json: bool,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    local_beads_dir: &Path,
+    local_obr_dir: &Path,
     storage_ctx: &config::OpenStorageResult,
 ) -> Result<bool> {
     match command {
         DepCommands::List(args) => {
-            execute_local_dep_list_with_storage_ctx(args, cli, ctx, local_beads_dir, storage_ctx)
+            execute_local_dep_list_with_storage_ctx(args, cli, ctx, local_obr_dir, storage_ctx)
         }
         DepCommands::Tree(args) => {
-            execute_local_dep_tree_with_storage_ctx(args, cli, ctx, local_beads_dir, storage_ctx)
+            execute_local_dep_tree_with_storage_ctx(args, cli, ctx, local_obr_dir, storage_ctx)
         }
         DepCommands::Cycles(args) => {
             dep_cycles(args, &storage_ctx.storage, json, ctx)?;
@@ -84,11 +84,11 @@ fn execute_dep_add(
     _json: bool,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    local_beads_dir: &Path,
+    local_obr_dir: &Path,
 ) -> Result<()> {
-    validate_dependency_target_route(local_beads_dir, &args.issue, &args.depends_on)?;
+    validate_dependency_target_route(local_obr_dir, &args.issue, &args.depends_on)?;
     let (mut storage_ctx, route_cli, auto_flush_external, _routed_write_lock) =
-        open_routed_storage_for_input(local_beads_dir, cli, &args.issue)?;
+        open_routed_storage_for_input(local_obr_dir, cli, &args.issue)?;
     let config_layer = storage_ctx.load_config(&route_cli)?;
     let id_config = config::id_config_from_layer(&config_layer);
     let resolver = IdResolver::new(ResolverConfig::with_prefix(id_config.prefix));
@@ -99,7 +99,7 @@ fn execute_dep_add(
         &resolver,
         &actor,
         ctx,
-        local_beads_dir,
+        local_obr_dir,
         auto_flush_external,
     )
 }
@@ -109,11 +109,11 @@ fn execute_dep_remove(
     _json: bool,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    local_beads_dir: &Path,
+    local_obr_dir: &Path,
 ) -> Result<()> {
-    validate_dependency_target_route(local_beads_dir, &args.issue, &args.depends_on)?;
+    validate_dependency_target_route(local_obr_dir, &args.issue, &args.depends_on)?;
     let (mut storage_ctx, route_cli, auto_flush_external, _routed_write_lock) =
-        open_routed_storage_for_input(local_beads_dir, cli, &args.issue)?;
+        open_routed_storage_for_input(local_obr_dir, cli, &args.issue)?;
     let config_layer = storage_ctx.load_config(&route_cli)?;
     let id_config = config::id_config_from_layer(&config_layer);
     let resolver = IdResolver::new(ResolverConfig::with_prefix(id_config.prefix));
@@ -124,7 +124,7 @@ fn execute_dep_remove(
         &resolver,
         &actor,
         ctx,
-        local_beads_dir,
+        local_obr_dir,
         auto_flush_external,
     )
 }
@@ -134,9 +134,9 @@ fn execute_dep_import(
     _json: bool,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    local_beads_dir: &Path,
+    local_obr_dir: &Path,
 ) -> Result<()> {
-    let mut storage_ctx = config::open_storage_with_cli(local_beads_dir, cli)?;
+    let mut storage_ctx = config::open_storage_with_cli(local_obr_dir, cli)?;
     auto_import_storage_ctx_if_stale(&mut storage_ctx, cli)?;
     let config_layer = storage_ctx.load_config(cli)?;
     let actor = config::resolve_actor(&config_layer);
@@ -148,10 +148,10 @@ fn execute_dep_list(
     args: &DepListArgs,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    local_beads_dir: &Path,
+    local_obr_dir: &Path,
 ) -> Result<()> {
     let (storage_ctx, route_cli, _, _routed_write_lock) =
-        open_routed_storage_for_input(local_beads_dir, cli, &args.issue)?;
+        open_routed_storage_for_input(local_obr_dir, cli, &args.issue)?;
     let config_layer = storage_ctx.load_config(&route_cli)?;
     let use_color = config::should_use_color(&config_layer);
     let quiet = route_cli.quiet.unwrap_or(false);
@@ -160,7 +160,7 @@ fn execute_dep_list(
     let external_db_paths = external_project_db_paths_after_auto_import_if_needed(
         &storage_ctx.storage,
         &config_layer,
-        &storage_ctx.paths.beads_dir,
+        &storage_ctx.paths.obr_dir,
         &route_cli,
     )?;
 
@@ -179,10 +179,10 @@ fn execute_local_dep_list_with_storage_ctx(
     args: &DepListArgs,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    local_beads_dir: &Path,
+    local_obr_dir: &Path,
     storage_ctx: &config::OpenStorageResult,
 ) -> Result<bool> {
-    if config::routing::resolve_route(&args.issue, local_beads_dir)?.is_external {
+    if config::routing::resolve_route(&args.issue, local_obr_dir)?.is_external {
         return Ok(false);
     }
 
@@ -194,7 +194,7 @@ fn execute_local_dep_list_with_storage_ctx(
     let external_db_paths = external_project_db_paths_after_auto_import_if_needed(
         &storage_ctx.storage,
         &config_layer,
-        &storage_ctx.paths.beads_dir,
+        &storage_ctx.paths.obr_dir,
         cli,
     )?;
 
@@ -215,17 +215,17 @@ fn execute_dep_tree(
     _json: bool,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    local_beads_dir: &Path,
+    local_obr_dir: &Path,
 ) -> Result<()> {
     let (storage_ctx, route_cli, _, _routed_write_lock) =
-        open_routed_storage_for_input(local_beads_dir, cli, &args.issue)?;
+        open_routed_storage_for_input(local_obr_dir, cli, &args.issue)?;
     let config_layer = storage_ctx.load_config(&route_cli)?;
     let id_config = config::id_config_from_layer(&config_layer);
     let resolver = IdResolver::new(ResolverConfig::with_prefix(id_config.prefix));
     let external_db_paths = external_project_db_paths_after_auto_import_if_needed(
         &storage_ctx.storage,
         &config_layer,
-        &storage_ctx.paths.beads_dir,
+        &storage_ctx.paths.obr_dir,
         &route_cli,
     )?;
 
@@ -243,10 +243,10 @@ fn execute_local_dep_tree_with_storage_ctx(
     args: &DepTreeArgs,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    local_beads_dir: &Path,
+    local_obr_dir: &Path,
     storage_ctx: &config::OpenStorageResult,
 ) -> Result<bool> {
-    if config::routing::resolve_route(&args.issue, local_beads_dir)?.is_external {
+    if config::routing::resolve_route(&args.issue, local_obr_dir)?.is_external {
         return Ok(false);
     }
 
@@ -256,7 +256,7 @@ fn execute_local_dep_tree_with_storage_ctx(
     let external_db_paths = external_project_db_paths_after_auto_import_if_needed(
         &storage_ctx.storage,
         &config_layer,
-        &storage_ctx.paths.beads_dir,
+        &storage_ctx.paths.obr_dir,
         cli,
     )?;
 
@@ -272,7 +272,7 @@ fn execute_local_dep_tree_with_storage_ctx(
 }
 
 fn open_routed_storage_for_input(
-    local_beads_dir: &Path,
+    local_obr_dir: &Path,
     cli: &config::CliOverrides,
     issue_input: &str,
 ) -> Result<(
@@ -281,21 +281,21 @@ fn open_routed_storage_for_input(
     bool,
     RoutedWorkspaceWriteLock,
 )> {
-    let route = config::routing::resolve_route(issue_input, local_beads_dir)?;
+    let route = config::routing::resolve_route(issue_input, local_obr_dir)?;
     let mut route_cli = cli_for_routed_workspace(cli, route.is_external);
     let routed_write_lock = acquire_routed_workspace_write_lock(
-        &route.beads_dir,
+        &route.obr_dir,
         route.is_external,
         route_cli.lock_timeout,
     )?;
     routed_write_lock.mark_cli_write_lock_held(&mut route_cli);
-    let mut storage_ctx = config::open_storage_with_cli(&route.beads_dir, &route_cli)?;
+    let mut storage_ctx = config::open_storage_with_cli(&route.obr_dir, &route_cli)?;
     auto_import_storage_ctx_if_stale(&mut storage_ctx, &route_cli)?;
     Ok((storage_ctx, route_cli, route.is_external, routed_write_lock))
 }
 
 fn validate_dependency_target_route(
-    local_beads_dir: &Path,
+    local_obr_dir: &Path,
     issue_input: &str,
     depends_on_input: &str,
 ) -> Result<()> {
@@ -303,10 +303,10 @@ fn validate_dependency_target_route(
         return Ok(());
     }
 
-    let issue_route = config::routing::resolve_route(issue_input, local_beads_dir)?;
-    let depends_on_route = config::routing::resolve_route(depends_on_input, local_beads_dir)?;
+    let issue_route = config::routing::resolve_route(issue_input, local_obr_dir)?;
+    let depends_on_route = config::routing::resolve_route(depends_on_input, local_obr_dir)?;
 
-    if issue_route.beads_dir == depends_on_route.beads_dir {
+    if issue_route.obr_dir == depends_on_route.obr_dir {
         return Ok(());
     }
 
@@ -548,7 +548,7 @@ fn dep_add(
     resolver: &IdResolver,
     actor: &str,
     ctx: &OutputContext,
-    local_beads_dir: &Path,
+    local_obr_dir: &Path,
     auto_flush_external: bool,
 ) -> Result<()> {
     let issue_id = resolve_issue_id(&storage_ctx.storage, resolver, &args.issue)?;
@@ -587,12 +587,12 @@ fn dep_add(
     if auto_flush_external && let Err(error) = storage_ctx.auto_flush_if_enabled() {
         report_auto_flush_failure(
             ctx,
-            &storage_ctx.paths.beads_dir,
+            &storage_ctx.paths.obr_dir,
             &storage_ctx.paths.jsonl_path,
             &error,
         );
     }
-    crate::util::set_last_touched_id(local_beads_dir, &issue_id);
+    crate::util::set_last_touched_id(local_obr_dir, &issue_id);
 
     if ctx.is_json() || ctx.is_toon() {
         let result = DepActionResult {
@@ -674,7 +674,7 @@ fn dep_import(
     if let Err(error) = storage_ctx.auto_flush_if_enabled() {
         report_auto_flush_failure(
             ctx,
-            &storage_ctx.paths.beads_dir,
+            &storage_ctx.paths.obr_dir,
             &storage_ctx.paths.jsonl_path,
             &error,
         );
@@ -714,7 +714,7 @@ fn dep_remove(
     resolver: &IdResolver,
     actor: &str,
     ctx: &OutputContext,
-    local_beads_dir: &Path,
+    local_obr_dir: &Path,
     auto_flush_external: bool,
 ) -> Result<()> {
     let issue_id = resolve_issue_id(&storage_ctx.storage, resolver, &args.issue)?;
@@ -740,12 +740,12 @@ fn dep_remove(
     if auto_flush_external && let Err(error) = storage_ctx.auto_flush_if_enabled() {
         report_auto_flush_failure(
             ctx,
-            &storage_ctx.paths.beads_dir,
+            &storage_ctx.paths.obr_dir,
             &storage_ctx.paths.jsonl_path,
             &error,
         );
     }
-    crate::util::set_last_touched_id(local_beads_dir, &issue_id);
+    crate::util::set_last_touched_id(local_obr_dir, &issue_id);
 
     if ctx.is_json() || ctx.is_toon() {
         let result = DepActionResult {

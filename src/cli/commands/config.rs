@@ -12,8 +12,8 @@
 use crate::cli::ConfigCommands;
 use crate::config::{
     self, CliOverrides, ConfigLayer, ConfigPaths, default_config_layer,
-    discover_optional_beads_dir_with_cli, id_config_from_layer, load_legacy_user_config,
-    load_project_config, load_user_config, resolve_actor,
+    discover_optional_obr_dir_with_cli, id_config_from_layer, load_project_config,
+    load_user_config, resolve_actor,
 };
 use crate::error::{BeadsError, Result};
 use crate::franken_sync::Connection;
@@ -23,6 +23,7 @@ use fsqlite_types::SqliteValue;
 use rich_rust::prelude::*;
 use serde_json::json;
 use shell_words::split as split_shell_words;
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::env;
 use std::fs::{self, File, OpenOptions};
@@ -31,29 +32,74 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tracing::{debug, info, trace};
 
+/// Basename of the project config file, i.e. the file
+/// [`config::load_project_config`] opens inside the workspace directory.
+/// Pinned to that behaviour by `project_config_filename_matches_loader`.
+const PROJECT_CONFIG_FILENAME: &str = "config.yaml";
+
 #[derive(Debug, Clone, Copy)]
 enum ConfigSource {
     Default,
     Jsonl,
     Db,
-    LegacyUser,
     User,
     Project,
     Environment,
     Cli,
 }
 
+/// The workspace directory's name as it exists on disk, for labelling the
+/// project-config layer and the "no project config" notice.
+///
+/// A workspace may legitimately be `.obr`, `_obr`, or an adopted legacy
+/// `.beads`/`_beads`, so the name is read off the resolved directory. When no
+/// workspace was discovered there is nothing on disk to name, so we fall back
+/// to the directory `obr init` would create.
+fn workspace_dir_label(obr_dir: Option<&Path>) -> String {
+    obr_dir.and_then(Path::file_name).map_or_else(
+        || config::WORKSPACE_DIR_NAME.to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
+}
+
+/// The notice shown by `obr config show --project` when no workspace was
+/// discovered. Shared by the rich and plain branches so the two can never
+/// disagree about what directory is missing (they previously agreed only on
+/// being wrong: both said `.beads`).
+fn missing_project_config_message(workspace_dir: &str) -> String {
+    format!("No project config (no {workspace_dir} directory found).")
+}
+
+/// Frame the "no project config" notice for Rich mode. Split out so the tests
+/// capture the shipped renderable instead of re-deriving its text.
+fn build_missing_project_config_panel<'a>(
+    notice: &'a str,
+    theme: &crate::output::Theme,
+) -> Panel<'a> {
+    Panel::from_text(notice)
+        .title(Text::styled(
+            "Project Configuration",
+            theme.panel_title.clone(),
+        ))
+        .box_style(theme.box_style)
+        .border_style(theme.panel_border.clone())
+}
+
 impl ConfigSource {
-    fn label(self) -> &'static str {
+    /// Human label for the "Source" column.
+    ///
+    /// `workspace_dir` is the resolved workspace directory name (see
+    /// [`workspace_dir_label`]); only the project layer uses it, and it must
+    /// name the real directory rather than a hardcoded `.beads`.
+    fn label(self, workspace_dir: &str) -> Cow<'static, str> {
         match self {
-            Self::Default => "default",
-            Self::Jsonl => "jsonl inference",
-            Self::Db => "db",
-            Self::LegacyUser => "legacy user",
-            Self::User => "user config",
-            Self::Project => ".beads/config",
-            Self::Environment => "environment",
-            Self::Cli => "cli",
+            Self::Default => Cow::Borrowed("default"),
+            Self::Jsonl => Cow::Borrowed("jsonl inference"),
+            Self::Db => Cow::Borrowed("db"),
+            Self::User => Cow::Borrowed("user config"),
+            Self::Project => Cow::Owned(format!("{workspace_dir}/{PROJECT_CONFIG_FILENAME}")),
+            Self::Environment => Cow::Borrowed("environment"),
+            Self::Cli => Cow::Borrowed("cli"),
         }
     }
 
@@ -62,7 +108,6 @@ impl ConfigSource {
             Self::Default => "Default",
             Self::Jsonl => "JSONL",
             Self::Db => "DB",
-            Self::LegacyUser => "Legacy User",
             Self::User => "User",
             Self::Project => "Project",
             Self::Environment => "Environment",
@@ -219,21 +264,14 @@ pub fn execute(
         ConfigCommands::Path => show_paths(json_mode, overrides, ctx),
         ConfigCommands::Edit => edit_config(),
         ConfigCommands::List { project, user } => {
-            let beads_dir = discover_optional_beads_dir_with_cli(overrides)?;
-            show_config(
-                beads_dir.as_ref(),
-                overrides,
-                *project,
-                *user,
-                json_mode,
-                ctx,
-            )
+            let obr_dir = discover_optional_obr_dir_with_cli(overrides)?;
+            show_config(obr_dir.as_ref(), overrides, *project, *user, json_mode, ctx)
         }
         ConfigCommands::Set { args } => set_config_value(args, json_mode, overrides, ctx),
         ConfigCommands::Delete { key } => delete_config_value(key, json_mode, overrides, ctx),
         ConfigCommands::Get { key } => {
-            let beads_dir = discover_optional_beads_dir_with_cli(overrides)?;
-            get_config_value(key, beads_dir.as_ref(), overrides, json_mode, ctx)
+            let obr_dir = discover_optional_obr_dir_with_cli(overrides)?;
+            get_config_value(key, obr_dir.as_ref(), overrides, json_mode, ctx)
         }
     }
 }
@@ -245,13 +283,13 @@ fn overrides_without_no_db(overrides: &CliOverrides) -> CliOverrides {
 }
 
 fn build_layers(
-    beads_dir: Option<&PathBuf>,
+    obr_dir: Option<&PathBuf>,
     overrides: &CliOverrides,
 ) -> Result<Vec<LayerWithSource>> {
     let defaults = default_config_layer();
     let db_overrides = overrides_without_no_db(overrides);
 
-    let (jsonl_inferred_layer, db_layer) = if let Some(dir) = beads_dir {
+    let (jsonl_inferred_layer, db_layer) = if let Some(dir) = obr_dir {
         let paths = config::resolve_paths(dir, db_overrides.db.as_ref())?;
         (
             load_jsonl_inferred_layer(&paths)?,
@@ -261,9 +299,8 @@ fn build_layers(
         (ConfigLayer::default(), ConfigLayer::default())
     };
 
-    let legacy_user = load_legacy_user_config()?;
     let user = load_user_config()?;
-    let project = if let Some(dir) = beads_dir {
+    let project = if let Some(dir) = obr_dir {
         load_project_config(dir)?
     } else {
         ConfigLayer::default()
@@ -283,10 +320,6 @@ fn build_layers(
         LayerWithSource {
             source: ConfigSource::Db,
             layer: db_layer,
-        },
-        LayerWithSource {
-            source: ConfigSource::LegacyUser,
-            layer: legacy_user,
         },
         LayerWithSource {
             source: ConfigSource::User,
@@ -416,17 +449,16 @@ fn format_config_value(value: &str) -> String {
     format!("\"{trimmed}\"")
 }
 
-fn render_config_table(title: &str, entries: &[ConfigEntry], ctx: &OutputContext) {
-    let theme = ctx.theme();
-    if entries.is_empty() {
-        let panel = Panel::from_text("No configuration values found.")
-            .title(Text::styled(title, theme.panel_title.clone()))
-            .box_style(theme.box_style)
-            .border_style(theme.panel_border.clone());
-        ctx.render(&panel);
-        return;
-    }
-
+/// Frame the config table. Split out from [`render_config_table`] so the tests
+/// can capture exactly the renderable that ships, rather than re-deriving the
+/// strings and proving nothing — the Rich branch is otherwise unreachable from
+/// any piped harness.
+fn build_config_table(
+    title: &str,
+    entries: &[ConfigEntry],
+    workspace_dir: &str,
+    theme: &crate::output::Theme,
+) -> Table {
     let mut table = Table::new()
         .box_style(theme.box_style)
         .border_style(theme.panel_border.clone())
@@ -440,11 +472,33 @@ fn render_config_table(title: &str, entries: &[ConfigEntry], ctx: &OutputContext
     for entry in entries {
         let key_cell = Cell::new(Text::styled(&entry.key, theme.emphasis.clone()));
         let value_cell = Cell::new(Text::new(entry.value.clone()));
-        let source_cell = Cell::new(Text::styled(entry.source.label(), theme.dimmed.clone()));
+        let source_cell = Cell::new(Text::styled(
+            entry.source.label(workspace_dir).into_owned(),
+            theme.dimmed.clone(),
+        ));
         table.add_row(Row::new(vec![key_cell, value_cell, source_cell]));
     }
 
-    ctx.render(&table);
+    table
+}
+
+fn render_config_table(
+    title: &str,
+    entries: &[ConfigEntry],
+    workspace_dir: &str,
+    ctx: &OutputContext,
+) {
+    let theme = ctx.theme();
+    if entries.is_empty() {
+        let panel = Panel::from_text("No configuration values found.")
+            .title(Text::styled(title, theme.panel_title.clone()))
+            .box_style(theme.box_style)
+            .border_style(theme.panel_border.clone());
+        ctx.render(&panel);
+        return;
+    }
+
+    ctx.render(&build_config_table(title, entries, workspace_dir, theme));
 }
 
 fn render_kv_table(title: &str, rows: &[(String, String)], ctx: &OutputContext) {
@@ -471,17 +525,15 @@ fn render_kv_table(title: &str, rows: &[(String, String)], ctx: &OutputContext) 
 }
 /// Show config file paths.
 fn show_paths(_json_mode: bool, overrides: &CliOverrides, ctx: &OutputContext) -> Result<()> {
-    let paths = discover_optional_beads_dir_with_cli(overrides)?
-        .map(|beads_dir| ConfigPaths::resolve(&beads_dir, overrides.db.as_ref()))
+    let paths = discover_optional_obr_dir_with_cli(overrides)?
+        .map(|obr_dir| ConfigPaths::resolve(&obr_dir, overrides.db.as_ref()))
         .transpose()?;
     let user_config_path = get_user_config_path();
-    let legacy_user_path = get_legacy_user_config_path();
     let project_path = paths.as_ref().and_then(ConfigPaths::project_config_path);
 
     if ctx.is_json() {
         let output = json!({
             "user_config": user_config_path.map(|p| p.display().to_string()),
-            "legacy_user_config": legacy_user_path.map(|p| p.display().to_string()),
             "project_config": project_path.map(|p| p.display().to_string()),
         });
         ctx.json_pretty(&output);
@@ -494,12 +546,6 @@ fn show_paths(_json_mode: bool, overrides: &CliOverrides, ctx: &OutputContext) -
             println!("User config: {} ({})", path.display(), status);
         } else {
             println!("User config: (none)");
-        }
-
-        if let Some(path) = legacy_user_path
-            && path.exists()
-        {
-            println!("Legacy user config: {} (found)", path.display());
         }
 
         if let Some(path) = project_path {
@@ -527,11 +573,11 @@ fn edit_config() -> Result<()> {
 
     // Create the default file if needed, and reject symlinked or non-file paths
     // before passing the config path to an editor.
-    let default_content = r"# br configuration
-# See `br config list` for available options
+    let default_content = r"# obr configuration
+# See `obr config list` for available options
 
 # Issue ID prefix
-# issue_prefix: br
+# issue_prefix: obr
 
 # Default priority for new issues (0-4)
 # default_priority: 2
@@ -549,7 +595,7 @@ fn edit_config() -> Result<()> {
 
     // Open an allowlisted editor. EDITOR/VISUAL may carry flags, but the
     // executable itself is constrained so a poisoned environment cannot turn
-    // `br config edit` into a generic process launcher.
+    // `obr config edit` into a generic process launcher.
     let mut command = AllowedEditor::from_program(&program)?.command();
     let status = command.args(&editor_args).arg(&config_path).status()?;
 
@@ -709,19 +755,19 @@ const ALLOWED_EDITORS: &[&str] = &[
     "zed",
 ];
 
-/// Resolve the effective DB path `br` would use at runtime for the current
+/// Resolve the effective DB path `obr` would use at runtime for the current
 /// workspace, independent of any explicit `db` config override.
 ///
 /// Uses the same path-resolution logic (`config::resolve_paths`, honoring the
-/// `--db` / `BEADS_DB` override and `.beads/metadata.json`) that the storage
-/// layer uses to locate the database. Returns the canonical path (when a
-/// `.beads` directory was discovered) and whether that file exists on disk.
+/// `--db` / `OBR_DB` override and the workspace's `metadata.json`) that the
+/// storage layer uses to locate the database. Returns the canonical path (when
+/// a workspace was discovered) and whether that file exists on disk.
 /// Returns `(None, false)` when no workspace is discovered. #339
 fn resolve_effective_db_path(
-    beads_dir: Option<&PathBuf>,
+    obr_dir: Option<&PathBuf>,
     overrides: &CliOverrides,
 ) -> (Option<PathBuf>, bool) {
-    let Some(dir) = beads_dir else {
+    let Some(dir) = obr_dir else {
         return (None, false);
     };
     match config::resolve_paths(dir, overrides.db.as_ref()) {
@@ -736,13 +782,13 @@ fn resolve_effective_db_path(
 /// Get a specific config value.
 fn get_config_value(
     key: &str,
-    beads_dir: Option<&PathBuf>,
+    obr_dir: Option<&PathBuf>,
     overrides: &CliOverrides,
     _json_mode: bool,
     ctx: &OutputContext,
 ) -> Result<()> {
     debug!(key, "Reading config key");
-    let layers = build_layers(beads_dir, overrides)?;
+    let layers = build_layers(obr_dir, overrides)?;
     let layer = merge_layers(&layers);
     let canonical_key = canonical_config_key(key);
 
@@ -753,13 +799,13 @@ fn get_config_value(
             "key": key,
             "value": value,
         });
-        // For the `db` key, surface the RESOLVED canonical DB path that `br`
+        // For the `db` key, surface the RESOLVED canonical DB path that `obr`
         // actually uses at runtime (the discovered `.beads/beads.db`), even
         // when there is no explicit override (`value` is null). Robot callers
         // querying `config get db --json` need the effective path, not just
         // the raw override, plus whether that file currently exists. #339
         if canonical_key == "db" {
-            let (effective_path, exists) = resolve_effective_db_path(beads_dir, overrides);
+            let (effective_path, exists) = resolve_effective_db_path(obr_dir, overrides);
             if let Some(obj) = output.as_object_mut() {
                 obj.insert(
                     "effective_path".to_string(),
@@ -785,6 +831,7 @@ fn get_config_value(
                     value: format_config_value(&v),
                     source,
                 }],
+                &workspace_dir_label(obr_dir.map(PathBuf::as_path)),
                 ctx,
             );
         } else {
@@ -828,8 +875,8 @@ fn set_config_value(
 
     // Determine target config file
     let (config_path, is_project) =
-        if let Some(beads_dir) = discover_optional_beads_dir_with_cli(overrides)? {
-            (beads_dir.join("config.yaml"), true)
+        if let Some(obr_dir) = discover_optional_obr_dir_with_cli(overrides)? {
+            (obr_dir.join("config.yaml"), true)
         } else {
             let path = get_user_config_path().ok_or_else(|| {
                 crate::error::BeadsError::Config("HOME environment variable not set".to_string())
@@ -1016,8 +1063,8 @@ fn delete_config_value(
 ) -> Result<()> {
     // Pre-validate YAML targets before any mutation so malformed config files
     // do not cause a failed command after the DB value was already deleted.
-    let beads_dir = discover_optional_beads_dir_with_cli(overrides)?;
-    let prepared_project_delete = beads_dir
+    let obr_dir = discover_optional_obr_dir_with_cli(overrides)?;
+    let prepared_project_delete = obr_dir
         .as_ref()
         .map(|dir| prepare_yaml_delete(&dir.join("config.yaml"), key))
         .transpose()?
@@ -1026,15 +1073,11 @@ fn delete_config_value(
         .map(|path| prepare_yaml_delete(&path, key))
         .transpose()?
         .flatten();
-    let prepared_legacy_user_delete = get_legacy_user_config_path()
-        .map(|path| prepare_yaml_delete(&path, key))
-        .transpose()?
-        .flatten();
 
     // 1. Delete from DB
     let mut db_deleted = false;
 
-    if let Some(dir) = &beads_dir
+    if let Some(dir) = &obr_dir
         && !matches!(overrides.no_db, Some(true))
     {
         let mut storage_ctx = config::open_storage_with_cli(dir, overrides)?;
@@ -1049,19 +1092,18 @@ fn delete_config_value(
 
     // 3. Delete from User YAML
     let user_deleted = apply_prepared_yaml_delete(prepared_user_delete)?;
-    let legacy_user_deleted = apply_prepared_yaml_delete(prepared_legacy_user_delete)?;
 
     if ctx.is_json() {
         let output = json!({
             "key": key,
             "deleted_from_db": db_deleted,
             "deleted_from_project": project_deleted,
-            "deleted_from_user": user_deleted || legacy_user_deleted,
+            "deleted_from_user": user_deleted,
         });
         ctx.json_pretty(&output);
     } else if ctx.is_quiet() {
         return Ok(());
-    } else if db_deleted || project_deleted || user_deleted || legacy_user_deleted {
+    } else if db_deleted || project_deleted || user_deleted {
         let mut sources = Vec::new();
         if db_deleted {
             sources.push("DB");
@@ -1069,7 +1111,7 @@ fn delete_config_value(
         if project_deleted {
             sources.push("Project");
         }
-        if user_deleted || legacy_user_deleted {
+        if user_deleted {
             sources.push("User");
         }
         if ctx.is_rich() {
@@ -1175,18 +1217,26 @@ fn delete_nested(value: &mut serde_yml::Value, path: &[&str]) -> bool {
 /// Show merged configuration.
 #[allow(clippy::too_many_lines)]
 fn show_config(
-    beads_dir: Option<&PathBuf>,
+    obr_dir: Option<&PathBuf>,
     overrides: &CliOverrides,
     project_only: bool,
     user_only: bool,
     json_mode: bool,
     ctx: &OutputContext,
 ) -> Result<()> {
+    let workspace_dir = workspace_dir_label(obr_dir.map(PathBuf::as_path));
+
     if project_only {
         // Show only project config
-        if let Some(dir) = beads_dir {
+        if let Some(dir) = obr_dir {
             let layer = load_project_config(dir)?;
-            output_layer(&layer, ConfigSource::Project, json_mode, ctx);
+            output_layer(
+                &layer,
+                ConfigSource::Project,
+                &workspace_dir,
+                json_mode,
+                ctx,
+            );
             return Ok(());
         }
         if ctx.is_json() {
@@ -1194,17 +1244,10 @@ fn show_config(
         } else if ctx.is_quiet() {
             return Ok(());
         } else if ctx.is_rich() {
-            let theme = ctx.theme();
-            let panel = Panel::from_text("No project config (no .beads directory found).")
-                .title(Text::styled(
-                    "Project Configuration",
-                    theme.panel_title.clone(),
-                ))
-                .box_style(theme.box_style)
-                .border_style(theme.panel_border.clone());
-            ctx.render(&panel);
+            let notice = missing_project_config_message(&workspace_dir);
+            ctx.render(&build_missing_project_config_panel(&notice, ctx.theme()));
         } else {
-            println!("No project config (no .beads directory found)");
+            println!("{}", missing_project_config_message(&workspace_dir));
         }
         return Ok(());
     }
@@ -1212,12 +1255,12 @@ fn show_config(
     if user_only {
         // Show only user config
         let layer = load_user_config()?;
-        output_layer(&layer, ConfigSource::User, json_mode, ctx);
+        output_layer(&layer, ConfigSource::User, &workspace_dir, json_mode, ctx);
         return Ok(());
     }
 
     // Show merged config
-    let layers = build_layers(beads_dir, overrides)?;
+    let layers = build_layers(obr_dir, overrides)?;
     let layer = merge_layers(&layers);
 
     // Compute derived values
@@ -1266,7 +1309,7 @@ fn show_config(
             });
         }
 
-        render_config_table("Configuration", &entries, ctx);
+        render_config_table("Configuration", &entries, &workspace_dir, ctx);
 
         let computed_rows = vec![
             ("prefix".to_string(), format_config_value(&id_config.prefix)),
@@ -1323,7 +1366,13 @@ fn show_config(
 }
 
 /// Output a single config layer.
-fn output_layer(layer: &ConfigLayer, source: ConfigSource, _json_mode: bool, ctx: &OutputContext) {
+fn output_layer(
+    layer: &ConfigLayer,
+    source: ConfigSource,
+    workspace_dir: &str,
+    _json_mode: bool,
+    ctx: &OutputContext,
+) {
     if ctx.is_json() {
         let mut all_keys: BTreeMap<String, &str> = BTreeMap::new();
         for (k, v) in &layer.runtime {
@@ -1355,6 +1404,7 @@ fn output_layer(layer: &ConfigLayer, source: ConfigSource, _json_mode: bool, ctx
         render_config_table(
             &format!("{} Configuration", source.heading()),
             &entries,
+            workspace_dir,
             ctx,
         );
     } else {
@@ -1379,24 +1429,172 @@ fn output_layer(layer: &ConfigLayer, source: ConfigSource, _json_mode: bool, ctx
 
 /// Get user config path.
 fn get_user_config_path() -> Option<PathBuf> {
-    let home = env::var("HOME").ok()?;
-    let config_root = PathBuf::from(home).join(".config");
-    let beads_path = config_root.join("beads").join("config.yaml");
-    if beads_path.exists() {
-        return Some(beads_path);
-    }
-    let legacy_path = config_root.join("bd").join("config.yaml");
-    if legacy_path.exists() {
-        return Some(legacy_path);
-    }
-    Some(beads_path)
+    crate::config::resolve_user_config_path()
 }
 
-/// Get legacy user config path.
-fn get_legacy_user_config_path() -> Option<PathBuf> {
-    env::var("HOME")
-        .ok()
-        .map(|home| PathBuf::from(home).join(".beads").join("config.yaml"))
+/// Rich-mode rendering of the config surfaces.
+///
+/// These strings are unreachable from every piped harness in the estate — the
+/// test helpers force `NO_COLOR`/a pipe, which selects the Plain branch — so
+/// the Rich branch went four rename passes advertising a `.beads/config`
+/// source column and a "no .beads directory found" notice on workspaces whose
+/// real directory is `.obr`. `OutputContext::with_mode(Rich)` forces the
+/// branch in-process; the panel/table builders are the ones `show_config` and
+/// `get_config_value` actually render, so what is captured here is what ships.
+#[cfg(test)]
+mod rich_render_tests {
+    use super::{
+        ConfigEntry, ConfigSource, PROJECT_CONFIG_FILENAME, build_config_table,
+        build_missing_project_config_panel, missing_project_config_message, workspace_dir_label,
+    };
+    use crate::config;
+    use crate::output::{OutputContext, OutputMode};
+    use rich_rust::Console;
+    use rich_rust::renderables::Renderable;
+    use std::path::Path;
+
+    const CAPTURE_WIDTH: usize = 100;
+
+    fn capture(renderable: &impl Renderable) -> String {
+        let console = Console::builder()
+            .no_color()
+            .force_terminal(true)
+            .width(CAPTURE_WIDTH)
+            .build();
+        console.begin_capture();
+        console.print_renderable(renderable);
+        console
+            .end_capture()
+            .iter()
+            .map(|segment| segment.text.as_ref())
+            .collect::<String>()
+    }
+
+    /// Every workspace spelling `obr` discovers. A single hardcoded literal
+    /// cannot satisfy this loop.
+    const WORKSPACE_DIR_SPELLINGS: [&str; 3] = [".obr", "_obr", ".beads"];
+
+    /// `PROJECT_CONFIG_FILENAME` must name the file
+    /// `config::load_project_config` actually opens, or the Source column
+    /// points operators at a file that does not exist.
+    #[test]
+    fn project_config_filename_matches_loader() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let obr_dir = tmp.path().join(config::WORKSPACE_DIR_NAME);
+        std::fs::create_dir_all(&obr_dir).unwrap();
+        std::fs::write(
+            obr_dir.join(PROJECT_CONFIG_FILENAME),
+            "issue_prefix: fromproject\n",
+        )
+        .unwrap();
+
+        let layer = config::load_project_config(&obr_dir).expect("load project config");
+        assert_eq!(
+            layer.get("issue_prefix"),
+            Some("fromproject"),
+            "load_project_config must read `{PROJECT_CONFIG_FILENAME}` inside the workspace"
+        );
+    }
+
+    #[test]
+    fn workspace_dir_label_reports_the_real_directory() {
+        for name in WORKSPACE_DIR_SPELLINGS {
+            let path = Path::new("/tmp/project").join(name);
+            assert_eq!(workspace_dir_label(Some(&path)), name);
+        }
+        // No workspace discovered: name the one `obr init` would create.
+        assert_eq!(workspace_dir_label(None), config::WORKSPACE_DIR_NAME);
+    }
+
+    #[test]
+    fn rich_source_column_names_the_resolved_project_config() {
+        for name in WORKSPACE_DIR_SPELLINGS {
+            let ctx = OutputContext::with_mode(OutputMode::Rich);
+            assert!(ctx.is_rich(), "the table must be exercised in Rich mode");
+            let entries = vec![ConfigEntry {
+                key: "issue_prefix".to_string(),
+                value: "\"bd\"".to_string(),
+                source: ConfigSource::Project,
+            }];
+            let table = build_config_table("Configuration", &entries, name, ctx.theme());
+            let rendered = capture(&table);
+
+            assert!(
+                rendered.contains(&format!("{name}/{PROJECT_CONFIG_FILENAME}")),
+                "Source column must name the resolved project config; got:\n{rendered}"
+            );
+            if name != ".beads" {
+                assert!(
+                    !rendered.contains(".beads"),
+                    "a `{name}` workspace must not be described as `.beads`; got:\n{rendered}"
+                );
+            }
+        }
+    }
+
+    /// The other layers' labels do not depend on the workspace and must be
+    /// left alone by the threading.
+    #[test]
+    fn rich_source_column_leaves_non_project_layers_alone() {
+        let ctx = OutputContext::with_mode(OutputMode::Rich);
+        for (source, expected) in [
+            (ConfigSource::Default, "default"),
+            (ConfigSource::User, "user config"),
+            (ConfigSource::Environment, "environment"),
+            (ConfigSource::Cli, "cli"),
+        ] {
+            let entries = vec![ConfigEntry {
+                key: "actor".to_string(),
+                value: "\"alice\"".to_string(),
+                source,
+            }];
+            let table = build_config_table("Configuration", &entries, ".obr", ctx.theme());
+            let rendered = capture(&table);
+            assert!(
+                rendered.contains(expected),
+                "expected source label {expected:?}; got:\n{rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn rich_missing_project_config_panel_names_the_canonical_dir() {
+        let ctx = OutputContext::with_mode(OutputMode::Rich);
+        assert!(ctx.is_rich(), "the panel must be exercised in Rich mode");
+        // `--project` with no workspace discovered: nothing on disk to name,
+        // so the notice names the directory `obr init` creates.
+        let notice = missing_project_config_message(&workspace_dir_label(None));
+        let rendered = capture(&build_missing_project_config_panel(&notice, ctx.theme()));
+
+        assert!(
+            rendered.contains(&format!(
+                "no {} directory found",
+                config::WORKSPACE_DIR_NAME
+            )),
+            "got:\n{rendered}"
+        );
+        assert!(!rendered.contains(".beads"), "got:\n{rendered}");
+    }
+
+    /// The Rich and Plain branches print the same sentence, so a fix to one
+    /// can never leave the other stale. (They previously agreed only on being
+    /// wrong: both said `.beads`.)
+    #[test]
+    fn missing_project_config_message_is_shared_by_both_branches() {
+        let ctx = OutputContext::with_mode(OutputMode::Rich);
+        let notice = missing_project_config_message(&workspace_dir_label(None));
+        let rendered = capture(&build_missing_project_config_panel(&notice, ctx.theme()));
+        // The plain branch prints `notice` verbatim; the rich branch frames
+        // the very same string.
+        assert!(rendered.contains(&notice), "got:\n{rendered}");
+        assert_eq!(
+            notice,
+            format!(
+                "No project config (no {} directory found).",
+                config::WORKSPACE_DIR_NAME
+            )
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1410,7 +1608,9 @@ mod tests {
             assert!(path.ends_with("config.yaml"));
             let path_str = path.to_string_lossy();
             assert!(
-                path_str.contains(".config/beads") || path_str.contains(".config/bd"),
+                path_str.contains(".config/obr")
+                    || path_str.contains(".config/beads")
+                    || path_str.contains(".config/bd"),
                 "unexpected user config path: {path_str}"
             );
         }
@@ -1667,13 +1867,13 @@ mod tests {
     #[test]
     fn test_build_layers_does_not_create_missing_db_for_read_only_access() {
         let dir = tempfile::TempDir::new().unwrap();
-        let beads_dir = dir.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = dir.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
 
-        let layers = build_layers(Some(&beads_dir), &CliOverrides::default()).unwrap();
+        let layers = build_layers(Some(&obr_dir), &CliOverrides::default()).unwrap();
 
         assert!(
-            !beads_dir.join("beads.db").exists(),
+            !obr_dir.join("beads.db").exists(),
             "config read paths must not create a database as a side effect"
         );
         assert!(!layers.is_empty());
@@ -1684,16 +1884,16 @@ mod tests {
         // #339: `config get db --json` must expose the RESOLVED canonical DB
         // path even with no explicit override, plus whether it exists.
         let dir = tempfile::TempDir::new().unwrap();
-        let beads_dir = dir.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = dir.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
 
         // No override, no DB file yet: effective path points at the discovered
         // `.beads` DB location, and `exists` is false.
-        let (path, exists) = resolve_effective_db_path(Some(&beads_dir), &CliOverrides::default());
+        let (path, exists) = resolve_effective_db_path(Some(&obr_dir), &CliOverrides::default());
         let path = path.expect("effective DB path resolved for discovered workspace");
         assert!(
-            path.starts_with(crate::util::resolve_cache_dir(&beads_dir))
-                || path.starts_with(&beads_dir),
+            path.starts_with(crate::util::resolve_cache_dir(&obr_dir))
+                || path.starts_with(&obr_dir),
             "effective path must resolve under the discovered .beads workspace: {}",
             path.display()
         );
@@ -1701,8 +1901,7 @@ mod tests {
 
         // Create the DB at the resolved path; `exists` flips to true.
         crate::storage::SqliteStorage::open(&path).unwrap();
-        let (path2, exists2) =
-            resolve_effective_db_path(Some(&beads_dir), &CliOverrides::default());
+        let (path2, exists2) = resolve_effective_db_path(Some(&obr_dir), &CliOverrides::default());
         assert_eq!(path2.as_ref(), Some(&path));
         assert!(exists2, "DB now exists at the resolved effective path");
 
@@ -1715,15 +1914,15 @@ mod tests {
     #[test]
     fn test_build_layers_reads_db_layer_from_startup_db_override() {
         let dir = tempfile::TempDir::new().unwrap();
-        let beads_dir = dir.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        fs::write(beads_dir.join("config.yaml"), "db: custom.db\n").unwrap();
+        let obr_dir = dir.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        fs::write(obr_dir.join("config.yaml"), "db: custom.db\n").unwrap();
 
-        let db_path = crate::util::resolve_cache_dir(&beads_dir).join("custom.db");
+        let db_path = crate::util::resolve_cache_dir(&obr_dir).join("custom.db");
         let mut storage = crate::storage::SqliteStorage::open(&db_path).unwrap();
         storage.set_config("issue_prefix", "proj").unwrap();
 
-        let layers = build_layers(Some(&beads_dir), &CliOverrides::default()).unwrap();
+        let layers = build_layers(Some(&obr_dir), &CliOverrides::default()).unwrap();
         let db_layer = layers
             .iter()
             .find(|layer| matches!(layer.source, ConfigSource::Db))
@@ -1742,15 +1941,15 @@ mod tests {
     #[test]
     fn test_build_layers_infers_prefix_from_jsonl_for_read_only_config_views() {
         let dir = tempfile::TempDir::new().unwrap();
-        let beads_dir = dir.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = dir.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
         fs::write(
-            beads_dir.join("issues.jsonl"),
+            obr_dir.join("issues.jsonl"),
             r#"{"id":"proj-abc12","title":"Example"}"#,
         )
         .unwrap();
 
-        let layers = build_layers(Some(&beads_dir), &CliOverrides::default()).unwrap();
+        let layers = build_layers(Some(&obr_dir), &CliOverrides::default()).unwrap();
 
         // Verify the JSONL layer directly to avoid interference from user
         // config files (~/.config/bd/config.yaml) that may override the prefix.

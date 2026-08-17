@@ -105,25 +105,25 @@ pub fn execute_defer(
         ));
     }
 
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    let routed_batches = config::routing::group_issue_inputs_by_route(&args.ids, &beads_dir)?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    let routed_batches = config::routing::group_issue_inputs_by_route(&args.ids, &obr_dir)?;
     let mut deferred_issues = Vec::new();
     let mut skipped_issues = Vec::new();
     let mut capacity_warnings = Vec::new();
 
     if routed_batches.iter().any(|batch| batch.is_external) {
-        let normalized_local_beads_dir =
-            dunce::canonicalize(&beads_dir).unwrap_or_else(|_| beads_dir.clone());
+        let normalized_local_obr_dir =
+            dunce::canonicalize(&obr_dir).unwrap_or_else(|_| obr_dir.clone());
         let mut routed_outcomes = Vec::new();
 
         for batch in routed_batches {
             let mut batch_args = args.clone();
             batch_args.ids.clone_from(&batch.issue_inputs);
 
-            let normalized_batch_beads_dir =
-                dunce::canonicalize(&batch.beads_dir).unwrap_or_else(|_| batch.beads_dir.clone());
+            let normalized_batch_obr_dir =
+                dunce::canonicalize(&batch.obr_dir).unwrap_or_else(|_| batch.obr_dir.clone());
             let mut batch_cli = cli.clone();
-            batch_cli.db = if normalized_batch_beads_dir == normalized_local_beads_dir {
+            batch_cli.db = if normalized_batch_obr_dir == normalized_local_obr_dir {
                 cli.db.clone()
             } else {
                 None
@@ -133,7 +133,7 @@ pub fn execute_defer(
                 &batch_args,
                 &batch_cli,
                 ctx,
-                &batch.beads_dir,
+                &batch.obr_dir,
                 batch.is_external,
             )?;
             routed_outcomes.push((batch.issue_inputs.clone(), result.ordered_outcomes));
@@ -149,14 +149,14 @@ pub fn execute_defer(
             }
         }
     } else {
-        let result = execute_defer_route(args, cli, ctx, &beads_dir, false)?;
+        let result = execute_defer_route(args, cli, ctx, &obr_dir, false)?;
         deferred_issues = result.deferred;
         skipped_issues = result.skipped;
         capacity_warnings = result.warnings;
     }
 
     if let Some(last_deferred) = deferred_issues.last() {
-        crate::util::set_last_touched_id(&beads_dir, &last_deferred.id);
+        crate::util::set_last_touched_id(&obr_dir, &last_deferred.id);
     }
 
     render_defer_output(
@@ -229,18 +229,18 @@ fn execute_defer_route(
     args: &DeferArgs,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     auto_flush_external: bool,
 ) -> Result<DeferResult> {
     let routed_write_lock =
-        acquire_routed_workspace_write_lock(beads_dir, auto_flush_external, cli.lock_timeout)?;
+        acquire_routed_workspace_write_lock(obr_dir, auto_flush_external, cli.lock_timeout)?;
     // Reuse the routed authority for the storage open below; acquiring the
     // same database-family lock from a second descriptor in this process
     // would self-deadlock until the lock timeout (#409 routed cluster).
     let mut route_cli = cli.clone();
     routed_write_lock.mark_cli_write_lock_held(&mut route_cli);
     let cli = &route_cli;
-    let mut storage_ctx = config::open_storage_with_cli(beads_dir, cli)?;
+    let mut storage_ctx = config::open_storage_with_cli(obr_dir, cli)?;
     auto_import_storage_ctx_if_stale(&mut storage_ctx, cli)?;
 
     let config_layer = storage_ctx.load_config(cli)?;
@@ -374,7 +374,7 @@ fn execute_defer_route(
     if auto_flush_external && let Err(error) = storage_ctx.auto_flush_if_enabled() {
         report_auto_flush_failure(
             ctx,
-            &storage_ctx.paths.beads_dir,
+            &storage_ctx.paths.obr_dir,
             &storage_ctx.paths.jsonl_path,
             &error,
         );
@@ -408,25 +408,25 @@ pub fn execute_undefer(
         ));
     }
 
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    let routed_batches = config::routing::group_issue_inputs_by_route(&args.ids, &beads_dir)?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    let routed_batches = config::routing::group_issue_inputs_by_route(&args.ids, &obr_dir)?;
     let mut undeferred_issues = Vec::new();
     let mut skipped_issues = Vec::new();
     let mut capacity_warnings = Vec::new();
 
     if routed_batches.iter().any(|batch| batch.is_external) {
-        let normalized_local_beads_dir =
-            dunce::canonicalize(&beads_dir).unwrap_or_else(|_| beads_dir.clone());
+        let normalized_local_obr_dir =
+            dunce::canonicalize(&obr_dir).unwrap_or_else(|_| obr_dir.clone());
         let mut routed_outcomes = Vec::new();
 
         for batch in routed_batches {
             let mut batch_args = args.clone();
             batch_args.ids.clone_from(&batch.issue_inputs);
 
-            let normalized_batch_beads_dir =
-                dunce::canonicalize(&batch.beads_dir).unwrap_or_else(|_| batch.beads_dir.clone());
+            let normalized_batch_obr_dir =
+                dunce::canonicalize(&batch.obr_dir).unwrap_or_else(|_| batch.obr_dir.clone());
             let mut batch_cli = cli.clone();
-            batch_cli.db = if normalized_batch_beads_dir == normalized_local_beads_dir {
+            batch_cli.db = if normalized_batch_obr_dir == normalized_local_obr_dir {
                 cli.db.clone()
             } else {
                 None
@@ -436,7 +436,7 @@ pub fn execute_undefer(
                 &batch_args,
                 &batch_cli,
                 ctx,
-                &batch.beads_dir,
+                &batch.obr_dir,
                 batch.is_external,
             )?;
             routed_outcomes.push((batch.issue_inputs.clone(), result.ordered_outcomes));
@@ -455,14 +455,14 @@ pub fn execute_undefer(
             }
         }
     } else {
-        let result = execute_undefer_route(args, cli, ctx, &beads_dir, false)?;
+        let result = execute_undefer_route(args, cli, ctx, &obr_dir, false)?;
         undeferred_issues = result.undeferred;
         skipped_issues = result.skipped;
         capacity_warnings = result.warnings;
     }
 
     if let Some(last_undeferred) = undeferred_issues.last() {
-        crate::util::set_last_touched_id(&beads_dir, &last_undeferred.id);
+        crate::util::set_last_touched_id(&obr_dir, &last_undeferred.id);
     }
 
     render_undefer_output(
@@ -532,18 +532,18 @@ fn execute_undefer_route(
     args: &UndeferArgs,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     auto_flush_external: bool,
 ) -> Result<UndeferResult> {
     let routed_write_lock =
-        acquire_routed_workspace_write_lock(beads_dir, auto_flush_external, cli.lock_timeout)?;
+        acquire_routed_workspace_write_lock(obr_dir, auto_flush_external, cli.lock_timeout)?;
     // Reuse the routed authority for the storage open below; acquiring the
     // same database-family lock from a second descriptor in this process
     // would self-deadlock until the lock timeout (#409 routed cluster).
     let mut route_cli = cli.clone();
     routed_write_lock.mark_cli_write_lock_held(&mut route_cli);
     let cli = &route_cli;
-    let mut storage_ctx = config::open_storage_with_cli(beads_dir, cli)?;
+    let mut storage_ctx = config::open_storage_with_cli(obr_dir, cli)?;
     auto_import_storage_ctx_if_stale(&mut storage_ctx, cli)?;
 
     let config_layer = storage_ctx.load_config(cli)?;
@@ -680,7 +680,7 @@ fn execute_undefer_route(
     if auto_flush_external && let Err(error) = storage_ctx.auto_flush_if_enabled() {
         report_auto_flush_failure(
             ctx,
-            &storage_ctx.paths.beads_dir,
+            &storage_ctx.paths.obr_dir,
             &storage_ctx.paths.jsonl_path,
             &error,
         );
@@ -1202,8 +1202,9 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        let beads_dir = temp.path().join(".beads");
-        let mut storage = SqliteStorage::open(&beads_dir.join("beads.db")).expect("storage");
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        let mut storage = SqliteStorage::open(&obr_dir.join(crate::config::DEFAULT_DB_FILENAME))
+            .expect("storage");
         let issue_id = format!(
             "{}-defer-1",
             storage
@@ -1215,7 +1216,7 @@ mod tests {
         storage.create_issue(&issue, "tester").expect("create");
 
         let cli = CliOverrides {
-            db: Some(beads_dir.join("beads.db")),
+            db: Some(obr_dir.join(crate::config::DEFAULT_DB_FILENAME)),
             ..CliOverrides::default()
         };
         let args = DeferArgs {
@@ -1240,8 +1241,9 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        let beads_dir = temp.path().join(".beads");
-        let mut storage = SqliteStorage::open(&beads_dir.join("beads.db")).expect("storage");
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        let mut storage = SqliteStorage::open(&obr_dir.join(crate::config::DEFAULT_DB_FILENAME))
+            .expect("storage");
         let issue_id = format!(
             "{}-defer-2",
             storage
@@ -1253,7 +1255,7 @@ mod tests {
         storage.create_issue(&issue, "tester").expect("create");
 
         let cli = CliOverrides {
-            db: Some(beads_dir.join("beads.db")),
+            db: Some(obr_dir.join(crate::config::DEFAULT_DB_FILENAME)),
             ..CliOverrides::default()
         };
         let args = DeferArgs {
@@ -1278,9 +1280,10 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
         let issue_id = {
-            let storage = SqliteStorage::open(&beads_dir.join("beads.db")).expect("storage");
+            let storage = SqliteStorage::open(&obr_dir.join(crate::config::DEFAULT_DB_FILENAME))
+                .expect("storage");
             format!(
                 "{}-defer-3",
                 storage
@@ -1290,13 +1293,15 @@ mod tests {
             )
         };
         {
-            let mut storage = SqliteStorage::open(&beads_dir.join("beads.db")).expect("storage");
+            let mut storage =
+                SqliteStorage::open(&obr_dir.join(crate::config::DEFAULT_DB_FILENAME))
+                    .expect("storage");
             let issue = make_issue(&issue_id, "Undefer me");
             storage.create_issue(&issue, "tester").expect("create");
         }
 
         let cli = CliOverrides {
-            db: Some(beads_dir.join("beads.db")),
+            db: Some(obr_dir.join(crate::config::DEFAULT_DB_FILENAME)),
             ..CliOverrides::default()
         };
         let defer_args = DeferArgs {
@@ -1314,7 +1319,8 @@ mod tests {
         };
         execute_undefer(&undefer_args, true, &cli, &ctx).expect("undefer");
 
-        let storage = SqliteStorage::open(&beads_dir.join("beads.db")).expect("reopen");
+        let storage =
+            SqliteStorage::open(&obr_dir.join(crate::config::DEFAULT_DB_FILENAME)).expect("reopen");
         let updated = storage.get_issue(&issue_id).expect("get").unwrap();
         assert_eq!(updated.status, Status::Open);
         assert!(updated.defer_until.is_none());
@@ -1329,8 +1335,9 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        let beads_dir = temp.path().join(".beads");
-        let mut storage = SqliteStorage::open(&beads_dir.join("beads.db")).expect("storage");
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        let mut storage = SqliteStorage::open(&obr_dir.join(crate::config::DEFAULT_DB_FILENAME))
+            .expect("storage");
         let issue_id = format!(
             "{}-soft-defer-1",
             storage
@@ -1344,7 +1351,7 @@ mod tests {
         storage.create_issue(&issue, "tester").expect("create");
 
         let cli = CliOverrides {
-            db: Some(beads_dir.join("beads.db")),
+            db: Some(obr_dir.join(crate::config::DEFAULT_DB_FILENAME)),
             ..CliOverrides::default()
         };
         let undefer_args = UndeferArgs {
@@ -1368,8 +1375,8 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx)?;
 
-        let beads_dir = temp.path().join(".beads");
-        let mut storage = SqliteStorage::open(&beads_dir.join("beads.db"))?;
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        let mut storage = SqliteStorage::open(&obr_dir.join(crate::config::DEFAULT_DB_FILENAME))?;
         let issue_id = format!(
             "{}-terminal-defer-1",
             storage
@@ -1383,7 +1390,7 @@ mod tests {
         storage.create_issue(&issue, "tester")?;
 
         let cli = CliOverrides {
-            db: Some(beads_dir.join("beads.db")),
+            db: Some(obr_dir.join(crate::config::DEFAULT_DB_FILENAME)),
             ..CliOverrides::default()
         };
         let undefer_args = UndeferArgs {

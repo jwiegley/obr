@@ -1,8 +1,9 @@
 //! Closure-time policy gates (issue #274 — Phase 1).
 //!
-//! Loads `.beads/policy.yaml` (when present) and evaluates configured gates
+//! Loads the workspace's `policy.yaml` (`.obr/policy.yaml` when present) and
+//! evaluates configured gates
 //! against a candidate close. Every gate is opt-in. With no policy file,
-//! [`ClosePolicy::is_active`] returns `false` and `br close` behaves exactly
+//! [`ClosePolicy::is_active`] returns `false` and `obr close` behaves exactly
 //! as it did before this module existed.
 //!
 //! # Phase 1 scope
@@ -23,25 +24,35 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
-/// Default file name for the policy document inside `.beads/`.
+/// Default file name for the policy document inside the workspace
+/// directory (`.obr/policy.yaml`).
 pub const POLICY_FILE_NAME: &str = "policy.yaml";
 
 /// Environment variable for agent name (Tier 1 attribution).
-pub const ENV_AGENT_NAME: &str = "BR_AGENT_NAME";
+pub const ENV_AGENT_NAME: &str = "OBR_AGENT_NAME";
 /// Environment variable for harness identifier.
-pub const ENV_HARNESS: &str = "BR_HARNESS";
+pub const ENV_HARNESS: &str = "OBR_HARNESS";
 /// Environment variable for model identifier.
-pub const ENV_MODEL: &str = "BR_MODEL";
+pub const ENV_MODEL: &str = "OBR_MODEL";
 
-/// Top-level policy document loaded from `.beads/policy.yaml`.
+/// Attribution environment variables, in the order the slots are resolved:
+/// [`ENV_AGENT_NAME`], [`ENV_HARNESS`], [`ENV_MODEL`].
+const ATTRIBUTION_ENV_VARS: [&str; 3] = ["OBR_AGENT_NAME", "OBR_HARNESS", "OBR_MODEL"];
+
+/// Read attribution slot `index` from the environment.
+fn attribution_env(env_lookup: &dyn Fn(&str) -> Option<String>, index: usize) -> Option<String> {
+    env_lookup(ATTRIBUTION_ENV_VARS[index]).filter(|value| !value.trim().is_empty())
+}
+
+/// Top-level policy document loaded from the workspace's `policy.yaml`.
 ///
 /// Close-policy structs intentionally accept unknown fields rather than
 /// hard-failing the parse: a single typo in `policy.yaml` used to take
-/// down `br close` for every operator on the project, with no recovery
+/// down `obr close` for every operator on the project, with no recovery
 /// path (even `--bypass-policy` couldn't help because the parse fires
 /// before bypass logic runs). See beads_rust#302.
 ///
-/// Unknown fields surface via [`load_for_beads_dir`], which emits a
+/// Unknown fields surface via [`load_for_obr_dir`], which emits a
 /// `tracing::warn!` listing every unknown key it discovered. Operators
 /// who want strict parsing back can wire up a future `--strict-policy`
 /// flag (out of scope for the #302 fix).
@@ -148,14 +159,14 @@ impl ClosePolicy {
 /// Transition enforcement (issue #312, layer 1) is opt-in via a non-empty
 /// `transitions:` map and is independently gated on `strict`: when
 /// `strict: true` *and* `transitions` is non-empty, a status change whose
-/// `from -> to` pair is not listed is rejected on `br update`. Absent or
+/// `from -> to` pair is not listed is rejected on `obr update`. Absent or
 /// empty `transitions` leaves transition behavior exactly as before.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Workflow {
     /// When `true` *and* `statuses` is non-empty, a status outside the
     /// configured set is rejected on `create`/`update` and flagged by
-    /// `br doctor`. When `false`, `statuses` is advisory only (no
+    /// `obr doctor`. When `false`, `statuses` is advisory only (no
     /// enforcement). The same flag gates transition enforcement (see
     /// `transitions`).
     pub strict: bool,
@@ -218,7 +229,7 @@ pub struct Workflow {
     #[serde(default)]
     pub required_fields: std::collections::BTreeMap<String, Vec<TransitionRequiredField>>,
     /// Named status groups (issue #354). Currently only `ready` is consumed —
-    /// it defines which statuses `br ready` (and the scheduler) treat as
+    /// it defines which statuses `obr ready` (and the scheduler) treat as
     /// actionable work. When the `status_groups:` block (or the `ready:` key
     /// inside it) is absent, the ready group defaults to `[open]`, preserving
     /// the pre-#354 behavior exactly.
@@ -322,13 +333,13 @@ impl CapacityScopePolicy {
 pub enum CapacityScopeKind {
     /// The whole repository — identical semantics to the top-level limits.
     Repository,
-    /// Partitioned by the acting CLI actor (`--actor` / `BD_ACTOR` / user).
+    /// Partitioned by the acting CLI actor (`--actor` / `OBR_ACTOR` / user).
     Actor,
     /// Partitioned by the issue's (prospective) assignee.
     Assignee,
-    /// Partitioned by the self-reported harness (`--harness` / `BR_HARNESS`).
+    /// Partitioned by the self-reported harness (`--harness` / `OBR_HARNESS`).
     Harness,
-    /// Partitioned by the self-reported session (`BR_SESSION`).
+    /// Partitioned by the self-reported session (`OBR_SESSION`).
     Session,
     /// Partitioned by the issue's root ancestor over parent-child edges.
     Subtree,
@@ -745,14 +756,14 @@ impl std::fmt::Display for WorkflowCapacityViolation {
 
 /// Named status groups under `workflow.status_groups` (issue #354).
 ///
-/// The `ready` group is the set of statuses `br ready` surfaces as actionable
+/// The `ready` group is the set of statuses `obr ready` surfaces as actionable
 /// work. An empty/absent `ready` list means "use the default" — see
 /// [`Workflow::ready_status_group`], which substitutes `[open]` so existing
 /// repos behave exactly as before this field existed.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StatusGroups {
-    /// Statuses treated as "ready to work on" by `br ready`. Empty means the
+    /// Statuses treated as "ready to work on" by `obr ready`. Empty means the
     /// default group (`[open]`).
     #[serde(default)]
     pub ready: Vec<String>,
@@ -801,7 +812,7 @@ pub enum TransitionRequiredField {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GateSpec {
     /// A named gate satisfied by a recorded `pass` result from a provider of
-    /// the same name (`br gate report <id> --provider <name> --status pass`).
+    /// the same name (`obr gate report <id> --provider <name> --status pass`).
     Named(String),
     /// The built-in `min_reviewers` gate: at least `n` distinct reviewers must
     /// have reported `pass` (provider name `reviewer`, or any provider whose
@@ -1292,7 +1303,7 @@ pub fn evaluate_gates(
                         message: format!(
                             "transition '{from}' -> '{to}' requires gate '{name}' to pass for {issue_id}, \
                              but {detail_note}. Record a result with \
-                             `br gate report {issue_id} --gate {name} --provider <name> --status pass --to {to}`."
+                             `obr gate report {issue_id} --gate {name} --provider <name> --status pass --to {to}`."
                         ),
                         detail: Some(serde_json::json!({
                             "issue_id": issue_id,
@@ -1319,7 +1330,7 @@ pub fn evaluate_gates(
                         message: format!(
                             "transition '{from}' -> '{to}' requires at least {n} reviewer(s) to pass for \
                              {issue_id}, but only {count} distinct reviewer(s) have. Record a review with \
-                             `br gate report {issue_id} --gate {GATE_MIN_REVIEWERS} --provider reviewer:<who> --status pass --to {to}`."
+                             `obr gate report {issue_id} --gate {GATE_MIN_REVIEWERS} --provider reviewer:<who> --status pass --to {to}`."
                         ),
                         detail: Some(serde_json::json!({
                             "issue_id": issue_id,
@@ -1449,7 +1460,7 @@ impl Workflow {
             "workflow.status_groups.ready",
             format!(
                 "ready status group contains status(es) not permitted by the project workflow \
-                 policy (.beads/policy.yaml workflow.strict): {}. Allowed statuses: {}.",
+                 policy (policy.yaml workflow.strict): {}. Allowed statuses: {}.",
                 unknown.join(", "),
                 self.allowed_list()
             ),
@@ -1532,7 +1543,7 @@ impl Workflow {
             "status",
             format!(
                 "status '{status}' is not permitted by the project workflow policy \
-                 (.beads/policy.yaml workflow.strict). Allowed statuses: {}.",
+                 (policy.yaml workflow.strict). Allowed statuses: {}.",
                 self.allowed_list()
             ),
         ))
@@ -1636,7 +1647,7 @@ impl Workflow {
                     "status",
                     format!(
                         "initial status '{to}' is not permitted by the project workflow policy \
-                         (.beads/policy.yaml workflow.transitions, key 'initial'). \
+                         (policy.yaml workflow.transitions, key 'initial'). \
                          Allowed initial statuses: {allowed}."
                     ),
                 ))
@@ -1655,7 +1666,7 @@ impl Workflow {
                     "status",
                     format!(
                         "transition '{from}' -> '{to}' is not permitted by the project workflow \
-                         policy (.beads/policy.yaml workflow.transitions). \
+                         policy (policy.yaml workflow.transitions). \
                          Valid next statuses from '{from}': {allowed_list}."
                     ),
                 ))
@@ -2058,6 +2069,12 @@ pub struct AttributionValues {
 
 impl AttributionValues {
     /// Resolve attribution values using the precedence: CLI flag > env var > absent.
+    ///
+    /// clap binds each flag to the `OBR_*` name, so a value set there arrives
+    /// as `cli_*` and outranks anything read from the environment here. Only
+    /// the `OBR_*` names are read — the pre-rename `BR_*` spellings were
+    /// removed outright, not deprecated — so no `env::set_var` bridge is
+    /// needed (unsound, and `unsafe` under edition 2024).
     #[must_use]
     pub fn resolve(
         cli_agent_name: Option<&str>,
@@ -2070,17 +2087,17 @@ impl AttributionValues {
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(String::from)
-                .or_else(|| env_lookup(ENV_AGENT_NAME).filter(|s| !s.trim().is_empty())),
+                .or_else(|| attribution_env(env_lookup, 0)),
             harness: cli_harness
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(String::from)
-                .or_else(|| env_lookup(ENV_HARNESS).filter(|s| !s.trim().is_empty())),
+                .or_else(|| attribution_env(env_lookup, 1)),
             model: cli_model
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(String::from)
-                .or_else(|| env_lookup(ENV_MODEL).filter(|s| !s.trim().is_empty())),
+                .or_else(|| attribution_env(env_lookup, 2)),
         }
     }
 
@@ -2415,7 +2432,7 @@ pub const GATE_FORBID_CLOSE_WITH_DEFERRED_DEPENDENTS: &str =
 /// error contract is covered without a database.
 ///
 /// The error names every offending dependent ID and instructs the closer to
-/// either reopen each (`br update <dep> --status=open`) or close-as-superseded
+/// either reopen each (`obr update <dep> --status=open`) or close-as-superseded
 /// with a `duplicate_of` edge before closing the prereq.
 #[must_use]
 pub fn deferred_dependents_violation(
@@ -2435,7 +2452,7 @@ pub fn deferred_dependents_violation(
     let id_list = ids.join(", ");
     let message = format!(
         "deferred-dependents policy: cannot close {issue_id}: it has {count} deferred dependent(s): {id_list}. \
-         Reopen each (`br update <dep> --status=open`) or close-as-superseded with a duplicate_of edge \
+         Reopen each (`obr update <dep> --status=open`) or close-as-superseded with a duplicate_of edge \
          before closing {issue_id}.",
         count = ids.len(),
     );
@@ -2609,7 +2626,7 @@ fn parse_unchecked_box(line: &str) -> Option<String> {
     Some(rest)
 }
 
-/// Load the policy document from `.beads/policy.yaml`. Returns the default
+/// Load the policy document from the workspace's `policy.yaml`. Returns the default
 /// (all gates off) when the file does not exist. Returns an error only if the
 /// file exists but cannot be read or parsed — never silently downgrades a
 /// broken config to "permissive."
@@ -2618,7 +2635,7 @@ fn parse_unchecked_box(line: &str) -> Option<String> {
 ///
 /// Close-policy structs deliberately accept unknown fields rather than
 /// hard-failing the parse. A typo or project-local experimental gate
-/// previously took down `br close` for every operator on the project,
+/// previously took down `obr close` for every operator on the project,
 /// with `--bypass-policy` powerless to recover because the parse fires
 /// before bypass logic runs. We now warn instead of erroring; the trade
 /// is loss of typo-at-parse-time detection, but the cost (full project
@@ -2633,8 +2650,8 @@ fn parse_unchecked_box(line: &str) -> Option<String> {
 /// # Errors
 ///
 /// Returns an error if the file exists but cannot be read or parsed.
-pub fn load_for_beads_dir(beads_dir: &Path) -> Result<PolicyDocument> {
-    let path = beads_dir.join(POLICY_FILE_NAME);
+pub fn load_for_obr_dir(obr_dir: &Path) -> Result<PolicyDocument> {
+    let path = obr_dir.join(POLICY_FILE_NAME);
     if !path.exists() {
         return Ok(PolicyDocument::default());
     }
@@ -3302,7 +3319,7 @@ mod tests {
         );
         // Remediation guidance is present.
         assert!(
-            violation.message.contains("br update <dep> --status=open"),
+            violation.message.contains("obr update <dep> --status=open"),
             "{}",
             violation.message
         );
@@ -3392,7 +3409,7 @@ mod tests {
     #[test]
     fn loader_returns_default_when_file_absent() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let policy = load_for_beads_dir(dir.path()).expect("load");
+        let policy = load_for_obr_dir(dir.path()).expect("load");
         assert_eq!(policy, PolicyDocument::default());
         assert!(!policy.close_policy.is_active());
         assert!(policy.allow_bypass);
@@ -3420,7 +3437,7 @@ close_policy:
 allow_bypass: false
 "#;
         std::fs::write(dir.path().join(POLICY_FILE_NAME), yaml).unwrap();
-        let policy = load_for_beads_dir(dir.path()).expect("load");
+        let policy = load_for_obr_dir(dir.path()).expect("load");
         assert!(policy.close_policy.require_close_reason.enabled);
         assert_eq!(policy.close_policy.require_close_reason.min_length, 30);
         assert_eq!(
@@ -3452,7 +3469,7 @@ allow_bypass: false
         assert!(policy.close_policy.is_active());
     }
 
-    /// beads_rust#302: unknown fields used to hard-fail and take down `br
+    /// beads_rust#302: unknown fields used to hard-fail and take down `obr
     /// close` project-wide. They are now tolerated — the parse succeeds and
     /// the unknown keys surface via [`detect_unknown_policy_fields`].
     #[test]
@@ -3460,7 +3477,7 @@ allow_bypass: false
         let dir = tempfile::tempdir().expect("tempdir");
         let yaml = "unknown_key: 1\nclose_policy:\n  require_close_reason:\n    enabled: true\n";
         std::fs::write(dir.path().join(POLICY_FILE_NAME), yaml).unwrap();
-        let policy = load_for_beads_dir(dir.path()).expect("load must succeed");
+        let policy = load_for_obr_dir(dir.path()).expect("load must succeed");
         assert!(
             policy.close_policy.require_close_reason.enabled,
             "known fields must still parse"
@@ -3487,7 +3504,7 @@ close_policy:
     enabled: true
 ";
         std::fs::write(dir.path().join(POLICY_FILE_NAME), yaml).unwrap();
-        let policy = load_for_beads_dir(dir.path()).expect("load must succeed");
+        let policy = load_for_obr_dir(dir.path()).expect("load must succeed");
         assert!(policy.close_policy.require_close_reason.enabled);
         assert_eq!(policy.close_policy.require_close_reason.min_length, 20);
 
@@ -3552,7 +3569,7 @@ close_policy:
     fn loader_accepts_empty_document() {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(dir.path().join(POLICY_FILE_NAME), "{}\n").unwrap();
-        let policy = load_for_beads_dir(dir.path()).expect("load");
+        let policy = load_for_obr_dir(dir.path()).expect("load");
         assert_eq!(policy, PolicyDocument::default());
     }
 
@@ -3940,7 +3957,7 @@ workflow:
   statuses: ["open", "in_progress", "closed"]
 "#;
         std::fs::write(dir.path().join(POLICY_FILE_NAME), yaml).unwrap();
-        let policy = load_for_beads_dir(dir.path()).expect("load");
+        let policy = load_for_obr_dir(dir.path()).expect("load");
         assert!(policy.workflow.is_enforced());
         assert_eq!(
             policy.workflow.statuses,
@@ -3961,7 +3978,7 @@ workflow:
         // must not enforce any status set.
         let yaml = "close_policy:\n  forbid_self_close_after_in_progress:\n    enabled: true\n";
         std::fs::write(dir.path().join(POLICY_FILE_NAME), yaml).unwrap();
-        let policy = load_for_beads_dir(dir.path()).expect("load");
+        let policy = load_for_obr_dir(dir.path()).expect("load");
         assert!(!policy.workflow.is_enforced());
         assert!(policy.workflow.validate_status("whatever").is_ok());
     }
@@ -4016,7 +4033,7 @@ workflow:
             active_work: 5
 ";
         std::fs::write(dir.path().join(POLICY_FILE_NAME), yaml).unwrap();
-        let policy = load_for_beads_dir(dir.path()).expect("capacity policy must load");
+        let policy = load_for_obr_dir(dir.path()).expect("capacity policy must load");
         assert!(policy.workflow.capacity.is_active());
         assert_eq!(
             policy.workflow.capacity.statuses["in_progress"].hard,
@@ -4048,7 +4065,7 @@ workflow:
       max_ttl_seconds: 86400
 ";
         std::fs::write(dir.path().join(POLICY_FILE_NAME), yaml).unwrap();
-        let policy = load_for_beads_dir(dir.path()).expect("exemption policy must load");
+        let policy = load_for_obr_dir(dir.path()).expect("exemption policy must load");
         let exemptions = &policy.workflow.capacity.exemptions;
         assert!(exemptions.is_enabled());
         assert!(exemptions.require_expiry);
@@ -4343,7 +4360,7 @@ workflow:
             soft: 1
 ";
         std::fs::write(dir.path().join(POLICY_FILE_NAME), yaml).unwrap();
-        let policy = load_for_beads_dir(dir.path()).expect("scope policy must load");
+        let policy = load_for_obr_dir(dir.path()).expect("scope policy must load");
         let capacity = &policy.workflow.capacity;
         assert!(capacity.is_active(), "scopes alone activate capacity");
         assert_eq!(
@@ -4678,7 +4695,7 @@ workflow:
     initial: [open, draft]
 ";
         std::fs::write(dir.path().join(POLICY_FILE_NAME), yaml).unwrap();
-        let policy = load_for_beads_dir(dir.path()).expect("load");
+        let policy = load_for_obr_dir(dir.path()).expect("load");
         let workflow = &policy.workflow;
         assert!(workflow.transitions_enforced());
         assert!(
@@ -4709,7 +4726,7 @@ workflow:
         // unconstrained (backward compatible with #311-only configs).
         let yaml = "workflow:\n  strict: true\n  statuses: [open, in_progress, closed]\n";
         std::fs::write(dir.path().join(POLICY_FILE_NAME), yaml).unwrap();
-        let policy = load_for_beads_dir(dir.path()).expect("load");
+        let policy = load_for_obr_dir(dir.path()).expect("load");
         assert!(policy.workflow.is_enforced());
         assert!(!policy.workflow.transitions_enforced());
         assert!(

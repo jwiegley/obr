@@ -1,4 +1,4 @@
-//! `SQLite` storage layer for `beads_rust`.
+//! `SQLite` storage layer for `obr`.
 //!
 //! This module provides the persistence layer using `SQLite` with:
 //! - WAL mode for concurrent reads

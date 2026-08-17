@@ -1,9 +1,9 @@
 #![no_main]
 
-use beads_rust::model::{DependencyType, Issue};
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{ImportConfig, import_from_jsonl};
-use beads_rust::validation::IssueValidator;
+use obr::model::{DependencyType, Issue};
+use obr::storage::SqliteStorage;
+use obr::sync::{ImportConfig, import_from_jsonl};
+use obr::validation::IssueValidator;
 use libfuzzer_sys::fuzz_target;
 use std::collections::HashSet;
 use std::error::Error;
@@ -38,13 +38,13 @@ fuzz_target!(|data: &[u8]| {
 
 fn run_import_case(data: &[u8]) -> Result<(), Box<dyn Error>> {
     let temp = Builder::new().prefix("br-jsonl-import-fuzz").tempdir()?;
-    let beads_dir = temp.path().join(".beads");
-    fs::create_dir(&beads_dir)?;
+    let obr_dir = temp.path().join(".obr");
+    fs::create_dir(&obr_dir)?;
 
-    let input_path = beads_dir.join("issues.jsonl");
+    let input_path = obr_dir.join("issues.jsonl");
     fs::write(&input_path, data)?;
 
-    let db_path = beads_dir.join("beads.db");
+    let db_path = obr_dir.join("obr.db");
     {
         let mut storage = SqliteStorage::open(&db_path)?;
         seed_sentinel_data(&mut storage)?;
@@ -53,7 +53,7 @@ fn run_import_case(data: &[u8]) -> Result<(), Box<dyn Error>> {
         let config = ImportConfig {
             skip_prefix_validation: true,
             clear_duplicate_external_refs: true,
-            beads_dir: Some(beads_dir.clone()),
+            obr_dir: Some(obr_dir.clone()),
             show_progress: false,
             ..ImportConfig::default()
         };

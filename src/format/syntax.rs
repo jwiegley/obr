@@ -12,8 +12,8 @@
 //! # Example
 //!
 //! ```ignore
-//! use beads_rust::format::syntax::highlight_code;
-//! use beads_rust::output::OutputContext;
+//! use obr::format::syntax::highlight_code;
+//! use obr::output::OutputContext;
 //!
 //! let code = r#"fn main() { println!("Hello!"); }"#;
 //! let ctx = OutputContext::detect();

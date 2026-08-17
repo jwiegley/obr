@@ -2,9 +2,9 @@
 
 mod common;
 
-use beads_rust::model::{Comment, Dependency, DependencyType, Issue, Priority};
-use beads_rust::util::content_hash;
-use beads_rust::validation::IssueValidator;
+use obr::model::{Comment, Dependency, DependencyType, Issue, Priority};
+use obr::util::content_hash;
+use obr::validation::IssueValidator;
 use common::{ByteCursor, EmptyCustomIssueCursorExt};
 use libfuzzer_sys::fuzz_target;
 use serde_json::Value;

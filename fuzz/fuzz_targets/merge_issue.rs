@@ -2,13 +2,13 @@
 
 mod common;
 
-use beads_rust::model::{Comment, Dependency, DependencyType, Issue, IssueType, Priority, Status};
-use beads_rust::sync::{
+use obr::model::{Comment, Dependency, DependencyType, Issue, IssueType, Priority, Status};
+use obr::sync::{
     ConflictResolution, ConflictType, MergeContext, MergeReport, MergeResult, merge_issue,
     three_way_merge,
 };
-use beads_rust::util::content_hash;
-use beads_rust::validation::IssueValidator;
+use obr::util::content_hash;
+use obr::validation::IssueValidator;
 use chrono::{DateTime, Duration, Utc};
 use common::{ByteCursor, TrimmedCustomIssueCursorExt};
 use libfuzzer_sys::fuzz_target;

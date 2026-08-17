@@ -594,10 +594,10 @@ pub fn execute_with_args(
     // a misuse of the bypass flag never silently slips past policy gates.
     validate_bypass_args(args)?;
 
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
     let mut target_inputs = args.ids.clone();
     if target_inputs.is_empty() {
-        let last_touched = crate::util::get_last_touched_id(&beads_dir);
+        let last_touched = crate::util::get_last_touched_id(&obr_dir);
         if last_touched.is_empty() {
             return Err(BeadsError::validation(
                 "ids",
@@ -613,7 +613,7 @@ pub fn execute_with_args(
             "--suggest-next only works with a single issue ID",
         ));
     }
-    let routed_batches = config::routing::group_issue_inputs_by_route(&target_inputs, &beads_dir)?;
+    let routed_batches = config::routing::group_issue_inputs_by_route(&target_inputs, &obr_dir)?;
 
     let mut closed_issues = Vec::new();
     let mut skipped_issues = Vec::new();
@@ -621,18 +621,18 @@ pub fn execute_with_args(
     let mut capacity_warnings = Vec::new();
 
     if routed_batches.iter().any(|batch| batch.is_external) {
-        let normalized_local_beads_dir =
-            dunce::canonicalize(&beads_dir).unwrap_or_else(|_| beads_dir.clone());
+        let normalized_local_obr_dir =
+            dunce::canonicalize(&obr_dir).unwrap_or_else(|_| obr_dir.clone());
         let mut routed_outcomes = Vec::new();
 
         for batch in routed_batches {
             let mut batch_args = args.clone();
             batch_args.ids.clone_from(&batch.issue_inputs);
 
-            let normalized_batch_beads_dir =
-                dunce::canonicalize(&batch.beads_dir).unwrap_or_else(|_| batch.beads_dir.clone());
+            let normalized_batch_obr_dir =
+                dunce::canonicalize(&batch.obr_dir).unwrap_or_else(|_| batch.obr_dir.clone());
             let mut batch_cli = cli.clone();
-            batch_cli.db = if normalized_batch_beads_dir == normalized_local_beads_dir {
+            batch_cli.db = if normalized_batch_obr_dir == normalized_local_obr_dir {
                 cli.db.clone()
             } else {
                 None
@@ -642,7 +642,7 @@ pub fn execute_with_args(
                 &batch_args,
                 &batch_cli,
                 ctx,
-                &batch.beads_dir,
+                &batch.obr_dir,
                 batch.is_external,
             )?;
             let CloseExecution {
@@ -670,7 +670,7 @@ pub fn execute_with_args(
     } else {
         let mut local_args = args.clone();
         local_args.ids = target_inputs;
-        let execution = execute_route(&local_args, cli, ctx, &beads_dir, false)?;
+        let execution = execute_route(&local_args, cli, ctx, &obr_dir, false)?;
         closed_issues = execution.closed;
         skipped_issues = execution.skipped;
         unblocked_issues = execution.unblocked;
@@ -688,7 +688,7 @@ pub fn execute_with_args(
     let skip_summary = summarize_skip_reasons(&skipped_issues);
 
     if let Some(last_closed) = closed_issues.last() {
-        crate::util::set_last_touched_id(&beads_dir, &last_closed.id);
+        crate::util::set_last_touched_id(&obr_dir, &last_closed.id);
     }
 
     if use_structured_output {
@@ -724,7 +724,7 @@ pub fn execute_with_args(
     // Exit status must carry the outcome for EVERY requested id, not just for
     // the all-or-nothing case. Gating this on `closed_count == 0` meant a batch
     // that closed one issue and refused another exited 0 with the refusal
-    // visible only as a warning on stderr — so `br close <blocked> <closeable>`
+    // visible only as a warning on stderr — so `obr close <blocked> <closeable>`
     // reported success while the blocked issue was untouched, and stdout showed
     // an unqualified "✓ Closed". `docs/agent/ERRORS.md` tells callers to parse
     // stdout precisely when the exit code is 0, which made that transcript
@@ -777,18 +777,18 @@ fn execute_route(
     args: &CloseArgs,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     auto_flush_external: bool,
 ) -> Result<CloseExecution> {
     let routed_write_lock =
-        acquire_routed_workspace_write_lock(beads_dir, auto_flush_external, cli.lock_timeout)?;
+        acquire_routed_workspace_write_lock(obr_dir, auto_flush_external, cli.lock_timeout)?;
     // Reuse the routed authority for the storage open below; acquiring the
     // same database-family lock from a second descriptor in this process
     // would self-deadlock until the lock timeout (#409 routed cluster).
     let mut route_cli = cli.clone();
     routed_write_lock.mark_cli_write_lock_held(&mut route_cli);
     let cli = &route_cli;
-    let mut storage_ctx = config::open_storage_with_cli(beads_dir, cli)?;
+    let mut storage_ctx = config::open_storage_with_cli(obr_dir, cli)?;
     auto_import_storage_ctx_if_stale(&mut storage_ctx, cli)?;
 
     let config_layer = storage_ctx.load_config(cli)?;
@@ -799,7 +799,7 @@ fn execute_route(
 
     // Closure-time policy gates (issue #274 Phase 1). Loading happens once per
     // route; if the file is absent the doc is the all-off default.
-    let policy_doc = close_policy::load_for_beads_dir(beads_dir)?;
+    let policy_doc = close_policy::load_for_obr_dir(obr_dir)?;
     // Active when close-policy gates are enabled (issue #274) OR the workflow
     // gate engine is configured (issue #312, layer 2). The latter must also
     // trigger per-issue gate evaluation at close time.
@@ -810,7 +810,7 @@ fn execute_route(
     if args.bypass_policy && !policy_doc.allow_bypass {
         return Err(BeadsError::validation(
             "bypass-policy",
-            ".beads/policy.yaml has allow_bypass: false; --bypass-policy is disabled",
+            "policy.yaml has allow_bypass: false; --bypass-policy is disabled",
         ));
     }
 
@@ -1238,7 +1238,7 @@ fn execute_route(
     if auto_flush_external && let Err(error) = storage_ctx.auto_flush_if_enabled() {
         report_auto_flush_failure(
             ctx,
-            &storage_ctx.paths.beads_dir,
+            &storage_ctx.paths.obr_dir,
             &storage_ctx.paths.jsonl_path,
             &error,
         );
@@ -1805,8 +1805,8 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        let db_path = obr_dir.join(crate::config::DEFAULT_DB_FILENAME);
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
         storage
             .create_issue(&make_issue("bd-blocker", "Batch blocker"), "tester")
@@ -1855,8 +1855,8 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        let db_path = obr_dir.join(crate::config::DEFAULT_DB_FILENAME);
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
         storage
             .create_issue(&make_issue("bd-close-first", "First"), "tester")
@@ -1880,7 +1880,7 @@ mod tests {
             ],
             ..CloseArgs::default()
         };
-        let execution = execute_route(&args, &CliOverrides::default(), &ctx, &beads_dir, false)
+        let execution = execute_route(&args, &CliOverrides::default(), &ctx, &obr_dir, false)
             .expect("mixed close batch");
 
         assert!(matches!(
@@ -1906,8 +1906,8 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        let db_path = obr_dir.join(crate::config::DEFAULT_DB_FILENAME);
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
         storage
             .create_issue(&make_issue("bd-parent", "Legacy parent"), "tester")
@@ -1948,8 +1948,8 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        let db_path = obr_dir.join(crate::config::DEFAULT_DB_FILENAME);
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
         storage
             .create_issue(&make_issue("bd-parent", "Legacy parent"), "tester")
@@ -1996,8 +1996,8 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        let db_path = obr_dir.join(crate::config::DEFAULT_DB_FILENAME);
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
         // A deferred prerequisite that blocks the parent epic.
         storage
@@ -2086,8 +2086,8 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        let db_path = obr_dir.join(crate::config::DEFAULT_DB_FILENAME);
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
         let mut issue = make_issue("bd-closed", "Already closed");
         issue.status = Status::Closed;
@@ -2129,8 +2129,8 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        let db_path = obr_dir.join(crate::config::DEFAULT_DB_FILENAME);
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
         storage
             .create_issue(&make_issue("bd-blocker", "Unrequested blocker"), "tester")
@@ -2221,8 +2221,8 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        let db_path = obr_dir.join(crate::config::DEFAULT_DB_FILENAME);
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
         storage
             .create_issue(&make_issue("bd-policy", "Policy governed"), "tester")
@@ -2230,7 +2230,7 @@ mod tests {
         drop(storage);
 
         std::fs::write(
-            beads_dir.join(close_policy::POLICY_FILE_NAME),
+            obr_dir.join(close_policy::POLICY_FILE_NAME),
             "close_policy:\n  require_close_reason:\n    enabled: true\n    min_length: 4\n",
         )
         .expect("write policy");
@@ -2265,8 +2265,8 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        let db_path = obr_dir.join(crate::config::DEFAULT_DB_FILENAME);
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
         storage
             .create_issue(&make_issue("bd-clean", "Clean policy issue"), "tester")
@@ -2279,7 +2279,7 @@ mod tests {
         drop(storage);
 
         std::fs::write(
-            beads_dir.join(close_policy::POLICY_FILE_NAME),
+            obr_dir.join(close_policy::POLICY_FILE_NAME),
             "close_policy:\n  require_acceptance_criteria_satisfied:\n    enabled: true\n",
         )
         .expect("write policy");
@@ -2325,8 +2325,8 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        let db_path = obr_dir.join(crate::config::DEFAULT_DB_FILENAME);
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
         storage
             .create_issue(&make_issue("bd-no-policy", "No policy"), "tester")
@@ -2351,7 +2351,7 @@ mod tests {
         );
     }
 
-    /// GitHub #399: `br close` must honor `workflow.transitions`. A policy
+    /// GitHub #399: `obr close` must honor `workflow.transitions`. A policy
     /// whose map has no `open -> closed` edge has to refuse the close and
     /// leave the issue open; widening the map with the `any` wildcard has to
     /// let the same close through.
@@ -2364,15 +2364,15 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        let db_path = obr_dir.join(crate::config::DEFAULT_DB_FILENAME);
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
         storage
             .create_issue(&make_issue("bd-wf", "Workflow governed"), "tester")
             .expect("create workflow issue");
         drop(storage);
 
-        let policy_path = beads_dir.join(close_policy::POLICY_FILE_NAME);
+        let policy_path = obr_dir.join(close_policy::POLICY_FILE_NAME);
         std::fs::write(
             &policy_path,
             "workflow:\n  strict: true\n  statuses: [open, in_progress, closed]\n  \
@@ -2438,7 +2438,7 @@ mod tests {
     /// `blocks` edge from the prereq (so `bd-dep` depends on `bd-prereq`),
     /// where the dependent has the supplied status.
     fn setup_prereq_and_dependent(
-        beads_dir: &std::path::Path,
+        obr_dir: &std::path::Path,
         db_path: &std::path::Path,
         dependent_status: Status,
     ) {
@@ -2465,7 +2465,7 @@ mod tests {
         storage.rebuild_blocked_cache(true).expect("rebuild cache");
         drop(storage);
         // No policy.yaml written by default — callers add it when needed.
-        let _ = beads_dir;
+        let _ = obr_dir;
     }
 
     #[test]
@@ -2477,10 +2477,10 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        let db_path = obr_dir.join(crate::config::DEFAULT_DB_FILENAME);
         // Deferred dependent present, but NO policy.yaml => gate is off.
-        setup_prereq_and_dependent(&beads_dir, &db_path, Status::Deferred);
+        setup_prereq_and_dependent(&obr_dir, &db_path, Status::Deferred);
 
         let _guard = DirGuard::new(temp.path());
         let args = CloseArgs {
@@ -2508,11 +2508,11 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
-        setup_prereq_and_dependent(&beads_dir, &db_path, Status::Deferred);
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        let db_path = obr_dir.join(crate::config::DEFAULT_DB_FILENAME);
+        setup_prereq_and_dependent(&obr_dir, &db_path, Status::Deferred);
         std::fs::write(
-            beads_dir.join(close_policy::POLICY_FILE_NAME),
+            obr_dir.join(close_policy::POLICY_FILE_NAME),
             DEFERRED_DEPENDENTS_POLICY,
         )
         .expect("write policy");
@@ -2561,12 +2561,12 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        let db_path = obr_dir.join(crate::config::DEFAULT_DB_FILENAME);
         // Dependent is open, not deferred => gate is satisfied.
-        setup_prereq_and_dependent(&beads_dir, &db_path, Status::Open);
+        setup_prereq_and_dependent(&obr_dir, &db_path, Status::Open);
         std::fs::write(
-            beads_dir.join(close_policy::POLICY_FILE_NAME),
+            obr_dir.join(close_policy::POLICY_FILE_NAME),
             DEFERRED_DEPENDENTS_POLICY,
         )
         .expect("write policy");
@@ -2597,11 +2597,11 @@ mod tests {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
 
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
-        setup_prereq_and_dependent(&beads_dir, &db_path, Status::Deferred);
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        let db_path = obr_dir.join(crate::config::DEFAULT_DB_FILENAME);
+        setup_prereq_and_dependent(&obr_dir, &db_path, Status::Deferred);
         std::fs::write(
-            beads_dir.join(close_policy::POLICY_FILE_NAME),
+            obr_dir.join(close_policy::POLICY_FILE_NAME),
             DEFERRED_DEPENDENTS_POLICY,
         )
         .expect("write policy");
@@ -2618,7 +2618,7 @@ mod tests {
                 .expect_err("close should be rejected while dependent is deferred");
         }
 
-        // Reopen the deferred dependent (`br update bd-dep --status=open`).
+        // Reopen the deferred dependent (`obr update bd-dep --status=open`).
         {
             let mut storage = SqliteStorage::open(&db_path).expect("storage");
             let update = IssueUpdate {
@@ -2665,9 +2665,9 @@ mod tests {
     fn setup_gate_repo(temp: &TempDir, status: Status) -> std::path::PathBuf {
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
-        let beads_dir = temp.path().join(".beads");
-        std::fs::write(beads_dir.join("policy.yaml"), GATE_POLICY_YAML).expect("write policy");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        std::fs::write(obr_dir.join("policy.yaml"), GATE_POLICY_YAML).expect("write policy");
+        let db_path = obr_dir.join(crate::config::DEFAULT_DB_FILENAME);
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
         storage
             .create_issue(&make_issue_with_status("bd-1", "Gated", status), "tester")
@@ -2783,8 +2783,8 @@ mod tests {
         let temp = TempDir::new().expect("tempdir");
         let ctx = OutputContext::from_flags(false, false, true);
         commands::init::execute(None, false, Some(temp.path()), &ctx).expect("init");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        let db_path = obr_dir.join(crate::config::DEFAULT_DB_FILENAME);
         {
             let mut storage = SqliteStorage::open(&db_path).expect("storage");
             storage

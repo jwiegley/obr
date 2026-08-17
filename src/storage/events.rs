@@ -1,4 +1,4 @@
-//! Event storage operations for `beads_rust`.
+//! Event storage operations for `obr`.
 //!
 //! This module implements the audit event system with:
 //! - Event insertion (atomic with mutations)

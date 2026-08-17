@@ -39,8 +39,8 @@ pub fn execute(
     outer_ctx: &OutputContext,
 ) -> Result<()> {
     // Open storage (--db flag allows working from any directory)
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    let storage_ctx = config::open_storage_with_cli(&beads_dir, cli)?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    let storage_ctx = config::open_storage_with_cli(&obr_dir, cli)?;
     execute_inner(args, cli, outer_ctx, &storage_ctx)
 }
 
@@ -69,7 +69,7 @@ fn execute_inner(
 
     // Build filter from args
     let mut filters = build_filters(args)?;
-    validate_status_filter(&filters, storage, &storage_ctx.paths.beads_dir)?;
+    validate_status_filter(&filters, storage, &storage_ctx.paths.obr_dir)?;
     let client_filters = needs_client_filters(args);
 
     // Determine output format early so we know whether to run a count query.
@@ -446,7 +446,7 @@ fn issue_with_batched_relation_metadata(
 fn validate_status_filter(
     filters: &ListFilters,
     storage: &crate::storage::SqliteStorage,
-    beads_dir: &std::path::Path,
+    obr_dir: &std::path::Path,
 ) -> Result<()> {
     let Some(statuses) = filters.statuses.as_ref() else {
         return Ok(());
@@ -461,7 +461,7 @@ fn validate_status_filter(
     if customs.is_empty() {
         return Ok(());
     }
-    let mut known: HashSet<String> = crate::close_policy::load_for_beads_dir(beads_dir)?
+    let mut known: HashSet<String> = crate::close_policy::load_for_obr_dir(obr_dir)?
         .workflow
         .statuses
         .iter()
@@ -480,7 +480,7 @@ fn validate_status_filter(
                 reason: format!(
                     "unknown status '{custom}'. Built-in statuses: open, in_progress, \
                      blocked, deferred, draft, closed, tombstone, pinned. Custom statuses \
-                     must be declared in .beads/policy.yaml (workflow.statuses) or exist \
+                     must be declared in .obr/policy.yaml (workflow.statuses) or exist \
                      on at least one issue. Use --status all to include every status"
                 ),
             });
@@ -492,7 +492,7 @@ fn validate_status_filter(
 /// Convert CLI args to storage filter.
 fn build_filters(args: &ListArgs) -> Result<ListFilters> {
     // Parse status strings to Status enums. `--status all` is the same
-    // meta-value `br lint` accepts: no status filter, every status included.
+    // meta-value `obr lint` accepts: no status filter, every status included.
     let all_statuses = super::status_filter_requests_all(&args.status);
     let statuses = if args.status.is_empty() || all_statuses {
         None

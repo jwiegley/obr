@@ -220,7 +220,7 @@ struct CapacityOccupancyRow {
 /// Observed occupancy of one configured capacity (GitHub #384 phase 6).
 ///
 /// Produced by [`SqliteStorage::capacity_snapshot`] for the observability
-/// surfaces (`br stats`, `br coordination status`). One row per repository
+/// surfaces (`obr stats`, `obr coordination status`). One row per repository
 /// capacity, plus one row per OCCUPIED partition of each scoped capacity.
 #[derive(Debug, Clone)]
 pub struct CapacitySnapshotRow {
@@ -1162,7 +1162,7 @@ const CHILD_OPEN_BLOCKER_SUFFIX: &str = ":child-open";
 /// parent down onto its children (e.g. `bd-3n73:parent-blocked`).
 ///
 /// This is an advisory **readiness** marker used to rank a child of a blocked
-/// epic below truly-ready work in `br ready`. It is hierarchy, not a
+/// epic below truly-ready work in `obr ready`. It is hierarchy, not a
 /// prerequisite edge from the parent to the child, so it must never act as a
 /// *hard* gate: a finished child must be *closable* (#355) and an actionable
 /// child must be *claimable / startable* (#357) even while its parent epic is
@@ -1197,7 +1197,7 @@ const KNOWN_METADATA_DEFAULTS: [(&str, &str); 7] = [
 ///
 /// `Absent` is the only state that permits an unrelated automatic mutation.
 /// Every other variant is a durable or ambiguous saga state that only the
-/// explicit `br sync --merge` recovery path may advance.
+/// explicit `obr sync --merge` recovery path may advance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PendingSyncMergeInspection {
     Absent,
@@ -1283,7 +1283,7 @@ pub(crate) fn classify_pending_sync_merge_rows(
             metadata_key: METADATA_SYNC_MERGE_PENDING_LEGACY.to_string(),
             row_count: 1,
             diagnostic:
-                "Legacy pending sync-merge state requires explicit `br sync --merge` reconciliation"
+                "Legacy pending sync-merge state requires explicit `obr sync --merge` reconciliation"
                     .to_string(),
         };
     }
@@ -2386,7 +2386,7 @@ impl SqliteStorage {
         // Ordinary opens keep the shipped auto-migration contract: a database
         // behind CURRENT_SCHEMA_VERSION is migrated in place (legacy fleets
         // depend on this — pre-v13 databases have no reviewed migration
-        // pair). The reviewed `br doctor migrate-schema` lifecycle remains
+        // pair). The reviewed `obr doctor migrate-schema` lifecycle remains
         // the explicit, receipt-bound alternative for operator-driven
         // migrations of supported version pairs.
         let current_schema_version = u32::try_from(CURRENT_SCHEMA_VERSION).unwrap_or(0);
@@ -4178,7 +4178,7 @@ impl SqliteStorage {
             return Err(BeadsError::validation(
                 "workflow.capacity.exemptions",
                 "capacity exemptions are not enabled: list authorized providers under \
-                 workflow.capacity.exemptions.providers in .beads/policy.yaml",
+                 workflow.capacity.exemptions.providers in policy.yaml",
             ));
         }
         let provider = provider.trim();
@@ -4757,8 +4757,8 @@ impl SqliteStorage {
         Self::load_capacity_exemption_index(conn, policy, true)
     }
 
-    /// Read-only exemption index for observability surfaces (`br stats`,
-    /// `br coordination status`): expired exemptions stop counting exactly
+    /// Read-only exemption index for observability surfaces (`obr stats`,
+    /// `obr coordination status`): expired exemptions stop counting exactly
     /// like enforcement, but the audited lazy-expire records stay pending
     /// for the next committed enforcement observation — a read command must
     /// not write.
@@ -6784,8 +6784,8 @@ impl SqliteStorage {
             let to = to_status.as_str();
 
             // GitHub #399: enforce `workflow.transitions` at the storage
-            // chokepoint. `br update` validated the transition in its own CLI
-            // layer, but `br close` (and the MCP/epic batch writers) reached
+            // chokepoint. `obr update` validated the transition in its own CLI
+            // layer, but `obr close` (and the MCP/epic batch writers) reached
             // this preflight with only required-field and gate evaluation, so
             // a status move the transitions map forbids still committed.
             // Validating here — inside the same `BEGIN IMMEDIATE` preflight,
@@ -7035,7 +7035,7 @@ impl SqliteStorage {
             tracing::warn!(
                 id = %id,
                 "update_issue: row not found inside write transaction \
-                 (possible DB corruption — run `br doctor --repair`)"
+                 (possible DB corruption — run `obr doctor --repair`)"
             );
             BeadsError::IssueNotFound { id: id.to_string() }
         })?;
@@ -7656,7 +7656,7 @@ impl SqliteStorage {
 
     /// List the IDs of all tombstoned (soft-deleted) issues, sorted.
     ///
-    /// Used by `br delete --hard` (invoked with no explicit IDs) to purge every
+    /// Used by `obr delete --hard` (invoked with no explicit IDs) to purge every
     /// tombstone from the store in one pass (#367).
     ///
     /// # Errors
@@ -8273,7 +8273,7 @@ impl SqliteStorage {
     /// List stale command issues without hydrating fields stale output never renders.
     ///
     /// This is intentionally narrow and falls back to `list_issues` if the
-    /// filter shape expands beyond what `br stale` currently uses.
+    /// filter shape expands beyond what `obr stale` currently uses.
     ///
     /// # Errors
     ///
@@ -8371,7 +8371,7 @@ impl SqliteStorage {
     /// List lint command issues without hydrating fields lint never inspects.
     ///
     /// This is intentionally narrow and falls back to `list_issues` if the
-    /// filter shape expands beyond what `br lint` currently uses.
+    /// filter shape expands beyond what `obr lint` currently uses.
     ///
     /// # Errors
     ///
@@ -8455,7 +8455,7 @@ impl SqliteStorage {
     /// List orphan-scan candidate issues without hydrating unused full issue fields.
     ///
     /// This is intentionally narrow and falls back to `list_issues` if the
-    /// filter shape expands beyond what `br orphans` currently uses.
+    /// filter shape expands beyond what `obr orphans` currently uses.
     ///
     /// # Errors
     ///
@@ -8518,7 +8518,7 @@ impl SqliteStorage {
     /// List graph command issues without hydrating fields graph rendering never inspects.
     ///
     /// This is intentionally narrow and falls back to `list_issues` if the
-    /// filter shape expands beyond what `br graph --all` currently uses.
+    /// filter shape expands beyond what `obr graph --all` currently uses.
     ///
     /// # Errors
     ///
@@ -9018,7 +9018,7 @@ impl SqliteStorage {
 
     /// Count label buckets for issues matching the given filters.
     ///
-    /// This mirrors the label grouping semantics used by `br count --by label`:
+    /// This mirrors the label grouping semantics used by `obr count --by label`:
     /// each labeled issue contributes once per label, and unlabeled issues
     /// contribute to the synthetic `(no labels)` bucket.
     ///
@@ -11968,11 +11968,11 @@ impl SqliteStorage {
     /// dep rows.
     ///
     /// Rationale: `get_epic_counts()` covers the happy path (issues created
-    /// with `br create --parent ...`, which writes a `parent-child` row in
+    /// with `obr create --parent ...`, which writes a `parent-child` row in
     /// `dependencies`). But legacy beads DBs, direct database migrations, or
     /// older storage versions can contain IDs like
     /// `bd-epic.1`, `bd-epic.2` that are semantically children but have no dep
-    /// row. Without this check, `br close bd-epic` silently closes the parent
+    /// row. Without this check, `obr close bd-epic` silently closes the parent
     /// while leaving those children orphaned.
     ///
     /// Excludes grandchildren (e.g. `bd-epic.1.1` is not a direct child of
@@ -14220,7 +14220,7 @@ impl SqliteStorage {
     /// Mirror of [`Self::get_blocking_dependents_for_issue_ids`]: for each id,
     /// the issues it *depends on* rather than the issues that depend on it.
     ///
-    /// Backs `br graph --dependencies` (`beads_rust-mf72`), which answers "what
+    /// Backs `obr graph --dependencies` (`beads_rust-mf72`), which answers "what
     /// is blocking this?" where the default walk answers "what does closing
     /// this unblock?". The two queries are exact inverses, including the
     /// `parent-child` special case, which the dependents query deliberately
@@ -16181,6 +16181,7 @@ fn namespace_sidecar_mode_repair_witnesses(
     Ok(witnesses)
 }
 
+/// Report whether an fsqlite namespace sidecar needs an owner-only mode repair.
 fn namespace_sidecar_mode_repair_required(db_path: &Path) -> Result<bool> {
     #[cfg(unix)]
     {
@@ -17092,7 +17093,7 @@ pub struct ReadyFilters {
     /// canonical-or-custom status string (already lowercased by the caller).
     /// Empty means "use the default `[open]` group", which preserves pre-#354
     /// behavior exactly. The CLI layer resolves this from
-    /// `workflow.status_groups.ready` in `.beads/policy.yaml`.
+    /// `workflow.status_groups.ready` in `policy.yaml`.
     pub ready_statuses: Vec<String>,
     pub limit: Option<usize>,
     /// Filter to children of this parent issue ID.
@@ -17679,7 +17680,7 @@ fn parse_opt_datetime_value(value: Option<&SqliteValue>) -> Result<Option<DateTi
 }
 
 /// Convert a numeric epoch stored as `i64` into a UTC datetime by auto-
-/// detecting the unit from magnitude. We assume any realistic beads timestamp
+/// detecting the unit from magnitude. We assume any realistic obr timestamp
 /// is within a century of the Unix epoch, which gives non-overlapping ranges
 /// for seconds (≤10^10), milliseconds (≤10^13), microseconds (≤10^16), and
 /// nanoseconds (≤10^19).
@@ -18126,9 +18127,9 @@ impl SqliteStorage {
     ) -> Result<BTreeMap<String, Vec<String>>> {
         let mut graph: BTreeMap<String, Vec<String>> = BTreeMap::new();
         // Cycle health is a *blocking* question, and it must agree with the
-        // add-time gate: `br dep add -t related` (and custom non-blocking
+        // add-time gate: `obr dep add -t related` (and custom non-blocking
         // types) are never cycle-checked on insertion, so counting those
-        // edges here made `br dep cycles` fail (nonzero since #368) on
+        // edges here made `obr dep cycles` fail (nonzero since #368) on
         // graphs the add path deliberately allowed (GitHub #391). Both modes
         // therefore use the blocking edge set; `--blocking-only` remains a
         // compatible alias now that the default matches add-time semantics.
@@ -18951,13 +18952,37 @@ impl SqliteStorage {
     /// # Errors
     ///
     /// Returns an error if validation or any database operation fails.
-    #[allow(clippy::too_many_lines)]
+    /// JSONL-format convenience wrapper; see
+    /// [`Self::apply_sync_merge_atomically_with_format`]. Production code
+    /// threads the workspace's real format; only tests use this shorthand.
+    #[cfg(test)]
     pub(crate) fn apply_sync_merge_atomically(
         &mut self,
         kept: &[Issue],
         deleted_ids: &[String],
         notes: &[(String, String)],
         intent: &SyncMergeIntent,
+    ) -> Result<SyncMergePendingReceipt> {
+        self.apply_sync_merge_atomically_with_format(
+            kept,
+            deleted_ids,
+            notes,
+            intent,
+            crate::sync::org_bridge::ExportFormat::Jsonl,
+        )
+    }
+
+    /// The receipt's `content_hash` is the digest of the export this merge
+    /// will produce, so it must be computed in the workspace's flat-file
+    /// format or verification against the flushed file can never match.
+    #[allow(clippy::too_many_lines)]
+    pub(crate) fn apply_sync_merge_atomically_with_format(
+        &mut self,
+        kept: &[Issue],
+        deleted_ids: &[String],
+        notes: &[(String, String)],
+        intent: &SyncMergeIntent,
+        export_format: crate::sync::org_bridge::ExportFormat,
     ) -> Result<SyncMergePendingReceipt> {
         self.last_capacity_warnings.clear();
         let actor = intent.actor.as_str();
@@ -19273,6 +19298,8 @@ impl SqliteStorage {
                     crate::sync::ExportErrorPolicy::Strict,
                     intent.retention_days,
                     intent.export_as_of,
+                    export_format,
+                    &crate::sync::org_bridge::OrgStyle::default(),
                 )?;
             let receipt = SyncMergePendingReceipt::new(
                 intent.clone(),
@@ -19430,8 +19457,20 @@ impl SqliteStorage {
             });
         }
         if authority.bind_database_inode_for_mutation()? {
+            // The main database file is gone. That is only safe to read as "no
+            // pending merge" when the rest of the family is gone too: a WAL
+            // abandoned by an abnormal exit can still hold the committed merge
+            // receipt, and calling that absent would let a repair truncate the
+            // WAL and lose the merge.
             authority.verify_database_authority()?;
-            return Ok(PendingSyncMergeInspection::Absent);
+            if authority.database_family_is_absent()? {
+                return Ok(PendingSyncMergeInspection::Absent);
+            }
+            return Err(BeadsError::SyncConflict {
+                message:
+                    "Pending sync-merge state is unknown because the authorized database is missing while its sidecars still hold data"
+                        .to_string(),
+            });
         }
         authority.verify_database_authority()?;
         let mut header = [0_u8; 16];
@@ -19462,6 +19501,19 @@ impl SqliteStorage {
                     expected: CURRENT_SCHEMA_VERSION,
                     found: i32::try_from(found).unwrap_or(i32::MAX),
                 }),
+                // Symmetric with the absent-main-file branch above. A receipt
+                // lives in a table inside the SQLite database, so when the main
+                // file provably holds no SQLite database and no sidecar can
+                // still carry committed pages, no member of the family can hold
+                // one. Refusing here would be refusing to protect bytes that do
+                // not exist, and it strands every repair path that exists to
+                // rebuild exactly this workspace.
+                None if crate::sync::database_file_is_provably_not_a_database(path)
+                    && !authority.database_sidecars_may_hold_committed_bytes()? =>
+                {
+                    authority.verify_database_authority()?;
+                    Ok(PendingSyncMergeInspection::Absent)
+                }
                 None => Err(BeadsError::SyncConflict {
                     message:
                         "Pending sync-merge state is unknown because the database schema is missing or unreadable"
@@ -19481,7 +19533,7 @@ impl SqliteStorage {
             pending @ (PendingSyncMergeInspection::Legacy { .. }
             | PendingSyncMergeInspection::Malformed { .. }) => Err(BeadsError::SyncConflict {
                 message: format!(
-                    "{}; refusing automatic recovery until `br sync --merge` reconciles it",
+                    "{}; refusing automatic recovery until `obr sync --merge` reconciles it",
                     pending.diagnostic()
                 ),
             }),
@@ -20160,6 +20212,8 @@ mod tests {
             crate::sync::ExportErrorPolicy::Strict,
             intent.retention_days,
             intent.export_as_of,
+            crate::sync::org_bridge::ExportFormat::Jsonl,
+            &crate::sync::org_bridge::OrgStyle::default(),
         )
         .unwrap()
         .0
@@ -23028,7 +23082,7 @@ mod tests {
 
     /// GitHub #391: the cycle report must agree with the add-time gate.
     /// A `related` edge is never cycle-checked on insertion, so it must not
-    /// be counted by `br dep cycles` either; the containment-induced
+    /// be counted by `obr dep cycles` either; the containment-induced
     /// rejection of a descendant's blocks-edge stays (documented design).
     #[test]
     fn dependency_cycles_agree_with_add_time_blocking_semantics() {
@@ -23879,10 +23933,10 @@ mod tests {
     fn test_external_dependency_blocks_and_propagates_to_children() {
         let temp = TempDir::new().unwrap();
         let external_root = temp.path().join("extproj");
-        let beads_dir = external_root.join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = external_root.join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
 
-        let db_path = beads_dir.join("beads.db");
+        let db_path = obr_dir.join("beads.db");
         let _external_storage = SqliteStorage::open(&db_path).unwrap();
 
         let mut storage = SqliteStorage::open_memory().unwrap();
@@ -24302,7 +24356,7 @@ mod tests {
         assert!(storage.may_have_blocked_command_results().unwrap());
     }
 
-    /// Regression for beads_rust#285. The issue reported that `br close`
+    /// Regression for beads_rust#285. The issue reported that `obr close`
     /// persisted to JSONL but not to the SQLite store and that the
     /// dirty-tracker stayed empty — meaning the JSONL→DB→JSONL
     /// reconciliation never fired for the row. Pins both halves of
@@ -24350,7 +24404,7 @@ mod tests {
         assert_eq!(
             reloaded.status,
             Status::Closed,
-            "SQLite row must report closed; if this fails, br close persisted to JSONL but not DB (issue #285)"
+            "SQLite row must report closed; if this fails, obr close persisted to JSONL but not DB (issue #285)"
         );
 
         // Half 3: dirty_issues queued the close so the next flush can
@@ -24360,7 +24414,7 @@ mod tests {
         assert_eq!(
             storage.get_dirty_issue_count().unwrap(),
             1,
-            "close path must enqueue dirty_issues; without this br sync --flush-only is a no-op after close (issue #285)"
+            "close path must enqueue dirty_issues; without this obr sync --flush-only is a no-op after close (issue #285)"
         );
         let dirty: Vec<(String, String)> = storage.get_dirty_issue_metadata().unwrap();
         assert_eq!(dirty.len(), 1);
@@ -24394,7 +24448,7 @@ mod tests {
 
     #[test]
     fn test_update_issue_writes_source_repo_path() {
-        // Regression for #289: `br update --source-repo-path PATH` must
+        // Regression for #289: `obr update --source-repo-path PATH` must
         // round-trip through SQLite. Without writing to the column, the
         // installed checkpoint would silently lose the value on every
         // create-then-update cycle.
@@ -27029,7 +27083,7 @@ mod tests {
 
         // GitHub #391: `related` edges are never cycle-checked when added,
         // so no report mode may count them — the default previously did,
-        // making `br dep cycles` fail on graphs the add path allowed.
+        // making `obr dep cycles` fail on graphs the add path allowed.
         assert!(storage.detect_all_cycles()?.is_empty());
         assert!(storage.detect_blocking_cycles()?.is_empty());
         Ok(())
@@ -30529,7 +30583,7 @@ mod tests {
         let error = SqliteStorage::open(&db_path)
             .expect_err("ordinary open must not cross a schema-version boundary");
         assert!(
-            error.to_string().contains("br doctor migrate-schema plan"),
+            error.to_string().contains("obr doctor migrate-schema plan"),
             "refusal must provide the reviewed migration command: {error}"
         );
 
@@ -31232,7 +31286,7 @@ mod tests {
 
         let issue_ids: Vec<String> = (0..160)
             .map(|idx| {
-                let prefix = if idx % 2 == 0 { "bd" } else { "br" };
+                let prefix = if idx % 2 == 0 { "bd" } else { "obr" };
                 format!("{prefix}-hash-{idx:03}")
             })
             .collect();
@@ -31262,7 +31316,10 @@ mod tests {
             .map(|issue_id| (issue_id.clone(), format!("hash-b-{issue_id}")))
             .collect();
         rewritten_hashes.push(("bd-hash-000".to_string(), "hash-c-bd-hash-000".to_string()));
-        rewritten_hashes.push(("br-hash-001".to_string(), "hash-c-br-hash-001".to_string()));
+        rewritten_hashes.push((
+            "obr-hash-001".to_string(),
+            "hash-c-obr-hash-001".to_string(),
+        ));
 
         let updated = storage.set_export_hashes(&rewritten_hashes).unwrap();
         assert_eq!(updated, issue_ids.len());
@@ -31274,10 +31331,10 @@ mod tests {
         assert_eq!(first_hash, "hash-c-bd-hash-000");
 
         let (second_hash, _) = storage
-            .get_export_hash("br-hash-001")
+            .get_export_hash("obr-hash-001")
             .unwrap()
             .expect("updated export hash for br-hash-001");
-        assert_eq!(second_hash, "hash-c-br-hash-001");
+        assert_eq!(second_hash, "hash-c-obr-hash-001");
 
         let row_count = storage
             .execute_raw_query("SELECT COUNT(*) FROM export_hashes")
@@ -31298,7 +31355,7 @@ mod tests {
 
         let issue_pairs: Vec<(String, String)> = (0..160)
             .map(|idx| {
-                let prefix = if idx % 2 == 0 { "bd" } else { "br" };
+                let prefix = if idx % 2 == 0 { "bd" } else { "obr" };
                 (
                     format!("{prefix}-blocked-{idx:03}"),
                     format!("{prefix}-blocker-{idx:03}"),
@@ -31462,7 +31519,7 @@ mod tests {
     #[allow(clippy::too_many_lines)]
     fn test_diag_root_page_visibility() {
         use fsqlite_types::value::SqliteValue;
-        // Create full beads schema and check which root pages are accessible
+        // Create full obr schema and check which root pages are accessible
         let conn = crate::franken_sync::Connection::open(":memory:".to_string()).unwrap();
 
         // Apply schema step by step, checking after each table
@@ -31535,7 +31592,7 @@ mod tests {
             "CREATE INDEX IF NOT EXISTS idx_issues_due_at ON issues(due_at) WHERE due_at IS NOT NULL",
             "CREATE INDEX IF NOT EXISTS idx_issues_defer_until ON issues(defer_until) WHERE defer_until IS NOT NULL",
             "CREATE INDEX IF NOT EXISTS idx_issues_ready ON issues(status, priority, created_at) WHERE status = 'open' AND ephemeral = 0 AND pinned = 0 AND (is_template = 0 OR is_template IS NULL)",
-            // Issue #354: `br ready` can be configured (workflow.status_groups.ready)
+            // Issue #354: `obr ready` can be configured (workflow.status_groups.ready)
             // to surface statuses beyond `open` (e.g. `rework`). The partial
             // `idx_issues_ready` above only covers `status = 'open'`, so a widened
             // ready group would fall back to a scan on the status leg. The partial
@@ -34687,7 +34744,7 @@ mod tests {
     /// `PRAGMA wal_checkpoint(TRUNCATE)` is fsqlite's responsibility
     /// — its checkpoint executor decides whether the file is
     /// truncated to zero or retained as a zero-frame header — and
-    /// keeping that detail out of beads_rust's regression suite
+    /// keeping that detail out of obr's regression suite
     /// avoids a false alarm whenever fsqlite revises its WAL
     /// teardown.
     #[test]
@@ -35364,14 +35421,14 @@ mod tests {
     #[test]
     fn attached_authority_rejects_replaced_database_before_both_write_transaction_paths() {
         let dir = TempDir::new().unwrap();
-        let beads_dir = dir.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let db_path = beads_dir.join("beads.db");
-        let displaced_path = beads_dir.join("beads.displaced.db");
+        let obr_dir = dir.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let db_path = obr_dir.join("beads.db");
+        let displaced_path = obr_dir.join("beads.displaced.db");
         let mut storage = SqliteStorage::open(&db_path).unwrap();
         let authority = Arc::new(
             crate::sync::blocking_database_family_write_lock_with_timeout(
-                &beads_dir,
+                &obr_dir,
                 &db_path,
                 Some(1_000),
             )
@@ -35445,13 +35502,13 @@ mod tests {
                 pre-merge snapshot); tracked for completion by the owning workstream"]
     fn write_transaction_reports_post_commit_authority_loss_without_retrying() {
         let dir = TempDir::new().unwrap();
-        let beads_dir = dir.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = dir.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let db_path = obr_dir.join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).unwrap();
         let authority = Arc::new(
             crate::sync::blocking_database_family_write_lock_with_timeout(
-                &beads_dir,
+                &obr_dir,
                 &db_path,
                 Some(1_000),
             )
@@ -35511,13 +35568,13 @@ mod tests {
     #[test]
     fn shared_write_transaction_reports_post_commit_authority_loss_without_retrying() {
         let dir = TempDir::new().unwrap();
-        let beads_dir = dir.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = dir.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let db_path = obr_dir.join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).unwrap();
         let authority = Arc::new(
             crate::sync::blocking_database_family_write_lock_with_timeout(
-                &beads_dir,
+                &obr_dir,
                 &db_path,
                 Some(1_000),
             )

@@ -20,7 +20,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 
-const SCHEDULER_SCHEMA: &str = "br.scheduler.v1";
+const SCHEDULER_SCHEMA: &str = "obr.scheduler.v1";
 const PRIORITY_WEIGHT: i64 = 10;
 const DEPENDENT_WEIGHT: i64 = 3;
 const MAX_DEPENDENT_CONTRIBUTION: i64 = 30;
@@ -142,8 +142,8 @@ pub fn execute(
     cli: &config::CliOverrides,
     outer_ctx: &OutputContext,
 ) -> Result<()> {
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    execute_inner(args, cli, outer_ctx, &beads_dir, None, None)
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    execute_inner(args, cli, outer_ctx, &obr_dir, None, None)
 }
 
 /// Execute scheduler using the caller's preopened storage context.
@@ -155,24 +155,24 @@ pub fn execute_with_storage_ctx(
     args: &SchedulerArgs,
     cli: &config::CliOverrides,
     outer_ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     storage_ctx: &config::OpenStorageResult,
 ) -> Result<()> {
-    execute_inner(args, cli, outer_ctx, beads_dir, None, Some(storage_ctx))
+    execute_inner(args, cli, outer_ctx, obr_dir, None, Some(storage_ctx))
 }
 
 fn execute_inner(
     args: &SchedulerArgs,
     cli: &config::CliOverrides,
     outer_ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     preloaded_storage: Option<&SqliteStorage>,
     preloaded_storage_ctx: Option<&config::OpenStorageResult>,
 ) -> Result<()> {
     let owned_storage_ctx = if preloaded_storage.is_some() || preloaded_storage_ctx.is_some() {
         None
     } else {
-        Some(config::open_storage_with_cli(beads_dir, cli)?)
+        Some(config::open_storage_with_cli(obr_dir, cli)?)
     };
     let storage = preloaded_storage
         .or_else(|| preloaded_storage_ctx.map(|ctx| &ctx.storage))
@@ -187,7 +187,7 @@ fn execute_inner(
     let quiet = cli.quiet.unwrap_or(false);
     let early_ctx = OutputContext::from_output_format(output_format, quiet, true);
 
-    let output = build_scheduler_output(args, cli, beads_dir, storage, storage_ctx_for_config)?;
+    let output = build_scheduler_output(args, cli, obr_dir, storage, storage_ctx_for_config)?;
 
     if matches!(early_ctx.mode(), OutputMode::Quiet) {
         return Ok(());
@@ -205,15 +205,15 @@ fn execute_inner(
 fn build_scheduler_output(
     args: &SchedulerArgs,
     cli: &config::CliOverrides,
-    beads_dir: &Path,
+    obr_dir: &Path,
     storage: &SqliteStorage,
     storage_ctx: Option<&config::OpenStorageResult>,
 ) -> Result<SchedulerOutput> {
     let now = Utc::now();
     let candidate_limit = (args.candidate_limit > 0).then_some(args.candidate_limit);
     // Honor the configured "ready" status group (#354) so the scheduler scores
-    // the same candidate set `br ready` surfaces. Defaults to `[open]`.
-    let workflow = crate::close_policy::load_for_beads_dir(beads_dir)?.workflow;
+    // the same candidate set `obr ready` surfaces. Defaults to `[open]`.
+    let workflow = crate::close_policy::load_for_obr_dir(obr_dir)?.workflow;
     workflow.validate_ready_status_group()?;
     let mut filters = ReadyFilters {
         limit: candidate_limit,
@@ -224,9 +224,9 @@ fn build_scheduler_output(
         storage.get_ready_issues_for_command_output(&filters, ReadySortPolicy::Priority)?;
 
     if !issues.is_empty() && storage.has_external_dependencies(true)? {
-        let config_layer = load_scheduler_config(beads_dir, storage, storage_ctx, cli)?;
-        auto_import_external_projects_if_stale(&config_layer, beads_dir, cli);
-        let external_db_paths = config::external_project_db_paths(&config_layer, beads_dir);
+        let config_layer = load_scheduler_config(obr_dir, storage, storage_ctx, cli)?;
+        auto_import_external_projects_if_stale(&config_layer, obr_dir, cli);
+        let external_db_paths = config::external_project_db_paths(&config_layer, obr_dir);
         let external_statuses =
             storage.resolve_external_dependency_statuses(&external_db_paths, true)?;
         let external_blockers = storage.external_blockers(&external_statuses)?;
@@ -311,7 +311,7 @@ fn build_scheduler_output(
 }
 
 fn load_scheduler_config(
-    beads_dir: &Path,
+    obr_dir: &Path,
     storage: &SqliteStorage,
     storage_ctx: Option<&config::OpenStorageResult>,
     cli: &config::CliOverrides,
@@ -319,7 +319,7 @@ fn load_scheduler_config(
     if let Some(storage_ctx) = storage_ctx {
         storage_ctx.load_config(cli)
     } else {
-        config::load_config(beads_dir, Some(storage), cli)
+        config::load_config(obr_dir, Some(storage), cli)
     }
 }
 
@@ -572,13 +572,13 @@ const fn scheduler_coordination_status_hint(
 ) -> Option<&'static str> {
     match recommended_action {
         RecommendedAction::InspectMail => Some(
-            "run br coordination status with Agent Mail snapshots before treating this claim as abandoned",
+            "run obr coordination status with Agent Mail snapshots before treating this claim as abandoned",
         ),
         RecommendedAction::AskOwner => {
             Some("ask the assignee or operator before changing ownership")
         }
         RecommendedAction::ReclaimCandidate => {
-            Some("review br coordination status suggested_commands before reclaiming")
+            Some("review obr coordination status suggested_commands before reclaiming")
         }
         RecommendedAction::LeaveActive => Some("leave active coordination evidence alone"),
         RecommendedAction::Observe => None,

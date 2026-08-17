@@ -23,7 +23,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-/// Execute `br coordination status`.
+/// Execute `obr coordination status`.
 ///
 /// # Errors
 ///
@@ -33,11 +33,11 @@ pub fn execute_status(
     cli: &config::CliOverrides,
     outer_ctx: &OutputContext,
 ) -> Result<()> {
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    execute_status_inner(args, cli, outer_ctx, &beads_dir, None, None)
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    execute_status_inner(args, cli, outer_ctx, &obr_dir, None, None)
 }
 
-/// Execute `br coordination status` using the caller's pre-opened storage.
+/// Execute `obr coordination status` using the caller's pre-opened storage.
 ///
 /// # Errors
 ///
@@ -46,24 +46,24 @@ pub fn execute_status_with_storage_ctx(
     args: &CoordinationStatusArgs,
     cli: &config::CliOverrides,
     outer_ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     storage_ctx: &config::OpenStorageResult,
 ) -> Result<()> {
-    execute_status_inner(args, cli, outer_ctx, beads_dir, None, Some(storage_ctx))
+    execute_status_inner(args, cli, outer_ctx, obr_dir, None, Some(storage_ctx))
 }
 
 fn execute_status_inner(
     args: &CoordinationStatusArgs,
     cli: &config::CliOverrides,
     outer_ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     preloaded_storage: Option<&SqliteStorage>,
     preloaded_storage_ctx: Option<&config::OpenStorageResult>,
 ) -> Result<()> {
     let owned_storage_ctx = if preloaded_storage.is_some() || preloaded_storage_ctx.is_some() {
         None
     } else {
-        Some(config::open_storage_with_cli(beads_dir, cli)?)
+        Some(config::open_storage_with_cli(obr_dir, cli)?)
     };
     let storage = preloaded_storage
         .or_else(|| preloaded_storage_ctx.map(|ctx| &ctx.storage))
@@ -111,7 +111,7 @@ fn execute_status_inner(
 }
 
 /// Build the shared coordination status envelope without offline Agent Mail
-/// snapshots. MCP serve uses this path to mirror `br coordination status --json`
+/// snapshots. MCP serve uses this path to mirror `obr coordination status --json`
 /// while keeping the resource read-only and filesystem-local.
 pub(crate) fn build_coordination_status_without_snapshots(
     storage: &SqliteStorage,

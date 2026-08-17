@@ -1,8 +1,8 @@
 #![no_main]
 
-use beads_rust::model::{Issue, IssueType, Priority, Status};
-use beads_rust::util::markdown_import::{ParsedIssue, parse_markdown_content};
-use beads_rust::validation::IssueValidator;
+use obr::model::{Issue, IssueType, Priority, Status};
+use obr::util::markdown_import::{ParsedIssue, parse_markdown_content};
+use obr::validation::IssueValidator;
 use chrono::{DateTime, Utc};
 use libfuzzer_sys::fuzz_target;
 use std::error::Error;

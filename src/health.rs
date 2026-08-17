@@ -121,6 +121,19 @@ pub enum AnomalyClass {
     },
     JournalSidecarPresent,
     OrphanedLockFile,
+    /// `.obr/.write.lock` exists but the current uid cannot open it for
+    /// writing, so no mutating command can take the workspace lock.
+    ///
+    /// Until `obr-m6m` this condition never reached the classifier: a plain
+    /// `obr doctor` took the workspace write lock at startup, so an unwritable
+    /// lock file aborted startup and the degraded verdict was hard-coded into
+    /// the abort envelope in `main.rs`. Read-only doctor no longer takes that
+    /// lock, so the same condition now arrives as an ordinary
+    /// `permissions.write_lock` warn — and without this variant it would be
+    /// reported on a workspace still classified `healthy`.
+    WriteLockNotWritable {
+        detail: String,
+    },
 }
 
 impl AnomalyClass {
@@ -153,6 +166,7 @@ impl AnomalyClass {
             Self::WriteProbeFailed { .. } => "write_probe_failed",
             Self::JournalSidecarPresent => "journal_sidecar_present",
             Self::OrphanedLockFile => "orphaned_lock_file",
+            Self::WriteLockNotWritable { .. } => "write_lock_not_writable",
         }
     }
 
@@ -185,7 +199,8 @@ impl AnomalyClass {
             | Self::ExportHashMismatch { .. }
             | Self::ChildCountDrift { .. }
             | Self::JournalSidecarPresent
-            | Self::OrphanedLockFile => WorkspaceHealth::Degraded,
+            | Self::OrphanedLockFile
+            | Self::WriteLockNotWritable { .. } => WorkspaceHealth::Degraded,
         }
     }
 
@@ -291,6 +306,9 @@ impl fmt::Display for AnomalyClass {
                 f.write_str("journal sidecar present (incomplete transaction)")
             }
             Self::OrphanedLockFile => f.write_str("orphaned lock file (.beads.lock) present"),
+            Self::WriteLockNotWritable { detail } => {
+                write!(f, "workspace write lock not writable: {detail}")
+            }
         }
     }
 }
@@ -360,7 +378,7 @@ impl ReliabilityAuditRecord {
     pub fn emit_tracing(&self, phase: &str, outcome: &str) {
         let anomaly_codes = self.anomaly_codes_csv();
         tracing::info!(
-            target: "br::reliability",
+            target: "obr::reliability",
             source = %self.source,
             phase,
             outcome,
@@ -467,7 +485,7 @@ pub fn classify_file_state(db_path: &Path, jsonl_path: &Path) -> Vec<AnomalyClas
     // A WAL header shorter than 32 bytes is a partial write — except for the
     // single value 0. A 0-byte WAL is the documented resting state after a
     // successful `PRAGMA wal_checkpoint(TRUNCATE)` with no concurrent readers,
-    // which `SqliteStorage::Drop` runs on every mutating br invocation. Treating
+    // which `SqliteStorage::Drop` runs on every mutating obr invocation. Treating
     // it as `TruncatedWal` would false-alarm a healthy store into `Recoverable`,
     // so floor the heuristic at `> 0` — the health-path counterpart of the same
     // `> 0` floor the recovery path's `quarantine_truncated_wal_sidecar`
@@ -802,7 +820,7 @@ mod tests {
     fn zero_byte_wal_is_clean_checkpoint_state_not_truncated() {
         // #358 (health-path counterpart of #291): a 0-byte WAL is the documented
         // resting state after `PRAGMA wal_checkpoint(TRUNCATE)` (run by
-        // `SqliteStorage::Drop` on every mutating br invocation), not corruption.
+        // `SqliteStorage::Drop` on every mutating obr invocation), not corruption.
         // Classifying it as `TruncatedWal` would false-alarm a healthy store into
         // `Recoverable`. The `< 32` guard must carry a `> 0` floor, mirroring the
         // recovery path's `quarantine_truncated_wal_sidecar` (#291).

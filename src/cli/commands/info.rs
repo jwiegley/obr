@@ -67,7 +67,7 @@ struct ProjectionInfo {
 #[derive(Serialize)]
 struct InfoOutput {
     database_path: String,
-    beads_dir: String,
+    obr_dir: String,
     mode: String,
     daemon_connected: bool,
     #[serde(skip)]
@@ -108,12 +108,12 @@ struct InfoSnapshot {
 /// Returns an error if configuration or storage access fails.
 pub fn execute(args: &InfoArgs, cli: &config::CliOverrides, ctx: &OutputContext) -> Result<()> {
     if args.whats_new {
-        return print_message(ctx, "No whats-new data available for br.", "whats_new");
+        return print_message(ctx, "No whats-new data available for obr.", "whats_new");
     }
     if args.thanks {
         return print_message(
             ctx,
-            "Thanks for using br. See README for project acknowledgements.",
+            "Thanks for using obr. See README for project acknowledgements.",
             "thanks",
         );
     }
@@ -144,8 +144,8 @@ pub fn execute(args: &InfoArgs, cli: &config::CliOverrides, ctx: &OutputContext)
 }
 
 fn collect_info_output(args: &InfoArgs, cli: &config::CliOverrides) -> Result<InfoOutput> {
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    let startup = config::load_startup_config_with_paths(&beads_dir, cli.db.as_ref())?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    let startup = config::load_startup_config_with_paths(&obr_dir, cli.db.as_ref())?;
     let snapshot = load_info_snapshot_without_recovery(args, &startup.paths);
     let resolved_prefix = config::configured_issue_prefix_from_map(&startup.merged_config.runtime)
         .or_else(|| snapshot.detected_prefix.clone())
@@ -165,12 +165,12 @@ fn collect_info_output(args: &InfoArgs, cli: &config::CliOverrides) -> Result<In
 
     Ok(InfoOutput {
         database_path: db_path.display().to_string(),
-        beads_dir: canonicalize_lossy(&beads_dir).display().to_string(),
+        obr_dir: canonicalize_lossy(&obr_dir).display().to_string(),
         mode: "direct".to_string(),
         daemon_connected: false,
         resolved_prefix,
         daemon_fallback_reason: Some("no-daemon".to_string()),
-        daemon_detail: Some("br runs in direct mode only".to_string()),
+        daemon_detail: Some("obr runs in direct mode only".to_string()),
         issue_count: snapshot.issue_count,
         config: snapshot.config_map,
         schema: snapshot.schema,
@@ -316,7 +316,7 @@ fn build_projection_info(conn: &Connection) -> ProjectionInfo {
     }
 
     ProjectionInfo {
-        schema_version: "br.graph-projections.v1".to_string(),
+        schema_version: "obr.graph-projections.v1".to_string(),
         blocked_cache_state,
         blocked_cache_stale,
         parity_status: combined_projection_parity_status(
@@ -454,8 +454,8 @@ fn actual_schema_version(conn: &Connection) -> String {
 }
 
 fn print_human(info: &InfoOutput) {
-    println!("Beads Database Information");
-    println!("Beads dir: {}", info_display_text(&info.beads_dir));
+    println!("Obr Database Information");
+    println!("Obr dir: {}", info_display_text(&info.obr_dir));
     println!("Database: {}", info_display_text(&info.database_path));
     if let Some(size) = info.db_size {
         println!("Database size: {}", format_bytes(size));
@@ -601,7 +601,7 @@ fn render_info_rich(info: &InfoOutput, ctx: &OutputContext) {
 
     // Location section
     content.append_styled("Location    ", theme.dimmed.clone());
-    content.append_styled(&info_display_text(&info.beads_dir), theme.accent.clone());
+    content.append_styled(&info_display_text(&info.obr_dir), theme.accent.clone());
     content.append("\n");
 
     // Prefix (if available)
@@ -856,10 +856,10 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
         std::fs::write(
-            beads_dir.join("metadata.json"),
+            obr_dir.join("metadata.json"),
             r#"{"database":"beads.db","jsonl_export":"issues.jsonl"}"#,
         )
         .unwrap();
@@ -869,13 +869,13 @@ mod tests {
         let output = collect_info_output(&InfoArgs::default(), &CliOverrides::default()).unwrap();
 
         assert!(
-            !beads_dir.join("beads.db").exists(),
+            !obr_dir.join("beads.db").exists(),
             "info collection should not create a missing database"
         );
         assert!(output.issue_count.is_none());
         assert_eq!(
             output.database_path,
-            beads_dir.join("beads.db").display().to_string()
+            obr_dir.join("beads.db").display().to_string()
         );
     }
 
@@ -885,15 +885,15 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
         std::fs::write(
-            beads_dir.join("metadata.json"),
+            obr_dir.join("metadata.json"),
             r#"{"database":"beads.db","jsonl_export":"issues.jsonl"}"#,
         )
         .unwrap();
 
-        let db_path = beads_dir.join("beads.db");
+        let db_path = obr_dir.join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).unwrap();
         storage.set_config("issue_prefix", "bd").unwrap();
         let issue = crate::model::Issue {
@@ -974,15 +974,15 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
         std::fs::write(
-            beads_dir.join("metadata.json"),
+            obr_dir.join("metadata.json"),
             r#"{"database":"beads.db","jsonl_export":"issues.jsonl"}"#,
         )
         .unwrap();
 
-        let db_path = beads_dir.join("beads.db");
+        let db_path = obr_dir.join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).unwrap();
         let blocker = crate::model::Issue {
             id: "bd-blocker".to_string(),
@@ -1022,7 +1022,7 @@ mod tests {
         .unwrap();
         let projections = output.projections.as_ref().unwrap();
 
-        assert_eq!(projections.schema_version, "br.graph-projections.v1");
+        assert_eq!(projections.schema_version, "obr.graph-projections.v1");
         assert_eq!(projections.blocked_cache_state, "fresh");
         assert!(!projections.blocked_cache_stale);
         assert_eq!(projections.parity_status, "matches");
@@ -1047,15 +1047,15 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
         std::fs::write(
-            beads_dir.join("metadata.json"),
+            obr_dir.join("metadata.json"),
             r#"{"database":"beads.db","jsonl_export":"issues.jsonl"}"#,
         )
         .unwrap();
 
-        let db_path = beads_dir.join("beads.db");
+        let db_path = obr_dir.join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).unwrap();
         storage.mark_blocked_cache_stale().unwrap();
         drop(storage);
@@ -1088,15 +1088,15 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
         std::fs::write(
-            beads_dir.join("metadata.json"),
+            obr_dir.join("metadata.json"),
             r#"{"database":"beads.db","jsonl_export":"issues.jsonl"}"#,
         )
         .unwrap();
 
-        let db_path = beads_dir.join("beads.db");
+        let db_path = obr_dir.join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).unwrap();
         let blocker = crate::model::Issue {
             id: "bd-real-blocker".to_string(),
@@ -1168,15 +1168,15 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
         std::fs::write(
-            beads_dir.join("metadata.json"),
+            obr_dir.join("metadata.json"),
             r#"{"database":"beads.db","jsonl_export":"issues.jsonl"}"#,
         )
         .unwrap();
 
-        let db_path = beads_dir.join("beads.db");
+        let db_path = obr_dir.join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).unwrap();
         let blocker = crate::model::Issue {
             id: "bd-ready-blocker".to_string(),
@@ -1241,15 +1241,15 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
         std::fs::write(
-            beads_dir.join("metadata.json"),
+            obr_dir.join("metadata.json"),
             r#"{"database":"beads.db","jsonl_export":"issues.jsonl"}"#,
         )
         .unwrap();
 
-        let db_path = beads_dir.join("beads.db");
+        let db_path = obr_dir.join("beads.db");
         let conn = Connection::open(db_path.to_string_lossy().into_owned()).unwrap();
         conn.execute("CREATE TABLE issues (id TEXT PRIMARY KEY)")
             .unwrap();
@@ -1279,16 +1279,16 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
         std::fs::write(
-            beads_dir.join("metadata.json"),
+            obr_dir.join("metadata.json"),
             r#"{"database":"beads.db","jsonl_export":"issues.jsonl"}"#,
         )
         .unwrap();
-        std::fs::write(beads_dir.join("config.yaml"), "issue_prefix: proj\n").unwrap();
+        std::fs::write(obr_dir.join("config.yaml"), "issue_prefix: proj\n").unwrap();
 
-        let db_path = beads_dir.join("beads.db");
+        let db_path = obr_dir.join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).unwrap();
         storage.set_config("issue_prefix", "bd").unwrap();
 
@@ -1314,15 +1314,15 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
         std::fs::write(
-            beads_dir.join("metadata.json"),
+            obr_dir.join("metadata.json"),
             r#"{"database":"beads.db","jsonl_export":"issues.jsonl"}"#,
         )
         .unwrap();
 
-        let db_path = beads_dir.join("beads.db");
+        let db_path = obr_dir.join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).unwrap();
         storage.set_config("issue_prefix", "proj").unwrap();
         let issue = crate::model::Issue {
@@ -1356,15 +1356,15 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
         std::fs::write(
-            beads_dir.join("metadata.json"),
+            obr_dir.join("metadata.json"),
             r#"{"database":"beads.db","jsonl_export":"issues.jsonl"}"#,
         )
         .unwrap();
         std::fs::write(
-            beads_dir.join("issues.jsonl"),
+            obr_dir.join("issues.jsonl"),
             r#"{"id":"proj-abc12","title":"Example"}"#,
         )
         .unwrap();
@@ -1385,14 +1385,14 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
         std::fs::write(
-            beads_dir.join("metadata.json"),
+            obr_dir.join("metadata.json"),
             r#"{"database":"beads.db","jsonl_export":"issues.jsonl"}"#,
         )
         .unwrap();
-        std::fs::write(beads_dir.join("config.yaml"), "prefix: proj\n").unwrap();
+        std::fs::write(obr_dir.join("config.yaml"), "prefix: proj\n").unwrap();
 
         let _guard = DirGuard::new(temp.path());
 
@@ -1407,15 +1407,15 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
         std::fs::write(
-            beads_dir.join("metadata.json"),
+            obr_dir.join("metadata.json"),
             r#"{"database":"beads.db","jsonl_export":"issues.jsonl"}"#,
         )
         .unwrap();
 
-        let db_path = beads_dir.join("beads.db");
+        let db_path = obr_dir.join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).unwrap();
         storage.set_config("prefix", "proj").unwrap();
 

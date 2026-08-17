@@ -1,7 +1,7 @@
 //! AGENTS.md blurb detection and management.
 //!
 //! This module provides functionality to detect, add, update, and remove
-//! beads workflow instructions in AGENTS.md or CLAUDE.md files.
+//! obr workflow instructions in AGENTS.md or CLAUDE.md files.
 
 use crate::error::{BeadsError, Result};
 use crate::output::{OutputContext, OutputMode};
@@ -16,81 +16,134 @@ use std::path::{Path, PathBuf};
 pub const BLURB_VERSION: u8 = 1;
 
 /// Start marker for the blurb (includes version).
-pub const BLURB_START_MARKER: &str = "<!-- br-agent-instructions-v1 -->";
+pub const BLURB_START_MARKER: &str = "<!-- obr-agent-instructions-v1 -->";
 
 /// End marker for the blurb.
-pub const BLURB_END_MARKER: &str = "<!-- end-br-agent-instructions -->";
+pub const BLURB_END_MARKER: &str = "<!-- end-obr-agent-instructions -->";
+
+/// Versioned start-marker prefix, current generation.
+const BLURB_START_PREFIX: &str = "<!-- obr-agent-instructions-v";
+
+/// Marker generations recognised when locating an existing block, current
+/// first.
+///
+/// legacy_compat: `agents --update` must *replace* a pre-rename block rather
+/// than append a second one beside it, so the pre-rename marker pair stays
+/// matchable even though it is never written again.
+const BLURB_MARKER_GENERATIONS: [(&str, &str); 2] = [
+    (BLURB_START_PREFIX, BLURB_END_MARKER),
+    (
+        "<!-- br-agent-instructions-v",
+        "<!-- end-br-agent-instructions -->",
+    ),
+];
+
+/// Whether an existing block uses a pre-rename marker generation.
+#[must_use]
+pub fn uses_legacy_markers(content: &str) -> bool {
+    BLURB_MARKER_GENERATIONS[1..]
+        .iter()
+        .any(|(start, end)| contains_marker_block(content, start, end))
+}
+
+/// Locate an agent-instruction block of any recognised marker generation.
+fn find_blurb_range(content: &str) -> Option<(usize, usize)> {
+    for (index, (start, end)) in BLURB_MARKER_GENERATIONS.iter().enumerate() {
+        if let Some(range) = find_marker_block_range(content, start, end) {
+            if index > 0 {
+                crate::legacy_compat::warn_deprecated_name(
+                    start,
+                    BLURB_START_PREFIX,
+                    "the agent-instruction block uses the pre-rename \
+                     br-agent-instructions markers; it will be replaced in \
+                     place with the obr-agent-instructions markers.",
+                );
+            }
+            return Some(range);
+        }
+    }
+    None
+}
 
 /// Supported agent file names in order of preference.
 pub const SUPPORTED_AGENT_FILES: &[&str] = &["AGENTS.md", "CLAUDE.md", "agents.md", "claude.md"];
 
 /// The agent instructions blurb to append to AGENTS.md files.
-pub const AGENT_BLURB: &str = r#"<!-- br-agent-instructions-v1 -->
+pub const AGENT_BLURB: &str = r#"<!-- obr-agent-instructions-v1 -->
 
 ---
 
-## Beads Workflow Integration
+## Obr Workflow Integration
 
-This project uses [beads_rust](https://github.com/Dicklesworthstone/beads_rust) (`br`/`bd`) for issue tracking. Issues are stored in `.beads/` and tracked in git.
+This project uses [obr](https://github.com/jwiegley/obr) for issue tracking.
+Issues live in `PLAN.org` — an Org-mode file tracked in git, at `doc/`,
+`docs/`, or the project root. `.obr/` is a per-machine cache (SQLite plus
+metadata) that ignores itself; never commit anything under it. obr never
+commits, pushes, pulls, or installs hooks: exporting and committing are
+separate, explicit steps. (A few read-only commands do shell out to git to
+report what it sees — `vcs-status`, `changelog`, `orphans` — and none of them
+write.)
 
 ### Essential Commands
 
 ```bash
 # View ready issues (open, unblocked, not deferred)
-br ready              # or: bd ready
+obr ready
 
 # List and search
-br list --status=open # All open issues
-br show <id>          # Full issue details with dependencies
-br search "keyword"   # Full-text search
+obr list --status=open # All open issues
+obr show <id>          # Full issue details with dependencies
+obr search "keyword"   # Full-text search
 
 # Create and update
-br create --title="..." --description="..." --type=task --priority=2
-br update <id> --status=in_progress
-br close <id> --reason="Completed"
-br close <id1> <id2>  # Close multiple issues at once
+obr create "Title" -d "..." --type=task --priority=2
+obr q "Title"          # Quick capture: create and print only the id
+obr update <id> --status=in_progress
+obr close <id> --reason="Completed"
+obr close <id1> <id2>  # Close multiple issues at once
 
-# Sync with git
-br sync --flush-only  # Export DB to JSONL
-br sync --status      # Check sync status
+# Write the tracked surface
+obr sync --flush-only  # Write PLAN.org from the database
+obr sync --status      # Check whether DB and PLAN.org agree
 ```
 
 ### Workflow Pattern
 
-1. **Start**: Run `br ready` to find actionable work
-2. **Claim**: Use `br update <id> --status=in_progress`
+1. **Start**: Run `obr ready` to find actionable work
+2. **Claim**: Use `obr update <id> --status=in_progress`
 3. **Work**: Implement the task
-4. **Complete**: Use `br close <id>`
-5. **Sync**: Always run `br sync --flush-only` at session end
+4. **Complete**: Use `obr close <id> --reason="..."`
+5. **Record**: Run `obr sync --flush-only`, then commit `PLAN.org` with the code
 
 ### Key Concepts
 
-- **Dependencies**: Issues can block other issues. `br ready` shows only open, unblocked work.
+- **Dependencies**: Issues can block other issues. `obr ready` shows only open, unblocked work.
 - **Priority**: P0=critical, P1=high, P2=medium, P3=low, P4=backlog (use numbers 0-4, not words)
 - **Types**: task, bug, feature, epic, chore, docs, question
-- **Blocking**: `br dep add <issue> <depends-on>` to add dependencies
+- **Blocking**: `obr dep add <issue> <depends-on>` to add dependencies
+- **Recording discovered work**: create an issue the moment you find work you are not doing now, and link it (`--deps discovered-from:<id>`)
 
 ### Session Protocol
 
 **Before ending any session, run this checklist:**
 
 ```bash
+obr sync --flush-only   # Write issue changes to PLAN.org
 git status              # Check what changed
-git add <files>         # Stage code changes
-br sync --flush-only    # Export beads changes to JSONL
-git commit -m "..."     # Commit everything
-git push                # Push to remote
+git add <files>         # Stage code changes AND PLAN.org together
+git commit -m "..."     # One commit: the change and its issue state
 ```
 
 ### Best Practices
 
-- Check `br ready` at session start to find available work
+- Check `obr ready` at session start to find available work
+- Record dependencies at creation time — they are what make `obr ready` meaningful
 - Update status as you work (in_progress → closed)
-- Create new issues with `br create` when you discover tasks
 - Use descriptive titles and set appropriate priority/type
-- Always sync before ending session
+- Commit `PLAN.org` together with the code that changes it; its diff is the review trail
+- A fresh clone rebuilds the cache with: `obr init && obr sync --import-only --rebuild`
 
-<!-- end-br-agent-instructions -->"#;
+<!-- end-obr-agent-instructions -->"#;
 
 /// Result of detecting an agent config file.
 #[derive(Debug, Clone, Default)]
@@ -105,6 +158,12 @@ pub struct AgentFileDetection {
     pub has_blurb: bool,
     /// Whether the file has the legacy (bv) blurb format.
     pub has_legacy_blurb: bool,
+    /// Whether the block uses the pre-rename `br-agent-instructions` markers.
+    ///
+    /// legacy_compat: this forces an upgrade even at the current blurb version,
+    /// so `--update` rewrites the markers in place instead of reporting the
+    /// block as up to date and leaving it behind forever.
+    pub has_legacy_marker_blurb: bool,
     /// Version of the blurb found (0 if none or legacy).
     pub blurb_version: u8,
     /// File content (if read).
@@ -133,7 +192,7 @@ impl AgentFileDetection {
     /// Returns true if the file has an older version that needs upgrade.
     #[must_use]
     pub const fn needs_upgrade(&self) -> bool {
-        if self.has_legacy_blurb {
+        if self.has_legacy_blurb || self.has_legacy_marker_blurb {
             return true;
         }
         self.has_blurb && self.blurb_version < BLURB_VERSION
@@ -177,10 +236,10 @@ const fn inferred_dry_run_action(detection: &AgentFileDetection) -> &'static str
     }
 }
 
-/// Check if content contains the br agent blurb.
+/// Check if content contains the obr agent blurb (either marker generation).
 #[must_use]
 pub fn contains_blurb(content: &str) -> bool {
-    contains_marker_block(content, "<!-- br-agent-instructions-v", BLURB_END_MARKER)
+    find_blurb_range(content).is_some()
 }
 
 /// Check if content contains the legacy bv blurb.
@@ -193,23 +252,21 @@ pub fn contains_legacy_blurb(content: &str) -> bool {
     )
 }
 
-/// Check if content contains any blurb (br or bv).
+/// Check if content contains any blurb (obr or bv).
 #[must_use]
 pub fn contains_any_blurb(content: &str) -> bool {
     contains_blurb(content) || contains_legacy_blurb(content)
 }
 
 static BLURB_VERSION_REGEX: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"<!-- br-agent-instructions-v(\d+) -->")
+    Regex::new(r"<!-- o?br-agent-instructions-v(\d+) -->")
         .expect("static regex compilation must not fail")
 });
 
 /// Extract the version number from an existing blurb.
 #[must_use]
 pub fn get_blurb_version(content: &str) -> u8 {
-    let Some((start_idx, end_idx)) =
-        find_marker_block_range(content, "<!-- br-agent-instructions-v", BLURB_END_MARKER)
-    else {
+    let Some((start_idx, end_idx)) = find_blurb_range(content) else {
         return 0;
     };
 
@@ -303,13 +360,14 @@ where
     };
 
     let has_legacy = contains_legacy_blurb(&content);
-    let has_br_blurb = contains_blurb(&content);
+    let has_obr_blurb = contains_blurb(&content);
 
     Some(AgentFileDetection {
         file_path: Some(file_path.to_path_buf()),
         file_type: Some(file_type.to_string()),
-        has_blurb: has_br_blurb || has_legacy,
+        has_blurb: has_obr_blurb || has_legacy,
         has_legacy_blurb: has_legacy,
+        has_legacy_marker_blurb: uses_legacy_markers(&content),
         blurb_version: get_blurb_version(&content),
         content: Some(content),
         read_error: None,
@@ -349,9 +407,13 @@ fn find_agent_search_root(work_dir: &Path) -> PathBuf {
     let mut current_dir = work_dir.to_path_buf();
 
     loop {
+        // `workspace_dir_in` returns the first existing directory in the
+        // `.obr`/`_obr`/`.beads`/`_beads` chain, falling back to `.obr`, so
+        // `is_dir()` on the result answers "does this root hold a workspace?"
+        // across current and legacy names. Probing only the legacy pair meant
+        // a `.obr` workspace was not recognised as a project root at all.
         let is_project_root = current_dir.join(".git").exists()
-            || current_dir.join(".beads").is_dir()
-            || current_dir.join("_beads").is_dir();
+            || crate::config::workspace_dir_in(&current_dir).is_dir();
         if is_project_root {
             return current_dir;
         }
@@ -370,7 +432,8 @@ fn find_agent_search_root(work_dir: &Path) -> PathBuf {
 /// Detect an agent file within the current project boundary.
 ///
 /// Searches upward from the working directory to the nearest project root
-/// marker (`.git`, `.beads`, or `_beads`). If no project marker exists, only
+/// marker: `.git`, or any workspace directory in the `.obr`/`_obr`/`.beads`/
+/// `_beads` chain. If no project marker exists, only
 /// the current directory is searched to avoid capturing unrelated files above
 /// the active workspace.
 #[must_use]
@@ -416,16 +479,17 @@ pub fn append_blurb(content: &str) -> String {
     result
 }
 
-/// Remove an existing br blurb from content.
+/// Remove existing obr blurbs from content, of any marker generation.
+///
+/// Loops so a file that somehow carries both generations ends up with neither,
+/// which is what makes `--update` idempotent rather than accumulating blocks.
 #[must_use]
 pub fn remove_blurb(content: &str) -> String {
-    let start_marker = "<!-- br-agent-instructions-v";
-    let Some((start_idx, end_idx)) =
-        find_marker_block_range(content, start_marker, BLURB_END_MARKER)
-    else {
-        return content.to_string();
-    };
-    remove_marker_block(content, start_idx, end_idx)
+    let mut content = content.to_string();
+    while let Some((start_idx, end_idx)) = find_blurb_range(&content) {
+        content = remove_marker_block(&content, start_idx, end_idx);
+    }
+    content
 }
 
 /// Remove legacy bv blurb from content.
@@ -525,7 +589,8 @@ fn require_force_for_json_action(force: bool, ctx: &OutputContext) -> Result<()>
     if ctx.is_json() && !force {
         return Err(BeadsError::Validation {
             field: "force".to_string(),
-            reason: "--force is required for mutating `br agents` actions in JSON mode".to_string(),
+            reason: "--force is required for mutating `obr agents` actions in JSON mode"
+                .to_string(),
         });
     }
 
@@ -671,8 +736,14 @@ fn backup_agent_file(file_path: &Path, ctx: &OutputContext) -> Option<PathBuf> {
     };
     match write_agent_file_atomically(&backup_path, &backup_bytes) {
         Ok(()) => {
+            // Rich does not print here: the path is carried by the success
+            // renderer instead, as one more line of the same message. It used
+            // to be dropped outright — the Rich branch skipped this `println!`
+            // and no panel replaced it, so a user on a TTY was never told a
+            // copy of their AGENTS.md existed. `BACKUP_LINE_LABEL` below is
+            // the single source for the wording of both.
             if !ctx.is_json() && !matches!(ctx.mode(), OutputMode::Rich) {
-                println!("Backup created: {}", backup_path.display());
+                println!("{BACKUP_LINE_LABEL}{}", backup_path.display());
             }
             Some(backup_path)
         }
@@ -690,12 +761,12 @@ fn backup_agent_file(file_path: &Path, ctx: &OutputContext) -> Option<PathBuf> {
 fn add_confirmation_message(detection: &AgentFileDetection, file_path: &Path) -> String {
     if detection.found() {
         format!(
-            "This will add beads workflow instructions to: {}",
+            "This will add obr workflow instructions to: {}",
             file_path.display()
         )
     } else {
         format!(
-            "This will create a new AGENTS.md with beads workflow instructions.\nFile: {}",
+            "This will create a new AGENTS.md with obr workflow instructions.\nFile: {}",
             file_path.display()
         )
     }
@@ -874,7 +945,7 @@ fn execute_dry_run_inferred(
             console.print_renderable(&panel);
         } else {
             println!(
-                "Dry-run: would create {} with beads workflow instructions",
+                "Dry-run: would create {} with obr workflow instructions",
                 target_path.display()
             );
             println!("\n--- Preview ---");
@@ -911,7 +982,7 @@ fn execute_dry_run_inferred(
             render_dry_run_update_rich(file_path, &from_version, ctx);
         } else {
             println!(
-                "Dry-run: would update beads workflow instructions from {from_version} to v{BLURB_VERSION}"
+                "Dry-run: would update obr workflow instructions from {from_version} to v{BLURB_VERSION}"
             );
             println!("File: {}", file_path.display());
         }
@@ -925,7 +996,7 @@ fn execute_dry_run_inferred(
             render_dry_run_add_rich(file_path, ctx);
         } else {
             println!(
-                "Dry-run: would add beads workflow instructions to {}",
+                "Dry-run: would add obr workflow instructions to {}",
                 file_path.display()
             );
             println!("\n--- Preview ---");
@@ -939,7 +1010,7 @@ fn execute_dry_run_inferred(
         render_already_up_to_date_rich(ctx);
     } else {
         println!(
-            "Dry-run: no changes needed. Beads workflow instructions are up to date (v{BLURB_VERSION})."
+            "Dry-run: no changes needed. Obr workflow instructions are up to date (v{BLURB_VERSION})."
         );
     }
 
@@ -1011,8 +1082,8 @@ fn execute_check(
             "No AGENTS.md or CLAUDE.md found {}.",
             search_scope_description(work_dir)
         );
-        println!("\nTo add beads workflow instructions:");
-        println!("  br agents --add");
+        println!("\nTo add obr workflow instructions:");
+        println!("  obr agents --add");
         return Ok(());
     }
 
@@ -1025,24 +1096,24 @@ fn execute_check(
         println!("\nStatus: File is unreadable");
         println!("Error: {err}");
     } else if detection.has_legacy_blurb {
-        println!("\nStatus: Contains legacy bv blurb (needs upgrade to br format)");
+        println!("\nStatus: Contains legacy bv blurb (needs upgrade to obr format)");
         println!("\nTo upgrade:");
-        println!("  br agents --update");
+        println!("  obr agents --update");
     } else if detection.has_blurb {
         if detection.blurb_version < BLURB_VERSION {
             println!(
-                "\nStatus: Contains br blurb v{} (current: v{})",
+                "\nStatus: Contains obr blurb v{} (current: v{})",
                 detection.blurb_version, BLURB_VERSION
             );
             println!("\nTo update:");
-            println!("  br agents --update");
+            println!("  obr agents --update");
         } else {
-            println!("\nStatus: Contains current br blurb v{BLURB_VERSION}");
+            println!("\nStatus: Contains current obr blurb v{BLURB_VERSION}");
         }
     } else {
-        println!("\nStatus: No beads workflow instructions found");
+        println!("\nStatus: No obr workflow instructions found");
         println!("\nTo add:");
-        println!("  br agents --add");
+        println!("  obr agents --add");
     }
 
     Ok(())
@@ -1073,7 +1144,7 @@ fn execute_add(
             render_already_current_rich(ctx);
         } else {
             println!(
-                "AGENTS.md already contains current beads workflow instructions (v{BLURB_VERSION})."
+                "AGENTS.md already contains current obr workflow instructions (v{BLURB_VERSION})."
             );
         }
         return Ok(());
@@ -1123,7 +1194,7 @@ fn execute_add(
             render_dry_run_add_rich(&file_path, ctx);
         } else {
             println!(
-                "Would add beads workflow instructions to: {}",
+                "Would add obr workflow instructions to: {}",
                 file_path.display()
             );
             println!("\n--- Preview ---");
@@ -1158,10 +1229,10 @@ fn execute_add(
         });
         ctx.json_pretty(&output);
     } else if matches!(ctx.mode(), OutputMode::Rich) {
-        render_add_success_rich(&file_path, new_content.len(), ctx);
+        render_add_success_rich(&file_path, backup_path.as_deref(), new_content.len(), ctx);
     } else {
         println!(
-            "Added beads workflow instructions to: {}",
+            "Added obr workflow instructions to: {}",
             file_path.display()
         );
     }
@@ -1204,7 +1275,7 @@ fn execute_remove(
         } else if matches!(ctx.mode(), OutputMode::Rich) {
             render_nothing_to_remove_rich(ctx);
         } else {
-            println!("No beads workflow instructions found to remove.");
+            println!("No obr workflow instructions found to remove.");
         }
         return Ok(());
     }
@@ -1228,7 +1299,7 @@ fn execute_remove(
             render_dry_run_remove_rich(file_path, ctx);
         } else {
             println!(
-                "Would remove beads workflow instructions from: {}",
+                "Would remove obr workflow instructions from: {}",
                 file_path.display()
             );
         }
@@ -1240,7 +1311,7 @@ fn execute_remove(
     // Prompt for confirmation unless forced
     if !force {
         println!(
-            "This will remove beads workflow instructions from: {}",
+            "This will remove obr workflow instructions from: {}",
             file_path.display()
         );
         print!("Continue? [y/N] ");
@@ -1268,10 +1339,10 @@ fn execute_remove(
         });
         ctx.json_pretty(&output);
     } else if matches!(ctx.mode(), OutputMode::Rich) {
-        render_remove_success_rich(file_path, ctx);
+        render_remove_success_rich(file_path, backup_path.as_deref(), ctx);
     } else {
         println!(
-            "Removed beads workflow instructions from: {}",
+            "Removed obr workflow instructions from: {}",
             file_path.display()
         );
     }
@@ -1314,7 +1385,7 @@ fn execute_update(
         } else if matches!(ctx.mode(), OutputMode::Rich) {
             render_already_up_to_date_rich(ctx);
         } else {
-            println!("Beads workflow instructions are already up to date (v{BLURB_VERSION}).");
+            println!("Obr workflow instructions are already up to date (v{BLURB_VERSION}).");
         }
         return Ok(());
     }
@@ -1344,7 +1415,7 @@ fn execute_update(
             render_dry_run_update_rich(file_path, &from_version, ctx);
         } else {
             println!(
-                "Would update beads workflow instructions from {from_version} to v{BLURB_VERSION}"
+                "Would update obr workflow instructions from {from_version} to v{BLURB_VERSION}"
             );
             println!("File: {}", file_path.display());
         }
@@ -1356,7 +1427,7 @@ fn execute_update(
     // Prompt for confirmation unless forced
     if !force {
         println!(
-            "This will update beads workflow instructions from {from_version} to v{BLURB_VERSION}."
+            "This will update obr workflow instructions from {from_version} to v{BLURB_VERSION}."
         );
         println!("File: {}", file_path.display());
         print!("Continue? [y/N] ");
@@ -1385,10 +1456,16 @@ fn execute_update(
         });
         ctx.json_pretty(&output);
     } else if matches!(ctx.mode(), OutputMode::Rich) {
-        render_update_success_rich(file_path, &from_version, new_content.len(), ctx);
+        render_update_success_rich(
+            file_path,
+            &from_version,
+            backup_path.as_deref(),
+            new_content.len(),
+            ctx,
+        );
     } else {
         println!(
-            "Updated beads workflow instructions to v{} in: {}",
+            "Updated obr workflow instructions to v{} in: {}",
             BLURB_VERSION,
             file_path.display()
         );
@@ -1429,38 +1506,35 @@ fn render_check_rich(
             content.append_styled(err, theme.warning.clone());
         } else if detection.has_legacy_blurb {
             content.append_styled("\u{26A0} ", theme.warning.clone());
-            content.append("Contains legacy bv blurb (needs upgrade to br format)\n\n");
+            content.append("Contains legacy bv blurb (needs upgrade to obr format)\n\n");
             content.append_styled("To upgrade:\n", theme.dimmed.clone());
-            content.append_styled("  br agents --update", theme.accent.clone());
+            content.append_styled("  obr agents --update", theme.accent.clone());
         } else if detection.has_blurb {
             if detection.blurb_version < BLURB_VERSION {
                 content.append_styled("\u{26A0} ", theme.warning.clone());
                 content.append(&format!(
-                    "Contains br blurb v{} (current: v{})\n\n",
+                    "Contains obr blurb v{} (current: v{})\n\n",
                     detection.blurb_version, BLURB_VERSION
                 ));
                 content.append_styled("To update:\n", theme.dimmed.clone());
-                content.append_styled("  br agents --update", theme.accent.clone());
+                content.append_styled("  obr agents --update", theme.accent.clone());
             } else {
                 content.append_styled("\u{2713} ", theme.success.clone());
-                content.append(&format!("Contains current br blurb v{BLURB_VERSION}"));
+                content.append(&format!("Contains current obr blurb v{BLURB_VERSION}"));
             }
         } else {
             content.append_styled("\u{2717} ", theme.warning.clone());
-            content.append("No beads workflow instructions found\n\n");
+            content.append("No obr workflow instructions found\n\n");
             content.append_styled("To add:\n", theme.dimmed.clone());
-            content.append_styled("  br agents --add", theme.accent.clone());
+            content.append_styled("  obr agents --add", theme.accent.clone());
         }
     } else {
         content.append_styled("\u{2717} ", theme.warning.clone());
         content.append("No AGENTS.md or CLAUDE.md found ");
         content.append_styled(&search_scope_description(work_dir), theme.accent.clone());
         content.append("\n\n");
-        content.append_styled(
-            "To add beads workflow instructions:\n",
-            theme.dimmed.clone(),
-        );
-        content.append_styled("  br agents --add", theme.accent.clone());
+        content.append_styled("To add obr workflow instructions:\n", theme.dimmed.clone());
+        content.append_styled("  obr agents --add", theme.accent.clone());
     }
 
     let panel = Panel::from_rich_text(&content, width)
@@ -1514,7 +1588,7 @@ fn render_already_current_rich(ctx: &OutputContext) {
     let mut text = Text::new("");
     text.append_styled("\u{2713} ", theme.success.clone());
     text.append(&format!(
-        "AGENTS.md already contains current beads workflow instructions (v{BLURB_VERSION})."
+        "AGENTS.md already contains current obr workflow instructions (v{BLURB_VERSION})."
     ));
 
     console.print_renderable(&text);
@@ -1528,7 +1602,7 @@ fn render_dry_run_add_rich(file_path: &Path, ctx: &OutputContext) {
 
     let mut content = Text::new("");
     content.append_styled(
-        "Would add beads workflow instructions to:\n",
+        "Would add obr workflow instructions to:\n",
         theme.dimmed.clone(),
     );
     content.append_styled(&file_path.display().to_string(), theme.accent.clone());
@@ -1540,17 +1614,47 @@ fn render_dry_run_add_rich(file_path: &Path, ctx: &OutputContext) {
     console.print_renderable(&panel);
 }
 
-/// Render add success in rich mode.
-fn render_add_success_rich(file_path: &Path, _bytes: usize, ctx: &OutputContext) {
-    let console = Console::default();
-    let theme = ctx.theme();
+/// Wording of the backup line, shared by the plain `println!` in
+/// `backup_agent_file` and by every Rich renderer, so the two cannot drift.
+const BACKUP_LINE_LABEL: &str = "Backup created: ";
 
+/// Append the backup path to a Rich success message.
+///
+/// Rewriting an agent file is destructive, and the backup is the user's only
+/// undo. Rich used to lose that fact entirely, so every Rich renderer for a
+/// rewrite goes through here and none may report a rewrite without it.
+fn append_backup_line(text: &mut Text, backup_path: Option<&Path>, theme: &crate::output::Theme) {
+    let Some(backup_path) = backup_path else {
+        return;
+    };
+    text.append("\n");
+    text.append_styled(BACKUP_LINE_LABEL, theme.dimmed.clone());
+    text.append_styled(&backup_path.display().to_string(), theme.accent.clone());
+}
+
+/// The Rich "instructions added" message, including the backup it made.
+fn build_add_success_text(
+    file_path: &Path,
+    backup_path: Option<&Path>,
+    theme: &crate::output::Theme,
+) -> Text {
     let mut text = Text::new("");
     text.append_styled("\u{2713} ", theme.success.clone());
-    text.append("Added beads workflow instructions to: ");
+    text.append("Added obr workflow instructions to: ");
     text.append_styled(&file_path.display().to_string(), theme.accent.clone());
+    append_backup_line(&mut text, backup_path, theme);
+    text
+}
 
-    console.print_renderable(&text);
+/// Render add success in rich mode.
+fn render_add_success_rich(
+    file_path: &Path,
+    backup_path: Option<&Path>,
+    _bytes: usize,
+    ctx: &OutputContext,
+) {
+    let console = Console::default();
+    console.print_renderable(&build_add_success_text(file_path, backup_path, ctx.theme()));
 }
 
 /// Render "nothing to remove" message in rich mode.
@@ -1560,7 +1664,7 @@ fn render_nothing_to_remove_rich(ctx: &OutputContext) {
 
     let mut text = Text::new("");
     text.append_styled("\u{2713} ", theme.success.clone());
-    text.append("No beads workflow instructions found to remove.");
+    text.append("No obr workflow instructions found to remove.");
 
     console.print_renderable(&text);
 }
@@ -1573,7 +1677,7 @@ fn render_dry_run_remove_rich(file_path: &Path, ctx: &OutputContext) {
 
     let mut content = Text::new("");
     content.append_styled(
-        "Would remove beads workflow instructions from:\n",
+        "Would remove obr workflow instructions from:\n",
         theme.dimmed.clone(),
     );
     content.append_styled(&file_path.display().to_string(), theme.accent.clone());
@@ -1585,17 +1689,28 @@ fn render_dry_run_remove_rich(file_path: &Path, ctx: &OutputContext) {
     console.print_renderable(&panel);
 }
 
-/// Render remove success in rich mode.
-fn render_remove_success_rich(file_path: &Path, ctx: &OutputContext) {
-    let console = Console::default();
-    let theme = ctx.theme();
-
+/// The Rich "instructions removed" message, including the backup it made.
+fn build_remove_success_text(
+    file_path: &Path,
+    backup_path: Option<&Path>,
+    theme: &crate::output::Theme,
+) -> Text {
     let mut text = Text::new("");
     text.append_styled("\u{2713} ", theme.success.clone());
-    text.append("Removed beads workflow instructions from: ");
+    text.append("Removed obr workflow instructions from: ");
     text.append_styled(&file_path.display().to_string(), theme.accent.clone());
+    append_backup_line(&mut text, backup_path, theme);
+    text
+}
 
-    console.print_renderable(&text);
+/// Render remove success in rich mode.
+fn render_remove_success_rich(file_path: &Path, backup_path: Option<&Path>, ctx: &OutputContext) {
+    let console = Console::default();
+    console.print_renderable(&build_remove_success_text(
+        file_path,
+        backup_path,
+        ctx.theme(),
+    ));
 }
 
 /// Render "already up to date" message in rich mode.
@@ -1606,7 +1721,7 @@ fn render_already_up_to_date_rich(ctx: &OutputContext) {
     let mut text = Text::new("");
     text.append_styled("\u{2713} ", theme.success.clone());
     text.append(&format!(
-        "Beads workflow instructions are already up to date (v{BLURB_VERSION})."
+        "Obr workflow instructions are already up to date (v{BLURB_VERSION})."
     ));
 
     console.print_renderable(&text);
@@ -1620,7 +1735,7 @@ fn render_dry_run_update_rich(file_path: &Path, from_version: &str, ctx: &Output
 
     let mut content = Text::new("");
     content.append_styled(
-        "Would update beads workflow instructions from ",
+        "Would update obr workflow instructions from ",
         theme.dimmed.clone(),
     );
     content.append_styled(from_version, theme.warning.clone());
@@ -1637,26 +1752,40 @@ fn render_dry_run_update_rich(file_path: &Path, from_version: &str, ctx: &Output
     console.print_renderable(&panel);
 }
 
-/// Render update success in rich mode.
-fn render_update_success_rich(
+/// The Rich "instructions updated" message, including the backup it made.
+fn build_update_success_text(
     file_path: &Path,
     from_version: &str,
-    _bytes: usize,
-    ctx: &OutputContext,
-) {
-    let console = Console::default();
-    let theme = ctx.theme();
-
+    backup_path: Option<&Path>,
+    theme: &crate::output::Theme,
+) -> Text {
     let mut text = Text::new("");
     text.append_styled("\u{2713} ", theme.success.clone());
-    text.append("Updated beads workflow instructions from ");
+    text.append("Updated obr workflow instructions from ");
     text.append_styled(from_version, theme.warning.clone());
     text.append(" to ");
     text.append_styled(&format!("v{BLURB_VERSION}"), theme.success.clone());
     text.append(" in: ");
     text.append_styled(&file_path.display().to_string(), theme.accent.clone());
+    append_backup_line(&mut text, backup_path, theme);
+    text
+}
 
-    console.print_renderable(&text);
+/// Render update success in rich mode.
+fn render_update_success_rich(
+    file_path: &Path,
+    from_version: &str,
+    backup_path: Option<&Path>,
+    _bytes: usize,
+    ctx: &OutputContext,
+) {
+    let console = Console::default();
+    console.print_renderable(&build_update_success_text(
+        file_path,
+        from_version,
+        backup_path,
+        ctx.theme(),
+    ));
 }
 
 #[cfg(test)]
@@ -1664,6 +1793,87 @@ mod tests {
     use super::*;
     use crate::output::OutputContext;
     use std::env;
+
+    /// Wide enough that no path wraps, so a substring assertion means the
+    /// renderer really said it.
+    const RICH_WIDTH: usize = 200;
+
+    /// Render a Rich message through the REAL builder and return its text.
+    ///
+    /// `OutputMode::Rich` is only reachable on an interactive TTY, which is
+    /// exactly why the backup line could go missing from it unnoticed for as
+    /// long as it did.
+    fn capture_rich(build: impl FnOnce(&crate::output::Theme) -> Text) -> String {
+        let ctx = OutputContext::with_mode(OutputMode::Rich);
+        assert!(ctx.is_rich(), "the renderer must be exercised in Rich mode");
+        let rendered = build(ctx.theme());
+
+        let console = Console::builder()
+            .no_color()
+            .force_terminal(true)
+            .width(RICH_WIDTH)
+            .build();
+        console.begin_capture();
+        console.print_renderable(&rendered);
+        console
+            .end_capture()
+            .iter()
+            .map(|segment| segment.text.as_ref())
+            .collect::<String>()
+    }
+
+    /// Rewriting AGENTS.md is destructive and the `.bak` copy is the only
+    /// undo. Plain mode has always printed it; Rich dropped it on the floor.
+    #[test]
+    fn rich_add_success_reports_the_backup_it_created() {
+        let file = PathBuf::from("/proj/AGENTS.md");
+        let backup = PathBuf::from("/proj/AGENTS.md.bak");
+
+        let with_backup =
+            capture_rich(|theme| build_add_success_text(&file, Some(backup.as_path()), theme));
+        assert!(
+            with_backup.contains(BACKUP_LINE_LABEL),
+            "rich add never mentioned the backup:\n{with_backup}"
+        );
+        assert!(
+            with_backup.contains("/proj/AGENTS.md.bak"),
+            "rich add never named the backup path:\n{with_backup}"
+        );
+
+        // No backup taken (the file did not exist): nothing to claim.
+        let without_backup = capture_rich(|theme| build_add_success_text(&file, None, theme));
+        assert!(
+            !without_backup.contains(BACKUP_LINE_LABEL),
+            "rich add invented a backup that was never made:\n{without_backup}"
+        );
+    }
+
+    #[test]
+    fn rich_remove_success_reports_the_backup_it_created() {
+        let file = PathBuf::from("/proj/AGENTS.md");
+        let backup = PathBuf::from("/proj/AGENTS.md.bak");
+
+        let rendered =
+            capture_rich(|theme| build_remove_success_text(&file, Some(backup.as_path()), theme));
+        assert!(
+            rendered.contains(BACKUP_LINE_LABEL) && rendered.contains("/proj/AGENTS.md.bak"),
+            "rich remove never mentioned the backup:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn rich_update_success_reports_the_backup_it_created() {
+        let file = PathBuf::from("/proj/AGENTS.md");
+        let backup = PathBuf::from("/proj/AGENTS.md.bak");
+
+        let rendered = capture_rich(|theme| {
+            build_update_success_text(&file, "v0", Some(backup.as_path()), theme)
+        });
+        assert!(
+            rendered.contains(BACKUP_LINE_LABEL) && rendered.contains("/proj/AGENTS.md.bak"),
+            "rich update never mentioned the backup:\n{rendered}"
+        );
+    }
 
     /// Restore the process working directory when a test that chdirs into an
     /// isolated temp project finishes (tests hold `TEST_DIR_LOCK` while using
@@ -2188,7 +2398,7 @@ mod tests {
         );
         assert!(
             !outside_target.exists(),
-            "br agents --add must not create a dangling symlink target"
+            "obr agents --add must not create a dangling symlink target"
         );
         assert!(
             fs::symlink_metadata(&agents_path)
@@ -2351,7 +2561,7 @@ mod tests {
         let file_path = detection.file_path.clone().unwrap();
         let message = add_confirmation_message(&detection, &file_path);
 
-        assert!(message.contains("add beads workflow instructions to"));
+        assert!(message.contains("add obr workflow instructions to"));
         assert!(message.contains(file_path.to_string_lossy().as_ref()));
         assert!(!message.contains("create a new AGENTS.md"));
     }

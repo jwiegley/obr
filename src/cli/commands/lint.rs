@@ -100,13 +100,13 @@ pub fn execute(
     cli: &config::CliOverrides,
     ctx: &OutputContext,
 ) -> Result<()> {
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
 
     let issues = if args.ids.is_empty() {
-        let storage_ctx = config::open_storage_with_cli(&beads_dir, cli)?;
+        let storage_ctx = config::open_storage_with_cli(&obr_dir, cli)?;
         lint_issues_with_storage(args, &storage_ctx.storage)?
     } else {
-        resolve_issues(&beads_dir, args, cli)?
+        resolve_issues(&obr_dir, args, cli)?
     };
 
     render_lint_output(lint_issues(&issues), ctx);
@@ -331,22 +331,22 @@ fn build_filters(args: &LintArgs) -> Result<ListFilters> {
 }
 
 fn resolve_issues(
-    beads_dir: &Path,
+    obr_dir: &Path,
     args: &LintArgs,
     cli: &config::CliOverrides,
 ) -> Result<Vec<Issue>> {
-    let routed_batches = config::routing::group_issue_inputs_by_route(&args.ids, beads_dir)?;
+    let routed_batches = config::routing::group_issue_inputs_by_route(&args.ids, obr_dir)?;
     let mut issues_by_input = std::collections::HashMap::new();
 
     for batch in routed_batches {
         let mut batch_cli = routed_cli_for_batch(cli, batch.is_external);
         let routed_write_lock = acquire_routed_workspace_write_lock(
-            &batch.beads_dir,
+            &batch.obr_dir,
             batch.is_external,
             batch_cli.lock_timeout,
         )?;
         routed_write_lock.mark_cli_write_lock_held(&mut batch_cli);
-        let mut storage_ctx = config::open_storage_with_cli(&batch.beads_dir, &batch_cli)?;
+        let mut storage_ctx = config::open_storage_with_cli(&batch.obr_dir, &batch_cli)?;
         auto_import_storage_ctx_if_stale(&mut storage_ctx, &batch_cli)?;
         let config_layer = storage_ctx.load_config(&batch_cli)?;
         let id_config = config::id_config_from_layer(&config_layer);

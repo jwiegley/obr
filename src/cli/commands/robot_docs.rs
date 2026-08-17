@@ -8,15 +8,15 @@ use crate::error::Result;
 use crate::output::{OutputContext, OutputMode};
 use serde::Serialize;
 
-const CONTRACT_VERSION: &str = "br.robot_docs.v1";
+const CONTRACT_VERSION: &str = "obr.robot_docs.v1";
 
-const GUIDE: &str = r#"br Agent Guide
+const GUIDE: &str = r#"obr Agent Guide
 
 Purpose:
-  br is a local-first issue tracker. It stores primary state in SQLite and
-  exports .beads/issues.jsonl for git-friendly handoff. Normal issue and sync
-  paths never run git. Only an explicit br vcs-status request runs bounded,
-  read-only Git probes.
+  obr is a local-first issue tracker. It keeps a SQLite cache in .obr/ and
+  exports the tracked PLAN.org surface for git-friendly handoff.
+  obr never runs git on normal issue and sync paths.
+  Only an explicit obr vcs-status request runs bounded, read-only Git probes.
 
 Machine-output defaults:
   Use --json or --format json for scripts. Diagnostics and structured errors
@@ -24,43 +24,43 @@ Machine-output defaults:
   the command supports it.
 
 Start of session:
-  br capabilities --format json
-  br ready --json
-  br coordination status --json
-  br show <id> --json
+  obr capabilities --format json
+  obr ready --json
+  obr coordination status --json
+  obr show <id> --json
 
 Finding work:
-  br ready --json is the single work-discovery entrypoint: it returns
+  obr ready --json is the single work-discovery entrypoint: it returns
   unblocked, non-deferred, actionable issues. "Ready" defaults to status=open,
   but projects can widen it via workflow.status_groups.ready in
-  .beads/policy.yaml (e.g. [open, rework]) so review-returned work resurfaces
+  policy.yaml (e.g. [open, rework]) so review-returned work resurfaces
   without changing the command. Don't hand-roll status filters like
-  `br list -s open -s rework`; call `br ready --json` and let project policy
+  `obr list -s open -s rework`; call `obr ready --json` and let project policy
   define readiness. Returned issues keep their real status (a rework item still
   reports {"status":"rework"}).
 
 Claiming work:
-  br update <id> --claim --actor "$AGENT_NAME" --json
+  obr update <id> --claim --actor "$AGENT_NAME" --json
   If Agent Mail is down, add a comment naming the intended file scope before
   editing. Treat that comment as advisory, not a lock.
 
 Completing work:
-  br close <id> --reason "Completed: <specific proof>" --json
-  br sync --flush-only
-  Stage code and .beads changes together outside br.
+  obr close <id> --reason "Completed: <specific proof>" --json
+  obr sync --flush-only
+  Stage code and PLAN.org changes together outside obr.
 
 Discovery:
-  br schema commands --format json
-  br schema all --format json
-  br vcs-status --json
-  br robot-docs guide
+  obr schema commands --format json
+  obr schema all --format json
+  obr vcs-status --json
+  obr robot-docs guide
 
 Safety:
   Avoid bare bv in automated sessions; use bv --robot-* flags.
-  Use RUST_LOG=error for routine br runs to suppress dependency logs.
-  br sync does not commit, push, pull, or install hooks.
+  Use RUST_LOG=error for routine obr runs to suppress dependency logs.
+  obr sync does not commit, push, pull, or install hooks.
   Existing databases are never schema-migrated implicitly. Run
-  br doctor migrate-schema plan --json, review the receipt, then apply its
+  obr doctor migrate-schema plan --json, review the receipt, then apply its
   exact token.
 "#;
 
@@ -84,35 +84,35 @@ struct CanonicalCommand {
 const CANONICAL_COMMANDS: &[CanonicalCommand] = &[
     CanonicalCommand {
         task: "discover capabilities",
-        command: "br capabilities --format json",
+        command: "obr capabilities --format json",
     },
     CanonicalCommand {
         task: "find ready work",
-        command: "br ready --json",
+        command: "obr ready --json",
     },
     CanonicalCommand {
         task: "diagnose stale claims",
-        command: "br coordination status --json",
+        command: "obr coordination status --json",
     },
     CanonicalCommand {
         task: "show issue details",
-        command: "br show <id> --json",
+        command: "obr show <id> --json",
     },
     CanonicalCommand {
         task: "inspect JSON contracts",
-        command: "br schema commands --format json",
+        command: "obr schema commands --format json",
     },
     CanonicalCommand {
         task: "explicitly inspect JSONL Git visibility",
-        command: "br vcs-status --json",
+        command: "obr vcs-status --json",
     },
     CanonicalCommand {
         task: "review a required schema migration",
-        command: "br doctor migrate-schema plan --json",
+        command: "obr doctor migrate-schema plan --json",
     },
     CanonicalCommand {
         task: "final JSONL export",
-        command: "br sync --flush-only",
+        command: "obr sync --flush-only",
     },
 ];
 
@@ -141,10 +141,10 @@ fn execute_guide(args: &RobotDocsGuideArgs, outer_ctx: &OutputContext) {
     }
 
     let payload = RobotGuideOutput {
-        tool: "br",
+        tool: "obr",
         version: env!("CARGO_PKG_VERSION"),
         contract_version: CONTRACT_VERSION,
-        title: "br Agent Guide",
+        title: "obr Agent Guide",
         line_count: GUIDE.lines().count(),
         guide: GUIDE,
         canonical_commands: CANONICAL_COMMANDS,
@@ -163,11 +163,11 @@ mod tests {
 
     #[test]
     fn guide_scopes_git_authority_and_discovers_vcs_status() {
-        assert!(GUIDE.contains("Only an explicit br vcs-status request"));
+        assert!(GUIDE.contains("Only an explicit obr vcs-status request"));
         assert!(
             CANONICAL_COMMANDS
                 .iter()
-                .any(|entry| entry.command == "br vcs-status --json")
+                .any(|entry| entry.command == "obr vcs-status --json")
         );
     }
 }

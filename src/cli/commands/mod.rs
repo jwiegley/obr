@@ -55,29 +55,6 @@ pub mod vcs;
 pub mod version;
 pub mod r#where;
 
-#[cfg(feature = "self_update")]
-pub mod upgrade;
-
-pub(crate) const GITHUB_REPO_OWNER: &str = "Dicklesworthstone";
-pub(crate) const GITHUB_REPO_NAME: &str = "beads_rust";
-
-#[must_use]
-pub(crate) fn github_latest_release_api_url() -> String {
-    format!("https://api.github.com/repos/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/releases/latest")
-}
-
-#[cfg(feature = "self_update")]
-#[must_use]
-pub(crate) fn github_releases_url() -> String {
-    format!("https://github.com/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/releases")
-}
-
-#[cfg(feature = "self_update")]
-#[must_use]
-pub(crate) fn github_raw_main_url(path: &str) -> String {
-    format!("https://raw.githubusercontent.com/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/main/{path}")
-}
-
 /// Report a post-mutation auto-flush failure without corrupting command stdout.
 ///
 /// The data mutation has already succeeded by the time this is called. The
@@ -85,12 +62,12 @@ pub(crate) fn github_raw_main_url(path: &str) -> String {
 /// the operator with an explicit `sync --flush-only` recovery path.
 pub fn report_auto_flush_failure(
     ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     jsonl_path: &Path,
     error: &BeadsError,
 ) {
     tracing::warn!(
-        beads_dir = %beads_dir.display(),
+        obr_dir = %obr_dir.display(),
         jsonl_path = %jsonl_path.display(),
         error = %error,
         "Mutation succeeded but auto-flush failed"
@@ -100,9 +77,12 @@ pub fn report_auto_flush_failure(
         return;
     }
 
-    let message = "Mutation succeeded, but automatic JSONL export failed. \
-                   Fix the export problem, run `br sync --flush-only`, then commit \
-                   the updated .beads/issues.jsonl.";
+    let message = format!(
+        "Mutation succeeded, but automatic export failed. \
+         Fix the export problem, run `obr sync --flush-only`, then commit \
+         the updated {}.",
+        jsonl_path.display()
+    );
     let error_text = error.to_string();
 
     if ctx.is_json() || ctx.is_toon() {
@@ -110,10 +90,13 @@ pub fn report_auto_flush_failure(
             "warning": {
                 "code": "AUTO_FLUSH_FAILED",
                 "message": message,
-                "beads_dir": beads_dir.display().to_string(),
+                "obr_dir": obr_dir.display().to_string(),
                 "jsonl_path": jsonl_path.display().to_string(),
                 "error": error_text,
-                "recovery": "Run br sync --flush-only after fixing the export problem before committing .beads/issues.jsonl"
+                "recovery": format!(
+                    "Run obr sync --flush-only after fixing the export problem before committing {}",
+                    jsonl_path.display()
+                )
             }
         });
         eprintln!(
@@ -126,7 +109,7 @@ pub fn report_auto_flush_failure(
     }
 
     let warning = format!(
-        "Warning: {message} JSONL path: {}. Error: {error_text}",
+        "Warning: {message} Export path: {}. Error: {error_text}",
         jsonl_path.display()
     );
     eprintln!("{}", sanitize_terminal_text(&warning));
@@ -281,7 +264,7 @@ pub(super) fn finalize_batched_blocked_cache_refresh(
 
 /// Whether a CLI status filter contains the `all` meta-value
 /// (case-insensitive), meaning "every status" — the same convention
-/// `br lint --status all` uses. Without this, `all` would parse as the
+/// `obr lint --status all` uses. Without this, `all` would parse as the
 /// custom status literal `Custom("all")` and silently match nothing
 /// (beads_rust-6ilv).
 pub(super) fn status_filter_requests_all(statuses: &[String]) -> bool {
@@ -291,11 +274,11 @@ pub(super) fn status_filter_requests_all(statuses: &[String]) -> bool {
 }
 
 /// Self-reported session identity for capacity occupancy and the `session`
-/// capacity scope (GitHub #384 phase 5). Env-only (`BR_SESSION`): a CLI flag
-/// would collide with `br close --session`, which records close metadata,
+/// capacity scope (GitHub #384 phase 5). Env-only (`OBR_SESSION`): a CLI flag
+/// would collide with `obr close --session`, which records close metadata,
 /// and session identity is a harness-level property anyway.
 pub(super) fn session_attribution_from_env() -> Option<String> {
-    std::env::var("BR_SESSION")
+    std::env::var("OBR_SESSION")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
@@ -337,7 +320,7 @@ pub(super) fn auto_import_storage_ctx_if_stale(
     // stale after the bulk import's DELETE + INSERT cycle, causing subsequent
     // `get_issue_from_conn` calls inside write transactions to silently
     // return zero rows — the mechanism behind the "Issue not found" errors
-    // on `br --no-db update`.
+    // on `obr --no-db update`.
     if storage_ctx.no_db {
         return Ok(());
     }
@@ -345,7 +328,7 @@ pub(super) fn auto_import_storage_ctx_if_stale(
     let config_layer = storage_ctx.load_config(cli)?;
     let no_auto_import = crate::config::no_auto_import_from_layer(&config_layer).unwrap_or(false);
     let allow_external_jsonl = crate::config::implicit_external_jsonl_allowed(
-        &storage_ctx.paths.beads_dir,
+        &storage_ctx.paths.obr_dir,
         &storage_ctx.paths.db_path,
         &storage_ctx.paths.jsonl_path,
     );
@@ -353,7 +336,7 @@ pub(super) fn auto_import_storage_ctx_if_stale(
 
     auto_import_if_stale(
         &mut storage_ctx.storage,
-        &storage_ctx.paths.beads_dir,
+        &storage_ctx.paths.obr_dir,
         &storage_ctx.paths.jsonl_path,
         Some(expected_prefix.as_str()),
         allow_external_jsonl,
@@ -377,7 +360,7 @@ pub(super) fn cli_for_routed_workspace(
 
 pub(super) fn auto_import_external_projects_if_stale(
     config_layer: &crate::config::ConfigLayer,
-    local_beads_dir: &Path,
+    local_obr_dir: &Path,
     cli: &crate::config::CliOverrides,
 ) {
     if cli.allow_stale.unwrap_or(false)
@@ -389,15 +372,14 @@ pub(super) fn auto_import_external_projects_if_stale(
         return;
     }
 
-    for (project, beads_dir) in
-        crate::config::external_project_beads_dirs(config_layer, local_beads_dir)
+    for (project, obr_dir) in crate::config::external_project_obr_dirs(config_layer, local_obr_dir)
     {
-        let paths = match crate::config::ConfigPaths::resolve(&beads_dir, None) {
+        let paths = match crate::config::ConfigPaths::resolve(&obr_dir, None) {
             Ok(paths) => paths,
             Err(error) => {
                 tracing::warn!(
                     project = %project,
-                    path = %beads_dir.display(),
+                    path = %obr_dir.display(),
                     error = %error,
                     "Skipping external project auto-import because path resolution failed"
                 );
@@ -411,7 +393,7 @@ pub(super) fn auto_import_external_projects_if_stale(
 
         let mut route_cli = cli_for_routed_workspace(cli, true);
         let routed_write_lock = match acquire_routed_workspace_write_lock(
-            &beads_dir,
+            &obr_dir,
             true,
             route_cli.lock_timeout,
         ) {
@@ -419,7 +401,7 @@ pub(super) fn auto_import_external_projects_if_stale(
             Err(error) => {
                 tracing::warn!(
                     project = %project,
-                    path = %beads_dir.display(),
+                    path = %obr_dir.display(),
                     error = %error,
                     "Skipping external project auto-import because the workspace write lock could not be acquired"
                 );
@@ -428,12 +410,12 @@ pub(super) fn auto_import_external_projects_if_stale(
         };
         routed_write_lock.mark_cli_write_lock_held(&mut route_cli);
 
-        let mut storage_ctx = match crate::config::open_storage_with_cli(&beads_dir, &route_cli) {
+        let mut storage_ctx = match crate::config::open_storage_with_cli(&obr_dir, &route_cli) {
             Ok(storage_ctx) => storage_ctx,
             Err(error) => {
                 tracing::warn!(
                     project = %project,
-                    path = %beads_dir.display(),
+                    path = %obr_dir.display(),
                     error = %error,
                     "Skipping external project auto-import because storage could not be opened"
                 );
@@ -444,7 +426,7 @@ pub(super) fn auto_import_external_projects_if_stale(
         if let Err(error) = auto_import_storage_ctx_if_stale(&mut storage_ctx, &route_cli) {
             tracing::warn!(
                 project = %project,
-                path = %beads_dir.display(),
+                path = %obr_dir.display(),
                 error = %error,
                 "External project auto-import failed; dependency status will use the current database state"
             );
@@ -455,23 +437,23 @@ pub(super) fn auto_import_external_projects_if_stale(
 pub(super) fn external_project_db_paths_after_auto_import_if_needed(
     storage: &SqliteStorage,
     config_layer: &crate::config::ConfigLayer,
-    beads_dir: &Path,
+    obr_dir: &Path,
     cli: &crate::config::CliOverrides,
 ) -> crate::Result<HashMap<String, PathBuf>> {
     if !storage.has_external_dependencies(true)? {
         return Ok(HashMap::new());
     }
 
-    auto_import_external_projects_if_stale(config_layer, beads_dir, cli);
+    auto_import_external_projects_if_stale(config_layer, obr_dir, cli);
     Ok(crate::config::external_project_db_paths(
         config_layer,
-        beads_dir,
+        obr_dir,
     ))
 }
 
 pub(super) struct RoutedWorkspaceWriteLock {
     lock: Option<Arc<crate::sync::DatabaseFamilyWriteLock>>,
-    beads_dir: Option<PathBuf>,
+    obr_dir: Option<PathBuf>,
 }
 
 impl RoutedWorkspaceWriteLock {
@@ -479,19 +461,19 @@ impl RoutedWorkspaceWriteLock {
     pub(super) const fn local() -> Self {
         Self {
             lock: None,
-            beads_dir: None,
+            obr_dir: None,
         }
     }
 
     pub(super) fn mark_cli_write_lock_held(&self, cli: &mut crate::config::CliOverrides) {
-        if let (Some(beads_dir), Some(lock)) = (&self.beads_dir, &self.lock) {
-            cli.mark_database_family_lock_held(beads_dir, lock);
+        if let (Some(obr_dir), Some(lock)) = (&self.obr_dir, &self.lock) {
+            cli.mark_database_family_lock_held(obr_dir, lock);
         }
     }
 }
 
 pub(super) fn acquire_routed_workspace_write_lock(
-    beads_dir: &Path,
+    obr_dir: &Path,
     is_external: bool,
     lock_timeout_ms: Option<u64>,
 ) -> crate::Result<RoutedWorkspaceWriteLock> {
@@ -499,10 +481,10 @@ pub(super) fn acquire_routed_workspace_write_lock(
         return Ok(RoutedWorkspaceWriteLock::local());
     }
 
-    let startup = crate::config::load_startup_config_with_paths(beads_dir, None)?;
-    let lock_path = beads_dir.join(".write.lock");
+    let startup = crate::config::load_startup_config_with_paths(obr_dir, None)?;
+    let lock_path = obr_dir.join(".write.lock");
     let lock = crate::sync::blocking_database_family_write_lock_with_timeout(
-        beads_dir,
+        obr_dir,
         &startup.paths.db_path,
         lock_timeout_ms,
     )
@@ -514,7 +496,7 @@ pub(super) fn acquire_routed_workspace_write_lock(
         })?;
     Ok(RoutedWorkspaceWriteLock {
         lock: Some(Arc::new(lock)),
-        beads_dir: Some(beads_dir.to_path_buf()),
+        obr_dir: Some(obr_dir.to_path_buf()),
     })
 }
 
@@ -705,10 +687,10 @@ mod tests {
 
     fn storage_ctx_with_exported_issue() -> (TempDir, OpenStorageResult) {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
-        let db_path = beads_dir.join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
+        let db_path = obr_dir.join(crate::config::DEFAULT_DB_FILENAME);
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         // Scope the initial storage so the connection is closed before
         // recovery opens a new one at the same path.  fsqlite tracks pages
@@ -724,7 +706,7 @@ mod tests {
                 .create_issue(&issue, "tester")
                 .expect("create issue");
             let export_config = ExportConfig {
-                beads_dir: Some(beads_dir.clone()),
+                obr_dir: Some(obr_dir.clone()),
                 ..Default::default()
             };
             export_to_jsonl_with_policy(&storage, &jsonl_path, &export_config)
@@ -732,7 +714,7 @@ mod tests {
         }
 
         let storage_ctx =
-            open_storage_with_cli(&beads_dir, &CliOverrides::default()).expect("storage ctx");
+            open_storage_with_cli(&obr_dir, &CliOverrides::default()).expect("storage ctx");
         (temp, storage_ctx)
     }
 
@@ -752,20 +734,29 @@ mod tests {
     #[test]
     fn routed_workspace_write_lock_respects_external_timeout() -> std::result::Result<(), String> {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
-        let _held = crate::sync::blocking_write_lock(&beads_dir).expect("hold write lock");
-        let result = acquire_routed_workspace_write_lock(&beads_dir, true, Some(1));
+        let _held = crate::sync::blocking_write_lock(&obr_dir).expect("hold write lock");
+        let lock_timeout_ms = 1;
+        let result = acquire_routed_workspace_write_lock(&obr_dir, true, Some(lock_timeout_ms));
         let err = result.err().ok_or_else(|| {
             "external routed lock should wait for and time out on held lock".to_string()
         })?;
         let message = err.to_string();
+        let lock_path = obr_dir.join(".write.lock");
         assert!(
             message.contains("Routed external workspace is busy")
-                && message.contains("target write lock")
-                && message.contains("Timed out after 1ms waiting for write lock"),
+                && message.contains(&format!("target write lock at {}", lock_path.display())),
             "{message}"
+        );
+        let reported_ms = crate::sync::reported_write_lock_timeout_ms(&message, &lock_path)
+            .ok_or_else(|| {
+                format!("routed acquisition must report a write-lock timeout: {message}")
+            })?;
+        assert!(
+            reported_ms <= lock_timeout_ms,
+            "the wait ignored the caller's {lock_timeout_ms}ms budget: {message}"
         );
         Ok(())
     }
@@ -773,10 +764,10 @@ mod tests {
     #[test]
     fn routed_workspace_write_lock_marks_cli_for_fast_open_recovery() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join(crate::config::DEFAULT_DB_FILENAME);
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
         write_single_issue_jsonl(
             &jsonl_path,
             "bd-routed",
@@ -784,7 +775,7 @@ mod tests {
         );
 
         let routed_write_lock =
-            acquire_routed_workspace_write_lock(&beads_dir, true, Some(1)).expect("routed lock");
+            acquire_routed_workspace_write_lock(&obr_dir, true, Some(1)).expect("routed lock");
         let mut cli = CliOverrides {
             lock_timeout: Some(1),
             read_only_fast_open: true,
@@ -793,7 +784,7 @@ mod tests {
         routed_write_lock.mark_cli_write_lock_held(&mut cli);
 
         let storage_ctx =
-            open_storage_with_cli(&beads_dir, &cli).expect("recovery should reuse routed lock");
+            open_storage_with_cli(&obr_dir, &cli).expect("recovery should reuse routed lock");
         let issue = storage_ctx
             .storage
             .get_issue("bd-routed")
@@ -807,7 +798,7 @@ mod tests {
     #[test]
     fn partial_mutation_rebuild_skips_clean_state() {
         let temp = TempDir::new().expect("tempdir");
-        let db_path = temp.path().join("beads.db");
+        let db_path = temp.path().join(crate::config::DEFAULT_DB_FILENAME);
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
         rebuild_blocked_cache_after_partial_mutation(&mut storage, false, "close")
             .expect("clean state should not rebuild");
@@ -816,7 +807,7 @@ mod tests {
     #[test]
     fn preserve_returns_original_error_when_cache_is_marked_stale() {
         let temp = TempDir::new().expect("tempdir");
-        let db_path = temp.path().join("beads.db");
+        let db_path = temp.path().join(crate::config::DEFAULT_DB_FILENAME);
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
         let result: crate::Result<()> = Err(BeadsError::validation("ids", "boom"));
         let err = preserve_blocked_cache_on_error::<()>(&mut storage, true, "close", result)
@@ -828,7 +819,7 @@ mod tests {
     #[test]
     fn preserve_surfaces_rebuild_failure_when_stale_marker_write_also_fails() {
         let temp = TempDir::new().expect("tempdir");
-        let db_path = temp.path().join("beads.db");
+        let db_path = temp.path().join(crate::config::DEFAULT_DB_FILENAME);
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
         let conn = Connection::open(db_path.to_string_lossy().into_owned()).expect("conn");
         conn.execute("DROP TABLE blocked_issues_cache")
@@ -859,7 +850,7 @@ mod tests {
     #[test]
     fn finalize_batched_refresh_rebuilds_when_cache_table_is_missing() {
         let temp = TempDir::new().expect("tempdir");
-        let db_path = temp.path().join("beads.db");
+        let db_path = temp.path().join(crate::config::DEFAULT_DB_FILENAME);
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
         let conn = Connection::open(db_path.to_string_lossy().into_owned()).expect("conn");
         conn.execute("DROP TABLE blocked_issues_cache")
@@ -887,7 +878,7 @@ mod tests {
     #[test]
     fn finalize_batched_refresh_clears_preexisting_stale_marker() {
         let temp = TempDir::new().expect("tempdir");
-        let db_path = temp.path().join("beads.db");
+        let db_path = temp.path().join(crate::config::DEFAULT_DB_FILENAME);
         let mut storage = SqliteStorage::open(&db_path).expect("storage");
         storage
             .mark_blocked_cache_stale()
@@ -1050,7 +1041,7 @@ mod tests {
         // the `-wal` file itself and never depending on a JSONL rebuild.
         let (_temp, mut storage_ctx) = storage_ctx_with_exported_issue();
         let db_path = storage_ctx.paths.db_path.clone();
-        let beads_dir = storage_ctx.paths.beads_dir.clone();
+        let obr_dir = storage_ctx.paths.obr_dir.clone();
         let wal_path = std::path::PathBuf::from(format!("{}-wal", db_path.display()));
         let cert_path = std::path::PathBuf::from(format!("{}-wal-cert", db_path.display()));
         let head_path = std::path::PathBuf::from(format!("{}-wal-cert-head", db_path.display()));
@@ -1098,7 +1089,7 @@ mod tests {
 
         // Both certificate sidecars were quarantined into `.br_recovery`
         // with their original bytes preserved.
-        let recovery_dir = beads_dir.join(".br_recovery");
+        let recovery_dir = obr_dir.join(".br_recovery");
         let backups: Vec<_> = fs::read_dir(&recovery_dir)
             .expect("recovery dir exists after quarantine")
             .filter_map(std::result::Result::ok)

@@ -1,7 +1,7 @@
-//! Workflow capacity management commands (`br capacity`), GitHub #384
+//! Workflow capacity management commands (`obr capacity`), GitHub #384
 //! phase 4: audited issue-specific capacity exemptions.
 //!
-//! `br capacity exempt <id> --status <name> --provider <p> --reason <r>`
+//! `obr capacity exempt <id> --status <name> --provider <p> --reason <r>`
 //! grants a narrowly scoped exemption: one issue, one named capacity.
 //! `renew` extends an active exemption's expiry, `revoke` withdraws it, and
 //! `exemptions` lists state plus the append-only audit history.
@@ -30,7 +30,7 @@ use crate::util::time::parse_flexible_timestamp;
 use serde::Serialize;
 use std::path::Path;
 
-/// JSON payload for `br capacity exemptions`.
+/// JSON payload for `obr capacity exemptions`.
 #[derive(Debug, Serialize)]
 struct CapacityExemptionsOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -51,12 +51,12 @@ pub fn execute(
     cli: &config::CliOverrides,
     ctx: &OutputContext,
 ) -> Result<()> {
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
     match command {
-        CapacityCommands::Exempt(args) => execute_exempt(args, cli, ctx, &beads_dir),
-        CapacityCommands::Renew(args) => execute_renew(args, cli, ctx, &beads_dir),
-        CapacityCommands::Revoke(args) => execute_revoke(args, cli, ctx, &beads_dir),
-        CapacityCommands::Exemptions(args) => execute_exemptions(args, cli, ctx, &beads_dir),
+        CapacityCommands::Exempt(args) => execute_exempt(args, cli, ctx, &obr_dir),
+        CapacityCommands::Renew(args) => execute_renew(args, cli, ctx, &obr_dir),
+        CapacityCommands::Revoke(args) => execute_revoke(args, cli, ctx, &obr_dir),
+        CapacityCommands::Exemptions(args) => execute_exemptions(args, cli, ctx, &obr_dir),
     }
 }
 
@@ -96,10 +96,10 @@ struct MutationSetup {
 fn mutation_setup(
     raw_id: &str,
     cli: &config::CliOverrides,
-    beads_dir: &Path,
+    obr_dir: &Path,
 ) -> Result<(MutationSetup, RoutedWorkspaceWriteLock)> {
-    let lock = acquire_routed_workspace_write_lock(beads_dir, false, cli.lock_timeout)?;
-    let mut storage_ctx = config::open_storage_with_cli(beads_dir, cli)?;
+    let lock = acquire_routed_workspace_write_lock(obr_dir, false, cli.lock_timeout)?;
+    let mut storage_ctx = config::open_storage_with_cli(obr_dir, cli)?;
     auto_import_storage_ctx_if_stale(&mut storage_ctx, cli)?;
     let config_layer = storage_ctx.load_config(cli)?;
     let actor = config::resolve_actor(&config_layer);
@@ -144,11 +144,11 @@ fn execute_exempt(
     args: &CapacityExemptArgs,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
 ) -> Result<()> {
     let (kind, name) = resolve_capacity_flags(args.status.as_deref(), args.group.as_deref())?;
     let expires_at = parse_expires(args.expires.as_deref())?;
-    let (setup, _lock) = mutation_setup(&args.id, cli, beads_dir)?;
+    let (setup, _lock) = mutation_setup(&args.id, cli, obr_dir)?;
     let record = setup.storage_ctx.storage.grant_capacity_exemption(
         &setup.issue_id,
         kind,
@@ -158,7 +158,7 @@ fn execute_exempt(
         expires_at,
         &setup.actor,
     )?;
-    crate::util::set_last_touched_id(beads_dir, &setup.issue_id);
+    crate::util::set_last_touched_id(obr_dir, &setup.issue_id);
     emit_exemption_record(ctx, args.robot, &record, "Granted");
     Ok(())
 }
@@ -167,11 +167,11 @@ fn execute_renew(
     args: &CapacityRenewArgs,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
 ) -> Result<()> {
     let (kind, name) = resolve_capacity_flags(args.status.as_deref(), args.group.as_deref())?;
     let expires_at = parse_expires(args.expires.as_deref())?;
-    let (setup, _lock) = mutation_setup(&args.id, cli, beads_dir)?;
+    let (setup, _lock) = mutation_setup(&args.id, cli, obr_dir)?;
     let record = setup.storage_ctx.storage.renew_capacity_exemption(
         &setup.issue_id,
         kind,
@@ -181,7 +181,7 @@ fn execute_renew(
         expires_at,
         &setup.actor,
     )?;
-    crate::util::set_last_touched_id(beads_dir, &setup.issue_id);
+    crate::util::set_last_touched_id(obr_dir, &setup.issue_id);
     emit_exemption_record(ctx, args.robot, &record, "Renewed");
     Ok(())
 }
@@ -190,10 +190,10 @@ fn execute_revoke(
     args: &CapacityRevokeArgs,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
 ) -> Result<()> {
     let (kind, name) = resolve_capacity_flags(args.status.as_deref(), args.group.as_deref())?;
-    let (setup, _lock) = mutation_setup(&args.id, cli, beads_dir)?;
+    let (setup, _lock) = mutation_setup(&args.id, cli, obr_dir)?;
     let record = setup.storage_ctx.storage.revoke_capacity_exemption(
         &setup.issue_id,
         kind,
@@ -202,7 +202,7 @@ fn execute_revoke(
         args.reason.as_deref(),
         &setup.actor,
     )?;
-    crate::util::set_last_touched_id(beads_dir, &setup.issue_id);
+    crate::util::set_last_touched_id(obr_dir, &setup.issue_id);
     emit_exemption_record(ctx, args.robot, &record, "Revoked");
     Ok(())
 }
@@ -211,9 +211,9 @@ fn execute_exemptions(
     args: &CapacityExemptionsArgs,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
 ) -> Result<()> {
-    let storage_ctx = config::open_storage_with_cli(beads_dir, cli)?;
+    let storage_ctx = config::open_storage_with_cli(obr_dir, cli)?;
     let issue_id = args
         .id
         .as_deref()
@@ -321,13 +321,13 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    fn open_storage(beads_dir: &Path) -> config::OpenStorageResult {
-        config::open_storage_with_cli(beads_dir, &CliOverrides::default()).expect("storage")
+    fn open_storage(obr_dir: &Path) -> config::OpenStorageResult {
+        config::open_storage_with_cli(obr_dir, &CliOverrides::default()).expect("storage")
     }
 
-    fn write_exemption_policy(beads_dir: &Path) {
+    fn write_exemption_policy(obr_dir: &Path) {
         fs::write(
-            beads_dir.join(close_policy::POLICY_FILE_NAME),
+            obr_dir.join(close_policy::POLICY_FILE_NAME),
             r"workflow:
   statuses: [open, in_progress, closed]
   capacity:
@@ -358,21 +358,21 @@ mod tests {
 
     fn setup_workspace() -> (TempDir, std::path::PathBuf) {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        write_exemption_policy(&beads_dir);
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        write_exemption_policy(&obr_dir);
         {
-            let mut ctx = open_storage(&beads_dir);
+            let mut ctx = open_storage(&obr_dir);
             ctx.storage
                 .create_issue(&make_issue("bd-1", Status::Open), "tester")
                 .unwrap();
         }
-        (temp, beads_dir)
+        (temp, obr_dir)
     }
 
     #[test]
     fn exempt_grants_and_exemptions_lists_it_back() {
-        let (_temp, beads_dir) = setup_workspace();
+        let (_temp, obr_dir) = setup_workspace();
         let ctx = OutputContext::from_flags(true, false, true);
         let grant = CapacityExemptArgs {
             id: "bd-1".to_string(),
@@ -383,9 +383,9 @@ mod tests {
             expires: Some("+7d".to_string()),
             robot: true,
         };
-        execute_exempt(&grant, &CliOverrides::default(), &ctx, &beads_dir).unwrap();
+        execute_exempt(&grant, &CliOverrides::default(), &ctx, &obr_dir).unwrap();
 
-        let storage_ctx = open_storage(&beads_dir);
+        let storage_ctx = open_storage(&obr_dir);
         let records = storage_ctx
             .storage
             .list_capacity_exemptions(Some("bd-1"))
@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     fn exempt_rejects_unauthorized_provider_and_missing_capacity_flag() {
-        let (_temp, beads_dir) = setup_workspace();
+        let (_temp, obr_dir) = setup_workspace();
         let ctx = OutputContext::from_flags(true, false, true);
         let unauthorized = CapacityExemptArgs {
             id: "bd-1".to_string(),
@@ -416,7 +416,7 @@ mod tests {
             expires: None,
             robot: true,
         };
-        let error = execute_exempt(&unauthorized, &CliOverrides::default(), &ctx, &beads_dir)
+        let error = execute_exempt(&unauthorized, &CliOverrides::default(), &ctx, &obr_dir)
             .expect_err("unauthorized provider must be rejected");
         assert!(error.to_string().contains("not authorized"));
 
@@ -429,14 +429,14 @@ mod tests {
             expires: None,
             robot: true,
         };
-        let error = execute_exempt(&no_capacity, &CliOverrides::default(), &ctx, &beads_dir)
+        let error = execute_exempt(&no_capacity, &CliOverrides::default(), &ctx, &obr_dir)
             .expect_err("a capacity flag is required");
         assert!(error.to_string().contains("--status"));
     }
 
     #[test]
     fn revoke_ends_exemption_and_appends_history() {
-        let (_temp, beads_dir) = setup_workspace();
+        let (_temp, obr_dir) = setup_workspace();
         let ctx = OutputContext::from_flags(true, false, true);
         let grant = CapacityExemptArgs {
             id: "bd-1".to_string(),
@@ -447,7 +447,7 @@ mod tests {
             expires: None,
             robot: true,
         };
-        execute_exempt(&grant, &CliOverrides::default(), &ctx, &beads_dir).unwrap();
+        execute_exempt(&grant, &CliOverrides::default(), &ctx, &obr_dir).unwrap();
 
         let revoke = CapacityRevokeArgs {
             id: "bd-1".to_string(),
@@ -457,9 +457,9 @@ mod tests {
             reason: Some("no longer needed".to_string()),
             robot: true,
         };
-        execute_revoke(&revoke, &CliOverrides::default(), &ctx, &beads_dir).unwrap();
+        execute_revoke(&revoke, &CliOverrides::default(), &ctx, &obr_dir).unwrap();
 
-        let storage_ctx = open_storage(&beads_dir);
+        let storage_ctx = open_storage(&obr_dir);
         let records = storage_ctx
             .storage
             .list_capacity_exemptions(Some("bd-1"))
@@ -488,7 +488,7 @@ mod tests {
             reason: None,
             robot: true,
         };
-        let error = execute_renew(&renew, &CliOverrides::default(), &ctx, &beads_dir)
+        let error = execute_renew(&renew, &CliOverrides::default(), &ctx, &obr_dir)
             .expect_err("a revoked exemption cannot be renewed");
         assert!(error.to_string().contains("revoked"), "{error}");
     }

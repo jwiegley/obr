@@ -18,7 +18,7 @@ use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use tracing::{debug, trace};
 
 /// Output format for orphan issues.
@@ -89,12 +89,12 @@ pub fn execute(
     let render_mode = resolve_render_mode(json, ctx.mode());
     validate_fix_render_mode(args, render_mode)?;
 
-    let Some(beads_dir) = config::discover_optional_beads_dir_with_cli(cli)? else {
+    let Some(obr_dir) = config::discover_optional_obr_dir_with_cli(cli)? else {
         output_empty(render_mode, ctx)?;
         return Ok(());
     };
 
-    execute_inner(args, json, cli, ctx, &beads_dir, None)
+    execute_inner(args, json, cli, ctx, &obr_dir, None)
 }
 
 /// Execute orphans using the caller's preopened storage context.
@@ -108,10 +108,10 @@ pub fn execute_with_storage_ctx(
     json: bool,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     storage_ctx: &config::OpenStorageResult,
 ) -> Result<()> {
-    execute_inner(args, json, cli, ctx, beads_dir, Some(storage_ctx))
+    execute_inner(args, json, cli, ctx, obr_dir, Some(storage_ctx))
 }
 
 #[allow(clippy::too_many_lines)]
@@ -120,7 +120,7 @@ fn execute_inner(
     json: bool,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     preloaded_storage_ctx: Option<&config::OpenStorageResult>,
 ) -> Result<()> {
     // beads_rust-750p: ordinary orphans scans must auto-import a newer JSONL
@@ -146,7 +146,7 @@ fn execute_inner(
     let owned_storage_ctx = if preloaded_storage_ctx.is_some() {
         None
     } else {
-        let mut ctx_owned = config::open_storage_with_cli(beads_dir, cli)?;
+        let mut ctx_owned = config::open_storage_with_cli(obr_dir, cli)?;
         if !cli.read_only_fast_open {
             crate::cli::commands::auto_import_storage_ctx_if_stale(&mut ctx_owned, cli)?;
         }
@@ -178,7 +178,7 @@ fn execute_inner(
     debug!(total_issues = issues.len(), "Scanning for orphaned issues");
 
     let Some(repo_root) = git_repo_root_for_path(&storage_ctx.paths.jsonl_path)
-        .or_else(|| git_repo_root_for_path(beads_dir))
+        .or_else(|| git_repo_root_for_path(obr_dir))
     else {
         output_empty(render_mode, ctx)?;
         return Ok(());
@@ -284,7 +284,7 @@ fn execute_inner(
             let table = table.build();
             ctx.render(&table);
             ctx.print(
-                "\nSuggestion: Assign these to an epic or set a parent with br update <ID> --parent <EPIC_ID>\n",
+                "\nSuggestion: Assign these to an epic or set a parent with obr update <ID> --parent <EPIC_ID>\n",
             );
         }
         OrphanRenderMode::Plain => {
@@ -355,9 +355,10 @@ fn execute_inner(
 
 fn git_repo_root_for_path(path: &Path) -> Option<PathBuf> {
     let start = if path.is_dir() { path } else { path.parent()? };
-    let output = Command::new("git")
+    // Hardened: this walks into whatever repository the user is standing in,
+    // and `--fix` closes issues from what it reports back.
+    let output = crate::cli::commands::vcs::hardened_git(start)
         .args(["rev-parse", "--show-toplevel"])
-        .current_dir(start)
         .output()
         .ok()?;
 
@@ -395,9 +396,8 @@ fn get_git_commit_refs_for_prefixes(
     prefixes: &[String],
     repo_root: &Path,
 ) -> Result<Vec<(String, String, String)>> {
-    let mut child = Command::new("git")
+    let mut child = crate::cli::commands::vcs::hardened_git(repo_root)
         .args(["log", "--oneline", "--all"])
-        .current_dir(repo_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
@@ -529,8 +529,11 @@ fn output_empty(render_mode: OrphanRenderMode, ctx: &OutputContext) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Test fixtures build real repositories; production git goes through
+    // `vcs::hardened_git`.
     use std::fs;
     use std::io::Cursor;
+    use std::process::Command;
     use tempfile::TempDir;
 
     #[test]

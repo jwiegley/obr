@@ -1,5 +1,5 @@
 //! Doctor subsystems — foundation for the WP1 (chokepoint) refactor of
-//! `br doctor --repair`.
+//! `obr doctor --repair`.
 //!
 //! These modules are landed standalone and do **not** yet rewire the
 //! existing [`crate::cli::commands::doctor`] `repair_*` call sites — that
@@ -15,7 +15,7 @@
 //! - [`exit_codes`] — the structured doctor exit-code dictionary
 //!   (0 / 1 / 2 / 3 / 4 / 5 / 6 / 64 / 66 / 73 / 74) per the
 //!   project's safety envelope.
-//! - [`capabilities_doctor`] — emits `br.doctor.capabilities.v1`
+//! - [`capabilities_doctor`] — emits `obr.doctor.capabilities.v1`
 //!   JSON describing the doctor's contract to AI agents.
 //! - [`refuse_gates`] — refuse-unsafe gates that run before any
 //!   `--repair` execution (schema downgrade, recovery-fingerprint

@@ -56,7 +56,7 @@ pub fn execute(cli: &config::CliOverrides, ctx: &OutputContext) -> Result<()> {
 }
 
 fn resolve_where_output(cli: &config::CliOverrides) -> Result<Option<WhereOutput>> {
-    let Some(source_dir) = config::discover_optional_beads_dir_candidate_with_cli(cli)? else {
+    let Some(source_dir) = config::discover_optional_obr_dir_candidate_with_cli(cli)? else {
         return Ok(None);
     };
 
@@ -82,12 +82,12 @@ fn resolve_where_output(cli: &config::CliOverrides) -> Result<Option<WhereOutput
 }
 
 fn detect_prefix(
-    beads_dir: &Path,
+    obr_dir: &Path,
     db_path: &Path,
     jsonl_path: &Path,
     cli: &config::CliOverrides,
 ) -> Option<String> {
-    if let Ok(startup) = config::load_startup_config_with_paths(beads_dir, cli.db.as_ref())
+    if let Ok(startup) = config::load_startup_config_with_paths(obr_dir, cli.db.as_ref())
         && let Some(prefix) =
             config::configured_issue_prefix_from_map(&startup.merged_config.runtime)
     {
@@ -295,7 +295,7 @@ fn render_where_rich(output: &WhereOutput, ctx: &OutputContext) {
     }
 
     let title = output.prefix.as_ref().map_or_else(
-        || "Beads Location".to_string(),
+        || "Obr Location".to_string(),
         |p| format!("{} Location", where_display_text(p)),
     );
 
@@ -355,11 +355,11 @@ mod tests {
     #[test]
     fn resolve_where_output_uses_explicit_db_override() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join("external").join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join("external").join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
-        let db_path = beads_dir.join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let db_path = obr_dir.join("beads.db");
+        let jsonl_path = obr_dir.join("issues.jsonl");
         fs::write(&jsonl_path, r#"{"id":"proj-abc12","title":"Example"}"#).expect("write jsonl");
 
         let cli = CliOverrides {
@@ -373,7 +373,7 @@ mod tests {
 
         assert_eq!(
             output.path,
-            canonicalize_lossy(&beads_dir).display().to_string()
+            canonicalize_lossy(&obr_dir).display().to_string()
         );
         assert_eq!(
             output.database_path,
@@ -394,14 +394,14 @@ mod tests {
         let temp = TempDir::new().expect("tempdir");
         let source_root = temp.path().join("source");
         let target_root = temp.path().join("target");
-        let source_beads = source_root.join(".beads");
-        let target_beads = target_root.join(".beads");
+        let source_obr = source_root.join(".beads");
+        let target_obr = target_root.join(".beads");
 
-        fs::create_dir_all(&source_beads).expect("create source beads dir");
-        fs::create_dir_all(&target_beads).expect("create target beads dir");
-        fs::write(source_beads.join("redirect"), "../../target/.beads").expect("write redirect");
+        fs::create_dir_all(&source_obr).expect("create source obr dir");
+        fs::create_dir_all(&target_obr).expect("create target obr dir");
+        fs::write(source_obr.join("redirect"), "../../target/.beads").expect("write redirect");
         fs::write(
-            target_beads.join("issues.jsonl"),
+            target_obr.join("issues.jsonl"),
             r#"{"id":"proj-abc12","title":"Example"}"#,
         )
         .expect("write jsonl");
@@ -413,16 +413,16 @@ mod tests {
 
         assert_eq!(
             output.path,
-            canonicalize_lossy(&target_beads).display().to_string()
+            canonicalize_lossy(&target_obr).display().to_string()
         );
         assert_eq!(
             output.redirected_from,
-            Some(canonicalize_lossy(&source_beads).display().to_string())
+            Some(canonicalize_lossy(&source_obr).display().to_string())
         );
         assert_eq!(
             output.database_path,
             Some(
-                canonicalize_lossy(&target_beads.join("beads.db"))
+                canonicalize_lossy(&target_obr.join("obr.db"))
                     .display()
                     .to_string()
             )
@@ -430,7 +430,7 @@ mod tests {
         assert_eq!(
             output.jsonl_path,
             Some(
-                canonicalize_lossy(&target_beads.join("issues.jsonl"))
+                canonicalize_lossy(&target_obr.join("issues.jsonl"))
                     .display()
                     .to_string()
             )
@@ -445,8 +445,8 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let temp = TempDir::new().expect("tempdir");
         let root = temp.path().join("workspace");
-        let beads_dir = root.join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = root.join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         let _guard = DirGuard::new(&root);
         let output = resolve_where_output(&CliOverrides::default())
@@ -456,13 +456,13 @@ mod tests {
         assert_eq!(
             output.database_path,
             Some(
-                canonicalize_lossy(&beads_dir.join("beads.db"))
+                canonicalize_lossy(&obr_dir.join("obr.db"))
                     .display()
                     .to_string()
             )
         );
         assert!(
-            !beads_dir.join("beads.db").exists(),
+            !obr_dir.join("obr.db").exists(),
             "where must not create the database as a side effect"
         );
     }
@@ -474,8 +474,8 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let temp = TempDir::new().expect("tempdir");
         let root = temp.path().join("workspace");
-        let beads_dir = root.join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = root.join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         let external_db = temp.path().join("cache").join("custom.db");
         let cli = CliOverrides {
@@ -490,7 +490,7 @@ mod tests {
 
         assert_eq!(
             output.path,
-            canonicalize_lossy(&beads_dir).display().to_string()
+            canonicalize_lossy(&obr_dir).display().to_string()
         );
         assert_eq!(
             output.database_path,
@@ -499,7 +499,7 @@ mod tests {
         assert_eq!(
             output.jsonl_path,
             Some(
-                canonicalize_lossy(&temp.path().join("cache").join("issues.jsonl"))
+                canonicalize_lossy(&temp.path().join("cache").join("issues.org"))
                     .display()
                     .to_string()
             )
@@ -544,16 +544,16 @@ mod tests {
     #[test]
     fn detect_prefix_prefers_configured_storage_prefix_when_jsonl_prefixes_conflict() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
-        let db_path = beads_dir.join("beads.db");
+        let db_path = obr_dir.join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).expect("open db");
         storage
             .set_config("issue_prefix", "proj")
             .expect("set issue prefix");
 
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let jsonl_path = obr_dir.join("issues.jsonl");
         fs::write(
             &jsonl_path,
             concat!(
@@ -566,7 +566,7 @@ mod tests {
         .expect("write mixed-prefix jsonl");
 
         assert_eq!(
-            detect_prefix(&beads_dir, &db_path, &jsonl_path, &CliOverrides::default()),
+            detect_prefix(&obr_dir, &db_path, &jsonl_path, &CliOverrides::default()),
             Some("proj".to_string())
         );
     }
@@ -578,9 +578,9 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let temp = TempDir::new().expect("tempdir");
         let root = temp.path().join("workspace");
-        let beads_dir = root.join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
-        fs::write(beads_dir.join("config.yaml"), "prefix: proj\n").expect("write config");
+        let obr_dir = root.join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
+        fs::write(obr_dir.join("config.yaml"), "prefix: proj\n").expect("write config");
 
         let _guard = DirGuard::new(&root);
         let output = resolve_where_output(&CliOverrides::default())
@@ -593,18 +593,18 @@ mod tests {
     #[test]
     fn detect_prefix_prefers_db_prefix_over_jsonl_inference() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
-        let db_path = beads_dir.join("beads.db");
+        let db_path = obr_dir.join("beads.db");
         let mut storage = SqliteStorage::open(&db_path).expect("open db");
         storage.set_config("prefix", "dbpref").expect("set prefix");
 
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let jsonl_path = obr_dir.join("issues.jsonl");
         fs::write(&jsonl_path, r#"{"id":"jsonl-abc12","title":"Example"}"#).expect("write jsonl");
 
         assert_eq!(
-            detect_prefix(&beads_dir, &db_path, &jsonl_path, &CliOverrides::default()),
+            detect_prefix(&obr_dir, &db_path, &jsonl_path, &CliOverrides::default()),
             Some("dbpref".to_string())
         );
     }

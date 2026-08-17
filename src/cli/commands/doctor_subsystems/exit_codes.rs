@@ -4,7 +4,7 @@
 //! the playbook all parse them. Numeric values match the world-class
 //! doctor methodology and the project's `safety_envelope.md`. They are
 //! distinct from the [`crate::error::ErrorCode::exit_code`] dictionary
-//! used by ordinary `br` commands; they are wider because the doctor
+//! used by ordinary `obr` commands; they are wider because the doctor
 //! has additional refusal modes (concurrency-lost, unsafe-precondition,
 //! online-required).
 //!
@@ -31,7 +31,7 @@
 //! - **64** — `UsageError` — clap rejected the invocation. Mirrors
 //!   `EX_USAGE` from `<sysexits.h>`.
 //! - **66** — `NoInput` — required input missing (e.g., the workspace
-//!   was never `br init`-ed). Mirrors `EX_NOINPUT`.
+//!   was never `obr init`-ed). Mirrors `EX_NOINPUT`.
 //! - **73** — `CannotCreateOutput` — could not create the run-dir or
 //!   actions.jsonl. Mirrors `EX_CANTCREAT`.
 //! - **74** — `IoError` — generic I/O fault during a non-mutating

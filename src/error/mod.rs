@@ -1,4 +1,4 @@
-//! Error types and handling for `beads_rust`.
+//! Error types and handling for `obr`.
 //!
 //! This module provides structured errors that match the classic bd
 //! behavior for JSON error output compatibility.
@@ -19,7 +19,7 @@ pub use structured::{ErrorCode, StructuredError};
 use std::path::PathBuf;
 use thiserror::Error;
 
-/// Primary error type for `beads_rust` operations.
+/// Primary error type for `obr` operations.
 ///
 /// Design: Structured variants for common cases.
 #[derive(Error, Debug)]
@@ -214,8 +214,8 @@ pub enum BeadsError {
     #[error("Internal error: {message}")]
     Internal { message: String },
 
-    /// Beads workspace not initialized.
-    #[error("Beads not initialized: run 'br init' first")]
+    /// Obr workspace not initialized.
+    #[error("Obr not initialized: run 'obr init' first")]
     NotInitialized,
 
     /// Already initialized.
@@ -302,7 +302,7 @@ impl BeadsError {
     pub fn reviewed_schema_migration_required(self) -> Self {
         Self::WithContext {
             context: "ordinary commands never migrate an existing tracker database; run \
-                      `br doctor migrate-schema plan` and review its receipt before applying the \
+                      `obr doctor migrate-schema plan` and review its receipt before applying the \
                       explicit migration"
                 .to_string(),
             source: Box::new(self),
@@ -411,8 +411,8 @@ impl BeadsError {
     #[must_use]
     pub const fn suggestion(&self) -> Option<&'static str> {
         match self {
-            Self::NotInitialized => Some("Run: br init"),
-            Self::DatabaseNotFound { .. } => Some("Check path or run: br init"),
+            Self::NotInitialized => Some("Run: obr init"),
+            Self::DatabaseNotFound { .. } => Some("Check path or run: obr init"),
             Self::AmbiguousId { .. } => Some("Provide more characters of the ID"),
             Self::HasDependents { .. } => Some("Use --force or --cascade to delete anyway"),
             Self::ImportCollision { .. } => Some("Use --force to overwrite or resolve manually"),
@@ -438,7 +438,7 @@ impl BeadsError {
                 "Fix the violation(s) above, or pass --bypass-policy --bypass-reason \"<text>\" if your project's policy.yaml allows bypass.",
             ),
             Self::WorkflowCapacityExceeded { .. } => Some(
-                "Drain the named queue before admitting fresh work; inspect it with `br list --status <status>`.",
+                "Drain the named queue before admitting fresh work; inspect it with `obr list --status <status>`.",
             ),
             Self::CommittedStateUnwitnessed { .. } => Some(
                 "Do not retry automatically. Reconcile the committed database state and authority first.",
@@ -581,7 +581,7 @@ mod tests {
     #[test]
     fn test_suggestion() {
         let err = BeadsError::NotInitialized;
-        assert_eq!(err.suggestion(), Some("Run: br init"));
+        assert_eq!(err.suggestion(), Some("Run: obr init"));
 
         let err = BeadsError::AmbiguousId {
             partial: "bd-a".to_string(),

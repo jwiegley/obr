@@ -1,4 +1,4 @@
-//! MCP resource handlers for the beads issue tracker.
+//! MCP resource handlers for the obr issue tracker.
 //!
 //! Resources provide read-only discovery endpoints that agents can inspect
 //! before calling tools.
@@ -19,7 +19,7 @@ use crate::error::StructuredError;
 use crate::model::{Event, Issue, Status};
 use crate::storage::{ListFilters, SqliteStorage};
 
-use super::{BeadsState, ensure_not_shutting_down, mcp_ready_issues, to_mcp};
+use super::{ObrState, ensure_not_shutting_down, mcp_ready_issues, to_mcp};
 
 fn read_project_config(storage: &SqliteStorage) -> McpResult<HashMap<String, String>> {
     storage.get_all_config().map_err(to_mcp)
@@ -35,7 +35,7 @@ fn resource_json(uri: &str, value: &Value) -> Vec<ResourceContent> {
 }
 
 fn cached_resource_json<F>(
-    state: &BeadsState,
+    state: &ObrState,
     uri: &str,
     key: String,
     build: F,
@@ -86,7 +86,7 @@ fn issue_not_found_resource(storage: &SqliteStorage, id: &str) -> McpResult<McpE
     ))
 }
 
-const COORDINATION_STATUS_URI: &str = "beads://coordination/status";
+const COORDINATION_STATUS_URI: &str = "obr://coordination/status";
 
 fn coordination_status_error(message: impl Into<String>) -> McpError {
     let message = message.into();
@@ -102,9 +102,9 @@ fn coordination_status_error(message: impl Into<String>) -> McpError {
                 {"tool": "project_overview", "arguments": {}}
             ],
             "suggested_cli_commands": [
-                "br coordination status --json",
-                "br show <id> --json",
-                "br comments list <id> --json"
+                "obr coordination status --json",
+                "obr show <id> --json",
+                "obr comments list <id> --json"
             ],
             "snapshot_hint": "This MCP resource is read-only and does not call Agent Mail. Use the CLI --reservations and --agents flags when reservation evidence is required."
         }),
@@ -133,9 +133,9 @@ fn coordination_status_resource_json(storage: &SqliteStorage) -> McpResult<Value
 // 1. project/info — static project metadata
 // ---------------------------------------------------------------------------
 
-pub struct ProjectInfoResource(Arc<BeadsState>);
+pub struct ProjectInfoResource(Arc<ObrState>);
 impl ProjectInfoResource {
-    pub fn new(state: Arc<BeadsState>) -> Self {
+    pub fn new(state: Arc<ObrState>) -> Self {
         Self(state)
     }
 }
@@ -143,10 +143,10 @@ impl ProjectInfoResource {
 impl ResourceHandler for ProjectInfoResource {
     fn definition(&self) -> Resource {
         Resource {
-            uri: "beads://project/info".into(),
+            uri: "obr://project/info".into(),
             name: "Project Info".into(),
             description: Some(
-                "Workspace metadata: beads directory, issue prefix, configuration. \
+                "Workspace metadata: obr directory, issue prefix, configuration. \
                  Read this first to understand the project context. \
                  Used by: project_overview tool returns similar data with more detail."
                     .into(),
@@ -163,14 +163,14 @@ impl ResourceHandler for ProjectInfoResource {
 
         cached_resource_json(
             &self.0,
-            "beads://project/info",
+            "obr://project/info",
             "resource:project_info".to_string(),
             |storage| {
                 let config = read_project_config(storage)?;
-                let prefix = self.0.issue_prefix.as_deref().unwrap_or("br");
+                let prefix = super::tools::resolved_issue_prefix(&self.0);
 
                 Ok(json!({
-                    "beads_dir": self.0.beads_dir.display().to_string(),
+                    "obr_dir": self.0.obr_dir.display().to_string(),
                     "issue_prefix": prefix,
                     "actor": self.0.actor,
                     "config": config,
@@ -184,9 +184,9 @@ impl ResourceHandler for ProjectInfoResource {
 // 2. issues/{id} — individual issue resource template
 // ---------------------------------------------------------------------------
 
-pub struct IssueResource(Arc<BeadsState>);
+pub struct IssueResource(Arc<ObrState>);
 impl IssueResource {
-    pub fn new(state: Arc<BeadsState>) -> Self {
+    pub fn new(state: Arc<ObrState>) -> Self {
         Self(state)
     }
 }
@@ -238,7 +238,7 @@ fn issue_resource_json(storage: &SqliteStorage, id: &str) -> McpResult<Value> {
 impl ResourceHandler for IssueResource {
     fn definition(&self) -> Resource {
         Resource {
-            uri: "beads://issues/{id}".into(),
+            uri: "obr://issues/{id}".into(),
             name: "Issue Details".into(),
             description: Some(
                 "Full issue details by ID. Discovery: use list_issues tool to find IDs. \
@@ -254,7 +254,7 @@ impl ResourceHandler for IssueResource {
 
     fn template(&self) -> Option<ResourceTemplate> {
         Some(ResourceTemplate {
-            uri_template: "beads://issues/{id}".into(),
+            uri_template: "obr://issues/{id}".into(),
             name: "Issue Details".into(),
             description: Some("Full issue details by ID".into()),
             mime_type: Some("application/json".into()),
@@ -268,7 +268,7 @@ impl ResourceHandler for IssueResource {
         ensure_not_shutting_down()?;
 
         Err(McpError::invalid_params(
-            "Provide an issue ID via the URI template: beads://issues/{id}",
+            "Provide an issue ID via the URI template: obr://issues/{id}",
         ))
     }
 
@@ -299,7 +299,7 @@ pub struct SchemaResource;
 impl ResourceHandler for SchemaResource {
     fn definition(&self) -> Resource {
         Resource {
-            uri: "beads://schema".into(),
+            uri: "obr://schema".into(),
             name: "Issue Schema Reference".into(),
             description: Some(
                 "Reference for issue fields, valid statuses, priorities, types, \
@@ -355,7 +355,11 @@ impl ResourceHandler for SchemaResource {
                 "replies-to", "relates-to"
             ],
             "issue_fields": {
-                "id": "string — unique ID (e.g. br-abc123)",
+                // No example prefix: this resource is stateless and cannot see
+                // the workspace's configured `issue_prefix`, and a literal one
+                // would be wrong for every project that set its own. Point at
+                // the resource that does know instead.
+                "id": "string — unique ID, formed as <issue_prefix>-<base36 hash>; read issue_prefix from obr://project/info",
                 "title": "string — 1-500 characters",
                 "description": "string|null — detailed description",
                 "status": "string — see statuses above",
@@ -374,7 +378,7 @@ impl ResourceHandler for SchemaResource {
                 "estimated_minutes": "integer|null",
                 "external_ref": "string|null — external tracker reference"
             },
-            "bead_anatomy": {
+            "issue_anatomy": {
                 "purpose": "Recommended structure for issue descriptions to ensure self-containment and completeness",
                 "sections": {
                     "background": "Why this issue exists — context and motivation",
@@ -394,7 +398,7 @@ impl ResourceHandler for SchemaResource {
         });
 
         Ok(vec![ResourceContent {
-            uri: "beads://schema".into(),
+            uri: "obr://schema".into(),
             mime_type: Some("application/json".into()),
             text: Some(schema.to_string()),
             blob: None,
@@ -406,9 +410,9 @@ impl ResourceHandler for SchemaResource {
 // 4. labels — discovery resource for valid label values
 // ---------------------------------------------------------------------------
 
-pub struct LabelsResource(Arc<BeadsState>);
+pub struct LabelsResource(Arc<ObrState>);
 impl LabelsResource {
-    pub fn new(state: Arc<BeadsState>) -> Self {
+    pub fn new(state: Arc<ObrState>) -> Self {
         Self(state)
     }
 }
@@ -416,7 +420,7 @@ impl LabelsResource {
 impl ResourceHandler for LabelsResource {
     fn definition(&self) -> Resource {
         Resource {
-            uri: "beads://labels".into(),
+            uri: "obr://labels".into(),
             name: "Labels".into(),
             description: Some(
                 "All labels in use with issue counts. Read this to discover valid \
@@ -437,7 +441,7 @@ impl ResourceHandler for LabelsResource {
 
         cached_resource_json(
             &self.0,
-            "beads://labels",
+            "obr://labels",
             "resource:labels".to_string(),
             |storage| {
                 let labels = storage.get_unique_labels_with_counts().map_err(to_mcp)?;
@@ -456,9 +460,9 @@ impl ResourceHandler for LabelsResource {
 // 5. issues/ready — actionable work items
 // ---------------------------------------------------------------------------
 
-pub struct ReadyIssuesResource(Arc<BeadsState>);
+pub struct ReadyIssuesResource(Arc<ObrState>);
 impl ReadyIssuesResource {
-    pub fn new(state: Arc<BeadsState>) -> Self {
+    pub fn new(state: Arc<ObrState>) -> Self {
         Self(state)
     }
 }
@@ -466,7 +470,7 @@ impl ReadyIssuesResource {
 impl ResourceHandler for ReadyIssuesResource {
     fn definition(&self) -> Resource {
         Resource {
-            uri: "beads://issues/ready".into(),
+            uri: "obr://issues/ready".into(),
             name: "Ready Issues".into(),
             description: Some(
                 "Issues ready for work: open, not blocked, not deferred. \
@@ -489,7 +493,7 @@ impl ResourceHandler for ReadyIssuesResource {
         let ready = mcp_ready_issues(&self.0, &storage)?;
 
         Ok(resource_json(
-            "beads://issues/ready",
+            "obr://issues/ready",
             &json!({
                 "count": ready.len(),
                 "issues": ready.iter().map(|issue| {
@@ -509,9 +513,9 @@ impl ResourceHandler for ReadyIssuesResource {
 // 6. issues/blocked — blocked work items
 // ---------------------------------------------------------------------------
 
-pub struct BlockedIssuesResource(Arc<BeadsState>);
+pub struct BlockedIssuesResource(Arc<ObrState>);
 impl BlockedIssuesResource {
-    pub fn new(state: Arc<BeadsState>) -> Self {
+    pub fn new(state: Arc<ObrState>) -> Self {
         Self(state)
     }
 }
@@ -519,7 +523,7 @@ impl BlockedIssuesResource {
 impl ResourceHandler for BlockedIssuesResource {
     fn definition(&self) -> Resource {
         Resource {
-            uri: "beads://issues/blocked".into(),
+            uri: "obr://issues/blocked".into(),
             name: "Blocked Issues".into(),
             description: Some(
                 "Issues that are blocked by other issues. Shows what's stuck and \
@@ -540,7 +544,7 @@ impl ResourceHandler for BlockedIssuesResource {
 
         cached_resource_json(
             &self.0,
-            "beads://issues/blocked",
+            "obr://issues/blocked",
             "resource:issues_blocked".to_string(),
             |storage| {
                 let blocked = storage.get_blocked_issues().map_err(to_mcp)?;
@@ -564,9 +568,9 @@ impl ResourceHandler for BlockedIssuesResource {
 // 7. issues/in_progress — work currently being done
 // ---------------------------------------------------------------------------
 
-pub struct InProgressResource(Arc<BeadsState>);
+pub struct InProgressResource(Arc<ObrState>);
 impl InProgressResource {
-    pub fn new(state: Arc<BeadsState>) -> Self {
+    pub fn new(state: Arc<ObrState>) -> Self {
         Self(state)
     }
 }
@@ -574,7 +578,7 @@ impl InProgressResource {
 impl ResourceHandler for InProgressResource {
     fn definition(&self) -> Resource {
         Resource {
-            uri: "beads://issues/in_progress".into(),
+            uri: "obr://issues/in_progress".into(),
             name: "In-Progress Issues".into(),
             description: Some(
                 "Issues currently being worked on (status: in_progress). \
@@ -595,7 +599,7 @@ impl ResourceHandler for InProgressResource {
 
         cached_resource_json(
             &self.0,
-            "beads://issues/in_progress",
+            "obr://issues/in_progress",
             "resource:issues_in_progress".to_string(),
             |storage| {
                 let filters = ListFilters {
@@ -627,9 +631,9 @@ impl ResourceHandler for InProgressResource {
 // 8. coordination/status — hidden in-progress claim diagnosis
 // ---------------------------------------------------------------------------
 
-pub struct CoordinationStatusResource(Arc<BeadsState>);
+pub struct CoordinationStatusResource(Arc<ObrState>);
 impl CoordinationStatusResource {
-    pub fn new(state: Arc<BeadsState>) -> Self {
+    pub fn new(state: Arc<ObrState>) -> Self {
         Self(state)
     }
 }
@@ -641,7 +645,7 @@ impl ResourceHandler for CoordinationStatusResource {
             name: "Coordination Status".into(),
             description: Some(
                 "Read-only stale-claim diagnosis for in-progress work. Mirrors \
-                 `br coordination status --json` with the br.coordination.v1 \
+                 `obr coordination status --json` with the obr.coordination.v1 \
                  evidence shape, without network listeners, background daemons, \
                  or direct Agent Mail calls. Use the CLI snapshot flags when \
                  reservation or agent-liveness evidence is required."
@@ -670,9 +674,9 @@ impl ResourceHandler for CoordinationStatusResource {
 // 9. events/recent — recent audit events
 // ---------------------------------------------------------------------------
 
-pub struct EventsResource(Arc<BeadsState>);
+pub struct EventsResource(Arc<ObrState>);
 impl EventsResource {
-    pub fn new(state: Arc<BeadsState>) -> Self {
+    pub fn new(state: Arc<ObrState>) -> Self {
         Self(state)
     }
 }
@@ -680,7 +684,7 @@ impl EventsResource {
 impl ResourceHandler for EventsResource {
     fn definition(&self) -> Resource {
         Resource {
-            uri: "beads://events/recent".into(),
+            uri: "obr://events/recent".into(),
             name: "Recent Activity".into(),
             description: Some(
                 "Recent audit events across all issues: status changes, field updates, \
@@ -701,7 +705,7 @@ impl ResourceHandler for EventsResource {
 
         cached_resource_json(
             &self.0,
-            "beads://events/recent",
+            "obr://events/recent",
             "resource:events_recent".to_string(),
             |storage| {
                 let events = storage.get_all_events(50).map_err(to_mcp)?;
@@ -733,9 +737,9 @@ impl ResourceHandler for EventsResource {
 // 10. issues/deferred — deferred work items
 // ---------------------------------------------------------------------------
 
-pub struct DeferredIssuesResource(Arc<BeadsState>);
+pub struct DeferredIssuesResource(Arc<ObrState>);
 impl DeferredIssuesResource {
-    pub fn new(state: Arc<BeadsState>) -> Self {
+    pub fn new(state: Arc<ObrState>) -> Self {
         Self(state)
     }
 }
@@ -743,7 +747,7 @@ impl DeferredIssuesResource {
 impl ResourceHandler for DeferredIssuesResource {
     fn definition(&self) -> Resource {
         Resource {
-            uri: "beads://issues/deferred".into(),
+            uri: "obr://issues/deferred".into(),
             name: "Deferred Issues".into(),
             description: Some(
                 "Issues that have been deferred (status: deferred, often with defer_until). \
@@ -763,7 +767,7 @@ impl ResourceHandler for DeferredIssuesResource {
 
         cached_resource_json(
             &self.0,
-            "beads://issues/deferred",
+            "obr://issues/deferred",
             "resource:issues_deferred".to_string(),
             |storage| {
                 let filters = ListFilters {
@@ -953,9 +957,9 @@ fn compute_graph_health(storage: &SqliteStorage) -> McpResult<serde_json::Value>
     }))
 }
 
-pub struct GraphHealthResource(Arc<BeadsState>);
+pub struct GraphHealthResource(Arc<ObrState>);
 impl GraphHealthResource {
-    pub fn new(state: Arc<BeadsState>) -> Self {
+    pub fn new(state: Arc<ObrState>) -> Self {
         Self(state)
     }
 }
@@ -963,7 +967,7 @@ impl GraphHealthResource {
 impl ResourceHandler for GraphHealthResource {
     fn definition(&self) -> Resource {
         Resource {
-            uri: "beads://graph/health".into(),
+            uri: "obr://graph/health".into(),
             name: "Dependency Graph Health".into(),
             description: Some(
                 "Graph-level health metrics for the dependency network: density, \
@@ -985,7 +989,7 @@ impl ResourceHandler for GraphHealthResource {
 
         cached_resource_json(
             &self.0,
-            "beads://graph/health",
+            "obr://graph/health",
             "resource:graph_health".to_string(),
             compute_graph_health,
         )
@@ -1052,9 +1056,9 @@ fn compute_bottlenecks(storage: &SqliteStorage) -> McpResult<serde_json::Value> 
     }))
 }
 
-pub struct BottlenecksResource(Arc<BeadsState>);
+pub struct BottlenecksResource(Arc<ObrState>);
 impl BottlenecksResource {
-    pub fn new(state: Arc<BeadsState>) -> Self {
+    pub fn new(state: Arc<ObrState>) -> Self {
         Self(state)
     }
 }
@@ -1062,7 +1066,7 @@ impl BottlenecksResource {
 impl ResourceHandler for BottlenecksResource {
     fn definition(&self) -> Resource {
         Resource {
-            uri: "beads://issues/bottlenecks".into(),
+            uri: "obr://issues/bottlenecks".into(),
             name: "Bottleneck Issues".into(),
             description: Some(
                 "Issues that block the most other work, sorted by impact. \
@@ -1083,7 +1087,7 @@ impl ResourceHandler for BottlenecksResource {
 
         cached_resource_json(
             &self.0,
-            "beads://issues/bottlenecks",
+            "obr://issues/bottlenecks",
             "resource:issues_bottlenecks".to_string(),
             compute_bottlenecks,
         )
@@ -1110,36 +1114,50 @@ mod tests {
     };
     use crate::cli::commands::coordination::build_coordination_status_without_snapshots;
     use crate::coordination::{COORDINATION_SCHEMA_VERSION, ClaimOwnerKind};
-    use crate::mcp::{BeadsState, McpReadSnapshotCache};
+    use crate::mcp::{McpReadSnapshotCache, ObrState};
     use crate::model::{Issue, IssueType, Priority, Status};
     use crate::storage::SqliteStorage;
 
-    fn mcp_resource_state(temp: &TempDir, read_snapshot: bool) -> Arc<BeadsState> {
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
-        let db_path = beads_dir.join("beads.db");
+    fn mcp_resource_state(temp: &TempDir, read_snapshot: bool) -> Arc<ObrState> {
+        mcp_resource_state_in(temp, crate::config::WORKSPACE_DIR_NAME, read_snapshot)
+    }
+
+    /// Build a fixture workspace under an explicit directory name.
+    ///
+    /// Everything except the deliberately-named legacy case below must go
+    /// through [`mcp_resource_state`], which uses the name `obr init` creates
+    /// today; a fixture that hand-builds a legacy name is what let a stale
+    /// `.beads` assertion pass for four rename passes.
+    fn mcp_resource_state_in(
+        temp: &TempDir,
+        workspace_dir_name: &str,
+        read_snapshot: bool,
+    ) -> Arc<ObrState> {
+        let obr_dir = temp.path().join(workspace_dir_name);
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
+        let db_path = obr_dir.join(crate::config::DEFAULT_DB_FILENAME);
         SqliteStorage::open(&db_path).expect("initialize storage");
-        Arc::new(BeadsState {
+        Arc::new(ObrState {
             db_path,
-            beads_dir: beads_dir.clone(),
-            jsonl_path: beads_dir.join("issues.jsonl"),
+            obr_dir: obr_dir.clone(),
+            jsonl_path: obr_dir.join("issues.jsonl"),
             // Robust under heavy parallel-test load (a concurrent auto-flush can
             // hold .write.lock for >25ms); no test asserts the timeout path.
             write_lock_timeout_ms: Some(5_000),
             allow_external_jsonl: false,
             actor: "mcp-resource-test".to_string(),
-            issue_prefix: Some("br".to_string()),
+            issue_prefix: Some("obr".to_string()),
             read_snapshot_cache: read_snapshot
                 .then(|| std::sync::Mutex::new(McpReadSnapshotCache::default())),
         })
     }
 
-    fn insert_resource_issue(state: &BeadsState, id: &str, title: &str) {
+    fn insert_resource_issue(state: &ObrState, id: &str, title: &str) {
         insert_resource_issue_with_status(state, id, title, Status::Open, None, Utc::now());
     }
 
     fn insert_resource_issue_with_status(
-        state: &BeadsState,
+        state: &ObrState,
         id: &str,
         title: &str,
         status: Status,
@@ -1276,45 +1294,45 @@ mod tests {
         let definitions: [(Resource, &str, &[&str]); 12] = [
             (
                 ProjectInfoResource::new(Arc::clone(&state)).definition(),
-                "beads://project/info",
+                "obr://project/info",
                 &["Workspace metadata", "project_overview"][..],
             ),
             (
                 IssueResource::new(Arc::clone(&state)).definition(),
-                "beads://issues/{id}",
+                "obr://issues/{id}",
                 &["Full issue details", "list_issues", "show_issue"],
             ),
             (
                 SchemaResource.definition(),
-                "beads://schema",
+                "obr://schema",
                 &["issue fields", "valid statuses", "dependency types"],
             ),
             (
                 LabelsResource::new(Arc::clone(&state)).definition(),
-                "beads://labels",
+                "obr://labels",
                 &["label values", "list_issues", "update_issue"],
             ),
             (
                 ReadyIssuesResource::new(Arc::clone(&state)).definition(),
-                "beads://issues/ready",
+                "obr://issues/ready",
                 &["ready for work", "project_overview", "list_issues"],
             ),
             (
                 BlockedIssuesResource::new(Arc::clone(&state)).definition(),
-                "beads://issues/blocked",
+                "obr://issues/blocked",
                 &["blocked", "dependencies"],
             ),
             (
                 InProgressResource::new(Arc::clone(&state)).definition(),
-                "beads://issues/in_progress",
+                "obr://issues/in_progress",
                 &["in_progress", "assignee"],
             ),
             (
                 CoordinationStatusResource::new(Arc::clone(&state)).definition(),
                 COORDINATION_STATUS_URI,
                 &[
-                    "br coordination status --json",
-                    "br.coordination.v1",
+                    "obr coordination status --json",
+                    "obr.coordination.v1",
                     "without network listeners",
                     "direct Agent Mail calls",
                     "CLI snapshot flags",
@@ -1322,22 +1340,22 @@ mod tests {
             ),
             (
                 EventsResource::new(Arc::clone(&state)).definition(),
-                "beads://events/recent",
+                "obr://events/recent",
                 &["audit events", "show_issue"],
             ),
             (
                 DeferredIssuesResource::new(Arc::clone(&state)).definition(),
-                "beads://issues/deferred",
+                "obr://issues/deferred",
                 &["deferred", "defer_until"],
             ),
             (
                 BottlenecksResource::new(Arc::clone(&state)).definition(),
-                "beads://issues/bottlenecks",
+                "obr://issues/bottlenecks",
                 &["block the most", "blocks_count"],
             ),
             (
                 GraphHealthResource::new(state).definition(),
-                "beads://graph/health",
+                "obr://graph/health",
                 &["Graph-level health", "cycle"],
             ),
         ];
@@ -1347,11 +1365,20 @@ mod tests {
         }
     }
 
+    /// LEGACY CASE (deliberate): a workspace still living under the
+    /// pre-rename `.beads` name must be reported back verbatim, not
+    /// rewritten to the current name. This is the negative control for the
+    /// assertion above: it fails if anyone "fixes" `obr://project/info` by
+    /// publishing a constant instead of the resolved directory.
     #[test]
-    fn mcp_contract_core_resource_payloads_match_documented_shapes() {
+    fn mcp_project_info_reports_a_legacy_workspace_directory_verbatim() {
         let temp = TempDir::new().expect("tempdir");
-        let state = mcp_resource_state(&temp, false);
-        insert_resource_issue(&state, "br-mcp-contract-ready", "contract ready issue");
+        let legacy_name = ".beads";
+        assert!(
+            crate::config::is_legacy_obr_dir_name(std::ffi::OsStr::new(legacy_name)),
+            "this case is only meaningful while {legacy_name} is a recognized legacy name"
+        );
+        let state = mcp_resource_state_in(&temp, legacy_name, false);
         let ctx = McpContext::new(Cx::for_testing(), 1);
 
         let project_info = resource_text_json(
@@ -1359,13 +1386,37 @@ mod tests {
                 .read(&ctx)
                 .expect("read project info"),
         );
-        assert_eq!(project_info["issue_prefix"], "br");
+
+        assert_eq!(
+            project_info["obr_dir"].as_str(),
+            Some(state.obr_dir.display().to_string().as_str()),
+            "obr://project/info must echo the resolved workspace path: {project_info}"
+        );
+    }
+
+    #[test]
+    fn mcp_contract_core_resource_payloads_match_documented_shapes() {
+        let temp = TempDir::new().expect("tempdir");
+        let state = mcp_resource_state(&temp, false);
+        insert_resource_issue(&state, "obr-mcp-contract-ready", "contract ready issue");
+        let ctx = McpContext::new(Cx::for_testing(), 1);
+
+        let project_info = resource_text_json(
+            &ProjectInfoResource::new(Arc::clone(&state))
+                .read(&ctx)
+                .expect("read project info"),
+        );
+        assert_eq!(project_info["issue_prefix"], "obr");
         assert_eq!(project_info["actor"], "mcp-resource-test");
-        assert!(project_info["beads_dir"].as_str().is_some_and(|path| {
-            std::path::Path::new(path)
-                .file_name()
-                .is_some_and(|name| name == ".beads")
-        }));
+        assert_eq!(
+            project_info["obr_dir"]
+                .as_str()
+                .and_then(|path| std::path::Path::new(path)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())),
+            Some(crate::config::WORKSPACE_DIR_NAME.to_string()),
+            "obr://project/info must report the workspace directory obr creates today: {project_info}"
+        );
         assert!(project_info["config"].is_object());
 
         let schema = resource_text_json(&SchemaResource.read(&ctx).expect("read schema"));
@@ -1390,7 +1441,7 @@ mod tests {
                 .is_some_and(|values| values.iter().any(|value| value == "blocks"))
         );
         assert!(schema["issue_fields"]["id"].is_string());
-        assert!(schema["bead_anatomy"]["sections"].is_object());
+        assert!(schema["issue_anatomy"]["sections"].is_object());
 
         let ready = resource_text_json(
             &ReadyIssuesResource::new(Arc::clone(&state))
@@ -1398,7 +1449,7 @@ mod tests {
                 .expect("read ready issues"),
         );
         assert_eq!(ready["count"].as_u64(), Some(1));
-        assert_eq!(ready["issues"][0]["id"], "br-mcp-contract-ready");
+        assert_eq!(ready["issues"][0]["id"], "obr-mcp-contract-ready");
         assert_eq!(ready["issues"][0]["title"], "contract ready issue");
         assert_eq!(ready["issues"][0]["type"], "task");
 
@@ -1416,7 +1467,7 @@ mod tests {
     fn ready_resource_snapshot_matches_direct_json_and_invalidates() {
         let temp = TempDir::new().expect("tempdir");
         let state = mcp_resource_state(&temp, true);
-        insert_resource_issue(&state, "br-ready-resource-1", "ready resource first issue");
+        insert_resource_issue(&state, "obr-ready-resource-1", "ready resource first issue");
         let ctx = McpContext::new(Cx::for_testing(), 1);
         let resource = ReadyIssuesResource::new(Arc::clone(&state));
 
@@ -1424,8 +1475,12 @@ mod tests {
         let first = resource_text_json(&first_content);
         assert_eq!(first["count"].as_u64(), Some(1));
 
-        insert_resource_issue(&state, "br-ready-resource-2", "ready resource second issue");
-        fs::write(&state.jsonl_path, "{\"id\":\"br-ready-resource-2\"}\n")
+        insert_resource_issue(
+            &state,
+            "obr-ready-resource-2",
+            "ready resource second issue",
+        );
+        fs::write(&state.jsonl_path, "{\"id\":\"obr-ready-resource-2\"}\n")
             .expect("update jsonl witness");
 
         let second_content = resource
@@ -1441,14 +1496,14 @@ mod tests {
         let state = mcp_resource_state(&temp, true);
         insert_resource_issue(
             &state,
-            "br-ready-external-blocked",
+            "obr-ready-external-blocked",
             "externally blocked ready candidate",
         );
-        insert_resource_issue(&state, "br-ready-local", "local ready candidate");
+        insert_resource_issue(&state, "obr-ready-local", "local ready candidate");
         let mut storage = SqliteStorage::open(&state.db_path).expect("open storage");
         storage
             .add_dependency(
-                "br-ready-external-blocked",
+                "obr-ready-external-blocked",
                 "external:missing:capability",
                 "blocks",
                 "mcp-resource-test",
@@ -1462,25 +1517,25 @@ mod tests {
         let ready = resource_text_json(&content);
 
         assert_eq!(ready["count"].as_u64(), Some(1));
-        assert_eq!(ready["issues"][0]["id"], "br-ready-local");
+        assert_eq!(ready["issues"][0]["id"], "obr-ready-local");
     }
 
     #[test]
     fn issue_resource_snapshot_matches_direct_json() {
         let temp = TempDir::new().expect("tempdir");
         let state = mcp_resource_state(&temp, true);
-        insert_resource_issue(&state, "br-resource-issue", "resource issue details");
+        insert_resource_issue(&state, "obr-resource-issue", "resource issue details");
         let ctx = McpContext::new(Cx::for_testing(), 1);
         let resource = IssueResource::new(Arc::clone(&state));
-        let params = HashMap::from([("id".to_string(), "br-resource-issue".to_string())]);
+        let params = HashMap::from([("id".to_string(), "obr-resource-issue".to_string())]);
 
         let content = resource
-            .read_with_uri(&ctx, "beads://issues/br-resource-issue", &params)
+            .read_with_uri(&ctx, "obr://issues/obr-resource-issue", &params)
             .expect("read issue resource");
         let cached = resource_text_json(&content);
         let direct = {
             let storage = SqliteStorage::open(&state.db_path).expect("open storage");
-            issue_resource_json(&storage, "br-resource-issue").expect("direct issue resource")
+            issue_resource_json(&storage, "obr-resource-issue").expect("direct issue resource")
         };
 
         assert_eq!(cached, direct);
@@ -1493,7 +1548,7 @@ mod tests {
         let now = fixed_now();
         insert_resource_issue_with_status(
             &state,
-            "br-mcp-claim",
+            "obr-mcp-claim",
             "resource claim details",
             Status::InProgress,
             Some("TopazFox"),
@@ -1566,7 +1621,7 @@ mod tests {
             .execute_raw("DROP TABLE issues")
             .expect("drop issues table");
 
-        let err = issue_not_found_resource(&storage, "bd-missing")
+        let err = issue_not_found_resource(&storage, "obr-missing")
             .expect_err("ID scan failure must be returned to MCP clients");
 
         assert!(
@@ -1594,9 +1649,9 @@ mod tests {
     #[test]
     fn graph_has_cycle_detects_three_node_cycle() {
         let edges = edge_map(&[
-            ("br-a", &["br-b"]),
-            ("br-b", &["br-c"]),
-            ("br-c", &["br-a"]),
+            ("obr-a", &["obr-b"]),
+            ("obr-b", &["obr-c"]),
+            ("obr-c", &["obr-a"]),
         ]);
 
         assert!(graph_has_cycle(&edges));
@@ -1605,9 +1660,9 @@ mod tests {
     #[test]
     fn graph_has_cycle_ignores_acyclic_graph() {
         let edges = edge_map(&[
-            ("br-a", &["br-b", "br-c"]),
-            ("br-b", &["br-d"]),
-            ("br-c", &[]),
+            ("obr-a", &["obr-b", "obr-c"]),
+            ("obr-b", &["obr-d"]),
+            ("obr-c", &[]),
         ]);
 
         assert!(!graph_has_cycle(&edges));

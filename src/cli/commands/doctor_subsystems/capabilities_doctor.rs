@@ -1,4 +1,4 @@
-//! `br.doctor.capabilities.v1` — machine-readable doctor contract.
+//! `obr.doctor.capabilities.v1` — machine-readable doctor contract.
 //!
 //! WP1 emits a *foundation* capabilities document describing the
 //! contract surface AI agents can rely on. Concretely:
@@ -6,7 +6,9 @@
 //! - `doctor_version` — `CARGO_PKG_VERSION`
 //! - `contract_version` — `"1"` (frozen for WP1)
 //! - `exit_codes` — derived from [`super::exit_codes::DoctorExitCode::all`]
-//! - `write_scopes` — `.beads/`, `.doctor/`
+//! - `write_scopes` — the directories the doctor may write (`.obr/`,
+//!   `.doctor/`); the agent handbook renders this same list rather than
+//!   restating it
 //! - `env_vars` — environment variables the doctor honors
 //! - `fixers` — currently wired repair/refuse paths
 //! - `detectors` — currently wired flat-doctor check IDs
@@ -36,7 +38,7 @@ pub struct ExitCodeEntry {
 /// Top-level capabilities document.
 #[derive(Debug, Clone, Serialize)]
 pub struct DoctorCapabilities {
-    /// Always `"br.doctor.capabilities"`.
+    /// Always `"obr.doctor.capabilities"`.
     pub schema: &'static str,
     /// Always `"1"` for the WP1 contract.
     pub contract_version: &'static str,
@@ -63,7 +65,7 @@ pub struct DoctorCapabilities {
     /// Pass-3 finding-id schema unification (`diagnostic_specificity`).
     /// Maps each emitted `check.name` value to its canonical
     /// `fm-<subsystem>-<slug>` identifier from the Phase-1
-    /// archaeology. Agents tooling around `br doctor --json` can
+    /// archaeology. Agents tooling around `obr doctor --json` can
     /// translate either way:
     ///
     /// ```jq
@@ -142,18 +144,21 @@ impl DoctorCapabilities {
             .collect();
 
         Self {
-            schema: "br.doctor.capabilities",
+            schema: "obr.doctor.capabilities",
             contract_version: "1",
             doctor_version: env!("CARGO_PKG_VERSION"),
             exit_codes,
-            write_scopes: vec![".beads/".into(), ".doctor/".into()],
+            write_scopes: vec![".obr/".into(), ".doctor/".into()],
             env_vars: vec![
                 super::run_dir::ENV_RUNS_DIR,
-                "BR_NO_AUTOFLUSH",
-                "BD_NO_AUTOFLUSH",
+                // The dynamic-config key is `no-auto-flush`; the doubled-up
+                // spelling `OBR_NO_AUTOFLUSH` normalizes to `no-autoflush`,
+                // which `is_startup_key` does not accept, so it was published
+                // here while being read by nothing.
+                "OBR_NO_AUTO_FLUSH",
                 "RUST_LOG",
-                "BD_DB",
-                "BEADS_JSONL",
+                "OBR_DB",
+                "OBR_JSONL",
             ],
             fixers: build_fixer_registry(),
             detectors: build_detector_registry(),
@@ -233,9 +238,9 @@ impl DoctorCapabilities {
 /// Detector registry — populated from the canonical `check_*` family
 /// in `src/cli/commands/doctor.rs`. Phase 10 cold-prober finding
 /// (`beads_rust-3idn`): a cold agent reading
-/// `br doctor capabilities --format json` previously saw `detectors:
+/// `obr doctor capabilities --format json` previously saw `detectors:
 /// []` and read it as "the contract is half-wired". This list pins
-/// the agent-visible name of every detector the flat `br doctor`
+/// the agent-visible name of every detector the flat `obr doctor`
 /// surface runs, so consumers can build allow-lists, `--only`/`--skip`
 /// selectors (future), and `--quick` parity tables against it.
 ///
@@ -245,14 +250,14 @@ impl DoctorCapabilities {
 type DetectorRow = (&'static str, &'static str, &'static str, bool);
 
 const DETECTOR_ROWS: &[DetectorRow] = &[
-    ("beads_dir", "configs", "error", true),
+    ("obr_dir", "configs", "error", true),
     ("metadata", "configs", "error", true),
-    ("gitignore.beads_inner", "configs", "warn", true),
+    ("gitignore.obr_inner", "configs", "warn", true),
     ("gitignore.root", "configs", "warn", true),
     ("routes_jsonl", "routes_external", "warn", true),
     ("routes.targets", "routes_external", "warn", true),
     ("rust_log", "observability", "warn", true),
-    ("permissions.beads_dir", "permissions", "warn", true),
+    ("permissions.obr_dir", "permissions", "warn", true),
     ("config.yaml", "configs", "warn", true),
     ("metadata.json", "configs", "warn", true),
     ("binary_version", "external_artifacts", "warn", true),
@@ -283,8 +288,8 @@ const DETECTOR_ROWS: &[DetectorRow] = &[
         "warn",
         true,
     ),
-    ("br_path_dupes", "external_artifacts", "warn", true),
-    ("gitignore.beads_inner_present", "configs", "warn", true),
+    ("obr_path_dupes", "external_artifacts", "warn", true),
+    ("gitignore.obr_inner_present", "configs", "warn", true),
     (
         "permissions.jsonl_world_writable",
         "permissions",
@@ -293,13 +298,12 @@ const DETECTOR_ROWS: &[DetectorRow] = &[
     ),
     ("tmp_files_orphan", "state_files", "warn", true),
     ("jsonl_size", "state_files", "warn", true),
-    ("br_history.size", "state_files", "warn", true),
+    ("obr_history.size", "state_files", "warn", true),
     ("jsonl_eof_newline", "state_files", "warn", true),
     ("jsonl_crlf", "state_files", "warn", true),
     ("jsonl_bom", "state_files", "warn", true),
     ("db_bloat", "caches_indexes", "warn", true),
     ("wal_size", "state_files", "warn", true),
-    ("startup_cache.health", "configs", "warn", true),
     ("sync_jsonl_path", "state_files", "warn", true),
     ("sync_conflict_markers", "state_files", "error", true),
     ("db.exists", "state_files", "error", true),
@@ -372,8 +376,8 @@ const EARLY_CHOKEPOINT_FIXER_ROWS: &[FixerRow] = &[
         "configs",
         true,
         true,
-        &["gitignore.beads_inner", "gitignore.root"],
-        &["fm-configs-gitignore-leaking-beads"],
+        &["gitignore.obr_inner", "gitignore.root"],
+        &["fm-configs-gitignore-leaking-obr"],
     ),
     (
         "doctor.merge_artifact_quarantine",
@@ -382,14 +386,6 @@ const EARLY_CHOKEPOINT_FIXER_ROWS: &[FixerRow] = &[
         true,
         &["jsonl.merge_artifacts"],
         &["fm-state_files-merge-artifact-stuck"],
-    ),
-    (
-        "doctor.startup_cache_quarantine",
-        "configs",
-        true,
-        true,
-        &["startup_cache.health"],
-        &["fm-configs-startup-cache-poisoned"],
     ),
     (
         "doctor.recovery_artifacts_aged_quarantine",
@@ -484,8 +480,8 @@ const EARLY_CHOKEPOINT_FIXER_ROWS: &[FixerRow] = &[
         "configs",
         true,
         true,
-        &["gitignore.beads_inner_present"],
-        &["fm-configs-gitignore-leaking-beads"],
+        &["gitignore.obr_inner_present"],
+        &["fm-configs-gitignore-leaking-obr"],
     ),
     (
         "doctor.dirty_bitmap_orphan_prune",
@@ -672,7 +668,7 @@ fn build_fixer_registry() -> Vec<FixerEntry> {
 /// Build the check-name → finding-id map from the canonical table in
 /// `super::super::doctor::CHECK_NAME_TO_FINDING_ID`. Pass-3 gap item
 /// #3 (`diagnostic_specificity`): every agent reading
-/// `br doctor --json` should be able to translate a check.name to
+/// `obr doctor --json` should be able to translate a check.name to
 /// its stable `fm-<subsystem>-<slug>` identifier without
 /// out-of-band knowledge.
 fn build_finding_id_map() -> Vec<FindingIdEntry> {
@@ -692,7 +688,7 @@ mod tests {
     #[test]
     fn capabilities_builds_with_expected_shape() {
         let caps = DoctorCapabilities::build();
-        assert_eq!(caps.schema, "br.doctor.capabilities");
+        assert_eq!(caps.schema, "obr.doctor.capabilities");
         assert_eq!(caps.contract_version, "1");
         assert_eq!(caps.doctor_version, env!("CARGO_PKG_VERSION"));
         assert!(!caps.exit_codes.is_empty());
@@ -703,7 +699,7 @@ mod tests {
         assert!(codes.contains(&4));
         assert!(codes.contains(&74));
         // Scopes are non-empty.
-        assert!(caps.write_scopes.contains(&".beads/".to_string()));
+        assert!(caps.write_scopes.contains(&".obr/".to_string()));
         assert!(caps.write_scopes.contains(&".doctor/".to_string()));
         // Env vars include the run-dir override.
         assert!(caps.env_vars.contains(&super::super::run_dir::ENV_RUNS_DIR));
@@ -714,7 +710,7 @@ mod tests {
         let caps = DoctorCapabilities::build();
         let json = caps.to_pretty_json().expect("json");
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse");
-        assert_eq!(parsed["schema"], "br.doctor.capabilities");
+        assert_eq!(parsed["schema"], "obr.doctor.capabilities");
         assert_eq!(parsed["contract_version"], "1");
         assert!(parsed["exit_codes"].is_array());
         assert!(parsed["fixers"].is_array());
@@ -765,7 +761,7 @@ mod tests {
             "detector registry must not contain duplicate ids"
         );
         for required in &[
-            "gitignore.beads_inner",
+            "gitignore.obr_inner",
             "jsonl.parse",
             "db.open",
             "sqlite.integrity_check",
@@ -796,7 +792,6 @@ mod tests {
             vec![
                 "doctor.gitignore_repair",
                 "doctor.merge_artifact_quarantine",
-                "doctor.startup_cache_quarantine",
                 "doctor.recovery_artifacts_aged_quarantine",
                 "doctor.export_hash_cache_repair",
                 "doctor.base_jsonl_symlink_quarantine",

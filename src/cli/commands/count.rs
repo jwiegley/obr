@@ -39,8 +39,8 @@ pub fn execute(
     cli: &config::CliOverrides,
     ctx: &OutputContext,
 ) -> Result<()> {
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    let storage_ctx = config::open_storage_with_cli(&beads_dir, cli)?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    let storage_ctx = config::open_storage_with_cli(&obr_dir, cli)?;
     execute_inner(args, ctx, &storage_ctx.storage)
 }
 
@@ -63,7 +63,7 @@ fn execute_inner(args: &CountArgs, ctx: &OutputContext, storage: &SqliteStorage)
     let types = parse_trimmed_values(&args.types)?;
     let priorities = parse_trimmed_values(&args.priority)?;
 
-    // `--status all` is the same meta-value `br lint` accepts: no status
+    // `--status all` is the same meta-value `obr lint` accepts: no status
     // filter, every status included (beads_rust-6ilv).
     if super::status_filter_requests_all(&args.status) {
         filters.include_closed = true;

@@ -1,6 +1,6 @@
 # Fuzz Targets
 
-This directory contains cargo-fuzz targets for `beads_rust`.
+This directory contains cargo-fuzz targets for `obr`.
 
 Run the JSONL import harness in bounded mode:
 
@@ -59,3 +59,16 @@ attempts, sidecar files, base snapshots, custom JSONL locations, and
 rebuild-style imports into a fresh database. It checks that invalid combinations
 return non-empty structured errors and that the outside sentinel directory is
 not modified.
+
+Run the Org-mode parser harness (the default export format's import
+boundary) against its seeded corpus:
+
+```bash
+cargo fuzz run org_parse -- -runs=10000 -max_len=131072
+```
+
+Run the string-parser/validator harness:
+
+```bash
+cargo fuzz run validation -- -runs=10000
+```

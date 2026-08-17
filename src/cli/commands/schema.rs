@@ -1,6 +1,6 @@
 //! Schema command implementation.
 //!
-//! Emits two complementary descriptions of br's machine-readable surface:
+//! Emits two complementary descriptions of obr's machine-readable surface:
 //!
 //! 1. **Per-row JSON Schemas** for the data types that show up inside
 //!    command outputs (`Issue`, `IssueWithCounts`, `IssueDetails`, …).
@@ -9,7 +9,7 @@
 //!    `show`, `.issues[]` for `list`, `.[]` for the array commands, …).
 //!
 //! Intended for AI agents and tooling that want stable schemas without
-//! reading source code. The CLI surface marks `br schema` as
+//! reading source code. The CLI surface marks `obr schema` as
 //! not-yet-stable; agents should re-call across release boundaries.
 
 use crate::cli::commands::vcs::VcsExportStatus;
@@ -50,7 +50,7 @@ struct ErrorBody {
     context: Option<serde_json::Value>,
 }
 
-/// Row emitted by `br dep tree --json`.
+/// Row emitted by `obr dep tree --json`.
 ///
 /// Keep this in sync with `cli::commands::dep::TreeNode`. The command emits a
 /// compact traversal node, not the older `format::output::TreeNode` shape that
@@ -73,7 +73,7 @@ struct TreeNode {
     truncated: bool,
 }
 
-/// Row emitted inside `br count --by <field> --json` under `groups[]`.
+/// Row emitted inside `obr count --by <field> --json` under `groups[]`.
 ///
 /// Keep this in sync with `cli::commands::count::CountGroup`.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -94,7 +94,7 @@ struct SchemaOutput {
     commands: BTreeMap<&'static str, CommandShape>,
 }
 
-/// Per-command output-envelope description for `br schema commands`.
+/// Per-command output-envelope description for `obr schema commands`.
 ///
 /// This describes the *top-level JSON shape* a command emits with `--json`,
 /// not the per-row schema (which lives in `schemas`). Agents can use the
@@ -161,7 +161,7 @@ pub fn execute(
     let schemas = build_schemas(args.target);
     let commands = build_commands(args.target);
     let payload = SchemaOutput {
-        tool: "br",
+        tool: "obr",
         generated_at: Utc::now(),
         schemas,
         commands,
@@ -480,7 +480,7 @@ fn insert_dependency_command_shapes(commands: &mut BTreeMap<&'static str, Comman
 }
 
 fn insert_aggregate_command_shapes(commands: &mut BTreeMap<&'static str, CommandShape>) {
-    // `br status` is documented as an alias for `br stats` and dispatches
+    // `obr status` is documented as an alias for `obr stats` and dispatches
     // through the same handler, so the envelope is identical. We list both
     // keys (with differentiated `notes`) so an agent looking up either name
     // gets the right shape without an indirection step, but can still tell
@@ -507,7 +507,7 @@ fn insert_aggregate_command_shapes(commands: &mut BTreeMap<&'static str, Command
             item_schema: None,
             error_envelope_on_stderr: false,
             notes: Some(
-                "Ungrouped `br count --json`; scalar count under `.count`. \
+                "Ungrouped `obr count --json`; scalar count under `.count`. \
                  Grouped variants use the `count --by` entry.",
             ),
         },
@@ -521,7 +521,7 @@ fn insert_aggregate_command_shapes(commands: &mut BTreeMap<&'static str, Command
             item_schema: Some("CountGroup"),
             error_envelope_on_stderr: false,
             notes: Some(
-                "For `br count --by <status|priority|type|assignee|label> --json`. \
+                "For `obr count --by <status|priority|type|assignee|label> --json`. \
                  The wrapper object also includes `total`.",
             ),
         },
@@ -597,6 +597,135 @@ fn insert_label_command_shapes(commands: &mut BTreeMap<&'static str, CommandShap
 mod tests {
     use super::*;
     use clap::ValueEnum;
+
+    /// Every string `obr schema all` publishes, paired with its JSON path.
+    ///
+    /// Built from the same `SchemaOutput` `execute` prints, so the check below
+    /// reads the real emitted document rather than a hand-assembled subset.
+    /// Object KEYS are collected alongside values because a property name is
+    /// every bit as published as a description.
+    fn published_strings() -> Vec<(String, String)> {
+        let payload = SchemaOutput {
+            tool: "obr",
+            generated_at: Utc::now(),
+            schemas: build_schemas(SchemaTarget::All),
+            commands: build_commands(SchemaTarget::All),
+        };
+        let value = serde_json::to_value(&payload).expect("schema payload is JSON");
+        let mut out = Vec::new();
+        collect_strings(&value, String::new(), &mut out);
+        out
+    }
+
+    fn collect_strings(value: &serde_json::Value, path: String, out: &mut Vec<(String, String)>) {
+        match value {
+            serde_json::Value::String(text) => out.push((path, text.clone())),
+            serde_json::Value::Array(items) => {
+                for (index, item) in items.iter().enumerate() {
+                    collect_strings(item, format!("{path}[{index}]"), out);
+                }
+            }
+            serde_json::Value::Object(map) => {
+                for (key, item) in map {
+                    out.push((format!("{path}/<key>"), key.clone()));
+                    collect_strings(item, format!("{path}/{key}"), out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The published agent contract must not name artifacts, prefixes, or
+    /// commands that do not exist.
+    ///
+    /// `obr schema` is rustdoc-driven: schemars copies every doc comment on a
+    /// `JsonSchema` type verbatim into the emitted `description` fields, so a
+    /// pre-rename sentence in `src/model/mod.rs` becomes a machine-published
+    /// claim without anyone ever editing an output string. Nothing else
+    /// executes these strings, which is how "bd parity" and `bd-abc123`
+    /// survived four rename passes and a 43-item comment audit: the goldens
+    /// were re-baselined around them.
+    ///
+    /// The allowlist has exactly one entry — the Go implementation. That
+    /// reference is factual, not residue: `tests/conformance.rs` runs the
+    /// real `bd` binary and compares the structure of
+    /// `obr ready|blocked|stale --json` against it, so the field-set docs
+    /// would be *less* true without it. Two conditions keep it an allowlist
+    /// rather than a loophole, and both are enforced per published string:
+    /// `bd` may appear only inside a code span (immediately after a
+    /// backtick), and the same string must identify what it is by naming
+    /// ``Go `bd` ``. "bd parity" and "bd's stale command" fail the first;
+    /// a stray `bd` in an unrelated description fails the second.
+    #[test]
+    fn published_schema_catalog_names_no_pre_rename_artifacts() {
+        let published = published_strings();
+
+        // Positive control: rustdoc descriptions really do reach the emitted
+        // document, so the scans below are not vacuously green.
+        assert!(
+            published
+                .iter()
+                .any(|(_, text)| text.contains("Unique issue ID")),
+            "field descriptions must reach the emitted schema for this test to mean anything"
+        );
+
+        // Word-bounded, because `obr ready` legitimately contains "br " and a
+        // substring scan would fire on it.
+        let banned = [
+            (
+                r"\bbd-",
+                "pre-rename issue-ID prefix, published as THE example",
+            ),
+            (
+                r"beads",
+                "pre-rename product name (`.beads`, `beads.db`, `beads_rust#NNN`)",
+            ),
+            (r"\bbr\b", "pre-rename binary name"),
+            (r"issues\.jsonl", "pre-rename default export filename"),
+        ]
+        .map(|(pattern, what)| {
+            (
+                regex::Regex::new(pattern).expect("literal regex compiles"),
+                what,
+            )
+        });
+        let bare_bd = regex::Regex::new(r"\bbd\b").expect("literal regex compiles");
+        let cites_go_bd = regex::Regex::new(r"Go\s+`bd`").expect("citation regex compiles");
+        let mut citations = 0_usize;
+
+        for (path, text) in &published {
+            for (pattern, what) in &banned {
+                assert!(
+                    !pattern.is_match(text),
+                    "obr schema all publishes a pre-rename token at {path} ({what}); \
+                     derive the text from what obr does today: {text:?}"
+                );
+            }
+
+            if !bare_bd.is_match(text) {
+                continue;
+            }
+            assert!(
+                cites_go_bd.is_match(text),
+                "{path} names `bd` without saying what it is; a published string may only \
+                 mention it as the Go `bd` implementation: {text:?}"
+            );
+            citations += 1;
+            for hit in bare_bd.find_iter(text) {
+                assert!(
+                    text[..hit.start()].ends_with('`'),
+                    "{path} names bd outside a code span, which reads as a name for THIS \
+                     tool: {text:?}"
+                );
+            }
+        }
+
+        assert!(
+            citations > 0,
+            "the allowlist is not exercised by anything; if the Go `bd` citation is gone, \
+             delete the allowlist too rather than leaving a hole in this gate"
+        );
+    }
 
     #[test]
     fn schema_generation_is_json_serializable() {
@@ -770,7 +899,7 @@ mod tests {
 
     #[test]
     fn stats_and_status_share_the_same_envelope() {
-        // `br status` is documented as an alias for `br stats`; the schema
+        // `obr status` is documented as an alias for `obr stats`; the schema
         // map should describe identical shapes for both names so agents
         // looking up either name get a consistent answer.
         let commands = build_commands(SchemaTarget::Commands);

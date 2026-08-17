@@ -1,0 +1,9 @@
+* TODO [#C] A
+:PROPERTIES:
+:ID:       bd-dup
+:END:
+
+* TODO [#C] B
+:PROPERTIES:
+:ID:       bd-dup
+:END:

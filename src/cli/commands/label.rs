@@ -32,18 +32,18 @@ pub fn execute(
     cli: &config::CliOverrides,
     ctx: &OutputContext,
 ) -> Result<()> {
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
 
     match command {
-        LabelCommands::Add(args) => execute_routed_label_add(args, cli, ctx, &beads_dir),
-        LabelCommands::Remove(args) => execute_routed_label_remove(args, cli, ctx, &beads_dir),
-        LabelCommands::List(args) => execute_label_list_command(args, json, cli, ctx, &beads_dir),
+        LabelCommands::Add(args) => execute_routed_label_add(args, cli, ctx, &obr_dir),
+        LabelCommands::Remove(args) => execute_routed_label_remove(args, cli, ctx, &obr_dir),
+        LabelCommands::List(args) => execute_label_list_command(args, json, cli, ctx, &obr_dir),
         LabelCommands::ListAll => {
-            let storage_ctx = config::open_storage_with_cli(&beads_dir, cli)?;
+            let storage_ctx = config::open_storage_with_cli(&obr_dir, cli)?;
             label_list_all(&storage_ctx.storage, json, ctx)
         }
         LabelCommands::Rename(args) => {
-            let mut storage_ctx = config::open_storage_with_cli(&beads_dir, cli)?;
+            let mut storage_ctx = config::open_storage_with_cli(&obr_dir, cli)?;
             let config_layer = storage_ctx.load_config(cli)?;
             let actor = config::resolve_actor(&config_layer);
             label_rename(args, &mut storage_ctx, &actor, json, ctx)
@@ -208,11 +208,11 @@ fn execute_routed_label_add(
     args: &LabelAddArgs,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
 ) -> Result<()> {
     let (issue_inputs, label) = parse_issues_and_label(&args.issues, args.label.as_ref())?;
     validate_label(&label)?;
-    let prepared_routes = prepare_label_routes(&issue_inputs, cli, beads_dir)?;
+    let prepared_routes = prepare_label_routes(&issue_inputs, cli, obr_dir)?;
     let mut routed_results = Vec::new();
 
     for mut prepared_route in prepared_routes {
@@ -227,7 +227,7 @@ fn execute_routed_label_add(
         "label add routing",
     )?;
     if let Some(last_result) = results.last() {
-        crate::util::set_last_touched_id(beads_dir, &last_result.issue_id);
+        crate::util::set_last_touched_id(obr_dir, &last_result.issue_id);
     }
     render_label_action_results(&results, "add", ctx);
     Ok(())
@@ -272,7 +272,7 @@ fn label_add(
     {
         report_auto_flush_failure(
             ctx,
-            &prepared_route.storage_ctx.paths.beads_dir,
+            &prepared_route.storage_ctx.paths.obr_dir,
             &prepared_route.storage_ctx.paths.jsonl_path,
             &error,
         );
@@ -285,11 +285,11 @@ fn execute_routed_label_remove(
     args: &LabelRemoveArgs,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
 ) -> Result<()> {
     let (issue_inputs, label) = parse_issues_and_label(&args.issues, args.label.as_ref())?;
     validate_label(&label)?;
-    let prepared_routes = prepare_label_routes(&issue_inputs, cli, beads_dir)?;
+    let prepared_routes = prepare_label_routes(&issue_inputs, cli, obr_dir)?;
     let mut routed_results = Vec::new();
 
     for mut prepared_route in prepared_routes {
@@ -304,7 +304,7 @@ fn execute_routed_label_remove(
         "label remove routing",
     )?;
     if let Some(last_result) = results.last() {
-        crate::util::set_last_touched_id(beads_dir, &last_result.issue_id);
+        crate::util::set_last_touched_id(obr_dir, &last_result.issue_id);
     }
     render_label_action_results(&results, "remove", ctx);
     Ok(())
@@ -345,7 +345,7 @@ fn label_remove(
     {
         report_auto_flush_failure(
             ctx,
-            &prepared_route.storage_ctx.paths.beads_dir,
+            &prepared_route.storage_ctx.paths.obr_dir,
             &prepared_route.storage_ctx.paths.jsonl_path,
             &error,
         );
@@ -359,25 +359,25 @@ fn execute_label_list_command(
     json: bool,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
 ) -> Result<()> {
     if let Some(input) = &args.issue {
-        let route = config::routing::resolve_route(input, beads_dir)?;
+        let route = config::routing::resolve_route(input, obr_dir)?;
         let mut route_cli = routed_cli_for_batch(cli, route.is_external);
         let routed_write_lock = acquire_routed_workspace_write_lock(
-            &route.beads_dir,
+            &route.obr_dir,
             route.is_external,
             route_cli.lock_timeout,
         )?;
         routed_write_lock.mark_cli_write_lock_held(&mut route_cli);
-        let mut storage_ctx = config::open_storage_with_cli(&route.beads_dir, &route_cli)?;
+        let mut storage_ctx = config::open_storage_with_cli(&route.obr_dir, &route_cli)?;
         auto_import_storage_ctx_if_stale(&mut storage_ctx, &route_cli)?;
         let config_layer = storage_ctx.load_config(&route_cli)?;
         let id_config = config::id_config_from_layer(&config_layer);
         let resolver = IdResolver::new(ResolverConfig::with_prefix(id_config.prefix));
         label_list(args, &storage_ctx.storage, &resolver, json, ctx)
     } else {
-        let storage_ctx = config::open_storage_with_cli(beads_dir, cli)?;
+        let storage_ctx = config::open_storage_with_cli(obr_dir, cli)?;
         let config_layer = storage_ctx.load_config(cli)?;
         let id_config = config::id_config_from_layer(&config_layer);
         let resolver = IdResolver::new(ResolverConfig::with_prefix(id_config.prefix));
@@ -388,20 +388,20 @@ fn execute_label_list_command(
 fn prepare_label_routes(
     issue_inputs: &[String],
     cli: &config::CliOverrides,
-    beads_dir: &Path,
+    obr_dir: &Path,
 ) -> Result<Vec<PreparedLabelRoute>> {
-    let routed_batches = config::routing::group_issue_inputs_by_route(issue_inputs, beads_dir)?;
+    let routed_batches = config::routing::group_issue_inputs_by_route(issue_inputs, obr_dir)?;
     let mut prepared_routes = Vec::new();
 
     for batch in routed_batches {
         let mut batch_cli = routed_cli_for_batch(cli, batch.is_external);
         let routed_write_lock = acquire_routed_workspace_write_lock(
-            &batch.beads_dir,
+            &batch.obr_dir,
             batch.is_external,
             batch_cli.lock_timeout,
         )?;
         routed_write_lock.mark_cli_write_lock_held(&mut batch_cli);
-        let mut storage_ctx = config::open_storage_with_cli(&batch.beads_dir, &batch_cli)?;
+        let mut storage_ctx = config::open_storage_with_cli(&batch.obr_dir, &batch_cli)?;
         auto_import_storage_ctx_if_stale(&mut storage_ctx, &batch_cli)?;
         let config_layer = storage_ctx.load_config(&batch_cli)?;
         let id_config = config::id_config_from_layer(&config_layer);

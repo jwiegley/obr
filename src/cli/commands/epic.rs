@@ -57,8 +57,8 @@ fn execute_status(
     cli: &config::CliOverrides,
     ctx: &OutputContext,
 ) -> Result<()> {
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    let storage_ctx = config::open_storage_with_cli(&beads_dir, cli)?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    let storage_ctx = config::open_storage_with_cli(&obr_dir, cli)?;
     execute_status_with_storage_ctx(args, cli, ctx, &storage_ctx)
 }
 
@@ -124,8 +124,8 @@ fn execute_close_eligible(
     cli: &config::CliOverrides,
     ctx: &OutputContext,
 ) -> Result<()> {
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    let mut storage_ctx = config::open_storage_with_cli(&beads_dir, cli)?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    let mut storage_ctx = config::open_storage_with_cli(&obr_dir, cli)?;
     let config_layer = storage_ctx.load_config(cli)?;
     let actor = config::resolve_actor(&config_layer);
 

@@ -1,4 +1,4 @@
-//! Shared utilities for `beads_rust`.
+//! Shared utilities for `obr`.
 //!
 //! Common functionality used across modules:
 //! - Content hashing (SHA256)
@@ -21,7 +21,6 @@ pub use id::{
     resolve_id, validate_prefix,
 };
 
-use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -33,58 +32,48 @@ const MAX_LAST_TOUCHED_BYTES_U64: u64 = 4096;
 /// Environment variable for overriding the cache directory location.
 ///
 /// When set, transient files like `last-touched` will be stored in this
-/// directory instead of the `.beads` directory. This is useful for monorepo
-/// setups where the `.beads` directory is checked into version control but
+/// directory instead of the workspace directory. This is useful for monorepo
+/// setups where the workspace directory is checked into version control but
 /// transient cache files should be stored elsewhere.
-pub const BEADS_CACHE_DIR_ENV: &str = "BEADS_CACHE_DIR";
+pub const CACHE_DIR_ENV: &str = "OBR_CACHE_DIR";
 
 /// Resolve the effective cache directory for transient files.
 ///
 /// Priority:
-/// 1. `BEADS_CACHE_DIR` environment variable (if set and valid)
-/// 2. The beads_dir itself (default behavior)
+/// 1. `OBR_CACHE_DIR` environment variable
+/// 2. The workspace directory itself (default behavior)
 #[must_use]
-pub fn resolve_cache_dir(beads_dir: &Path) -> PathBuf {
-    if let Ok(cache_dir) = env::var(BEADS_CACHE_DIR_ENV) {
-        let path = PathBuf::from(&cache_dir);
-        if !cache_dir.is_empty() {
-            return path;
-        }
-    }
-    beads_dir.to_path_buf()
+pub fn resolve_cache_dir(obr_dir: &Path) -> PathBuf {
+    std::env::var_os(CACHE_DIR_ENV)
+        .filter(|value| !value.is_empty())
+        .map_or_else(|| obr_dir.to_path_buf(), PathBuf::from)
 }
 
 /// Build the path to the `last-touched` file.
 ///
 /// The file location is determined by:
-/// 1. `BEADS_CACHE_DIR` environment variable (if set)
-/// 2. The `.beads` directory (default)
+/// 1. [`CACHE_DIR_ENV`] (`OBR_CACHE_DIR`) environment variable (if set)
+/// 2. The workspace directory (default)
 #[must_use]
-pub fn last_touched_path(beads_dir: &Path) -> PathBuf {
-    resolve_cache_dir(beads_dir).join(LAST_TOUCHED_FILE)
+pub fn last_touched_path(obr_dir: &Path) -> PathBuf {
+    resolve_cache_dir(obr_dir).join(LAST_TOUCHED_FILE)
 }
 
-const DB_FILE: &str = "beads.db";
-
-/// Build the path to the SQLite database file.
-///
-/// The file location is determined by:
-/// 1. `BEADS_CACHE_DIR` environment variable (if set)
-/// 2. The `.beads` directory (default)
-///
-/// This allows storing the database (and its WAL/SHM files) on a fast local
-/// filesystem when the `.beads` directory is on a slow network mount.
-#[must_use]
-pub fn db_path(beads_dir: &Path) -> PathBuf {
-    resolve_cache_dir(beads_dir).join(DB_FILE)
-}
+// The database path is NOT resolved here. `config::resolve_db_path` (reached
+// through `ConfigPaths::resolve`) owns that question, including the
+// `metadata.json` database name and the pre-rename `beads.db` fallback. A
+// second resolver used to live here for `init` alone, with its own copies of
+// both filename constants and a legacy fallback that was a bare existence
+// probe rather than config's "only when metadata does not name a database" —
+// so `obr init` and every other command could disagree about which file is
+// the workspace's database.
 
 /// Best-effort write of the last-touched issue ID.
 ///
 /// Errors are ignored to match classic bd behavior.
-/// If `BEADS_CACHE_DIR` is set, the cache directory will be created if needed.
-pub fn set_last_touched_id(beads_dir: &Path, id: &str) {
-    let path = last_touched_path(beads_dir);
+/// If [`CACHE_DIR_ENV`] is set, the cache directory will be created if needed.
+pub fn set_last_touched_id(obr_dir: &Path, id: &str) {
+    let path = last_touched_path(obr_dir);
 
     // Ensure cache directory exists (best-effort)
     if let Some(parent) = path.parent() {
@@ -109,8 +98,8 @@ pub fn set_last_touched_id(beads_dir: &Path, id: &str) {
 ///
 /// Returns an empty string if the file is missing or unreadable.
 #[must_use]
-pub fn get_last_touched_id(beads_dir: &Path) -> String {
-    let path = last_touched_path(beads_dir);
+pub fn get_last_touched_id(obr_dir: &Path) -> String {
+    let path = last_touched_path(obr_dir);
     let Ok(metadata) = fs::metadata(&path) else {
         return String::new();
     };
@@ -142,8 +131,8 @@ fn read_last_touched_file_limited(path: &Path, metadata: &fs::Metadata) -> io::R
 }
 
 /// Best-effort delete of the last-touched file.
-pub fn clear_last_touched(beads_dir: &Path) {
-    let path = last_touched_path(beads_dir);
+pub fn clear_last_touched(obr_dir: &Path) {
+    let path = last_touched_path(obr_dir);
     let _ = fs::remove_file(path);
 }
 
@@ -298,20 +287,20 @@ pub mod test_helpers {
     use tempfile::TempDir;
     pub static TEST_DIR_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
-    /// Whether `start` or any ancestor already contains a beads workspace or a
-    /// git checkout. Both matter: `br` resolves its workspace by walking
+    /// Whether `start` or any ancestor already contains a obr workspace or a
+    /// git checkout. Both matter: `obr` resolves its workspace by walking
     /// ancestors for `.beads/`, and the sync status helpers shell out to git,
     /// so a temp directory inside either tree is not the isolated environment
     /// these tests intend.
-    fn is_inside_beads_workspace(start: &Path) -> bool {
+    fn is_inside_obr_workspace(start: &Path) -> bool {
         start.ancestors().any(|dir| {
             dir.join(".beads").is_dir() || dir.join("_beads").is_dir() || dir.join(".git").exists()
         })
     }
 
-    /// A temp root guaranteed not to sit inside an existing beads workspace.
+    /// A temp root guaranteed not to sit inside an existing obr workspace.
     ///
-    /// [`crate::config::discover_beads_dir`] walks every ancestor to the
+    /// [`crate::config::discover_obr_dir`] walks every ancestor to the
     /// filesystem root with no `.git`-style boundary, so a `TMPDIR` inside a
     /// checkout hands each "fresh" temp directory the enclosing repository's
     /// `.beads/`. Tests that assert on an *uninitialized* workspace then
@@ -326,35 +315,35 @@ pub mod test_helpers {
     ///
     /// # Panics
     ///
-    /// Panics when `TMPDIR` and every system fallback sit inside a beads
+    /// Panics when `TMPDIR` and every system fallback sit inside a obr
     /// workspace or git checkout, since silently returning a polluted root
     /// would make the calling test assert against the wrong workspace.
     #[must_use]
     pub fn isolated_temp_root() -> PathBuf {
         let preferred = std::env::temp_dir();
-        if !is_inside_beads_workspace(&preferred) {
+        if !is_inside_obr_workspace(&preferred) {
             return preferred;
         }
 
         for fallback in ["/tmp", "/var/tmp"] {
             let path = PathBuf::from(fallback);
-            if path.is_dir() && !is_inside_beads_workspace(&path) {
+            if path.is_dir() && !is_inside_obr_workspace(&path) {
                 return path;
             }
         }
 
         panic!(
-            "no beads-free temp root available: TMPDIR ({}) is inside a beads workspace \
+            "no obr-free temp root available: TMPDIR ({}) is inside an obr workspace \
              and no system fallback is clean. Set TMPDIR to a directory outside any \
              .beads/ tree before running the test suite.",
             preferred.display()
         );
     }
 
-    /// A [`TempDir`] created outside any beads workspace.
+    /// A [`TempDir`] created outside any obr workspace.
     ///
     /// Use this instead of `TempDir::new()` in any test whose subject resolves
-    /// a beads workspace by walking ancestors.
+    /// a obr workspace by walking ancestors.
     ///
     /// # Panics
     ///
@@ -372,7 +361,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn isolated_temp_root_is_beads_free_and_usable() {
+    fn isolated_temp_root_is_obr_free_and_usable() {
         let root = test_helpers::isolated_temp_root();
         assert!(
             root.is_dir(),
@@ -380,11 +369,11 @@ mod tests {
             root.display()
         );
         // The whole point: nothing above a temp dir created here may supply a
-        // workspace to `discover_beads_dir`'s unbounded ancestor walk.
+        // workspace to `discover_obr_dir`'s unbounded ancestor walk.
         let temp = test_helpers::isolated_temp_dir();
         assert!(
-            crate::config::discover_beads_dir(Some(temp.path())).is_err(),
-            "temp dir {} resolved a beads workspace; TMPDIR is inside one",
+            crate::config::discover_obr_dir(Some(temp.path())).is_err(),
+            "temp dir {} resolved a obr workspace; TMPDIR is inside one",
             temp.path().display()
         );
     }
@@ -392,16 +381,16 @@ mod tests {
     #[test]
     fn test_set_get_clear_last_touched() {
         let temp = TempDir::new().expect("temp dir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir(&beads_dir).expect("create .beads");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir(&obr_dir).expect("create .beads");
 
-        assert_eq!(get_last_touched_id(&beads_dir), "");
+        assert_eq!(get_last_touched_id(&obr_dir), "");
 
-        set_last_touched_id(&beads_dir, "bd-abc123");
-        assert_eq!(get_last_touched_id(&beads_dir), "bd-abc123");
+        set_last_touched_id(&obr_dir, "bd-abc123");
+        assert_eq!(get_last_touched_id(&obr_dir), "bd-abc123");
 
-        clear_last_touched(&beads_dir);
-        assert_eq!(get_last_touched_id(&beads_dir), "");
+        clear_last_touched(&obr_dir);
+        assert_eq!(get_last_touched_id(&obr_dir), "");
     }
 
     #[cfg(unix)]
@@ -410,11 +399,11 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let temp = TempDir::new().expect("temp dir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir(&beads_dir).expect("create .beads");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir(&obr_dir).expect("create .beads");
 
-        set_last_touched_id(&beads_dir, "bd-abc123");
-        let metadata = fs::metadata(last_touched_path(&beads_dir)).expect("metadata");
+        set_last_touched_id(&obr_dir, "bd-abc123");
+        let metadata = fs::metadata(last_touched_path(&obr_dir)).expect("metadata");
         assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
     }
 
@@ -425,7 +414,7 @@ mod tests {
         let cache_dir = temp.path().join("nested").join("cache");
         // cache_dir doesn't exist yet
 
-        // Create last-touched path manually (simulating what happens with BEADS_CACHE_DIR)
+        // Create last-touched path manually (simulating what happens with OBR_CACHE_DIR)
         let path = cache_dir.join(LAST_TOUCHED_FILE);
 
         // Manually test the parent directory creation logic
@@ -439,9 +428,9 @@ mod tests {
     #[test]
     fn test_get_last_touched_ignores_oversized_cache_file() {
         let temp = TempDir::new().expect("temp dir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir(&beads_dir).expect("create .beads");
-        let path = last_touched_path(&beads_dir);
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir(&obr_dir).expect("create .beads");
+        let path = last_touched_path(&obr_dir);
         fs::write(&path, "bd-abc123\n").expect("write last touched");
         let file = OpenOptions::new()
             .append(true)
@@ -450,7 +439,7 @@ mod tests {
         file.set_len(MAX_LAST_TOUCHED_BYTES_U64 + 1)
             .expect("extend last touched");
 
-        assert_eq!(get_last_touched_id(&beads_dir), "");
+        assert_eq!(get_last_touched_id(&obr_dir), "");
     }
 
     #[test]

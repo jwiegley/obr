@@ -59,7 +59,7 @@ struct DeletePreviewResult {
 }
 
 struct PreparedDeleteRoute {
-    beads_dir: PathBuf,
+    obr_dir: PathBuf,
     route_cli: config::CliOverrides,
     resolved_ids: Vec<String>,
     blocked_dependents: Vec<String>,
@@ -98,12 +98,12 @@ pub fn execute(
     }
 
     if ids.is_empty() {
-        // `br delete --hard` with no IDs is the tombstone garbage-collector:
+        // `obr delete --hard` with no IDs is the tombstone garbage-collector:
         // purge every tombstone in the current workspace (#367). Plain
-        // `br delete` with no IDs remains a usage error.
+        // `obr delete` with no IDs remains a usage error.
         if args.hard {
-            let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-            return purge_all_tombstones(args, cli, ctx, &beads_dir);
+            let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+            return purge_all_tombstones(args, cli, ctx, &obr_dir);
         }
         return Err(BeadsError::validation("ids", "no issue IDs provided"));
     }
@@ -116,14 +116,14 @@ pub fn execute(
         .collect();
     ids.sort();
 
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    let routed_batches = config::routing::group_issue_inputs_by_route(&ids, &beads_dir)?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    let routed_batches = config::routing::group_issue_inputs_by_route(&ids, &obr_dir)?;
     if routed_batches.iter().any(|batch| batch.is_external) {
-        return execute_routed(args, cli, ctx, &beads_dir, routed_batches);
+        return execute_routed(args, cli, ctx, &obr_dir, routed_batches);
     }
 
     // 2. Open storage
-    let mut storage_ctx = config::open_storage_with_cli(&beads_dir, cli)?;
+    let mut storage_ctx = config::open_storage_with_cli(&obr_dir, cli)?;
     let config_layer = storage_ctx.load_config(cli)?;
     let id_config = config::id_config_from_layer(&config_layer);
     let resolver = IdResolver::new(ResolverConfig::with_prefix(id_config.prefix));
@@ -335,9 +335,9 @@ pub fn execute(
 
     let deleted_ids: HashSet<String> = result.deleted.iter().cloned().collect();
     storage_ctx.flush_no_db_then(|ctx| {
-        let last_touched = crate::util::get_last_touched_id(&ctx.paths.beads_dir);
+        let last_touched = crate::util::get_last_touched_id(&ctx.paths.obr_dir);
         if !last_touched.is_empty() && deleted_ids.contains(&last_touched) {
-            crate::util::clear_last_touched(&ctx.paths.beads_dir);
+            crate::util::clear_last_touched(&ctx.paths.obr_dir);
         }
         Ok(())
     })?;
@@ -379,20 +379,20 @@ pub fn execute(
     Ok(())
 }
 
-/// Purge every tombstone in the workspace (`br delete --hard` with no IDs).
+/// Purge every tombstone in the workspace (`obr delete --hard` with no IDs).
 ///
-/// Tombstones are the soft-delete markers a normal `br delete` leaves behind so
+/// Tombstones are the soft-delete markers a normal `obr delete` leaves behind so
 /// a deletion can propagate through JSONL/git. They accumulate over time and
-/// there was previously no way to reclaim them — `br delete --hard` with no IDs
+/// there was previously no way to reclaim them — `obr delete --hard` with no IDs
 /// errored on the empty argument list (#367). This hard-removes each tombstone
 /// row (no new tombstone is written) and prunes it from the JSONL export.
 fn purge_all_tombstones(
     args: &DeleteArgs,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
 ) -> Result<()> {
-    let mut storage_ctx = config::open_storage_with_cli(beads_dir, cli)?;
+    let mut storage_ctx = config::open_storage_with_cli(obr_dir, cli)?;
     auto_import_storage_ctx_if_stale(&mut storage_ctx, cli)?;
     let config_layer = storage_ctx.load_config(cli)?;
     let actor = config::resolve_actor(&config_layer);
@@ -445,9 +445,9 @@ fn purge_all_tombstones(
 
     let deleted_ids: HashSet<String> = result.deleted.iter().cloned().collect();
     storage_ctx.flush_no_db_then(|ctx| {
-        let last_touched = crate::util::get_last_touched_id(&ctx.paths.beads_dir);
+        let last_touched = crate::util::get_last_touched_id(&ctx.paths.obr_dir);
         if !last_touched.is_empty() && deleted_ids.contains(&last_touched) {
-            crate::util::clear_last_touched(&ctx.paths.beads_dir);
+            crate::util::clear_last_touched(&ctx.paths.obr_dir);
         }
         Ok(())
     })?;
@@ -467,12 +467,14 @@ fn purge_all_tombstones(
 
     if result.deleted_count == 0 {
         ctx.success("No tombstones to purge.");
+    } else if ctx.is_rich() {
+        // Purging is irreversible, and the IDs are the only record of what
+        // went. Rich used to print the count and swallow the list.
+        render_purge_result_rich(&result.deleted, ctx);
     } else {
         ctx.success(&format!("Purged {} tombstone(s)", result.deleted_count));
-        if !ctx.is_rich() {
-            for id in &result.deleted {
-                println!("  - {}", delete_display_text(id));
-            }
+        for id in &result.deleted {
+            println!("  - {}", delete_display_text(id));
         }
     }
 
@@ -484,18 +486,18 @@ fn execute_routed(
     args: &DeleteArgs,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    local_beads_dir: &Path,
+    local_obr_dir: &Path,
     routed_batches: Vec<config::routing::RoutedIssueBatch>,
 ) -> Result<()> {
-    let normalized_local_beads_dir =
-        dunce::canonicalize(local_beads_dir).unwrap_or_else(|_| local_beads_dir.to_path_buf());
+    let normalized_local_obr_dir =
+        dunce::canonicalize(local_obr_dir).unwrap_or_else(|_| local_obr_dir.to_path_buf());
     let mut prepared_routes = Vec::with_capacity(routed_batches.len());
 
     for batch in routed_batches {
-        let normalized_batch_beads_dir =
-            dunce::canonicalize(&batch.beads_dir).unwrap_or_else(|_| batch.beads_dir.clone());
+        let normalized_batch_obr_dir =
+            dunce::canonicalize(&batch.obr_dir).unwrap_or_else(|_| batch.obr_dir.clone());
         let mut batch_cli = cli.clone();
-        batch_cli.db = if normalized_batch_beads_dir == normalized_local_beads_dir {
+        batch_cli.db = if normalized_batch_obr_dir == normalized_local_obr_dir {
             cli.db.clone()
         } else {
             None
@@ -503,7 +505,7 @@ fn execute_routed(
         prepared_routes.push(prepare_delete_route(
             args,
             &batch.issue_inputs,
-            &batch.beads_dir,
+            &batch.obr_dir,
             &batch_cli,
             batch.is_external,
         )?);
@@ -572,7 +574,7 @@ fn execute_routed(
         merge_delete_result(&mut result, batch_result);
     }
     finalize_delete_result(&mut result);
-    clear_last_touched_if_deleted(local_beads_dir, &result.deleted);
+    clear_last_touched_if_deleted(local_obr_dir, &result.deleted);
 
     if ctx.is_json() || ctx.is_toon() {
         if ctx.is_toon() {
@@ -615,12 +617,12 @@ fn execute_routed(
 fn prepare_delete_route(
     args: &DeleteArgs,
     issue_inputs: &[String],
-    beads_dir: &Path,
+    obr_dir: &Path,
     cli: &config::CliOverrides,
     auto_flush_external: bool,
 ) -> Result<PreparedDeleteRoute> {
     let routed_write_lock =
-        acquire_routed_workspace_write_lock(beads_dir, auto_flush_external, cli.lock_timeout)?;
+        acquire_routed_workspace_write_lock(obr_dir, auto_flush_external, cli.lock_timeout)?;
     // Reuse the routed authority for every storage open on this route (both
     // the preparation open below and the later `apply_delete_route` reopen
     // through the stored `route_cli`); acquiring the same database-family
@@ -629,7 +631,7 @@ fn prepare_delete_route(
     let mut route_cli = cli.clone();
     routed_write_lock.mark_cli_write_lock_held(&mut route_cli);
     let cli = &route_cli;
-    let mut storage_ctx = config::open_storage_with_cli(beads_dir, cli)?;
+    let mut storage_ctx = config::open_storage_with_cli(obr_dir, cli)?;
     auto_import_storage_ctx_if_stale(&mut storage_ctx, cli)?;
     let config_layer = storage_ctx.load_config(cli)?;
     let id_config = config::id_config_from_layer(&config_layer);
@@ -654,7 +656,7 @@ fn prepare_delete_route(
     };
 
     Ok(PreparedDeleteRoute {
-        beads_dir: beads_dir.to_path_buf(),
+        obr_dir: obr_dir.to_path_buf(),
         route_cli: cli.clone(),
         resolved_ids,
         blocked_dependents,
@@ -670,7 +672,7 @@ fn apply_delete_route(
     route: &PreparedDeleteRoute,
     ctx: &OutputContext,
 ) -> Result<DeleteResult> {
-    let mut storage_ctx = config::open_storage_with_cli(&route.beads_dir, &route.route_cli)?;
+    let mut storage_ctx = config::open_storage_with_cli(&route.obr_dir, &route.route_cli)?;
     auto_import_storage_ctx_if_stale(&mut storage_ctx, &route.route_cli)?;
     let config_layer = storage_ctx.load_config(&route.route_cli)?;
     let actor = config::resolve_actor(&config_layer);
@@ -722,9 +724,9 @@ fn apply_delete_route(
 
     let deleted_ids: HashSet<String> = result.deleted.iter().cloned().collect();
     storage_ctx.flush_no_db_then(|ctx| {
-        let last_touched = crate::util::get_last_touched_id(&ctx.paths.beads_dir);
+        let last_touched = crate::util::get_last_touched_id(&ctx.paths.obr_dir);
         if !last_touched.is_empty() && deleted_ids.contains(&last_touched) {
-            crate::util::clear_last_touched(&ctx.paths.beads_dir);
+            crate::util::clear_last_touched(&ctx.paths.obr_dir);
         }
         Ok(())
     })?;
@@ -733,7 +735,7 @@ fn apply_delete_route(
     {
         report_auto_flush_failure(
             ctx,
-            &storage_ctx.paths.beads_dir,
+            &storage_ctx.paths.obr_dir,
             &storage_ctx.paths.jsonl_path,
             &error,
         );
@@ -832,11 +834,11 @@ fn finalize_delete_result(result: &mut DeleteResult) {
     result.deleted_count = result.deleted.len();
 }
 
-fn clear_last_touched_if_deleted(beads_dir: &Path, deleted_ids: &[String]) {
+fn clear_last_touched_if_deleted(obr_dir: &Path, deleted_ids: &[String]) {
     let deleted_ids: HashSet<&str> = deleted_ids.iter().map(String::as_str).collect();
-    let last_touched = crate::util::get_last_touched_id(beads_dir);
+    let last_touched = crate::util::get_last_touched_id(obr_dir);
     if !last_touched.is_empty() && deleted_ids.contains(last_touched.as_str()) {
-        crate::util::clear_last_touched(beads_dir);
+        crate::util::clear_last_touched(obr_dir);
     }
 }
 
@@ -1113,6 +1115,41 @@ fn render_dry_run_rich(
 }
 
 /// Render the delete result in rich format.
+/// The purge report as a Rich panel body.
+///
+/// Carries the same facts the plain branch prints — the count *and* every
+/// purged ID. Rich reported only the count, which is the one number a user
+/// cannot act on after the tombstones are gone.
+fn build_purge_result_text(purged: &[String], theme: &crate::output::Theme) -> Text {
+    let mut content = Text::new("");
+    content.append_styled("Purged ", theme.success.clone());
+    content.append_styled(&format!("{}", purged.len()), theme.emphasis.clone());
+    content.append_styled(" tombstone(s):\n\n", theme.success.clone());
+
+    for id in purged {
+        content.append_styled("  \u{2713} ", theme.success.clone());
+        content.append_styled(&delete_display_text(id), theme.issue_id.clone());
+        content.append("\n");
+    }
+
+    content
+}
+
+fn render_purge_result_rich(purged: &[String], ctx: &OutputContext) {
+    let console = Console::default();
+    let theme = ctx.theme();
+
+    let content = build_purge_result_text(purged, theme);
+    let panel = Panel::from_rich_text(&content, ctx.width())
+        .title(Text::styled(
+            "\u{1f5d1} Purge Complete",
+            theme.success.clone(),
+        ))
+        .box_style(theme.box_style);
+
+    console.print_renderable(&panel);
+}
+
 fn render_delete_result_rich(result: &DeleteResult, storage: &SqliteStorage, ctx: &OutputContext) {
     let console = Console::default();
     let theme = ctx.theme();
@@ -1193,10 +1230,50 @@ fn render_delete_result_rich(result: &DeleteResult, storage: &SqliteStorage, ctx
 mod tests {
     use super::*;
     use crate::model::{Issue, IssueType, Priority, Status};
+    use crate::output::OutputMode;
     use chrono::Utc;
     use std::io::Write;
     use tempfile::NamedTempFile;
     use tracing::info;
+
+    /// Wide enough that no ID wraps inside the panel frame.
+    const RICH_WIDTH: usize = 200;
+
+    /// Purging is irreversible; the IDs are the only record of what went.
+    /// Rich printed the count alone, which no golden could catch because
+    /// goldens capture the plain branch — the one that DOES print them.
+    #[test]
+    fn rich_purge_panel_lists_every_purged_id() {
+        let ctx = OutputContext::with_mode(OutputMode::Rich);
+        assert!(ctx.is_rich(), "the panel must be exercised in Rich mode");
+
+        let purged = vec!["vocab-a1b".to_string(), "vocab-c2d".to_string()];
+        let content = build_purge_result_text(&purged, ctx.theme());
+
+        let console = Console::builder()
+            .no_color()
+            .force_terminal(true)
+            .width(RICH_WIDTH)
+            .build();
+        console.begin_capture();
+        console.print_renderable(&content);
+        let rendered = console
+            .end_capture()
+            .iter()
+            .map(|segment| segment.text.as_ref())
+            .collect::<String>();
+
+        assert!(
+            rendered.contains("Purged 2 tombstone(s)"),
+            "rich purge lost the count:\n{rendered}"
+        );
+        for id in &purged {
+            assert!(
+                rendered.contains(id.as_str()),
+                "rich purge never named {id}:\n{rendered}"
+            );
+        }
+    }
 
     fn init_logging() {
         crate::logging::init_test_logging();

@@ -92,7 +92,7 @@ pub fn take_output_serialization_failure() -> Option<crate::BeadsError> {
 ///
 /// Instead, the command prints its output normally, records the intended exit
 /// code here, and `main` applies it after auto-flush and storage teardown.
-/// Used by `br dep cycles` (cycles present) and `br create -f` (declared
+/// Used by `obr dep cycles` (cycles present) and `obr create -f` (declared
 /// dependency edges dropped by cycle detection) — see #368.
 static PENDING_EXIT_CODE: Mutex<Option<i32>> = Mutex::new(None);
 
@@ -1309,7 +1309,7 @@ mod tests {
 
     #[test]
     fn detect_mode_uses_env_json_default_when_no_explicit_format_requested() {
-        let cli = Cli::parse_from(["br", "count"]);
+        let cli = Cli::parse_from(["obr", "count"]);
         assert_eq!(
             OutputContext::detect_mode_with_env(&cli, Some(OutputFormat::Json)),
             OutputMode::Json
@@ -1318,7 +1318,7 @@ mod tests {
 
     #[test]
     fn detect_mode_uses_env_toon_default_when_no_explicit_format_requested() {
-        let cli = Cli::parse_from(["br", "count"]);
+        let cli = Cli::parse_from(["obr", "count"]);
         assert_eq!(
             OutputContext::detect_mode_with_env(&cli, Some(OutputFormat::Toon)),
             OutputMode::Toon
@@ -1327,7 +1327,7 @@ mod tests {
 
     #[test]
     fn detect_mode_quiet_overrides_env_machine_format() {
-        let cli = Cli::parse_from(["br", "--quiet", "count"]);
+        let cli = Cli::parse_from(["obr", "--quiet", "count"]);
         assert_eq!(
             OutputContext::detect_mode_with_env(&cli, Some(OutputFormat::Json)),
             OutputMode::Quiet
@@ -1336,7 +1336,7 @@ mod tests {
 
     #[test]
     fn detect_mode_explicit_json_overrides_env_toon_default() {
-        let cli = Cli::parse_from(["br", "--json", "count"]);
+        let cli = Cli::parse_from(["obr", "--json", "count"]);
         assert_eq!(
             OutputContext::detect_mode_with_env(&cli, Some(OutputFormat::Toon)),
             OutputMode::Json
@@ -1345,7 +1345,7 @@ mod tests {
 
     #[test]
     fn detect_mode_uses_robot_flag_for_sync() {
-        let cli = Cli::parse_from(["br", "sync", "--robot"]);
+        let cli = Cli::parse_from(["obr", "sync", "--robot"]);
         assert_eq!(
             OutputContext::detect_mode_with_env(&cli, Some(OutputFormat::Text)),
             OutputMode::Json
@@ -1358,7 +1358,7 @@ mod tests {
             for json in [false, true] {
                 for robot in [false, true] {
                     for no_color in [false, true] {
-                        let mut argv = vec!["br"];
+                        let mut argv = vec!["obr"];
                         if quiet {
                             argv.push("--quiet");
                         }
@@ -1408,8 +1408,8 @@ mod tests {
 
     #[test]
     fn detect_mode_short_quiet_alias_matches_long_quiet() {
-        let short = Cli::parse_from(["br", "-q", "sync", "--status"]);
-        let long = Cli::parse_from(["br", "--quiet", "sync", "--status"]);
+        let short = Cli::parse_from(["obr", "-q", "sync", "--status"]);
+        let long = Cli::parse_from(["obr", "--quiet", "sync", "--status"]);
 
         assert_eq!(
             OutputContext::detect_mode_with_env(&short, None),

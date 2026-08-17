@@ -20,8 +20,8 @@ pub fn execute(args: &StaleArgs, cli: &config::CliOverrides, ctx: &OutputContext
         ));
     }
 
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    let storage_ctx = config::open_storage_with_cli(&beads_dir, cli)?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    let storage_ctx = config::open_storage_with_cli(&obr_dir, cli)?;
     execute_inner(args, ctx, &storage_ctx.storage)
 }
 

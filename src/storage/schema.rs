@@ -225,7 +225,7 @@ pub struct ReviewedSchemaMigrationEffects {
     pub gate_result_history_created: bool,
 }
 
-/// The complete SQL schema for the beads database.
+/// The complete SQL schema for the obr database.
 /// Schema matches classic bd (Go) for interoperability.
 pub const SCHEMA_SQL: &str = r"
     -- Issues table
@@ -278,8 +278,8 @@ pub const SCHEMA_SQL: &str = r"
         -- included), and schema audits count declaration tokens. See #289.
         source_repo_path TEXT,
         -- agent_context (schema v11, #297) carries canonical-JSON governing
-        -- instructions inherited by descendants on br update --status
-        -- in_progress / --claim and br show. The on-disk shape is a JSON
+        -- instructions inherited by descendants on obr update --status
+        -- in_progress / --claim and obr show. The on-disk shape is a JSON
         -- string; serde_json validation happens at the CLI boundary so the
         -- column itself stays a TEXT bag. NULL means no inherited context;
         -- emission for descendants silently skips ancestors with NULL.
@@ -836,13 +836,13 @@ pub fn apply_schema(conn: &Connection) -> Result<()> {
     // to reclaim any transient pages frankensqlite allocated while
     // executing SCHEMA_SQL (CREATE TABLE + ~15 CREATE INDEX statements,
     // several of which are partial indexes on columns of empty tables).
-    // Without this, a fresh `br init` can leave the database with
+    // Without this, a fresh `obr init` can leave the database with
     // unreachable pages that sqlite3's `PRAGMA integrity_check` surfaces
     // as `Page N: never used` — see issue #225.
     //
     // Note: page-level anomalies from subsequent writes (e.g., "free space
     // corruption" — issue #237) are addressed via VACUUM in the rebuild
-    // path and `br doctor --repair`, not here.  Running VACUUM here would
+    // path and `obr doctor --repair`, not here.  Running VACUUM here would
     // conflict with connections opened immediately after init.
     if is_fresh && let Err(e) = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)") {
         tracing::debug!(
@@ -871,7 +871,7 @@ fn connection_user_version(conn: &Connection) -> Result<u32> {
 }
 
 /// Source schema versions accepted by the reviewed, receipt-bound
-/// `br doctor migrate-schema` lifecycle. Every released schema since v13 must
+/// `obr doctor migrate-schema` lifecycle. Every released schema since v13 must
 /// stay upgradeable here: 13/14 (pre-gate-history releases), 15 (the #388
 /// gate-history schema shipped in the v0.2.19-era line) and 16 (the #384
 /// capacity-exemptions schema created by the released v0.2.19 binary). See
@@ -3022,7 +3022,7 @@ fn rebuild_issues_table_inner(conn: &Connection, existing_columns: &[String]) ->
 ///
 /// SQLite's `ALTER TABLE ADD COLUMN ... NOT NULL DEFAULT ...` enforces the
 /// default for new and existing rows, but legacy databases — predating
-/// br's current migration code, or carrying history from Go bd or raw
+/// obr's current migration code, or carrying history from Go bd or raw
 /// `sqlite3` edits — can hold storage-class NULLs in such columns. The
 /// `typeof(col) = 'null'` predicate detects these directly even when
 /// partial indexes cause `IS NULL` to silently miss them (see #269).
@@ -3168,7 +3168,7 @@ fn run_pre_schema_migrations(conn: &Connection) -> Result<bool> {
 
     // Rebuild the issues table if columns are out of order or missing.
     // This fixes fsqlite "no such column" errors on databases created with
-    // older br versions where ALTER TABLE ADD COLUMN appended columns in
+    // older obr versions where ALTER TABLE ADD COLUMN appended columns in
     // a different position than the canonical CREATE TABLE definition.
     // issues_column_order_matches handles both existence and column order
     // checks via PRAGMA table_info, avoiding redundant sqlite_master queries
@@ -3205,7 +3205,7 @@ fn run_pre_schema_migrations(conn: &Connection) -> Result<bool> {
     // performance issue rather than a correctness issue. On large file-backed
     // databases, exercising DROP INDEX through frankensqlite currently trips an
     // out-of-memory failure. Additionally, frankensqlite's in-memory schema
-    // representation does not reliably preserve partial-index predicates, so br
+    // representation does not reliably preserve partial-index predicates, so obr
     // cannot distinguish a stale ready index from a current one at open time.
 
     Ok(issues_rebuilt)
@@ -3513,7 +3513,7 @@ pub(crate) fn record_runtime_schema_witness(conn: &Connection, attested_cookie: 
 #[allow(clippy::too_many_lines)]
 fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
     // Migration: ensure blocked_issues_cache has the canonical derived-cache
-    // schema, including NOT NULL payload columns. Older br/bd paths could
+    // schema, including NOT NULL payload columns. Older obr/bd paths could
     // leave a nullable blocked_by column with stale NULL cache rows.
     if !blocked_cache_table_canonical(conn) {
         // Table needs update - drop and recreate (it's a cache, data is regenerated)
@@ -3636,7 +3636,7 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
     }
 
     // v7: Historical content-hash rebuild. For databases older than v7 that
-    // open under current br, compute the current canonical format directly
+    // open under current obr, compute the current canonical format directly
     // instead of replaying obsolete intermediate encodings. Marking rows dirty
     // is intentional: per-issue export hashes were computed with an older
     // algorithm, so the next flush must rewrite JSONL tracking metadata.
@@ -3681,7 +3681,7 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
     // v8: Backfill storage-class NULL values in NOT NULL DEFAULT columns.
     //
     // Older databases — particularly those carrying history from Go bd or
-    // br versions where ALTER TABLE ADD COLUMN ran without a DEFAULT
+    // obr versions where ALTER TABLE ADD COLUMN ran without a DEFAULT
     // clause — accumulate storage-class NULL in columns declared NOT NULL
     // DEFAULT. `PRAGMA integrity_check` then flags these as constraint
     // violations even though `WHERE col IS NULL` won't always match them
@@ -3725,7 +3725,7 @@ fn run_migrations(conn: &Connection, issues_rebuilt: bool) -> Result<()> {
 
     // Migration v10 -> v11 (beads_rust#297): add `agent_context TEXT` to
     // `issues` for inherited governing instructions emitted on
-    // `br update --status in_progress` / `--claim` and `br show`.
+    // `obr update --status in_progress` / `--claim` and `obr show`.
     // Pure additive — existing rows get NULL and existing consumers ignore
     // it. Same idempotence pattern as the v10 source_repo_path migration:
     // skipped when the column already exists, skipped when the table was
@@ -4207,7 +4207,7 @@ fn apply_gate_result_history_migration_in_transaction(conn: &Connection) -> Resu
 /// v16 (GitHub #384 phase 4) migration step: audited issue-specific capacity
 /// exemptions. Pure additive — new tables/indexes only (`IF NOT EXISTS`), no
 /// row rewrites. Shared by the general migration engine and the reviewed
-/// `br doctor migrate-schema` path (#398).
+/// `obr doctor migrate-schema` path (#398).
 fn apply_capacity_exemptions_migration_in_transaction(conn: &Connection) -> Result<()> {
     execute_batch(
         conn,
@@ -4252,7 +4252,7 @@ fn apply_capacity_exemptions_migration_in_transaction(conn: &Connection) -> Resu
 /// v17 (GitHub #384 phase 5) migration step: capacity occupancy attribution.
 /// Pure additive — a new table plus partial indexes (`IF NOT EXISTS`).
 /// Shared by the general migration engine and the reviewed
-/// `br doctor migrate-schema` path (#398).
+/// `obr doctor migrate-schema` path (#398).
 fn apply_capacity_occupancy_migration_in_transaction(conn: &Connection) -> Result<()> {
     execute_batch(
         conn,
@@ -5374,7 +5374,7 @@ mod tests {
     /// `marked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP` definition
     /// kept `dirty_issues.marked_at` as a plain NOT NULL column with no
     /// default. The v7 migration's `INSERT INTO dirty_issues (issue_id)`
-    /// path then tripped the constraint and bricked every `br` command
+    /// path then tripped the constraint and bricked every `obr` command
     /// against the legacy DB. The fix passes `marked_at` explicitly so
     /// the absence of a column-level default no longer matters.
     #[test]

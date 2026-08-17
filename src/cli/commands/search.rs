@@ -42,8 +42,8 @@ pub fn execute(
         });
     }
 
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    let storage_ctx = config::open_storage_with_cli(&beads_dir, cli)?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    let storage_ctx = config::open_storage_with_cli(&obr_dir, cli)?;
     execute_with_storage_ctx(args, cli, outer_ctx, &storage_ctx)
 }
 
@@ -557,7 +557,7 @@ fn normalize_whitespace(input: &str) -> String {
 fn build_filters(args: &ListArgs) -> Result<ListFilters> {
     validate_sort_key(args.sort.as_deref())?;
 
-    // `--status all` is the same meta-value `br lint` accepts: no status
+    // `--status all` is the same meta-value `obr lint` accepts: no status
     // filter, every status included (beads_rust-6ilv).
     let all_statuses = super::status_filter_requests_all(&args.status);
     let statuses = if args.status.is_empty() || all_statuses {

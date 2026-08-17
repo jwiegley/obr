@@ -1,8 +1,8 @@
 #![no_main]
 
-use beads_rust::model::{Issue, IssueType, Priority, Status};
-use beads_rust::storage::{ListFilters, SqliteStorage};
-use beads_rust::validation::IssueValidator;
+use obr::model::{Issue, IssueType, Priority, Status};
+use obr::storage::{ListFilters, SqliteStorage};
+use obr::validation::IssueValidator;
 use chrono::{DateTime, Utc};
 use libfuzzer_sys::fuzz_target;
 use std::cell::OnceCell;
@@ -53,7 +53,7 @@ struct SearchHarness {
 impl SearchHarness {
     fn new() -> Result<Self, Box<dyn Error>> {
         let temp = Builder::new().prefix("br-search-issues-fuzz").tempdir()?;
-        let db_path = temp.path().join("beads.db");
+        let db_path = temp.path().join("obr.db");
         let mut storage = SqliteStorage::open(&db_path)?;
         let seeded_ids = seed_storage(&mut storage)?;
 

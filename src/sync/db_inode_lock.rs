@@ -1,4 +1,4 @@
-//! SQLite-compatible exclusive advisory locking for the beads database inode.
+//! SQLite-compatible exclusive advisory locking for the obr database inode.
 //!
 //! # Why this module exists (GitHub #412)
 //!
@@ -61,7 +61,7 @@
 
 use std::fs::{File, TryLockError};
 
-/// Byte offset of the beads database-inode authority lock.
+/// Byte offset of the obr database-inode authority lock.
 ///
 /// Chosen so it can never collide with anything else that locks or reads the
 /// database file:

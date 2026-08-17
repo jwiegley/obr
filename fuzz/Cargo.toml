@@ -1,5 +1,5 @@
 [package]
-name = "beads_rust-fuzz"
+name = "obr-fuzz"
 version = "0.0.0"
 edition = "2024"
 publish = false
@@ -8,7 +8,7 @@ publish = false
 cargo-fuzz = true
 
 [dependencies]
-beads_rust = { path = "..", default-features = false }
+obr = { path = "..", default-features = false }
 chrono = { version = "0.4.43", features = ["serde"] }
 libfuzzer-sys = "0.4"
 serde = { version = "1.0.228", features = ["derive"] }
@@ -60,6 +60,20 @@ bench = false
 [[bin]]
 name = "search_issues"
 path = "fuzz_targets/search_issues.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "org_parse"
+path = "fuzz_targets/org_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "validation"
+path = "fuzz_targets/validation.rs"
 test = false
 doc = false
 bench = false

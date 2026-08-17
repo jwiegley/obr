@@ -1,4 +1,4 @@
-//! Output formatting for `beads_rust`.
+//! Output formatting for `obr`.
 //!
 //! Supports human-readable text output, machine-parseable JSON, and CSV export.
 //! Robot mode sends clean JSON to stdout with diagnostics to stderr.

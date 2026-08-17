@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 251ce28a14c29e82708fc4102c8c111689ab5b8e2518ec7b5da026d968fb7e25 # shrinks to status_idx = 0, pinned_flag = false, priority = 0, raw_title = "0", desc_lines = [], lead_newlines = 0, trail_newlines = 0, label_seeds = [], hostile_label = false, assignee = None, reason = Some(" \nA"), with_dep = false, with_comment = false, with_ctx = false
+cc 94a60935e93dc9d4a3d60b13e2e8c49b124195a7663ac0a382b82231b03ec9ed # shrinks to status_idx = 7, pinned_flag = false, priority = 0, raw_title = "a", desc_lines = [], lead_newlines = 0, trail_newlines = 0, label_seeds = [], hostile_label = false, assignee = None, reason = None, with_dep = false, with_comment = false, with_ctx = false
+cc 97d08e346de210c5ae9b1512481f4a4d2afb4a3153ebb99ac4a8dfdf562eb842 # shrinks to status_idx = 0, pinned_flag = false, priority = 0, raw_title = "A", desc_lines = [], lead_newlines = 0, trail_newlines = 0, label_seeds = [], hostile_label = false, assignee = Some(" a"), reason = None, with_dep = false, with_comment = false, with_ctx = false
+cc e19fb7923073b4729599d31b8af910cffdf4ac959d53021b7d9e98777d7a21dc # shrinks to status_idx = 0, pinned_flag = false, priority = 0, raw_title = "A", desc_lines = [], lead_newlines = 0, trail_newlines = 0, label_seeds = [], hostile_label = false, assignee = None, reason = Some("a\n"), with_dep = false, with_comment = false, with_ctx = false

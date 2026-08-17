@@ -15,7 +15,6 @@ use rich_rust::prelude::*;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use tracing::debug;
 
 /// Changelog output structure.
@@ -73,9 +72,9 @@ pub fn execute(
     cli: &config::CliOverrides,
     ctx: &OutputContext,
 ) -> Result<()> {
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    let storage_ctx = config::open_storage_with_cli(&beads_dir, cli)?;
-    execute_with_storage_ctx(args, json, ctx, &beads_dir, &storage_ctx)
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    let storage_ctx = config::open_storage_with_cli(&obr_dir, cli)?;
+    execute_with_storage_ctx(args, json, ctx, &obr_dir, &storage_ctx)
 }
 
 /// Execute changelog generation using storage that was already opened by the caller.
@@ -88,12 +87,12 @@ pub fn execute_with_storage_ctx(
     args: &ChangelogArgs,
     json: bool,
     ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     storage_ctx: &config::OpenStorageResult,
 ) -> Result<()> {
     let storage = &storage_ctx.storage;
     let repo_root = git_repo_root_for_path(&storage_ctx.paths.jsonl_path)
-        .or_else(|| git_repo_root_for_path(beads_dir));
+        .or_else(|| git_repo_root_for_path(obr_dir));
 
     let (since_dt, since_label) = resolve_since(args, repo_root.as_deref())?;
     let until = Utc::now();
@@ -368,9 +367,8 @@ fn git_commit_date(reference: &str, repo_root: Option<&Path>) -> Result<DateTime
             ),
         )
     })?;
-    let output = Command::new("git")
+    let output = crate::cli::commands::vcs::hardened_git(repo_root)
         .args(["show", "-s", "--format=%cI", reference])
-        .current_dir(repo_root)
         .output()
         .map_err(|e| BeadsError::external_command("git", format!("Failed to run git: {e}")))?;
 
@@ -408,9 +406,8 @@ fn git_tag_date(reference: &str, repo_root: Option<&Path>) -> Result<DateTime<Ut
     })?;
     let tag_ref = format!("refs/tags/{reference}");
 
-    let verify = Command::new("git")
+    let verify = crate::cli::commands::vcs::hardened_git(repo_root)
         .args(["rev-parse", "--verify", "--quiet", &tag_ref])
-        .current_dir(repo_root)
         .output()
         .map_err(|e| BeadsError::external_command("git", format!("Failed to run git: {e}")))?;
 
@@ -423,13 +420,12 @@ fn git_tag_date(reference: &str, repo_root: Option<&Path>) -> Result<DateTime<Ut
 
     // Annotated tags carry their own timestamp, which is what --since-tag promises.
     // Lightweight tags have no tagger date, so we fall back to the referenced commit.
-    let output = Command::new("git")
+    let output = crate::cli::commands::vcs::hardened_git(repo_root)
         .args([
             "for-each-ref",
             "--format=%(taggerdate:iso-strict)",
             &tag_ref,
         ])
-        .current_dir(repo_root)
         .output()
         .map_err(|e| BeadsError::external_command("git", format!("Failed to run git: {e}")))?;
 
@@ -453,9 +449,9 @@ fn git_tag_date(reference: &str, repo_root: Option<&Path>) -> Result<DateTime<Ut
 
 fn git_repo_root_for_path(path: &Path) -> Option<PathBuf> {
     let start = if path.is_dir() { path } else { path.parent()? };
-    let output = Command::new("git")
+    // Hardened: `changelog` reads whatever repository it is pointed at.
+    let output = crate::cli::commands::vcs::hardened_git(start)
         .args(["rev-parse", "--show-toplevel"])
-        .current_dir(start)
         .output()
         .ok()?;
 
@@ -475,6 +471,9 @@ fn git_repo_root_for_path(path: &Path) -> Option<PathBuf> {
 mod tests {
     use super::*;
     use chrono::{Duration, TimeZone};
+    // Test fixtures build real repositories; production git goes through
+    // `vcs::hardened_git`.
+    use std::process::Command;
 
     #[test]
     fn test_resolve_since_rfc3339() {

@@ -1,7 +1,7 @@
-//! Workflow gate engine commands (`br gate`), issue #312 layer 2.
+//! Workflow gate engine commands (`obr gate`), issue #312 layer 2.
 //!
-//! `br gate report <id> --gate <name> --provider <name> --status pass|fail`
-//! records a gate result; `br gate list <id>` shows recorded results and, when
+//! `obr gate report <id> --gate <name> --provider <name> --status pass|fail`
+//! records a gate result; `obr gate list <id>` shows recorded results and, when
 //! the project configures `workflow.gates`, the computed required-gate status
 //! for each guarded transition out of the issue's current status.
 //!
@@ -24,7 +24,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-/// JSON payload for `br gate report`.
+/// JSON payload for `obr gate report`.
 #[derive(Debug, Serialize)]
 struct GateReportOutput {
     id: i64,
@@ -57,7 +57,7 @@ struct GatedTransitionStatus {
     satisfied: bool,
 }
 
-/// JSON payload for `br gate list`.
+/// JSON payload for `obr gate list`.
 #[derive(Debug, Serialize)]
 struct GateListOutput {
     issue_id: String,
@@ -83,10 +83,10 @@ pub fn execute(
     cli: &config::CliOverrides,
     ctx: &OutputContext,
 ) -> Result<()> {
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
     match command {
-        GateCommands::Report(args) => execute_report(args, cli, ctx, &beads_dir),
-        GateCommands::List(args) => execute_list(args, cli, ctx, &beads_dir),
+        GateCommands::Report(args) => execute_report(args, cli, ctx, &obr_dir),
+        GateCommands::List(args) => execute_list(args, cli, ctx, &obr_dir),
     }
 }
 
@@ -94,7 +94,7 @@ fn execute_report(
     args: &GateReportArgs,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
 ) -> Result<()> {
     let gate = args.gate.trim();
     let provider = args.provider.trim();
@@ -111,8 +111,8 @@ fn execute_report(
     // Gate results are local auxiliary metadata; take the workspace write lock
     // so a concurrent flush/import doesn't race the write, mirroring the other
     // mutating commands.
-    let _lock = acquire_routed_workspace_write_lock(beads_dir, false, cli.lock_timeout)?;
-    let mut storage_ctx = config::open_storage_with_cli(beads_dir, cli)?;
+    let _lock = acquire_routed_workspace_write_lock(obr_dir, false, cli.lock_timeout)?;
+    let mut storage_ctx = config::open_storage_with_cli(obr_dir, cli)?;
     auto_import_storage_ctx_if_stale(&mut storage_ctx, cli)?;
 
     let config_layer = storage_ctx.load_config(cli)?;
@@ -127,7 +127,7 @@ fn execute_report(
             .ok_or_else(|| BeadsError::IssueNotFound {
                 id: issue_id.clone(),
             })?;
-    let policy = close_policy::load_for_beads_dir(beads_dir)?;
+    let policy = close_policy::load_for_obr_dir(obr_dir)?;
     let labels = storage_ctx.storage.get_labels(&issue_id)?;
     let from_status = issue.status.as_str();
     let status_revision = storage_ctx.storage.status_revision(&issue_id)?;
@@ -159,7 +159,7 @@ fn execute_report(
         &actor,
     )?;
 
-    crate::util::set_last_touched_id(beads_dir, &issue_id);
+    crate::util::set_last_touched_id(obr_dir, &issue_id);
 
     let output = GateReportOutput {
         id: record.id,
@@ -260,9 +260,9 @@ fn execute_list(
     args: &GateListArgs,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
 ) -> Result<()> {
-    let storage_ctx = config::open_storage_with_cli(beads_dir, cli)?;
+    let storage_ctx = config::open_storage_with_cli(obr_dir, cli)?;
     let config_layer = storage_ctx.load_config(cli)?;
     let resolver = build_resolver(&config_layer);
     let issue_id = resolve_issue_id(&storage_ctx.storage, &resolver, &args.id)?;
@@ -275,7 +275,7 @@ fn execute_list(
     // Compute required-gate status for each guarded transition out of the
     // current status, using the project's workflow.gates config. Absent
     // config / status leaves this empty (backward compatible).
-    let policy = close_policy::load_for_beads_dir(beads_dir)?;
+    let policy = close_policy::load_for_obr_dir(obr_dir)?;
     let labels = storage_ctx.storage.get_labels(&issue_id)?;
     let priority = issue.as_ref().map_or(0, |i| i.priority.0);
     let mut results_by_target = BTreeMap::new();
@@ -463,13 +463,13 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    fn open_storage(beads_dir: &Path) -> config::OpenStorageResult {
-        config::open_storage_with_cli(beads_dir, &CliOverrides::default()).expect("storage")
+    fn open_storage(obr_dir: &Path) -> config::OpenStorageResult {
+        config::open_storage_with_cli(obr_dir, &CliOverrides::default()).expect("storage")
     }
 
-    fn write_gate_policy(beads_dir: &Path) {
+    fn write_gate_policy(obr_dir: &Path) {
         fs::write(
-            beads_dir.join(close_policy::POLICY_FILE_NAME),
+            obr_dir.join(close_policy::POLICY_FILE_NAME),
             r#"workflow:
   strict: true
   gates:
@@ -498,11 +498,11 @@ mod tests {
     #[test]
     fn report_records_result_and_list_reads_it_back() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        write_gate_policy(&beads_dir);
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        write_gate_policy(&obr_dir);
         {
-            let mut ctx = open_storage(&beads_dir);
+            let mut ctx = open_storage(&obr_dir);
             ctx.storage
                 .create_issue(&make_issue("bd-1", Status::Open), "tester")
                 .unwrap();
@@ -518,9 +518,9 @@ mod tests {
             robot: true,
         };
         let ctx = OutputContext::from_flags(true, false, true);
-        execute_report(&report, &CliOverrides::default(), &ctx, &beads_dir).unwrap();
+        execute_report(&report, &CliOverrides::default(), &ctx, &obr_dir).unwrap();
 
-        let storage_ctx = open_storage(&beads_dir);
+        let storage_ctx = open_storage(&obr_dir);
         let results = storage_ctx
             .storage
             .get_scoped_gate_results("bd-1", "open", "closed")
@@ -535,11 +535,11 @@ mod tests {
     #[test]
     fn report_overwrites_same_provider_and_gate() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        write_gate_policy(&beads_dir);
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        write_gate_policy(&obr_dir);
         {
-            let mut ctx = open_storage(&beads_dir);
+            let mut ctx = open_storage(&obr_dir);
             ctx.storage
                 .create_issue(&make_issue("bd-1", Status::Open), "tester")
                 .unwrap();
@@ -554,14 +554,14 @@ mod tests {
             note: None,
             robot: true,
         };
-        execute_report(&base, &CliOverrides::default(), &ctx, &beads_dir).unwrap();
+        execute_report(&base, &CliOverrides::default(), &ctx, &obr_dir).unwrap();
         let pass = GateReportArgs {
             status: GateStatus::Pass,
             ..base.clone()
         };
-        execute_report(&pass, &CliOverrides::default(), &ctx, &beads_dir).unwrap();
+        execute_report(&pass, &CliOverrides::default(), &ctx, &obr_dir).unwrap();
 
-        let storage_ctx = open_storage(&beads_dir);
+        let storage_ctx = open_storage(&obr_dir);
         let results = storage_ctx
             .storage
             .get_scoped_gate_results("bd-1", "open", "closed")
@@ -581,8 +581,8 @@ mod tests {
     #[test]
     fn report_rejects_empty_gate_and_provider() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
         let ctx = OutputContext::from_flags(true, false, true);
         let empty_gate = GateReportArgs {
             id: "bd-1".to_string(),
@@ -593,7 +593,7 @@ mod tests {
             note: None,
             robot: true,
         };
-        assert!(execute_report(&empty_gate, &CliOverrides::default(), &ctx, &beads_dir).is_err());
+        assert!(execute_report(&empty_gate, &CliOverrides::default(), &ctx, &obr_dir).is_err());
     }
 
     #[test]

@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Schema version for coordination status and claim evidence outputs.
-pub const COORDINATION_SCHEMA_VERSION: &str = "br.coordination.v1";
+pub const COORDINATION_SCHEMA_VERSION: &str = "obr.coordination.v1";
 /// Swarm-agent claims become stale candidates after two quiet hours.
 pub const SWARM_STALE_CANDIDATE_AFTER_MINUTES: i64 = 2 * 60;
 /// Extra-conservative marker for likely abandoned swarm claims.
@@ -377,7 +377,7 @@ pub struct CoordinationStatusOutput {
     pub claims: Vec<CoordinationClaimRow>,
     /// Workflow capacity occupancy (GitHub #384 phase 6). Absent when no
     /// capacity is configured, preserving the pre-capacity
-    /// `br.coordination.v1` payload shape.
+    /// `obr.coordination.v1` payload shape.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capacity: Vec<crate::format::CapacityStat>,
 }
@@ -659,20 +659,20 @@ fn reclaim_suggested_commands(
     evidence_summary: &str,
 ) -> Vec<CoordinationSuggestedCommand> {
     let audit_message = format!(
-        "reclaim: previous in_progress claim appears abandoned; evidence: {evidence_summary}; no active reservation found in supplied snapshot; pane_status=not_checked_by_br"
+        "reclaim: previous in_progress claim appears abandoned; evidence: {evidence_summary}; no active reservation found in supplied snapshot; pane_status=not_checked_by_obr"
     );
     vec![
         CoordinationSuggestedCommand {
             purpose: CoordinationSuggestedCommandPurpose::AddReclaimAuditComment,
             command: format!(
-                "br comments add {} --author \"$AGENT_NAME\" --message {} --json",
+                "obr comments add {} --author \"$AGENT_NAME\" --message {} --json",
                 shell_quote(issue_id),
                 shell_quote(&audit_message)
             ),
         },
         CoordinationSuggestedCommand {
             purpose: CoordinationSuggestedCommandPurpose::ClaimIssue,
-            command: format!("br update {} --claim --json", shell_quote(issue_id)),
+            command: format!("obr update {} --claim --json", shell_quote(issue_id)),
         },
     ]
 }
@@ -1179,9 +1179,13 @@ mod tests {
         assert!(
             advisory.suggested_commands[0]
                 .command
-                .contains("br comments add")
+                .contains("obr comments add")
         );
-        assert!(advisory.suggested_commands[1].command.contains("br update"));
+        assert!(
+            advisory.suggested_commands[1]
+                .command
+                .contains("obr update")
+        );
         assert!(
             advisory.suggested_commands[0]
                 .command

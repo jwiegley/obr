@@ -1,8 +1,8 @@
-//! MCP (Model Context Protocol) server for beads_rust.
+//! MCP (Model Context Protocol) server for obr.
 //!
 //! Exposes the issue tracker as an MCP server so that AI agents can
 //! query, create, and manage issues through the standard MCP protocol
-//! instead of shelling out to the `br` CLI.
+//! instead of shelling out to the `obr` CLI.
 //!
 //! This module is feature-gated behind `mcp` and is **not** included
 //! in the default feature set.
@@ -27,13 +27,13 @@ use crate::storage::sqlite::PendingSyncMergeInspection;
 use crate::storage::{ReadyFilters, ReadySortPolicy, SqliteStorage};
 use crate::{BeadsError, config};
 
-const MCP_READ_SNAPSHOT_ENV: &str = "BR_MCP_READ_SNAPSHOT";
+const MCP_READ_SNAPSHOT_ENV: &str = "OBR_MCP_READ_SNAPSHOT";
 const MCP_READ_SNAPSHOT_CACHE_LIMIT: usize = 64;
 
 /// Map any `Display` error into a flat `McpError::tool_error`.
 ///
 /// Used by resources and prompts for non-structured error mapping.
-/// Tools use the richer `beads_to_mcp` in `tools.rs` instead.
+/// Tools use the richer `obr_to_mcp` in `tools.rs` instead.
 pub(super) fn to_mcp(err: impl std::fmt::Display) -> McpError {
     McpError::tool_error(err.to_string())
 }
@@ -72,7 +72,7 @@ pub(super) fn ensure_not_shutting_down() -> McpResult<()> {
 }
 
 pub(super) fn mcp_ready_issues(
-    state: &BeadsState,
+    state: &ObrState,
     storage: &SqliteStorage,
 ) -> fastmcp_rust::McpResult<Vec<Issue>> {
     let mut ready = storage
@@ -83,12 +83,12 @@ pub(super) fn mcp_ready_issues(
     }
 
     let config_layer = config::load_config(
-        &state.beads_dir,
+        &state.obr_dir,
         Some(storage),
         &config::CliOverrides::default(),
     )
     .map_err(to_mcp)?;
-    let external_db_paths = config::external_project_db_paths(&config_layer, &state.beads_dir);
+    let external_db_paths = config::external_project_db_paths(&config_layer, &state.obr_dir);
     let external_statuses = storage
         .resolve_external_dependency_statuses(&external_db_paths, true)
         .map_err(to_mcp)?;
@@ -102,11 +102,11 @@ pub(super) fn mcp_ready_issues(
 }
 
 fn auto_flush_mcp_error(
-    beads_dir: &Path,
+    obr_dir: &Path,
     jsonl_path: &Path,
     err: impl std::fmt::Display,
 ) -> McpError {
-    let message = "Mutation succeeded, but automatic JSONL export failed";
+    let message = "Mutation succeeded, but automatic export failed";
     McpError::with_data(
         McpErrorCode::ToolExecutionError,
         message,
@@ -114,19 +114,18 @@ fn auto_flush_mcp_error(
             "error_type": "AUTO_FLUSH_FAILED",
             "recoverable": true,
             "message": message,
-            "beads_dir": beads_dir.display().to_string(),
+            "obr_dir": obr_dir.display().to_string(),
             "jsonl_path": jsonl_path.display().to_string(),
             "error": err.to_string(),
-            "recovery": "Run br sync --flush-only after fixing the export problem before committing .beads/issues.jsonl",
+            "recovery": format!(
+                "Run obr sync --flush-only after fixing the export problem before committing {}",
+                jsonl_path.display()
+            ),
         }),
     )
 }
 
-fn sync_lock_mcp_error(
-    beads_dir: &Path,
-    jsonl_path: &Path,
-    err: impl std::fmt::Display,
-) -> McpError {
+fn sync_lock_mcp_error(obr_dir: &Path, jsonl_path: &Path, err: impl std::fmt::Display) -> McpError {
     let message = "Mutation was not attempted because the JSONL sync lock is unavailable";
     McpError::with_data(
         McpErrorCode::ToolExecutionError,
@@ -135,18 +134,21 @@ fn sync_lock_mcp_error(
             "error_type": "SYNC_LOCK_UNAVAILABLE",
             "recoverable": true,
             "message": message,
-            "beads_dir": beads_dir.display().to_string(),
+            "obr_dir": obr_dir.display().to_string(),
             "jsonl_path": jsonl_path.display().to_string(),
             "error": err.to_string(),
-            "recovery": "Retry after the active sync finishes or fix the .beads/.sync.lock path.",
+            "recovery": format!(
+                "Retry after the active sync finishes, or clear the stale sync lock at {}.",
+                crate::sync::sync_lock_path(obr_dir).display()
+            ),
         }),
     )
 }
 
-fn sync_lock_busy_error(beads_dir: &Path) -> BeadsError {
+fn sync_lock_busy_error(obr_dir: &Path) -> BeadsError {
     BeadsError::Config(format!(
         "Automatic JSONL export skipped because sync lock at {} is held by another process",
-        beads_dir.join(".sync.lock").display()
+        crate::sync::sync_lock_path(obr_dir).display()
     ))
 }
 
@@ -176,7 +178,7 @@ fn pending_sync_merge_mcp_error(inspection: &PendingSyncMergeInspection) -> McpE
             "condition": condition,
             "metadata_key": metadata_key,
             "diagnostic": inspection.diagnostic(),
-            "recovery": "Run `br sync --merge`, verify that it clears the pending receipt, then retry the MCP operation.",
+            "recovery": "Run `obr sync --merge`, verify that it clears the pending receipt, then retry the MCP operation.",
         }),
     )
 }
@@ -192,7 +194,7 @@ fn pending_sync_merge_unknown_mcp_error(err: impl std::fmt::Display) -> McpError
             "recoverable": false,
             "message": message,
             "inspection_error": err.to_string(),
-            "recovery": "Restore current-schema read-only access to the database family, run `br doctor`, and reconcile with `br sync --merge` before retrying.",
+            "recovery": "Restore current-schema read-only access to the database family, run `obr doctor`, and reconcile with `obr sync --merge` before retrying.",
         }),
     )
 }
@@ -200,7 +202,7 @@ fn pending_sync_merge_unknown_mcp_error(err: impl std::fmt::Display) -> McpError
 fn pending_sync_merge_read_fallback_error(inspection: &PendingSyncMergeInspection) -> BeadsError {
     BeadsError::SyncConflict {
         message: format!(
-            "MCP writable read fallback refused because {}. Run `br sync --merge` before retrying",
+            "MCP writable read fallback refused because {}. Run `obr sync --merge` before retrying",
             inspection.diagnostic()
         ),
     }
@@ -209,7 +211,7 @@ fn pending_sync_merge_read_fallback_error(inspection: &PendingSyncMergeInspectio
 fn pending_sync_merge_read_fallback_unknown(err: impl std::fmt::Display) -> BeadsError {
     BeadsError::SyncConflict {
         message: format!(
-            "MCP writable read fallback refused because pending sync-merge state could not be proven absent: {err}. Restore current-schema read-only database access, run `br doctor`, and reconcile with `br sync --merge` before retrying"
+            "MCP writable read fallback refused because pending sync-merge state could not be proven absent: {err}. Restore current-schema read-only database access, run `obr doctor`, and reconcile with `obr sync --merge` before retrying"
         ),
     }
 }
@@ -351,9 +353,9 @@ fn snapshot_file(path: &Path) -> Option<McpReadSnapshotFile> {
 /// `Rc` internally and therefore cannot satisfy `Send + Sync`.  Each
 /// handler call opens a fresh connection via [`open_read_storage`] or
 /// [`open_storage`] depending on whether the operation may mutate state.
-pub struct BeadsState {
+pub struct ObrState {
     pub db_path: PathBuf,
-    pub beads_dir: PathBuf,
+    pub obr_dir: PathBuf,
     pub jsonl_path: PathBuf,
     pub write_lock_timeout_ms: Option<u64>,
     pub allow_external_jsonl: bool,
@@ -362,7 +364,7 @@ pub struct BeadsState {
     pub(super) read_snapshot_cache: Option<Mutex<McpReadSnapshotCache>>,
 }
 
-impl BeadsState {
+impl ObrState {
     pub(super) fn cached_read_json(&self, key: &str) -> Option<Value> {
         let cache = self.read_snapshot_cache.as_ref()?;
         let before = self.capture_read_snapshot_witness()?;
@@ -440,6 +442,27 @@ impl BeadsState {
             write_authority.install_empty_database_replacement_and_bind()?;
         }
         write_authority.verify_database_authority()?;
+        // Refuse a file that is present but provably holds no SQLite database.
+        //
+        // The sync-merge gate now answers `Absent` for this shape, because no
+        // member of the family can hold a receipt, and the CLI is right to
+        // proceed: it recovers from the tracked surface. This path has no
+        // recovery. `SqliteStorage::open` on a ZERO-LENGTH file SUCCEEDS —
+        // SQLite treats an empty file as a new database and applies the schema
+        // — so without this check MCP would answer reads with an empty tracker
+        // while the issues are still in PLAN.org. A confident wrong answer is
+        // worse than the refusal this restores, and zero-length is the most
+        // common real corruption there is.
+        if crate::sync::database_file_is_provably_not_a_database(&self.db_path) {
+            return Err(BeadsError::SyncConflict {
+                message: format!(
+                    "Refusing to open '{}': the file exists but holds no SQLite database, and \
+                     this surface has no rebuild path. Run `obr doctor --repair`, or any obr \
+                     command, to rebuild it from the tracked export first.",
+                    self.db_path.display()
+                ),
+            });
+        }
         let mut storage = SqliteStorage::open(&self.db_path)?;
         write_authority.verify_database_authority()?;
         storage.attach_write_authority(Arc::clone(write_authority));
@@ -449,13 +472,13 @@ impl BeadsState {
     fn open_storage_with_fresh_write_authority(&self) -> crate::Result<SqliteStorage> {
         let write_authority = Arc::new(
             crate::sync::blocking_database_family_write_lock_with_timeout(
-                &self.beads_dir,
+                &self.obr_dir,
                 &self.db_path,
                 self.write_lock_timeout_ms,
             )?,
         );
-        let _sync_lock = crate::sync::try_sync_lock(&self.beads_dir)?
-            .ok_or_else(|| sync_lock_busy_error(&self.beads_dir))?;
+        let _sync_lock = crate::sync::try_sync_lock(&self.obr_dir)?
+            .ok_or_else(|| sync_lock_busy_error(&self.obr_dir))?;
 
         match SqliteStorage::inspect_pending_sync_merge_under_authority(
             &self.db_path,
@@ -513,7 +536,7 @@ impl BeadsState {
         // 1. Acquire the cross-process write lock.
         let write_authority = Arc::new(
             crate::sync::blocking_database_family_write_lock_with_timeout(
-                &self.beads_dir,
+                &self.obr_dir,
                 &self.db_path,
                 self.write_lock_timeout_ms,
             )
@@ -523,17 +546,17 @@ impl BeadsState {
         // 2. Acquire the sync lock before committing a mutation. MCP writes
         // should not report success when JSONL export is known to be unguarded
         // or impossible.
-        let _sync_lock = match crate::sync::try_sync_lock(&self.beads_dir) {
+        let _sync_lock = match crate::sync::try_sync_lock(&self.obr_dir) {
             Ok(Some(lock)) => lock,
             Ok(None) => {
                 return Err(sync_lock_mcp_error(
-                    &self.beads_dir,
+                    &self.obr_dir,
                     &self.jsonl_path,
-                    sync_lock_busy_error(&self.beads_dir),
+                    sync_lock_busy_error(&self.obr_dir),
                 ));
             }
             Err(err) => {
-                return Err(sync_lock_mcp_error(&self.beads_dir, &self.jsonl_path, err));
+                return Err(sync_lock_mcp_error(&self.obr_dir, &self.jsonl_path, err));
             }
         };
 
@@ -585,17 +608,17 @@ impl BeadsState {
         let dirty_before_flush = storage.get_dirty_issue_count().map_err(to_mcp)?;
         let flush_result = crate::sync::auto_flush(
             storage,
-            &self.beads_dir,
+            &self.obr_dir,
             &self.jsonl_path,
             self.allow_external_jsonl,
         )
-        .map_err(|err| auto_flush_mcp_error(&self.beads_dir, &self.jsonl_path, err))?;
+        .map_err(|err| auto_flush_mcp_error(&self.obr_dir, &self.jsonl_path, err))?;
 
         if dirty_before_flush > 0 && !flush_result.flushed {
             let remaining_dirty = storage.get_dirty_issue_count().map_err(to_mcp)?;
             if remaining_dirty > 0 {
                 return Err(auto_flush_mcp_error(
-                    &self.beads_dir,
+                    &self.obr_dir,
                     &self.jsonl_path,
                     dirty_auto_flush_incomplete_error(remaining_dirty),
                 ));
@@ -633,34 +656,41 @@ mod tests {
         }
     }
 
-    fn test_state(temp: &TempDir, jsonl_path: PathBuf) -> BeadsState {
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let db_path = beads_dir.join("beads.db");
+    /// Workspace directory for a fixture, under the name `obr init` creates
+    /// today. Hard-coding a legacy spelling here is what let a stale
+    /// assertion pass for four rename passes.
+    fn workspace_dir(temp: &TempDir) -> PathBuf {
+        temp.path().join(config::WORKSPACE_DIR_NAME)
+    }
+
+    fn test_state(temp: &TempDir, jsonl_path: PathBuf) -> ObrState {
+        let obr_dir = workspace_dir(temp);
+        fs::create_dir_all(&obr_dir).unwrap();
+        let db_path = obr_dir.join(config::DEFAULT_DB_FILENAME);
         SqliteStorage::open(&db_path).unwrap();
 
-        BeadsState {
+        ObrState {
             db_path,
-            beads_dir,
+            obr_dir,
             jsonl_path,
             // Robust under heavy parallel-test load (a concurrent auto-flush can
             // hold .write.lock for >25ms); no test asserts the timeout path.
             write_lock_timeout_ms: Some(5_000),
             allow_external_jsonl: false,
             actor: "mcp-test".to_string(),
-            issue_prefix: Some("br".to_string()),
+            issue_prefix: Some("obr".to_string()),
             read_snapshot_cache: None,
         }
     }
 
-    fn test_state_with_read_snapshot(temp: &TempDir, jsonl_path: PathBuf) -> BeadsState {
+    fn test_state_with_read_snapshot(temp: &TempDir, jsonl_path: PathBuf) -> ObrState {
         let mut state = test_state(temp, jsonl_path);
         state.read_snapshot_cache = Some(Mutex::new(McpReadSnapshotCache::default()));
         state
     }
 
     fn install_valid_pending_merge_receipt(
-        state: &BeadsState,
+        state: &ObrState,
     ) -> crate::sync::SyncMergePendingReceipt {
         let mut storage = SqliteStorage::open(&state.db_path).unwrap();
         let database_before = crate::sync::capture_sync_database_witness(&storage).unwrap();
@@ -740,11 +770,10 @@ mod tests {
     #[test]
     fn open_read_storage_uses_read_only_fast_path_without_write_lock() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = workspace_dir(&temp);
+        let jsonl_path = obr_dir.join("issues.jsonl");
         let state = test_state(&temp, jsonl_path);
-        let _held_lock =
-            crate::sync::blocking_write_lock(&state.beads_dir).expect("hold write lock");
+        let _held_lock = crate::sync::blocking_write_lock(&state.obr_dir).expect("hold write lock");
 
         let storage = state
             .open_read_storage()
@@ -754,9 +783,55 @@ mod tests {
     }
 
     #[test]
+    fn a_zero_length_database_is_refused_rather_than_answered_empty() {
+        // `SqliteStorage::open` SUCCEEDS on a zero-length file: SQLite treats
+        // it as a new database and applies the schema. Before this was guarded,
+        // MCP answered reads with an empty tracker while the issues were still
+        // in the tracked export -- a confident wrong answer where the CLI
+        // recovers. Zero length is the shape a crash or an ENOSPC truncation
+        // leaves, so it is the one that matters most.
+        let temp = TempDir::new().unwrap();
+        let jsonl_path = workspace_dir(&temp).join("issues.jsonl");
+        let state = test_state(&temp, jsonl_path.clone());
+        drop(SqliteStorage::open(&state.db_path).unwrap());
+        for suffix in ["-wal", "-shm"] {
+            let _ = fs::remove_file(format!("{}{suffix}", state.db_path.display()));
+        }
+        fs::write(&state.db_path, b"").unwrap();
+
+        let err = state.open_read_storage().unwrap_err();
+        assert!(
+            err.to_string().contains("holds no SQLite database"),
+            "a zero-length database must be refused, not opened: {err}"
+        );
+        assert_eq!(
+            fs::read(&state.db_path).unwrap().len(),
+            0,
+            "the refusal must not write a fresh schema over the evidence"
+        );
+
+        let called = Rc::new(Cell::new(false));
+        let called_for_closure = Rc::clone(&called);
+        let mutation_err = state
+            .with_mutation(|_| {
+                called_for_closure.set(true);
+                Ok(())
+            })
+            .unwrap_err();
+        assert!(
+            !called.get(),
+            "a database that is not a database must refuse before the mutation closure"
+        );
+        assert!(
+            format!("{mutation_err:?}").contains("holds no SQLite database"),
+            "mutation refusal should name the same cause: {mutation_err:?}"
+        );
+    }
+
+    #[test]
     fn writable_read_fallback_refuses_stale_schema_without_repairing_it() {
         let temp = TempDir::new().unwrap();
-        let jsonl_path = temp.path().join(".beads").join("issues.jsonl");
+        let jsonl_path = workspace_dir(&temp).join("issues.jsonl");
         let state = test_state(&temp, jsonl_path.clone());
         let storage = SqliteStorage::open(&state.db_path).unwrap();
         storage.execute_test_sql("PRAGMA user_version = 1").unwrap();
@@ -767,7 +842,7 @@ mod tests {
 
         assert!(
             err.to_string().contains("could not be proven absent")
-                && err.to_string().contains("br doctor"),
+                && err.to_string().contains("obr doctor"),
             "stale-schema fallback must fail closed with remediation: {err}"
         );
         assert_eq!(
@@ -816,7 +891,7 @@ mod tests {
     #[test]
     fn read_snapshot_cache_returns_value_when_witness_is_stable() {
         let temp = TempDir::new().unwrap();
-        let jsonl_path = temp.path().join(".beads").join("issues.jsonl");
+        let jsonl_path = workspace_dir(&temp).join("issues.jsonl");
         let state = test_state_with_read_snapshot(&temp, jsonl_path);
         let cached = json!({"count": 1});
 
@@ -829,13 +904,13 @@ mod tests {
     #[test]
     fn read_snapshot_cache_rejects_jsonl_witness_mismatch() {
         let temp = TempDir::new().unwrap();
-        let jsonl_path = temp.path().join(".beads").join("issues.jsonl");
+        let jsonl_path = workspace_dir(&temp).join("issues.jsonl");
         let state = test_state_with_read_snapshot(&temp, jsonl_path.clone());
         let cached = json!({"count": 1});
 
         let witness = state.capture_read_snapshot_witness();
         state.store_read_json_snapshot("test".to_string(), witness, &cached);
-        fs::write(jsonl_path, "{\"id\":\"br-new\"}\n").unwrap();
+        fs::write(jsonl_path, "{\"id\":\"obr-new\"}\n").unwrap();
 
         assert_eq!(state.cached_read_json("test"), None);
     }
@@ -843,7 +918,7 @@ mod tests {
     #[test]
     fn with_mutation_clears_read_snapshot_cache_before_writing() {
         let temp = TempDir::new().unwrap();
-        let jsonl_path = temp.path().join(".beads").join("issues.jsonl");
+        let jsonl_path = workspace_dir(&temp).join("issues.jsonl");
         let state = test_state_with_read_snapshot(&temp, jsonl_path);
         let cached = json!({"count": 1});
         let witness = state.capture_read_snapshot_witness();
@@ -857,7 +932,7 @@ mod tests {
                 );
                 storage
                     .create_issue(
-                        &test_issue("br-mcp-cache-clear", "clear stale read cache"),
+                        &test_issue("obr-mcp-cache-clear", "clear stale read cache"),
                         "mcp-test",
                     )
                     .map_err(to_mcp)?;
@@ -871,10 +946,10 @@ mod tests {
     #[test]
     fn with_mutation_requires_openable_sync_lock_before_mutating() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = workspace_dir(&temp);
+        let jsonl_path = obr_dir.join("issues.jsonl");
         let state = test_state(&temp, jsonl_path);
-        fs::create_dir(state.beads_dir.join(".sync.lock")).unwrap();
+        fs::create_dir(crate::sync::sync_lock_path(&state.obr_dir)).unwrap();
         let database_before = fs::read(&state.db_path).unwrap();
         let called = Rc::new(Cell::new(false));
         let called_for_closure = Rc::clone(&called);
@@ -884,7 +959,7 @@ mod tests {
                 called_for_closure.set(true);
                 storage
                     .create_issue(
-                        &test_issue("br-mcp-lock", "should not be created"),
+                        &test_issue("obr-mcp-lock", "should not be created"),
                         "mcp-test",
                     )
                     .map_err(to_mcp)?;
@@ -910,13 +985,93 @@ mod tests {
             "sync-lock refusal must occur before writable storage open"
         );
         let storage = SqliteStorage::open(&state.db_path).unwrap();
-        assert!(!storage.id_exists("br-mcp-lock").unwrap());
+        assert!(!storage.id_exists("obr-mcp-lock").unwrap());
+        assert!(
+            recovery_text(&err).contains(
+                &crate::sync::sync_lock_path(&state.obr_dir)
+                    .display()
+                    .to_string()
+            ),
+            "live sync-lock refusal must point the agent at the real lock: {err:?}"
+        );
+    }
+
+    fn recovery_text(err: &McpError) -> String {
+        err.data
+            .as_ref()
+            .and_then(|data| data.get("recovery"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_else(|| panic!("MCP error must carry a recovery string: {err:?}"))
+            .to_string()
+    }
+
+    /// Every path an MCP client is told to go fix must be the path this
+    /// workspace actually uses. These strings sat beside correctly-computed
+    /// `obr_dir`/`jsonl_path` fields while naming a pre-rename artifact, and
+    /// no harness executed them.
+    #[test]
+    fn mcp_error_recovery_strings_name_the_resolved_workspace_paths() {
+        let temp = TempDir::new().unwrap();
+        let obr_dir = workspace_dir(&temp);
+        let jsonl_path = obr_dir.join("issues.jsonl");
+
+        let sync_lock = recovery_text(&sync_lock_mcp_error(&obr_dir, &jsonl_path, "lock held"));
+        assert!(
+            sync_lock.contains(&crate::sync::sync_lock_path(&obr_dir).display().to_string()),
+            "sync-lock recovery must name the resolved lock path: {sync_lock}"
+        );
+
+        let auto_flush = recovery_text(&auto_flush_mcp_error(&obr_dir, &jsonl_path, "disk full"));
+        assert!(
+            auto_flush.contains(&jsonl_path.display().to_string()),
+            "auto-flush recovery must name the resolved export path: {auto_flush}"
+        );
+
+        // No agent-facing recovery may name a pre-rename artifact that this
+        // workspace does not have. The binary names are word-bounded because
+        // "before committing" legitimately contains "br ".
+        let stale = regex::Regex::new(r"\.beads|_beads|beads\.db|\bbd\b|\bbr\b")
+            .expect("literal regex compiles");
+        for recovery in [&sync_lock, &auto_flush] {
+            assert!(
+                stale.find(recovery).is_none(),
+                "recovery names a pre-rename artifact: {recovery}"
+            );
+        }
+    }
+
+    /// Negative control for the assertion above: the lock path must be
+    /// DERIVED from the workspace it was handed, not spelled out with the
+    /// current constant. A workspace still under the legacy directory name
+    /// must be quoted back under that name.
+    #[test]
+    fn mcp_sync_lock_recovery_quotes_a_legacy_workspace_verbatim() {
+        let temp = TempDir::new().unwrap();
+        let legacy_dir = temp.path().join(".beads");
+        let jsonl_path = legacy_dir.join("issues.jsonl");
+
+        let recovery = recovery_text(&sync_lock_mcp_error(&legacy_dir, &jsonl_path, "lock held"));
+
+        assert!(
+            recovery.contains(
+                &crate::sync::sync_lock_path(&legacy_dir)
+                    .display()
+                    .to_string()
+            ),
+            "recovery must quote the workspace it was given, not a constant: {recovery}"
+        );
+        let current_name_lock =
+            crate::sync::sync_lock_path(&temp.path().join(config::WORKSPACE_DIR_NAME));
+        assert!(
+            !recovery.contains(&current_name_lock.display().to_string()),
+            "a legacy workspace must not be reported under the current name: {recovery}"
+        );
     }
 
     #[test]
     fn with_mutation_refuses_malformed_pending_state_before_invoking_closure() {
         let temp = TempDir::new().unwrap();
-        let jsonl_path = temp.path().join(".beads").join("issues.jsonl");
+        let jsonl_path = workspace_dir(&temp).join("issues.jsonl");
         let state = test_state(&temp, jsonl_path.clone());
         let mut storage = SqliteStorage::open(&state.db_path).unwrap();
         storage
@@ -975,7 +1130,7 @@ mod tests {
     #[test]
     fn with_mutation_returns_structured_legacy_pending_refusal() {
         let temp = TempDir::new().unwrap();
-        let jsonl_path = temp.path().join(".beads").join("issues.jsonl");
+        let jsonl_path = workspace_dir(&temp).join("issues.jsonl");
         let state = test_state(&temp, jsonl_path.clone());
         let mut storage = SqliteStorage::open(&state.db_path).unwrap();
         storage
@@ -1016,7 +1171,7 @@ mod tests {
                 .as_ref()
                 .and_then(|data| data.get("recovery"))
                 .and_then(serde_json::Value::as_str)
-                .is_some_and(|recovery| recovery.contains("br sync --merge")),
+                .is_some_and(|recovery| recovery.contains("obr sync --merge")),
             "legacy refusal must include explicit recovery"
         );
         assert_eq!(
@@ -1030,9 +1185,9 @@ mod tests {
     #[test]
     fn long_lived_server_refuses_receipt_committed_after_start_before_invoking_closure() {
         let temp = TempDir::new().unwrap();
-        let jsonl_path = temp.path().join(".beads").join("issues.jsonl");
+        let jsonl_path = workspace_dir(&temp).join("issues.jsonl");
         let state = test_state(&temp, jsonl_path.clone());
-        fs::write(&jsonl_path, b"{\"id\":\"br-existing\"}\n").unwrap();
+        fs::write(&jsonl_path, b"{\"id\":\"obr-existing\"}\n").unwrap();
 
         // `state` represents an already-running server. Commit the receipt
         // through a separate connection only after that long-lived state exists.
@@ -1090,8 +1245,8 @@ mod tests {
     #[test]
     fn with_mutation_reports_auto_flush_failure_and_preserves_dirty_state() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = workspace_dir(&temp);
+        let jsonl_path = obr_dir.join("issues.jsonl");
         let state = test_state(&temp, jsonl_path.clone());
         fs::write(
             &jsonl_path,
@@ -1102,7 +1257,7 @@ mod tests {
         let err = state
             .with_mutation(|storage| {
                 storage
-                    .create_issue(&test_issue("br-mcp-dirty", "dirty issue"), "mcp-test")
+                    .create_issue(&test_issue("obr-mcp-dirty", "dirty issue"), "mcp-test")
                     .map_err(to_mcp)?;
                 Ok(())
             })
@@ -1118,7 +1273,7 @@ mod tests {
         );
 
         let storage = SqliteStorage::open(&state.db_path).unwrap();
-        assert!(storage.id_exists("br-mcp-dirty").unwrap());
+        assert!(storage.id_exists("obr-mcp-dirty").unwrap());
         assert_eq!(storage.get_dirty_issue_count().unwrap(), 1);
         let jsonl = fs::read_to_string(jsonl_path).unwrap();
         assert!(jsonl.contains("<<<<<<<"));
@@ -1127,15 +1282,15 @@ mod tests {
     #[test]
     fn with_mutation_flushes_committed_changes_before_returning_late_error() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = workspace_dir(&temp);
+        let jsonl_path = obr_dir.join("issues.jsonl");
         let state = test_state(&temp, jsonl_path.clone());
 
         let err = state
             .with_mutation(|storage| -> fastmcp_rust::McpResult<()> {
                 storage
                     .create_issue(
-                        &test_issue("br-mcp-partial", "partial mutation"),
+                        &test_issue("obr-mcp-partial", "partial mutation"),
                         "mcp-test",
                     )
                     .map_err(to_mcp)?;
@@ -1148,18 +1303,18 @@ mod tests {
         assert_eq!(err.code, McpErrorCode::InvalidParams);
 
         let storage = SqliteStorage::open(&state.db_path).unwrap();
-        assert!(storage.id_exists("br-mcp-partial").unwrap());
+        assert!(storage.id_exists("obr-mcp-partial").unwrap());
         assert_eq!(storage.get_dirty_issue_count().unwrap(), 0);
 
         let jsonl = fs::read_to_string(jsonl_path).unwrap();
         assert!(
-            jsonl.contains("\"id\":\"br-mcp-partial\""),
+            jsonl.contains("\"id\":\"obr-mcp-partial\""),
             "late-error committed mutation must still reach JSONL"
         );
     }
 }
 
-/// CLI arguments for `br serve`.
+/// CLI arguments for `obr serve`.
 #[derive(clap::Args, Debug, Clone)]
 pub struct ServeArgs {
     /// Actor name for mutations (defaults to "mcp")
@@ -1171,7 +1326,7 @@ pub struct ServeArgs {
 ///
 /// # Errors
 ///
-/// Returns an error if the beads workspace is not initialised or storage
+/// Returns an error if the obr workspace is not initialised or storage
 /// cannot be opened.
 /// Build the runtime-backed serve context.
 ///
@@ -1189,8 +1344,8 @@ fn build_serve_cx() -> crate::Result<(asupersync::runtime::Runtime, fastmcp_rust
 }
 
 pub fn run_serve(args: &ServeArgs, overrides: &config::CliOverrides) -> crate::Result<()> {
-    let beads_dir = config::discover_beads_dir_with_cli(overrides)?;
-    let startup = config::load_startup_config_with_paths(&beads_dir, overrides.db.as_ref())?;
+    let obr_dir = config::discover_obr_dir_with_cli(overrides)?;
+    let startup = config::load_startup_config_with_paths(&obr_dir, overrides.db.as_ref())?;
     let mut startup_layers = startup.layers.clone();
     startup_layers.push(overrides.as_layer());
     let merged_layer = config::ConfigLayer::merge_layers(&startup_layers);
@@ -1200,7 +1355,7 @@ pub fn run_serve(args: &ServeArgs, overrides: &config::CliOverrides) -> crate::R
         .or(Some(crate::sync::default_write_lock_timeout_ms()));
     let write_lock = Arc::new(
         crate::sync::blocking_database_family_write_lock_with_timeout(
-            &beads_dir,
+            &obr_dir,
             &startup.paths.db_path,
             lock_timeout,
         )?,
@@ -1220,15 +1375,15 @@ pub fn run_serve(args: &ServeArgs, overrides: &config::CliOverrides) -> crate::R
     let db_path = res.paths.db_path.clone();
     let jsonl_path = res.paths.jsonl_path.clone();
     let allow_external_jsonl =
-        config::implicit_external_jsonl_allowed(&beads_dir, &db_path, &jsonl_path);
+        config::implicit_external_jsonl_allowed(&obr_dir, &db_path, &jsonl_path);
 
     // Eagerly drop the bootstrap connection; handlers will open their own.
     drop(res.storage);
     drop(write_lock);
 
-    let state = std::sync::Arc::new(BeadsState {
+    let state = std::sync::Arc::new(ObrState {
         db_path,
-        beads_dir,
+        obr_dir,
         jsonl_path,
         write_lock_timeout_ms: lock_timeout,
         allow_external_jsonl,
@@ -1237,21 +1392,21 @@ pub fn run_serve(args: &ServeArgs, overrides: &config::CliOverrides) -> crate::R
         read_snapshot_cache: mcp_read_snapshot_cache_from_env(),
     });
 
-    let server = fastmcp_rust::modern::ServerBuilder::new("br", env!("CARGO_PKG_VERSION"))
+    let server = fastmcp_rust::modern::ServerBuilder::new("obr", env!("CARGO_PKG_VERSION"))
         .instructions(
-            "beads_rust (br) issue tracker MCP server.\n\n\
+            "obr issue tracker MCP server.\n\n\
              Use tools to query, create, and manage issues. All mutations are \
              recorded with full audit trails.\n\n\
              Getting started:\n\
              1. Call project_overview to understand the project state\n\
-             2. Read beads://schema for valid field values and bead anatomy guidance\n\
-             3. Read beads://labels to discover existing labels\n\
+             2. Read obr://schema for valid field values and issue anatomy guidance\n\
+             3. Read obr://labels to discover existing labels\n\
              4. Use list_issues to find specific issues\n\n\
-             Discovery resources: beads://project/info, beads://schema, \
-             beads://labels, beads://issues/ready, beads://issues/blocked, \
-             beads://issues/in_progress, beads://coordination/status, \
-             beads://issues/deferred, beads://issues/bottlenecks, \
-             beads://graph/health, beads://events/recent\n\n\
+             Discovery resources: obr://project/info, obr://schema, \
+             obr://labels, obr://issues/ready, obr://issues/blocked, \
+             obr://issues/in_progress, obr://coordination/status, \
+             obr://issues/deferred, obr://issues/bottlenecks, \
+             obr://graph/health, obr://events/recent\n\n\
              Guided workflows:\n\
              - 'triage' — backlog triage (blocked, unassigned, deferred)\n\
              - 'status_report' — project status report generation\n\
@@ -1287,9 +1442,9 @@ pub fn run_serve(args: &ServeArgs, overrides: &config::CliOverrides) -> crate::R
         .build();
 
     // The stdio transport observes `cx.is_cancel_requested()` between its
-    // read polls, so translating br's cooperative shutdown flag
+    // read polls, so translating obr's cooperative shutdown flag
     // (SIGINT/SIGTERM/SIGHUP; see `crate::shutdown`) into a Cx cancellation
-    // lets `br serve` return through `main` and run every destructor (WAL
+    // lets `obr serve` return through `main` and run every destructor (WAL
     // flush on drop, #270) instead of waiting on transport EOF detection.
     let (_serve_runtime, serve_cx) = build_serve_cx()?;
     let watcher_cx = serve_cx.clone();

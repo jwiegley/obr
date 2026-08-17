@@ -8,7 +8,7 @@ use crate::output::{OutputContext, OutputMode};
 use clap::{Arg, Command as ClapCommand, CommandFactory};
 use serde::Serialize;
 
-const CONTRACT_VERSION: &str = "br.capabilities.v1";
+const CONTRACT_VERSION: &str = "obr.capabilities.v1";
 
 #[derive(Debug, Serialize)]
 struct CapabilitiesOutput {
@@ -117,7 +117,7 @@ struct CommandContract {
 const FEATURES: &[FeatureCapability] = &[
     FeatureCapability {
         name: "local_first_issue_tracking",
-        description: "Stores issue state locally in SQLite with git-friendly JSONL export.",
+        description: "Stores issue state locally in SQLite, with an Org-mode surface (PLAN.org) as the git-tracked export.",
     },
     FeatureCapability {
         name: "agent_machine_output",
@@ -125,11 +125,11 @@ const FEATURES: &[FeatureCapability] = &[
     },
     FeatureCapability {
         name: "schema_export",
-        description: "br schema emits JSON schemas and command envelope shapes.",
+        description: "obr schema emits JSON schemas and command envelope shapes.",
     },
     FeatureCapability {
         name: "coordination_diagnostics",
-        description: "br coordination status diagnoses hidden or stale in-progress claims.",
+        description: "obr coordination status diagnoses hidden or stale in-progress claims.",
     },
     FeatureCapability {
         name: "mcp_stdio_optional",
@@ -152,7 +152,7 @@ const GLOBAL_FLAGS: &[FlagCapability] = &[
     },
     FlagCapability {
         flag: "--db <PATH>",
-        description: "Override the discovered .beads SQLite database path.",
+        description: "Override the discovered SQLite database path.",
     },
     FlagCapability {
         flag: "--actor <NAME>",
@@ -210,18 +210,38 @@ const EXIT_CODES: &[ExitCodeCapability] = &[
     },
 ];
 
+/// Published environment contract.
+///
+/// `OBR_*` is the only spelling obr reads. The pre-rename `BEADS_*`/`BD_*`/
+/// `BR_*` environment names were removed outright, not deprecated.
 const ENV_VARS: &[EnvVarCapability] = &[
     EnvVarCapability {
-        name: "BD_DB / BD_DATABASE",
+        name: "OBR_DIR",
+        description: "Override the workspace directory.",
+    },
+    EnvVarCapability {
+        name: "OBR_DB / OBR_DATABASE",
         description: "Override the SQLite database path.",
     },
     EnvVarCapability {
-        name: "BEADS_JSONL",
-        description: "Override the JSONL path when explicitly allowed.",
+        name: "OBR_JSONL",
+        description: "Override the export path when explicitly allowed.",
     },
     EnvVarCapability {
-        name: "BR_OUTPUT_FORMAT",
+        name: "OBR_CACHE_DIR",
+        description: "Store the database and transient files outside the workspace.",
+    },
+    EnvVarCapability {
+        name: "OBR_ACTOR",
+        description: "Actor recorded on writes.",
+    },
+    EnvVarCapability {
+        name: "OBR_OUTPUT_FORMAT",
         description: "Default output format: text, json, or toon.",
+    },
+    EnvVarCapability {
+        name: "OBR_<KEY>",
+        description: "Set any config key from the environment.",
     },
     EnvVarCapability {
         name: "TOON_DEFAULT_FORMAT",
@@ -240,11 +260,11 @@ const ENV_VARS: &[EnvVarCapability] = &[
 const SAFETY: &[SafetyCapability] = &[
     SafetyCapability {
         name: "no_automatic_git_operations",
-        guarantee: "br never commits, pushes, pulls, or installs hooks automatically.",
+        guarantee: "obr never commits, pushes, pulls, or installs hooks automatically. The read-only commands that do consult git (vcs-status, changelog, orphans) run it with hooks, fsmonitor and external config disabled.",
     },
     SafetyCapability {
         name: "sync_path_allowlist",
-        guarantee: "sync writes stay inside .beads unless an external JSONL path is explicitly allowed.",
+        guarantee: "sync writes stay inside the workspace directory (.obr) and the workspace's own tracked surface (PLAN.org); any other path requires --allow-external-jsonl.",
     },
     SafetyCapability {
         name: "write_lock_for_storage_mutations",
@@ -257,11 +277,11 @@ const SAFETY: &[SafetyCapability] = &[
 ];
 
 const RECOMMENDED_ENTRYPOINTS: &[&str] = &[
-    "br capabilities --format json",
-    "br robot-docs guide",
-    "br ready --json",
-    "br coordination status --json",
-    "br schema commands --format json",
+    "obr capabilities --format json",
+    "obr robot-docs guide",
+    "obr ready --json",
+    "obr coordination status --json",
+    "obr schema commands --format json",
 ];
 
 /// Execute the capabilities command.
@@ -288,7 +308,7 @@ pub fn execute(args: &CapabilitiesArgs, outer_ctx: &OutputContext) -> Result<()>
         .transpose()?;
 
     let payload = CapabilitiesOutput {
-        tool: "br",
+        tool: "obr",
         version: env!("CARGO_PKG_VERSION"),
         contract_version: CONTRACT_VERSION,
         features: FEATURES,
@@ -353,7 +373,7 @@ fn command_detail_for_path(path: &str) -> Result<CommandDetail> {
 
 fn command_path_segments(path: &str) -> Result<Vec<&str>> {
     let mut segments = path.split_whitespace().collect::<Vec<_>>();
-    if segments.first().is_some_and(|segment| *segment == "br") {
+    if segments.first().is_some_and(|segment| *segment == "obr") {
         segments.remove(0);
     }
     if segments.is_empty() {
@@ -476,31 +496,31 @@ fn subcommand_capability(command: &ClapCommand) -> SubcommandCapability {
 fn parent_examples(name: &str) -> &'static [&'static str] {
     match name {
         "comments" => &[
-            "br comments list br-abc --json",
-            "br comments add br-abc --message \"Investigation notes\" --json",
-            "br comments add br-abc --file notes.md --json",
+            "obr comments list br-abc --json",
+            "obr comments add br-abc --message \"Investigation notes\" --json",
+            "obr comments add br-abc --file notes.md --json",
         ],
         "dep" => &[
-            "br dep add br-task br-blocker --type blocks --json",
-            "br dep import edges.jsonl --robot",
-            "br dep list br-task --direction both --format json",
-            "br dep cycles --blocking-only --json",
+            "obr dep add br-task br-blocker --type blocks --json",
+            "obr dep import edges.jsonl --robot",
+            "obr dep list br-task --direction both --format json",
+            "obr dep cycles --blocking-only --json",
         ],
         "query" => &[
-            "br query list --json",
-            "br query save p0-open --priority 0 --status open --description \"P0 open work\" --format json",
-            "br query run p0-open --assignee agent-name --format json",
+            "obr query list --json",
+            "obr query save p0-open --priority 0 --status open --description \"P0 open work\" --format json",
+            "obr query run p0-open --assignee agent-name --format json",
         ],
         "label" => &[
-            "br label list --json",
-            "br label add br-abc --label needs-review --json",
+            "obr label list --json",
+            "obr label add br-abc --label needs-review --json",
         ],
         "epic" => &[
-            "br epic status --json",
-            "br epic close-eligible --dry-run --json",
+            "obr epic status --json",
+            "obr epic close-eligible --dry-run --json",
         ],
-        "config" => &["br config get output.format --json"],
-        "history" => &["br history list --json"],
+        "config" => &["obr config get output.format --json"],
+        "history" => &["obr history list --json"],
         _ => &[],
     }
 }
@@ -537,8 +557,8 @@ fn command_safety_notes(name: &str) -> &'static [&'static str] {
             "`--hard` prunes tombstones from JSONL immediately and should be rare.",
         ],
         "sync" => &[
-            "br sync never runs git operations.",
-            "External JSONL paths require both `BEADS_JSONL` and `--allow-external-jsonl`.",
+            "obr sync never runs git operations.",
+            "External JSONL paths require both `OBR_JSONL` and `--allow-external-jsonl`.",
             "Use `--status --json` or `--witness` for read-only diagnostics.",
         ],
         "vcs-status" => &[
@@ -563,17 +583,14 @@ fn command_safety_notes(name: &str) -> &'static [&'static str] {
         ],
         "ready" => &[
             "Ready is read-only and is the single work-discovery entrypoint; it returns unblocked, non-deferred, actionable issues.",
-            "Readiness defaults to status=open but is project-configurable via `workflow.status_groups.ready` in `.beads/policy.yaml` (e.g. `[open, rework]`); returned issues keep their real status.",
+            "Readiness defaults to status=open but is project-configurable via `workflow.status_groups.ready` in `policy.yaml` (e.g. `[open, rework]`); returned issues keep their real status.",
             "`--include-deferred` additionally surfaces deferred work and drops the defer-time gate; it never double-counts a status already in the ready group.",
         ],
         "scheduler" => &[
             "Scheduler is read-only and ranks already-ready issues; it does not claim work.",
-            "Scheduler honors the same `workflow.status_groups.ready` group as `br ready`.",
+            "Scheduler honors the same `workflow.status_groups.ready` group as `obr ready`.",
             "Use `--limit` for returned recommendations and `--candidate-limit` for the scoring window.",
         ],
-        "upgrade" => {
-            &["Use `--check` to inspect availability before changing the installed binary."]
-        }
         _ => &[],
     }
 }
@@ -581,7 +598,7 @@ fn command_safety_notes(name: &str) -> &'static [&'static str] {
 fn comments_safety_notes(name: &str) -> &'static [&'static str] {
     match name {
         "comments" => &[
-            "Bare `br comments <id>` lists comments; `comments add` is the mutating subcommand.",
+            "Bare `obr comments <id>` lists comments; `comments add` is the mutating subcommand.",
             "Use `--message` or `--file` for scripted comments instead of relying on shell word joining.",
         ],
         "comments add" => &[
@@ -625,12 +642,12 @@ fn dep_safety_notes(name: &str) -> &'static [&'static str] {
         "dep tree" => &[
             "Dependency tree is read-only; `--direction down` follows blockers from the root issue.",
             "Use `--max-depth` to bound large graphs in automation.",
-            "Use global `--json` for JSON or `BR_OUTPUT_FORMAT=toon` for TOON; local `--format` selects text or mermaid.",
+            "Use global `--json` for JSON or `OBR_OUTPUT_FORMAT=toon` for TOON; local `--format` selects text or mermaid.",
         ],
         "dep cycles" => &[
             "Cycle detection is read-only.",
             "Use `--blocking-only` when planning ready-work unblock order.",
-            "Use global `--json` for JSON or `BR_OUTPUT_FORMAT=toon` for TOON; `dep cycles` does not accept a local `--format` flag.",
+            "Use global `--json` for JSON or `OBR_OUTPUT_FORMAT=toon` for TOON; `dep cycles` does not accept a local `--format` flag.",
         ],
         _ => &[],
     }
@@ -639,13 +656,13 @@ fn dep_safety_notes(name: &str) -> &'static [&'static str] {
 fn query_safety_notes(name: &str) -> &'static [&'static str] {
     match name {
         "query" => &[
-            "Saved queries live in br config storage, not in shell history.",
+            "Saved queries live in obr config storage, not in shell history.",
             "`query run` is read-only; `query save` and `query delete` mutate saved-query config.",
         ],
         "query save" => &[
             "Query names cannot be empty and cannot contain `:` or `/`.",
             "Saving fails if the name already exists; delete the old query first to replace it.",
-            "Saved filters use the same filter flags as `br list`.",
+            "Saved filters use the same filter flags as `obr list`.",
         ],
         "query run" => &[
             "Query run is read-only and executes the saved filters through the list command.",
@@ -671,9 +688,9 @@ fn command_contract(name: &str) -> CommandContract {
             workspace: "required",
             machine_output: &["json", "toon", "text"],
             examples: &[
-                "br comments add br-abc --message \"Investigation notes\" --json",
-                "br comment add br-abc \"Short note\" --json",
-                "br comments add br-abc --file notes.md --author Codex --json",
+                "obr comments add br-abc --message \"Investigation notes\" --json",
+                "obr comment add br-abc \"Short note\" --json",
+                "obr comments add br-abc --file notes.md --author Codex --json",
             ],
         },
         "comments list" => CommandContract {
@@ -681,8 +698,8 @@ fn command_contract(name: &str) -> CommandContract {
             workspace: "required",
             machine_output: &["json", "toon", "text"],
             examples: &[
-                "br comments list br-abc --json",
-                "br comments br-abc --json",
+                "obr comments list br-abc --json",
+                "obr comments br-abc --json",
             ],
         },
         "dep add" => CommandContract {
@@ -690,9 +707,9 @@ fn command_contract(name: &str) -> CommandContract {
             workspace: "required",
             machine_output: &["json", "toon", "text"],
             examples: &[
-                "br dep add br-task br-blocker --type blocks --json",
-                "br dep add br-child br-parent --type parent-child --json",
-                "br dep add br-task external:repo-123 --metadata '{\"repo\":\"other\"}' --json",
+                "obr dep add br-task br-blocker --type blocks --json",
+                "obr dep add br-child br-parent --type parent-child --json",
+                "obr dep add br-task external:repo-123 --metadata '{\"repo\":\"other\"}' --json",
             ],
         },
         "dep import" => CommandContract {
@@ -700,23 +717,23 @@ fn command_contract(name: &str) -> CommandContract {
             workspace: "required",
             machine_output: &["json", "toon", "text"],
             examples: &[
-                "br dep import edges.jsonl --robot",
-                "br dep import .beads/issues.jsonl --robot",
+                "obr dep import edges.jsonl --robot",
+                "obr dep import .obr/issues.jsonl --robot",
             ],
         },
         "dep remove" => CommandContract {
             operation: "write",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
-            examples: &["br dep remove br-task br-blocker --json"],
+            examples: &["obr dep remove br-task br-blocker --json"],
         },
         "dep list" => CommandContract {
             operation: "read",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
             examples: &[
-                "br dep list br-task --direction down --format json",
-                "br dep list br-task --direction both --type blocks --format toon",
+                "obr dep list br-task --direction down --format json",
+                "obr dep list br-task --direction both --type blocks --format toon",
             ],
         },
         "dep tree" => CommandContract {
@@ -724,9 +741,9 @@ fn command_contract(name: &str) -> CommandContract {
             workspace: "required",
             machine_output: &["json", "toon", "text"],
             examples: &[
-                "br dep tree br-task --direction down --max-depth 5 --json",
-                "BR_OUTPUT_FORMAT=toon br dep tree br-task --direction down --max-depth 5",
-                "br dep tree br-task --direction up --format mermaid",
+                "obr dep tree br-task --direction down --max-depth 5 --json",
+                "OBR_OUTPUT_FORMAT=toon obr dep tree br-task --direction down --max-depth 5",
+                "obr dep tree br-task --direction up --format mermaid",
             ],
         },
         "dep cycles" => CommandContract {
@@ -734,9 +751,9 @@ fn command_contract(name: &str) -> CommandContract {
             workspace: "required",
             machine_output: &["json", "toon", "text"],
             examples: &[
-                "br dep cycles --json",
-                "br dep cycles --blocking-only --json",
-                "BR_OUTPUT_FORMAT=toon br dep cycles --blocking-only",
+                "obr dep cycles --json",
+                "obr dep cycles --blocking-only --json",
+                "OBR_OUTPUT_FORMAT=toon obr dep cycles --blocking-only",
             ],
         },
         "query save" => CommandContract {
@@ -744,8 +761,8 @@ fn command_contract(name: &str) -> CommandContract {
             workspace: "required",
             machine_output: &["json", "toon", "text"],
             examples: &[
-                "br query save p0-open --priority 0 --status open --description \"P0 open work\" --format json",
-                "br query save mine --assignee agent-name --status in_progress --format json",
+                "obr query save p0-open --priority 0 --status open --description \"P0 open work\" --format json",
+                "obr query save mine --assignee agent-name --status in_progress --format json",
             ],
         },
         "query run" => CommandContract {
@@ -753,118 +770,118 @@ fn command_contract(name: &str) -> CommandContract {
             workspace: "required",
             machine_output: &["json", "csv", "toon", "text"],
             examples: &[
-                "br query run p0-open --format json",
-                "br query run p0-open --status open --format toon",
+                "obr query run p0-open --format json",
+                "obr query run p0-open --status open --format toon",
             ],
         },
         "query list" => CommandContract {
             operation: "read",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
-            examples: &["br query list --json"],
+            examples: &["obr query list --json"],
         },
         "query delete" => CommandContract {
             operation: "write",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
-            examples: &["br query delete stale-filter --json"],
+            examples: &["obr query delete stale-filter --json"],
         },
         "label add" => CommandContract {
             operation: "write",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
-            examples: &["br label add br-abc --label needs-review --json"],
+            examples: &["obr label add br-abc --label needs-review --json"],
         },
         "label remove" => CommandContract {
             operation: "write",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
-            examples: &["br label remove br-abc --label needs-review --json"],
+            examples: &["obr label remove br-abc --label needs-review --json"],
         },
         "label list" => CommandContract {
             operation: "read",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
-            examples: &["br label list --json"],
+            examples: &["obr label list --json"],
         },
         "label rename" => CommandContract {
             operation: "write",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
-            examples: &["br label rename old-label new-label --json"],
+            examples: &["obr label rename old-label new-label --json"],
         },
         "epic status" => CommandContract {
             operation: "read",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
-            examples: &["br epic status --json"],
+            examples: &["obr epic status --json"],
         },
         "epic close-eligible" => CommandContract {
             operation: "read",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
-            examples: &["br epic close-eligible --dry-run --json"],
+            examples: &["obr epic close-eligible --dry-run --json"],
         },
         "capabilities" => CommandContract {
             operation: "read",
             workspace: "none",
             machine_output: &["json", "toon", "text"],
-            examples: &["br capabilities --format json"],
+            examples: &["obr capabilities --format json"],
         },
         "robot-docs" => CommandContract {
             operation: "read",
             workspace: "none",
             machine_output: &["json", "toon", "text"],
-            examples: &["br robot-docs guide"],
+            examples: &["obr robot-docs guide"],
         },
         "schema" => CommandContract {
             operation: "read",
             workspace: "none",
             machine_output: &["json", "toon", "text"],
-            examples: &["br schema commands --format json"],
+            examples: &["obr schema commands --format json"],
         },
         "version" => CommandContract {
             operation: "read",
             workspace: "none",
             machine_output: &["json", "toon", "text"],
-            examples: &["br version --json"],
+            examples: &["obr version --json"],
         },
         "completions" => CommandContract {
             operation: "read",
             workspace: "none",
             machine_output: &["text"],
-            examples: &["br completions zsh"],
+            examples: &["obr completions zsh"],
         },
         "init" => CommandContract {
             operation: "write",
             workspace: "none",
             machine_output: &["text"],
-            examples: &["br init --prefix br"],
+            examples: &["obr init --prefix obr"],
         },
         "create" => CommandContract {
             operation: "write",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
             examples: &[
-                "br create \"Fix login\" --type bug --priority 1 --json",
-                "br create --title \"Investigate slow ready\" --slug slow-ready --labels perf,agent-workflow --json",
-                "br create --file backlog.md --json",
+                "obr create \"Fix login\" --type bug --priority 1 --json",
+                "obr create --title \"Investigate slow ready\" --slug slow-ready --labels perf,agent-workflow --json",
+                "obr create --file backlog.md --json",
             ],
         },
         "q" => CommandContract {
             operation: "write",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
-            examples: &["br q \"Quick note\""],
+            examples: &["obr q \"Quick note\""],
         },
         "update" => CommandContract {
             operation: "write",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
             examples: &[
-                "br update br-abc --claim --json",
-                "br update br-abc --status in_progress --assignee agent-name --json",
-                "br update br-abc --add-label needs-review --json",
+                "obr update br-abc --claim --json",
+                "obr update br-abc --status in_progress --assignee agent-name --json",
+                "obr update br-abc --add-label needs-review --json",
             ],
         },
         "close" => CommandContract {
@@ -872,81 +889,81 @@ fn command_contract(name: &str) -> CommandContract {
             workspace: "required",
             machine_output: &["json", "toon", "text"],
             examples: &[
-                "br close br-abc --reason \"Completed\" --json",
-                "br close br-abc --reason \"Completed\" --suggest-next --json",
-                "br close br-abc --agent-name Codex --model gpt-5 --harness local --json",
+                "obr close br-abc --reason \"Completed\" --json",
+                "obr close br-abc --reason \"Completed\" --suggest-next --json",
+                "obr close br-abc --agent-name Codex --model gpt-5 --harness local --json",
             ],
         },
         "reopen" => CommandContract {
             operation: "write",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
-            examples: &["br reopen br-abc --json"],
+            examples: &["obr reopen br-abc --json"],
         },
         "delete" => CommandContract {
             operation: "write",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
-            examples: &["br delete br-abc --reason duplicate --json"],
+            examples: &["obr delete br-abc --reason duplicate --json"],
         },
         "defer" => CommandContract {
             operation: "write",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
-            examples: &["br defer br-abc --until tomorrow --json"],
+            examples: &["obr defer br-abc --until tomorrow --json"],
         },
         "undefer" => CommandContract {
             operation: "write",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
-            examples: &["br undefer br-abc --json"],
+            examples: &["obr undefer br-abc --json"],
         },
         "list" => CommandContract {
             operation: "read",
             workspace: "required",
             machine_output: &["json", "toon", "csv", "text"],
-            examples: &["br list --status open --format json"],
+            examples: &["obr list --status open --format json"],
         },
         "ready" => CommandContract {
             operation: "read",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
-            examples: &["br ready --json"],
+            examples: &["obr ready --json"],
         },
         "scheduler" => CommandContract {
             operation: "read",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
             examples: &[
-                "br scheduler --json",
-                "br scheduler --limit 5 --candidate-limit 100 --format json",
+                "obr scheduler --json",
+                "obr scheduler --limit 5 --candidate-limit 100 --format json",
             ],
         },
         "coordination" => CommandContract {
             operation: "read",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
-            examples: &["br coordination status --json"],
+            examples: &["obr coordination status --json"],
         },
         "blocked" => CommandContract {
             operation: "read",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
-            examples: &["br blocked --json"],
+            examples: &["obr blocked --json"],
         },
         "show" => CommandContract {
             operation: "read",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
-            examples: &["br show br-abc --json"],
+            examples: &["obr show br-abc --json"],
         },
         "search" => CommandContract {
             operation: "read",
             workspace: "required",
             machine_output: &["json", "toon", "csv", "text"],
             examples: &[
-                "br search \"auth\" --format json",
-                "br search \"auth\" --status open --priority 0 --format toon",
+                "obr search \"auth\" --format json",
+                "obr search \"auth\" --status open --priority 0 --format toon",
             ],
         },
         "count" => CommandContract {
@@ -954,41 +971,41 @@ fn command_contract(name: &str) -> CommandContract {
             workspace: "required",
             machine_output: &["json", "toon", "text"],
             examples: &[
-                "br count --by status --json",
-                "br count --by-label --status open --json",
+                "obr count --by status --json",
+                "obr count --by-label --status open --json",
             ],
         },
         "stale" => CommandContract {
             operation: "read",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
-            examples: &["br stale --days 30 --json"],
+            examples: &["obr stale --days 30 --json"],
         },
         "stats" | "status" => CommandContract {
             operation: "read",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
-            examples: &["br stats --format json"],
+            examples: &["obr stats --format json"],
         },
         "where" | "info" => CommandContract {
             operation: "read",
             workspace: "optional",
             machine_output: &["json", "toon", "text"],
-            examples: &["br where --json"],
+            examples: &["obr where --json"],
         },
         "sync" => CommandContract {
             operation: "mixed",
             workspace: "required",
             machine_output: &["json", "text"],
-            examples: &["br sync --status --json", "br sync --flush-only"],
+            examples: &["obr sync --status --json", "obr sync --flush-only"],
         },
         "vcs-status" => CommandContract {
             operation: "read",
             workspace: "required",
             machine_output: &["json", "toon", "text"],
             examples: &[
-                "br vcs-status --json",
-                "br vcs-status --timeout-ms 5000 --robot",
+                "obr vcs-status --json",
+                "obr vcs-status --timeout-ms 5000 --robot",
             ],
         },
         "doctor" => CommandContract {
@@ -996,10 +1013,10 @@ fn command_contract(name: &str) -> CommandContract {
             workspace: "optional",
             machine_output: &["json", "text"],
             examples: &[
-                "br doctor --json",
-                "br doctor migrate-schema plan --json",
-                "br doctor migrate-schema apply --plan-token <TOKEN> --json",
-                "br doctor migrate-schema undo <RUN_ID> --dry-run --json",
+                "obr doctor --json",
+                "obr doctor migrate-schema plan --json",
+                "obr doctor migrate-schema apply --plan-token <TOKEN> --json",
+                "obr doctor migrate-schema undo <RUN_ID> --dry-run --json",
             ],
         },
         "config" => CommandContract {
@@ -1024,13 +1041,7 @@ fn command_contract(name: &str) -> CommandContract {
             operation: "mixed",
             workspace: "optional",
             machine_output: &["json", "text"],
-            examples: &["br agents --check --json"],
-        },
-        "upgrade" => CommandContract {
-            operation: "write",
-            workspace: "none",
-            machine_output: &["json", "text"],
-            examples: &["br upgrade --check --json"],
+            examples: &["obr agents --check --json"],
         },
         _ => CommandContract {
             operation: "unknown",
@@ -1131,7 +1142,7 @@ mod tests {
             contract
                 .examples
                 .iter()
-                .any(|example| example.contains("br vcs-status --json"))
+                .any(|example| example.contains("obr vcs-status --json"))
         );
 
         let detail = command_detail_for_path("vcs-status").expect("vcs-status detail");

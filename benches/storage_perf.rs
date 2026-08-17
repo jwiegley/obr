@@ -19,10 +19,10 @@
     clippy::cast_possible_wrap
 )]
 
-use beads_rust::model::{Dependency, DependencyType, Issue, IssueType, Priority, Status};
-use beads_rust::storage::{IssueUpdate, ListFilters, ReadyFilters, ReadySortPolicy, SqliteStorage};
 use chrono::Utc;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use obr::model::{Dependency, DependencyType, Issue, IssueType, Priority, Status};
+use obr::storage::{IssueUpdate, ListFilters, ReadyFilters, ReadySortPolicy, SqliteStorage};
 use std::hint::black_box;
 use std::io::Cursor;
 use std::sync::Once;
@@ -89,7 +89,7 @@ fn create_test_issue(i: usize) -> Issue {
 fn init_bench_logging() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
-        let _ = beads_rust::logging::init_logging(0, false, None);
+        let _ = obr::logging::init_logging(0, false, None);
     });
 }
 
@@ -625,7 +625,7 @@ fn bench_export(c: &mut Criterion) {
             let bench_start = log_bench_start(&bench_name);
             b.iter(|| {
                 let mut buffer = Cursor::new(Vec::new());
-                beads_rust::sync::export_to_writer(storage, &mut buffer).unwrap();
+                obr::sync::export_to_writer(storage, &mut buffer).unwrap();
                 black_box(buffer.into_inner())
             });
             log_bench_end(&bench_name, bench_start);
@@ -651,7 +651,7 @@ fn bench_import(c: &mut Criterion) {
         // Create source data
         let (_src_dir, src_storage) = setup_db_with_issues(size);
         let mut buffer = Cursor::new(Vec::new());
-        beads_rust::sync::export_to_writer(&src_storage, &mut buffer).unwrap();
+        obr::sync::export_to_writer(&src_storage, &mut buffer).unwrap();
         let jsonl_data = buffer.into_inner();
 
         group.throughput(Throughput::Elements(size as u64));
@@ -677,9 +677,8 @@ fn bench_import(c: &mut Criterion) {
                     (dir, storage, jsonl_path)
                 },
                 |(dir, mut storage, jsonl_path)| {
-                    let config = beads_rust::sync::ImportConfig::default();
-                    beads_rust::sync::import_from_jsonl(&mut storage, &jsonl_path, &config, None)
-                        .unwrap();
+                    let config = obr::sync::ImportConfig::default();
+                    obr::sync::import_from_jsonl(&mut storage, &jsonl_path, &config, None).unwrap();
                     drop(dir);
                 },
             );
@@ -899,7 +898,7 @@ fn bench_cycle_detection(c: &mut Criterion) {
 
 /// Benchmark ID generation.
 fn bench_generate_id(c: &mut Criterion) {
-    use beads_rust::util::id::{IdConfig, IdGenerator};
+    use obr::util::id::{IdConfig, IdGenerator};
     use std::collections::HashSet;
 
     init_bench_logging();
@@ -960,7 +959,7 @@ fn bench_generate_id(c: &mut Criterion) {
 
 /// Benchmark ID prefix resolution against 100 known IDs.
 fn bench_resolve_id_prefix(c: &mut Criterion) {
-    use beads_rust::util::id::{IdResolver, ResolverConfig, find_matching_ids};
+    use obr::util::id::{IdResolver, ResolverConfig, find_matching_ids};
     use std::collections::HashSet;
 
     init_bench_logging();
@@ -1002,7 +1001,7 @@ fn bench_resolve_id_prefix(c: &mut Criterion) {
 
 /// Benchmark ID hash computation.
 fn bench_id_hash(c: &mut Criterion) {
-    use beads_rust::util::id::compute_id_hash;
+    use obr::util::id::compute_id_hash;
 
     init_bench_logging();
     let group_name = "id/hash";
@@ -1032,7 +1031,7 @@ fn bench_id_hash(c: &mut Criterion) {
 
 /// Benchmark content hashing.
 fn bench_content_hash(c: &mut Criterion) {
-    use beads_rust::util::content_hash;
+    use obr::util::content_hash;
 
     init_bench_logging();
     let group_name = "id/content_hash";

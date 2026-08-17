@@ -3,8 +3,13 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Minimal issue output for stale command (bd parity).
-/// Contains only the fields that bd's stale command outputs.
+/// Row emitted by `obr stale --json`.
+///
+/// Deliberately narrower than [`Issue`]: it carries the field set the Go
+/// `bd` implementation emits for its own `stale` command. That is a real
+/// constraint, not a historical note — `tests/conformance.rs` compares the
+/// structure of `obr stale --json` against `bd stale --json` whenever a `bd`
+/// binary is installed, so removing or adding a field here breaks conformance.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StaleIssue {
     pub created_at: DateTime<Utc>,
@@ -18,9 +23,13 @@ pub struct StaleIssue {
     pub assignee: Option<String>,
 }
 
-/// Minimal issue output for ready command (bd parity).
+/// Row emitted by `obr ready --json`.
 ///
-/// Contains only the fields that bd's ready command outputs.
+/// Deliberately narrower than [`Issue`]: it carries the field set the Go
+/// `bd` implementation emits for its own `ready` command. That is a real
+/// constraint, not a historical note — `tests/conformance.rs` compares the
+/// structure of `obr ready --json` against `bd ready --json` whenever a `bd`
+/// binary is installed, so removing or adding a field here breaks conformance.
 /// Does NOT include: `compaction_level`, `original_size`, `dependency_count`, `dependent_count`
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ReadyIssue {
@@ -40,8 +49,8 @@ pub struct ReadyIssue {
     /// Labels attached to the issue.
     ///
     /// Always emitted (as `[]` when empty) so downstream consumers can filter
-    /// `br ready --json` output on labels the same way they filter
-    /// `br list --json` (#309).
+    /// `obr ready --json` output on labels the same way they filter
+    /// `obr list --json` (#309).
     pub labels: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
@@ -75,9 +84,14 @@ impl From<Issue> for ReadyIssue {
     }
 }
 
-/// Minimal issue output for blocked command (bd parity).
+/// Row emitted by `obr blocked --json`.
 ///
-/// Contains only the fields that bd's blocked command outputs, plus `blocked_by` info.
+/// Deliberately narrower than [`Issue`]: it carries the field set the Go
+/// `bd` implementation emits for its own `blocked` command, plus the
+/// `blocked_by` information. That is a real constraint, not a historical
+/// note — `tests/conformance.rs` compares the structure of
+/// `obr blocked --json` against `bd blocked --json` whenever a `bd` binary is
+/// installed, so removing or adding a field here breaks conformance.
 /// Does NOT include: `compaction_level`, `original_size`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BlockedIssueOutput {
@@ -134,7 +148,7 @@ pub struct IssueWithCounts {
     pub dependent_count: usize,
 }
 
-/// Paginated list response envelope for `br list --json`.
+/// Paginated list response envelope for `obr list --json`.
 ///
 /// Wraps the issue array with pagination metadata so consumers can detect
 /// truncation and iterate through all results using `--limit` / `--offset`.

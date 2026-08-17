@@ -35,8 +35,8 @@ pub fn execute(
     cli: &config::CliOverrides,
     outer_ctx: &OutputContext,
 ) -> Result<()> {
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    execute_inner(args, cli, outer_ctx, &beads_dir, None, None)
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    execute_inner(args, cli, outer_ctx, &obr_dir, None, None)
 }
 
 /// Execute stats using storage that was already opened by the caller.
@@ -48,10 +48,10 @@ pub fn execute_with_storage(
     args: &StatsArgs,
     cli: &config::CliOverrides,
     outer_ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     storage: &SqliteStorage,
 ) -> Result<()> {
-    execute_inner(args, cli, outer_ctx, beads_dir, Some(storage), None)
+    execute_inner(args, cli, outer_ctx, obr_dir, Some(storage), None)
 }
 
 /// Execute stats using the caller's preopened storage context.
@@ -63,24 +63,24 @@ pub fn execute_with_storage_ctx(
     args: &StatsArgs,
     cli: &config::CliOverrides,
     outer_ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     storage_ctx: &config::OpenStorageResult,
 ) -> Result<()> {
-    execute_inner(args, cli, outer_ctx, beads_dir, None, Some(storage_ctx))
+    execute_inner(args, cli, outer_ctx, obr_dir, None, Some(storage_ctx))
 }
 
 fn execute_inner(
     args: &StatsArgs,
     cli: &config::CliOverrides,
     outer_ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     preloaded_storage: Option<&SqliteStorage>,
     preloaded_storage_ctx: Option<&config::OpenStorageResult>,
 ) -> Result<()> {
     let owned_storage_ctx = if preloaded_storage.is_some() || preloaded_storage_ctx.is_some() {
         None
     } else {
-        Some(config::open_storage_with_cli(beads_dir, cli)?)
+        Some(config::open_storage_with_cli(obr_dir, cli)?)
     };
     let storage = preloaded_storage
         .or_else(|| preloaded_storage_ctx.map(|ctx| &ctx.storage))
@@ -89,7 +89,7 @@ fn execute_inner(
     let jsonl_path = preloaded_storage_ctx
         .or(owned_storage_ctx.as_ref())
         .map_or_else(
-            || beads_dir.join("issues.jsonl"),
+            || obr_dir.join(crate::config::DEFAULT_JSONL_FILENAME),
             |ctx| ctx.paths.jsonl_path.clone(),
         );
     let output_format = resolve_output_format_basic_with_outer_mode(
@@ -112,7 +112,7 @@ fn execute_inner(
         .any(|issue| is_potential_ready_candidate(issue, &now));
     let external_blockers = resolve_stats_external_blockers(
         storage,
-        beads_dir,
+        obr_dir,
         storage_ctx_for_config,
         cli,
         &mut config_layer,
@@ -165,7 +165,7 @@ fn execute_inner(
     let ctx = stats_output_context(
         output_format,
         quiet,
-        beads_dir,
+        obr_dir,
         storage,
         storage_ctx_for_config,
         cli,
@@ -194,7 +194,7 @@ fn execute_inner(
 
 fn resolve_stats_external_blockers(
     storage: &SqliteStorage,
-    beads_dir: &Path,
+    obr_dir: &Path,
     storage_ctx: Option<&config::OpenStorageResult>,
     cli: &config::CliOverrides,
     config_layer: &mut Option<config::ConfigLayer>,
@@ -204,10 +204,9 @@ fn resolve_stats_external_blockers(
         return Ok(None);
     }
 
-    let config_layer =
-        ensure_stats_config_layer(beads_dir, storage, storage_ctx, cli, config_layer)?;
-    auto_import_external_projects_if_stale(config_layer, beads_dir, cli);
-    let external_db_paths = config::external_project_db_paths(config_layer, beads_dir);
+    let config_layer = ensure_stats_config_layer(obr_dir, storage, storage_ctx, cli, config_layer)?;
+    auto_import_external_projects_if_stale(config_layer, obr_dir, cli);
+    let external_db_paths = config::external_project_db_paths(config_layer, obr_dir);
     let external_statuses =
         storage.resolve_external_dependency_statuses(&external_db_paths, true)?;
     Ok(Some(storage.external_blockers(&external_statuses)?))
@@ -216,7 +215,7 @@ fn resolve_stats_external_blockers(
 fn stats_output_context(
     output_format: OutputFormat,
     quiet: bool,
-    beads_dir: &Path,
+    obr_dir: &Path,
     storage: &SqliteStorage,
     storage_ctx: Option<&config::OpenStorageResult>,
     cli: &config::CliOverrides,
@@ -224,7 +223,7 @@ fn stats_output_context(
 ) -> Result<OutputContext> {
     let use_color = if matches!(output_format, OutputFormat::Text | OutputFormat::Csv) {
         config::should_use_color(ensure_stats_config_layer(
-            beads_dir,
+            obr_dir,
             storage,
             storage_ctx,
             cli,
@@ -241,19 +240,14 @@ fn stats_output_context(
 }
 
 fn ensure_stats_config_layer<'a>(
-    beads_dir: &Path,
+    obr_dir: &Path,
     storage: &SqliteStorage,
     storage_ctx: Option<&config::OpenStorageResult>,
     cli: &config::CliOverrides,
     config_layer: &'a mut Option<config::ConfigLayer>,
 ) -> Result<&'a config::ConfigLayer> {
     if config_layer.is_none() {
-        *config_layer = Some(load_stats_config_layer(
-            beads_dir,
-            storage,
-            storage_ctx,
-            cli,
-        )?);
+        *config_layer = Some(load_stats_config_layer(obr_dir, storage, storage_ctx, cli)?);
     }
     Ok(config_layer
         .as_ref()
@@ -261,7 +255,7 @@ fn ensure_stats_config_layer<'a>(
 }
 
 fn load_stats_config_layer(
-    beads_dir: &Path,
+    obr_dir: &Path,
     storage: &SqliteStorage,
     storage_ctx: Option<&config::OpenStorageResult>,
     cli: &config::CliOverrides,
@@ -269,7 +263,7 @@ fn load_stats_config_layer(
     if let Some(storage_ctx) = storage_ctx {
         storage_ctx.load_config(cli)
     } else {
-        config::load_config(beads_dir, Some(storage), cli)
+        config::load_config(obr_dir, Some(storage), cli)
     }
 }
 
@@ -1291,7 +1285,7 @@ fn print_text_output(output: &Statistics) {
     print_capacity_table(&output.capacity);
 
     // Match bd footer
-    println!("\nFor more details, use 'br list' to see individual issues.");
+    println!("\nFor more details, use 'obr list' to see individual issues.");
 }
 
 /// Capacity occupancy for the stats payload (GitHub #384 phase 6), absent
@@ -2112,9 +2106,9 @@ mod tests {
         git(temp.path(), &["config", "user.email", "tester@example.com"]);
         git(temp.path(), &["config", "user.name", "Tester"]);
 
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
+        let jsonl_path = obr_dir.join("issues.jsonl");
         let issue = make_issue("bd-cache", Status::Open, IssueType::Task);
         write_issue_jsonl(&jsonl_path, &issue);
         git(temp.path(), &["add", ".beads/issues.jsonl"]);
@@ -2218,7 +2212,7 @@ mod tests {
         git(temp.path(), &["config", "user.name", "Tester"]);
 
         let jsonl_dir = temp.path().join(".beads");
-        fs::create_dir_all(&jsonl_dir).expect("create beads dir");
+        fs::create_dir_all(&jsonl_dir).expect("create obr dir");
         let jsonl_path = jsonl_dir.join("issues.jsonl");
 
         let base_time = Utc.with_ymd_and_hms(2026, 3, 11, 0, 0, 0).unwrap();

@@ -154,29 +154,29 @@ pub fn execute(
     cli: &config::CliOverrides,
     ctx: &OutputContext,
 ) -> Result<()> {
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    let layer = config::load_config(&beads_dir, None, cli)?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    let layer = config::load_config(&obr_dir, None, cli)?;
     let actor = config::resolve_actor(&layer);
 
     match command {
-        AuditCommands::Record(args) => record_entry(args, &beads_dir, &actor, ctx),
+        AuditCommands::Record(args) => record_entry(args, &obr_dir, &actor, ctx),
         AuditCommands::Coordination(args) => {
-            record_coordination_entries(args, &beads_dir, &actor, ctx)
+            record_coordination_entries(args, &obr_dir, &actor, ctx)
         }
-        AuditCommands::Label(args) => label_entry(args, &beads_dir, &actor, ctx),
-        AuditCommands::Log(args) => execute_log(args, &beads_dir, cli, ctx),
-        AuditCommands::Summary(args) => execute_summary(args, &beads_dir, cli, ctx),
+        AuditCommands::Label(args) => label_entry(args, &obr_dir, &actor, ctx),
+        AuditCommands::Log(args) => execute_log(args, &obr_dir, cli, ctx),
+        AuditCommands::Summary(args) => execute_summary(args, &obr_dir, cli, ctx),
     }
 }
 
 fn execute_log(
     args: &AuditLogArgs,
-    beads_dir: &Path,
+    obr_dir: &Path,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
 ) -> Result<()> {
     let (storage_ctx, issue_id, _routed_write_lock) =
-        open_routed_storage_for_issue_input(beads_dir, cli, &args.id)?;
+        open_routed_storage_for_issue_input(obr_dir, cli, &args.id)?;
     let events = storage_ctx.storage.get_events(&issue_id, 0)?;
 
     if ctx.is_quiet() {
@@ -211,20 +211,20 @@ fn execute_log(
 }
 
 fn open_routed_storage_for_issue_input(
-    local_beads_dir: &Path,
+    local_obr_dir: &Path,
     cli: &config::CliOverrides,
     issue_input: &str,
 ) -> Result<(config::OpenStorageResult, String, RoutedWorkspaceWriteLock)> {
-    let route = config::routing::resolve_route(issue_input, local_beads_dir)?;
+    let route = config::routing::resolve_route(issue_input, local_obr_dir)?;
     let mut route_cli = cli_for_routed_workspace(cli, route.is_external);
 
     let routed_write_lock = acquire_routed_workspace_write_lock(
-        &route.beads_dir,
+        &route.obr_dir,
         route.is_external,
         route_cli.lock_timeout,
     )?;
     routed_write_lock.mark_cli_write_lock_held(&mut route_cli);
-    let mut storage_ctx = config::open_storage_with_cli(&route.beads_dir, &route_cli)?;
+    let mut storage_ctx = config::open_storage_with_cli(&route.obr_dir, &route_cli)?;
     auto_import_storage_ctx_if_stale(&mut storage_ctx, &route_cli)?;
     let config_layer = storage_ctx.load_config(&route_cli)?;
     let id_config = config::id_config_from_layer(&config_layer);
@@ -236,11 +236,11 @@ fn open_routed_storage_for_issue_input(
 
 fn execute_summary(
     args: &AuditSummaryArgs,
-    beads_dir: &Path,
+    obr_dir: &Path,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
 ) -> Result<()> {
-    let storage_ctx = config::open_storage_with_cli(beads_dir, cli)?;
+    let storage_ctx = config::open_storage_with_cli(obr_dir, cli)?;
     let events = storage_ctx.storage.get_all_events(0)?;
 
     let cutoff = Utc::now() - chrono::Duration::days(i64::from(args.days));
@@ -339,7 +339,7 @@ fn map_event_to_output(event: &crate::model::Event) -> AuditEventOutput {
 
 fn record_entry(
     args: &AuditRecordArgs,
-    beads_dir: &Path,
+    obr_dir: &Path,
     actor: &str,
     ctx: &OutputContext,
 ) -> Result<()> {
@@ -387,7 +387,7 @@ fn record_entry(
         }
     };
 
-    let id = append_entry(beads_dir, &mut entry)?;
+    let id = append_entry(obr_dir, &mut entry)?;
     let output = AuditRecordOutput {
         id: id.clone(),
         kind: entry.kind.clone(),
@@ -406,7 +406,7 @@ fn record_entry(
 
 fn record_coordination_entries(
     args: &AuditCoordinationArgs,
-    beads_dir: &Path,
+    obr_dir: &Path,
     actor: &str,
     ctx: &OutputContext,
 ) -> Result<()> {
@@ -450,7 +450,7 @@ fn record_coordination_entries(
                 incident,
             )),
         };
-        ids.push(append_entry(beads_dir, &mut entry)?);
+        ids.push(append_entry(obr_dir, &mut entry)?);
     }
 
     let output = AuditCoordinationOutput {
@@ -478,7 +478,7 @@ fn record_coordination_entries(
 
 fn label_entry(
     args: &AuditLabelArgs,
-    beads_dir: &Path,
+    obr_dir: &Path,
     actor: &str,
     ctx: &OutputContext,
 ) -> Result<()> {
@@ -493,7 +493,7 @@ fn label_entry(
     if parent_id.is_empty() {
         return Err(BeadsError::validation("entry_id", "required"));
     }
-    if !audit_entry_exists(beads_dir, parent_id)? {
+    if !audit_entry_exists(obr_dir, parent_id)? {
         return Err(BeadsError::validation(
             "entry_id",
             format!("Audit entry '{parent_id}' not found"),
@@ -518,7 +518,7 @@ fn label_entry(
         extra: None,
     };
 
-    let id = append_entry(beads_dir, &mut entry)?;
+    let id = append_entry(obr_dir, &mut entry)?;
     let output = AuditLabelOutput {
         id: id.clone(),
         parent_id: parent_id.to_string(),
@@ -767,8 +767,8 @@ fn clean_actor(actor: &str) -> Option<String> {
     }
 }
 
-fn append_entry(beads_dir: &Path, entry: &mut AuditEntry) -> Result<String> {
-    let path = ensure_interactions_file(beads_dir)?;
+fn append_entry(obr_dir: &Path, entry: &mut AuditEntry) -> Result<String> {
+    let path = ensure_interactions_file(obr_dir)?;
 
     let kind = entry.kind.trim();
     if kind.is_empty() {
@@ -798,18 +798,18 @@ fn append_entry(beads_dir: &Path, entry: &mut AuditEntry) -> Result<String> {
     Ok(entry.id.as_ref().expect("id set before append").clone())
 }
 
-fn interactions_file_path(beads_dir: &Path) -> PathBuf {
-    beads_dir.join("interactions.jsonl")
+fn interactions_file_path(obr_dir: &Path) -> PathBuf {
+    obr_dir.join("interactions.jsonl")
 }
 
-fn ensure_interactions_file(beads_dir: &Path) -> Result<PathBuf> {
-    if !beads_dir.exists() {
+fn ensure_interactions_file(obr_dir: &Path) -> Result<PathBuf> {
+    if !obr_dir.exists() {
         return Err(BeadsError::NotInitialized);
     }
 
-    fs::create_dir_all(beads_dir)?;
-    let path = interactions_file_path(beads_dir);
-    require_valid_sync_path(&path, beads_dir)?;
+    fs::create_dir_all(obr_dir)?;
+    let path = interactions_file_path(obr_dir);
+    require_valid_sync_path(&path, obr_dir)?;
     if !path.exists() {
         fs::OpenOptions::new()
             .write(true)
@@ -819,7 +819,7 @@ fn ensure_interactions_file(beads_dir: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn audit_entry_exists(beads_dir: &Path, entry_id: &str) -> Result<bool> {
+fn audit_entry_exists(obr_dir: &Path, entry_id: &str) -> Result<bool> {
     #[derive(Deserialize)]
     struct PartialId {
         id: Option<String>,
@@ -830,8 +830,8 @@ fn audit_entry_exists(beads_dir: &Path, entry_id: &str) -> Result<bool> {
         return Err(BeadsError::validation("entry_id", "required"));
     }
 
-    let path = interactions_file_path(beads_dir);
-    require_valid_sync_path(&path, beads_dir)?;
+    let path = interactions_file_path(obr_dir);
+    require_valid_sync_path(&path, obr_dir)?;
 
     let file = match fs::File::open(&path) {
         Ok(file) => file,
@@ -1108,10 +1108,10 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    fn temp_beads_dir() -> TempDir {
+    fn temp_obr_dir() -> TempDir {
         let dir = TempDir::new().expect("tempdir");
-        let beads_dir = dir.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = dir.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
         dir
     }
 
@@ -1150,17 +1150,17 @@ mod tests {
 
     #[test]
     fn test_append_preserves_order() {
-        let dir = temp_beads_dir();
-        let beads_dir = dir.path().join(".beads");
+        let dir = temp_obr_dir();
+        let obr_dir = dir.path().join(".beads");
 
         let mut entry_a = base_entry("llm_call");
-        let id_a = append_entry(&beads_dir, &mut entry_a).expect("append A");
+        let id_a = append_entry(&obr_dir, &mut entry_a).expect("append A");
 
         let mut entry_b = base_entry("tool_call");
-        let id_b = append_entry(&beads_dir, &mut entry_b).expect("append B");
+        let id_b = append_entry(&obr_dir, &mut entry_b).expect("append B");
 
         let contents =
-            fs::read_to_string(beads_dir.join("interactions.jsonl")).expect("read interactions");
+            fs::read_to_string(obr_dir.join("interactions.jsonl")).expect("read interactions");
         let lines: Vec<&str> = contents.lines().collect();
         assert_eq!(lines.len(), 2);
 
@@ -1185,7 +1185,7 @@ mod tests {
     #[test]
     fn coordination_snapshot_parser_accepts_status_object_and_jsonl_rows() {
         let status = serde_json::json!({
-            "schema_version": "br.coordination.v1",
+            "schema_version": "obr.coordination.v1",
             "claims": [coordination_claim("bd-one"), coordination_claim("bd-two")]
         });
         let parsed = parse_coordination_snapshot_stream(&status.to_string()).expect("status");
@@ -1285,14 +1285,14 @@ mod tests {
 
     #[test]
     fn test_audit_entry_exists_finds_existing_parent() {
-        let dir = temp_beads_dir();
-        let beads_dir = dir.path().join(".beads");
+        let dir = temp_obr_dir();
+        let obr_dir = dir.path().join(".beads");
 
         let mut entry = base_entry("llm_call");
-        let entry_id = append_entry(&beads_dir, &mut entry).expect("append interaction");
+        let entry_id = append_entry(&obr_dir, &mut entry).expect("append interaction");
 
-        assert!(audit_entry_exists(&beads_dir, &entry_id).expect("lookup existing entry"));
-        assert!(!audit_entry_exists(&beads_dir, "int-missing").expect("lookup missing entry"));
+        assert!(audit_entry_exists(&obr_dir, &entry_id).expect("lookup existing entry"));
+        assert!(!audit_entry_exists(&obr_dir, "int-missing").expect("lookup missing entry"));
     }
 
     #[cfg(unix)]
@@ -1300,15 +1300,15 @@ mod tests {
     fn test_ensure_interactions_file_rejects_symlink_escape() {
         use std::os::unix::fs::symlink;
 
-        let dir = temp_beads_dir();
-        let beads_dir = dir.path().join(".beads");
+        let dir = temp_obr_dir();
+        let obr_dir = dir.path().join(".beads");
         let outside_dir = TempDir::new().expect("outside tempdir");
         let outside_path = outside_dir.path().join("captured.jsonl");
         fs::write(&outside_path, "outside").expect("write outside file");
 
-        symlink(&outside_path, beads_dir.join("interactions.jsonl")).expect("create symlink");
+        symlink(&outside_path, obr_dir.join("interactions.jsonl")).expect("create symlink");
 
-        let err = ensure_interactions_file(&beads_dir).unwrap_err();
+        let err = ensure_interactions_file(&obr_dir).unwrap_err();
         assert!(
             matches!(err, BeadsError::Config(_)),
             "unexpected error: {err:?}"

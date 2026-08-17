@@ -15,7 +15,7 @@ const MAX_FALLBACK_NONCE: u32 = 2000;
 /// Default ID generation configuration.
 #[derive(Debug, Clone)]
 pub struct IdConfig {
-    /// Issue ID prefix (e.g., "bd", "`beads_rust`").
+    /// Issue ID prefix (e.g., `bd`, `obr`).
     pub prefix: String,
     /// Minimum hash length.
     pub min_hash_length: usize,
@@ -25,10 +25,13 @@ pub struct IdConfig {
     pub max_collision_prob: f64,
 }
 
+/// Issue-ID prefix used when none is configured and none can be inferred.
+pub const DEFAULT_ISSUE_PREFIX: &str = "obr";
+
 impl Default for IdConfig {
     fn default() -> Self {
         Self {
-            prefix: "br".to_string(),
+            prefix: DEFAULT_ISSUE_PREFIX.to_string(),
             min_hash_length: 3,
             max_hash_length: 8,
             max_collision_prob: 0.25,
@@ -133,7 +136,7 @@ impl IdGenerator {
     }
 
     /// Generate an ID with a user-supplied slug embedded between the prefix
-    /// and the uniquifying hash, e.g. `br-survey-my-thing-8cda`.
+    /// and the uniquifying hash, e.g. `obr-survey-my-thing-8cda`.
     ///
     /// The slug is normalized via [`normalize_slug`] (lowercase ASCII
     /// alphanumerics and single hyphens, capped at 48 chars). If the input
@@ -400,7 +403,7 @@ use crate::error::{BeadsError, Result};
 /// Supports both root IDs (`br-abc123`) and hierarchical IDs (`br-abc123.1.2`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedId {
-    /// The prefix (e.g., "br").
+    /// The prefix (e.g., "obr").
     pub prefix: String,
     /// The hash portion (e.g., "abc123").
     pub hash: String,
@@ -590,14 +593,14 @@ fn normalized_prefix_chars(prefix: &str) -> String {
 ///
 /// This trims whitespace, lowercases ASCII letters, removes unsupported
 /// characters, and clamps the prefix to the maximum supported length. Inferred
-/// prefixes that contain no usable characters fall back to `br`; explicitly
+/// prefixes that contain no usable characters fall back to `obr`; explicitly
 /// configured prefixes should use [`normalize_configured_prefix`] instead.
 #[must_use]
 pub fn normalize_prefix(prefix: &str) -> String {
     let normalized = normalized_prefix_chars(prefix);
 
     if normalized.is_empty() {
-        "br".to_string()
+        DEFAULT_ISSUE_PREFIX.to_string()
     } else {
         normalized
     }
@@ -606,7 +609,7 @@ pub fn normalize_prefix(prefix: &str) -> String {
 /// Normalize an explicitly configured issue prefix.
 ///
 /// Unlike [`normalize_prefix`], this rejects values that contain no usable
-/// prefix characters so a typo cannot silently mint IDs in the `br` namespace.
+/// prefix characters so a typo cannot silently mint IDs in the `obr` namespace.
 ///
 /// # Errors
 ///
@@ -746,7 +749,7 @@ pub struct ResolverConfig {
 impl Default for ResolverConfig {
     fn default() -> Self {
         Self {
-            default_prefix: "br".to_string(),
+            default_prefix: DEFAULT_ISSUE_PREFIX.to_string(),
             allowed_prefixes: Vec::new(),
             allow_substring_match: true,
         }
@@ -1132,10 +1135,10 @@ mod tests {
 
     fn mock_db() -> Vec<String> {
         vec![
-            "br-abc123".to_string(),
-            "br-abd456".to_string(),
-            "br-xyz789".to_string(),
-            "br-abc123.1".to_string(),  // child
+            "obr-abc123".to_string(),
+            "obr-abd456".to_string(),
+            "obr-xyz789".to_string(),
+            "obr-abc123.1".to_string(), // child
             "other-def111".to_string(), // different prefix
         ]
     }
@@ -1152,9 +1155,9 @@ mod tests {
     fn test_resolve_exact_match() {
         let resolver = IdResolver::with_defaults();
         let result = resolver
-            .resolve("br-abc123", exists_in_mock, substring_in_mock)
+            .resolve("obr-abc123", exists_in_mock, substring_in_mock)
             .unwrap();
-        assert_eq!(result.id, "br-abc123");
+        assert_eq!(result.id, "obr-abc123");
         assert_eq!(result.match_type, MatchType::Exact);
     }
 
@@ -1164,31 +1167,31 @@ mod tests {
         let result = resolver
             .resolve("abc123", exists_in_mock, substring_in_mock)
             .unwrap();
-        assert_eq!(result.id, "br-abc123");
+        assert_eq!(result.id, "obr-abc123");
         assert_eq!(result.match_type, MatchType::PrefixNormalized);
     }
 
     #[test]
     fn test_resolve_substring_match() {
         let resolver = IdResolver::with_defaults();
-        // "xyz" should uniquely match "br-xyz789"
+        // "xyz" should uniquely match "obr-xyz789"
         let result = resolver
             .resolve("xyz", exists_in_mock, substring_in_mock)
             .unwrap();
-        assert_eq!(result.id, "br-xyz789");
+        assert_eq!(result.id, "obr-xyz789");
         assert_eq!(result.match_type, MatchType::Substring);
     }
 
     #[test]
     fn test_resolve_ambiguous() {
         let resolver = IdResolver::with_defaults();
-        // "ab" matches both "br-abc123" and "br-abd456"
+        // "ab" matches both "obr-abc123" and "obr-abd456"
         let result = resolver.resolve("ab", exists_in_mock, substring_in_mock);
         assert!(result.is_err());
         if let Err(BeadsError::AmbiguousId { partial, matches }) = result {
             assert_eq!(partial, "ab");
-            assert!(matches.contains(&"br-abc123".to_string()));
-            assert!(matches.contains(&"br-abd456".to_string()));
+            assert!(matches.contains(&"obr-abc123".to_string()));
+            assert!(matches.contains(&"obr-abd456".to_string()));
         } else {
             unreachable!("Expected AmbiguousId error");
         }
@@ -1210,9 +1213,9 @@ mod tests {
     fn test_resolve_child_id() {
         let resolver = IdResolver::with_defaults();
         let result = resolver
-            .resolve("br-abc123.1", exists_in_mock, substring_in_mock)
+            .resolve("obr-abc123.1", exists_in_mock, substring_in_mock)
             .unwrap();
-        assert_eq!(result.id, "br-abc123.1");
+        assert_eq!(result.id, "obr-abc123.1");
         assert_eq!(result.match_type, MatchType::Exact);
     }
 
@@ -1220,9 +1223,9 @@ mod tests {
     fn test_resolve_case_insensitive() {
         let resolver = IdResolver::with_defaults();
         let result = resolver
-            .resolve("BR-ABC123", exists_in_mock, substring_in_mock)
+            .resolve("OBR-ABC123", exists_in_mock, substring_in_mock)
             .unwrap();
-        assert_eq!(result.id, "br-abc123");
+        assert_eq!(result.id, "obr-abc123");
     }
 
     #[test]
@@ -1248,16 +1251,16 @@ mod tests {
     fn test_resolve_whitespace_trimmed() {
         let resolver = IdResolver::with_defaults();
         let result = resolver
-            .resolve("  br-abc123  ", exists_in_mock, substring_in_mock)
+            .resolve("  obr-abc123  ", exists_in_mock, substring_in_mock)
             .unwrap();
-        assert_eq!(result.id, "br-abc123");
+        assert_eq!(result.id, "obr-abc123");
     }
 
     #[test]
     fn test_resolve_fallible_propagates_lookup_error() {
         let resolver = IdResolver::with_defaults();
         let result = resolver.resolve_fallible(
-            "br-abc123",
+            "obr-abc123",
             |_id| Err(BeadsError::Config("lookup failed".to_string())),
             |_hash| Ok(Vec::new()),
         );
@@ -1267,7 +1270,7 @@ mod tests {
     #[test]
     fn test_resolve_all_fallible_propagates_lookup_error() {
         let resolver = IdResolver::with_defaults();
-        let inputs = vec!["br-abc123".to_string(), "br-xyz789".to_string()];
+        let inputs = vec!["obr-abc123".to_string(), "obr-xyz789".to_string()];
         let result = resolver.resolve_all_fallible(
             &inputs,
             |_id| Err(BeadsError::Config("exists lookup failed".to_string())),
@@ -1282,9 +1285,9 @@ mod tests {
     fn test_find_matching_ids_substring() {
         let ids = mock_db();
         let matches = find_matching_ids(&ids, "abc");
-        assert!(matches.contains(&"br-abc123".to_string()));
+        assert!(matches.contains(&"obr-abc123".to_string()));
         // Note: br-abc123.1 is a child and its base hash contains "abc"
-        assert!(matches.contains(&"br-abc123.1".to_string()));
+        assert!(matches.contains(&"obr-abc123.1".to_string()));
     }
 
     #[test]
@@ -1452,7 +1455,7 @@ mod tests {
     #[test]
     fn test_normalize_prefix_sanitizes_and_lowercases() {
         assert_eq!(normalize_prefix("  Project-Name_2!  "), "project-name_2");
-        assert_eq!(normalize_prefix("!!!"), "br");
+        assert_eq!(normalize_prefix("!!!"), DEFAULT_ISSUE_PREFIX);
     }
 
     #[test]
@@ -1514,7 +1517,7 @@ mod tests {
             )
             .expect("collision lookup succeeds");
 
-        assert!(id.starts_with("br-"));
+        assert!(id.starts_with("obr-"));
         assert!(is_valid_id_format(&id));
     }
 
@@ -1556,7 +1559,7 @@ mod tests {
     #[test]
     fn test_id_generator_fails_closed_when_every_candidate_exists() {
         let id_gen = IdGenerator::new(IdConfig {
-            prefix: "br".to_string(),
+            prefix: "obr".to_string(),
             min_hash_length: 3,
             max_hash_length: 3,
             max_collision_prob: 0.25,
@@ -1614,11 +1617,11 @@ mod tests {
             .generate_with_slug(input, "survey-my-thing", |_| Ok(false))
             .expect("collision lookup succeeds");
         assert!(
-            id.starts_with("br-survey-my-thing-"),
-            "expected prefix br-survey-my-thing-, got {id}"
+            id.starts_with("obr-survey-my-thing-"),
+            "expected prefix obr-survey-my-thing-, got {id}"
         );
         let parsed = parse_id(&id).expect("slug-shaped ID should parse");
-        assert_eq!(parsed.prefix, "br-survey-my-thing");
+        assert_eq!(parsed.prefix, "obr-survey-my-thing");
         assert!(!parsed.hash.is_empty(), "hash suffix must be present");
 
         // Empty slug → falls back to hash-only generation.
@@ -1626,7 +1629,7 @@ mod tests {
             .generate_with_slug(input, "", |_| Ok(false))
             .expect("collision lookup succeeds");
         let parsed = parse_id(&id).expect("hash-only ID should parse");
-        assert_eq!(parsed.prefix, "br");
+        assert_eq!(parsed.prefix, "obr");
 
         // Slug-only collision falls through hash-extension. Force exactly the
         // very first candidate to "exist" and confirm the generator still
@@ -1639,7 +1642,7 @@ mod tests {
                 Ok(n == 0)
             })
             .expect("collision lookup succeeds");
-        assert!(id.starts_with("br-survey-my-thing-"));
+        assert!(id.starts_with("obr-survey-my-thing-"));
     }
 
     #[test]
@@ -1717,11 +1720,11 @@ mod tests {
             .generate_with_slug(input, "Hello World!", |_| Ok(false))
             .expect("collision lookup succeeds");
         assert!(
-            id.starts_with("br-hello-world-"),
-            "expected prefix 'br-hello-world-', got {id}"
+            id.starts_with("obr-hello-world-"),
+            "expected prefix 'obr-hello-world-', got {id}"
         );
         let parsed = parse_id(&id).expect("must parse");
-        assert_eq!(parsed.prefix, "br-hello-world");
+        assert_eq!(parsed.prefix, "obr-hello-world");
         assert!(!parsed.hash.is_empty(), "hash suffix must be present");
 
         // Multiple non-alphanumeric runs collapse to a single hyphen
@@ -1729,7 +1732,7 @@ mod tests {
             .generate_with_slug(input, "a   b/c.d!!e", |_| Ok(false))
             .expect("collision lookup succeeds");
         assert!(
-            id2.starts_with("br-a-b-c-d-e-"),
+            id2.starts_with("obr-a-b-c-d-e-"),
             "expected b-c-d-e collapsed; got {id2}"
         );
 
@@ -1738,7 +1741,7 @@ mod tests {
             .generate_with_slug(input, "café-résumé", |_| Ok(false))
             .expect("collision lookup succeeds");
         // After normalize_slug: "caf-r-sum" (drops é, kept letters around hyphens)
-        assert!(id3.starts_with("br-caf-r-sum-"), "got {id3}");
+        assert!(id3.starts_with("obr-caf-r-sum-"), "got {id3}");
     }
 
     /// l6xl AC: a slug longer than `MAX_SLUG_LEN` (48 chars after
@@ -1760,7 +1763,7 @@ mod tests {
             .generate_with_slug(input, &long_slug, |_| Ok(false))
             .expect("collision lookup succeeds");
         let parsed = parse_id(&id).expect("must parse");
-        let slug_part = parsed.prefix.strip_prefix("br-").unwrap_or(&parsed.prefix);
+        let slug_part = parsed.prefix.strip_prefix("obr-").unwrap_or(&parsed.prefix);
         assert!(
             slug_part.len() <= MAX_SLUG_LEN,
             "slug {slug_part} exceeded MAX_SLUG_LEN ({MAX_SLUG_LEN}); got len={}",
@@ -1772,12 +1775,12 @@ mod tests {
         let id2 = id_gen
             .generate_with_slug(input, &trailing_hyphen_slug, |_| Ok(false))
             .expect("collision lookup succeeds");
-        assert!(!id2.starts_with("br--"), "double-hyphen leak in {id2}");
-        // Find the slug portion: between "br-" and the last "-<hash>" segment
+        assert!(!id2.starts_with("obr--"), "double-hyphen leak in {id2}");
+        // Find the slug portion: between "obr-" and the last "-<hash>" segment
         let parsed2 = parse_id(&id2).expect("must parse");
         let slug2 = parsed2
             .prefix
-            .strip_prefix("br-")
+            .strip_prefix("obr-")
             .unwrap_or(&parsed2.prefix);
         assert!(
             !slug2.ends_with('-'),
@@ -1841,7 +1844,7 @@ mod tests {
                 .expect("collision lookup succeeds");
             let parsed = parse_id(&id).expect("must parse hash-only fallback");
             assert_eq!(
-                parsed.prefix, "br",
+                parsed.prefix, "obr",
                 "empty-normalizing slug {empty_yielding:?} should fall back to hash-only; got {id}"
             );
             assert!(

@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use beads_rust::model::{IssueType, Status};
+use obr::model::{IssueType, Status};
 
 pub(crate) struct ByteCursor<'a> {
     data: &'a [u8],

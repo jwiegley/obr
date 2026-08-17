@@ -1,7 +1,7 @@
 #![no_main]
 
-use beads_rust::config::{self, ConfigLayer};
-use beads_rust::util::id::MAX_ID_HASH_LEN;
+use obr::config::{self, ConfigLayer};
+use obr::util::id::MAX_ID_HASH_LEN;
 use libfuzzer_sys::fuzz_target;
 use std::collections::HashMap;
 use std::error::Error;
@@ -105,8 +105,8 @@ fn validate_config_accessors(layer: &ConfigLayer) -> Result<(), Box<dyn Error>> 
 }
 
 fn validate_external_project_paths(layer: &ConfigLayer) -> Result<(), Box<dyn Error>> {
-    let beads_dir = Path::new("/tmp/br-config-yaml-fuzz/.beads");
-    for (name, path) in config::external_projects_from_layer(layer, beads_dir) {
+    let obr_dir = Path::new("/tmp/br-config-yaml-fuzz/.beads");
+    for (name, path) in config::external_projects_from_layer(layer, obr_dir) {
         if name.trim().is_empty() {
             return Err("external project name resolved to an empty value".into());
         }

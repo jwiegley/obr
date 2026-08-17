@@ -1,0 +1,4 @@
+* TODO [#C] Title ending :foo:
+:PROPERTIES:
+:ID:       bd-2
+:END:

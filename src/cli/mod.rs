@@ -19,7 +19,7 @@ use crate::model::{IssueType, Status};
 
 pub mod commands;
 
-/// Default cap for work-surface listings (`br list`).
+/// Default cap for work-surface listings (`obr list`).
 ///
 /// #349: work-surface listings are COMPLETE by default — `0` means "no cap".
 /// Silently truncating an agent's view of its work surface hides issues and
@@ -30,7 +30,7 @@ pub mod commands;
 pub(crate) const DEFAULT_LIST_LIMIT: usize = 0;
 pub(crate) const DEFAULT_LIST_OFFSET: usize = 0;
 
-/// Default cap for full-text SEARCH results (`br search`).
+/// Default cap for full-text SEARCH results (`obr search`).
 ///
 /// #349: unlike list/ready (which are complete by default), search results
 /// stay capped — a broad text query can match a huge fraction of the corpus,
@@ -222,13 +222,13 @@ fn add_layer_keys(keys: &mut BTreeSet<String>, layer: &config::ConfigLayer) {
     keys.extend(layer.startup.keys().cloned());
 }
 
-fn resolve_completion_paths_for_beads_dir(beads_dir: &Path) -> Option<config::ConfigPaths> {
-    config::resolve_paths(beads_dir, None).ok()
+fn resolve_completion_paths_for_obr_dir(obr_dir: &Path) -> Option<config::ConfigPaths> {
+    config::resolve_paths(obr_dir, None).ok()
 }
 
 fn completion_paths() -> Option<config::ConfigPaths> {
-    let beads_dir = config::discover_beads_dir(None).ok()?;
-    resolve_completion_paths_for_beads_dir(&beads_dir)
+    let obr_dir = config::discover_obr_dir(None).ok()?;
+    resolve_completion_paths_for_obr_dir(&obr_dir)
 }
 
 fn saved_queries_from_db(db_path: &Path) -> BTreeSet<String> {
@@ -332,16 +332,13 @@ fn build_config_index() -> CompletionConfigIndex {
     let mut saved_queries = BTreeSet::new();
 
     add_layer_keys(&mut keys, &config::default_config_layer());
-    if let Ok(legacy_user) = config::load_legacy_user_config() {
-        add_layer_keys(&mut keys, &legacy_user);
-    }
     if let Ok(user) = config::load_user_config() {
         add_layer_keys(&mut keys, &user);
     }
     add_layer_keys(&mut keys, &config::ConfigLayer::from_env());
 
     if let Some(paths) = completion_paths() {
-        if let Ok(project) = config::load_project_config(&paths.beads_dir) {
+        if let Ok(project) = config::load_project_config(&paths.obr_dir) {
             add_layer_keys(&mut keys, &project);
         }
         saved_queries.extend(saved_queries_from_db(&paths.db_path));
@@ -689,13 +686,13 @@ fn csv_fields_completer(current: &OsStr) -> Vec<CompletionCandidate> {
 
 /// Agent-first issue tracker (`SQLite` + JSONL)
 #[derive(Parser, Debug)]
-#[command(name = "br", author, version, about, long_about = None)]
+#[command(name = "obr", author, version, about, long_about = None)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
 
-    /// Database path (auto-discover .beads/*.db if not set)
+    /// Database path (auto-discover .obr/*.db if not set)
     #[arg(long, global = true)]
     pub db: Option<PathBuf>,
 
@@ -707,7 +704,7 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
-    /// Force direct mode (no daemon) - effectively no-op in br v1
+    /// Force direct mode (no daemon) - effectively no-op in obr v1
     #[arg(long, global = true)]
     pub no_daemon: bool,
 
@@ -758,7 +755,7 @@ pub enum Commands {
     /// List blocked issues
     Blocked(BlockedArgs),
 
-    /// Describe br's machine-readable contracts and safety guarantees
+    /// Describe obr's machine-readable contracts and safety guarantees
     Capabilities(CapabilitiesArgs),
 
     /// Workflow capacity management: audited issue-specific exemptions (GitHub #384)
@@ -836,7 +833,7 @@ pub enum Commands {
     /// Show diagnostic metadata about the workspace
     Info(InfoArgs),
 
-    /// Initialize a beads workspace
+    /// Initialize an obr workspace
     Init {
         /// Issue ID prefix (e.g., "bd")
         #[arg(long)]
@@ -894,7 +891,7 @@ pub enum Commands {
 
     /// Emit JSON Schemas and per-command output envelope shapes (for agent/tooling integration)
     ///
-    /// IMPORTANT: br schema is not a stable API and is subject to change.
+    /// IMPORTANT: obr schema is not a stable API and is subject to change.
     /// Use at your own risk.
     Schema(SchemaArgs),
 
@@ -913,23 +910,27 @@ pub enum Commands {
     /// Alias for stats
     Status(StatsArgs),
 
-    /// Sync database with JSONL file (export or import)
+    /// Sync database with the tracked export (flush or import)
     ///
-    /// IMPORTANT: br sync NEVER executes git commands or auto-commits.
-    /// All file operations are confined to .beads/ by default.
+    /// IMPORTANT: obr sync NEVER executes git commands or auto-commits.
+    /// Writes are confined to the workspace directory and the tracked
+    /// surface (PLAN.org) by default.
     /// Use -v for detailed safety logging, -vv for debug output.
     #[command(long_about = "Sync database with JSONL file (export or import).
 
 SAFETY GUARANTEES:
-  • br sync NEVER executes git commands or auto-commits
-  • br sync NEVER modifies files outside .beads/ (unless --allow-external-jsonl)
+  • obr sync NEVER executes git commands or auto-commits
+  • obr sync writes only two things: files inside the workspace directory
+    (.obr/), and the workspace's own tracked surface -- PLAN.org, at the
+    project root or under doc/ or docs/. Anything else needs
+    --allow-external-jsonl
   • All writes use atomic temp-file-then-rename pattern
   • Safety guards prevent accidental data loss
 
 MODES (one required):
   --flush-only    Export database to JSONL (safe by default)
   --import-only   Import JSONL into database (validates first)
-  --merge         Three-way merge .beads/beads.base.jsonl + DB + JSONL
+  --merge         Three-way merge .obr/merge.base.jsonl + DB + JSONL
   --status        Show sync status (read-only)
   --witness       Emit deterministic JSONL chunk witness (read-only)
   --reconcile-additive
@@ -959,16 +960,17 @@ VERBOSE LOGGING:
   -vv    Show DEBUG-level file operations
 
 EXAMPLES:
-  br sync --flush-only           Export database to .beads/issues.jsonl
-  br sync --flush-only -v        Export with safety logging
-  br sync --import-only          Import from JSONL (validates first)
-  br sync --merge                Merge DB and JSONL changes
-  br sync --merge --force-db     Keep local DB conflicts
-  br sync --merge --force-jsonl  Keep JSONL conflicts
-  br sync --import-only --rebuild Import + remove DB entries not in JSONL
-  br sync --status               Show current sync status
-  br sync --witness --json       Emit JSONL chunk witness
-  br vcs-status --json           Explicitly inspect JSONL Git visibility")]
+  obr sync --flush-only           Export database to the tracked surface
+                                 (PLAN.org; pinned workspaces keep their path)
+  obr sync --flush-only -v        Export with safety logging
+  obr sync --import-only          Import from the export file (validates first)
+  obr sync --merge                Merge DB and JSONL changes
+  obr sync --merge --force-db     Keep local DB conflicts
+  obr sync --merge --force-jsonl  Keep JSONL conflicts
+  obr sync --import-only --rebuild Import + remove DB entries not in JSONL
+  obr sync --status               Show current sync status
+  obr sync --witness --json       Emit JSONL chunk witness
+  obr vcs-status --json           Explicitly inspect JSONL Git visibility")]
     Sync(SyncArgs),
 
     /// Undefer issues (make ready again)
@@ -977,9 +979,9 @@ EXAMPLES:
     /// Update an issue
     Update(UpdateArgs),
 
-    /// Explicitly inspect Git visibility for the configured JSONL export
+    /// Explicitly inspect Git visibility for the configured export
     ///
-    /// This diagnostic is intentionally separate from `br sync`: sync never
+    /// This diagnostic is intentionally separate from `obr sync`: sync never
     /// executes Git. The command applies a shared probe budget, bounded output,
     /// literal path handling, and no-prompt/no-optional-lock safeguards.
     #[command(name = "vcs-status")]
@@ -988,18 +990,14 @@ EXAMPLES:
     /// Start an MCP (Model Context Protocol) server on stdio
     ///
     /// Exposes the issue tracker to AI agents via the standard MCP protocol.
-    /// This is an alternative to shelling out to the br CLI.
+    /// This is an alternative to shelling out to the obr CLI.
     #[cfg(feature = "mcp")]
     Serve(crate::mcp::ServeArgs),
-
-    /// Upgrade br to the latest version
-    #[cfg(feature = "self_update")]
-    Upgrade(UpgradeArgs),
 
     /// Show version information
     Version(VersionArgs),
 
-    /// Show the active .beads directory
+    /// Show the active obr workspace directory
     Where,
 }
 
@@ -1128,7 +1126,7 @@ pub struct CreateArgs {
     /// Set the initial `agent_context` governing-instructions JSON
     /// (beads_rust#408).
     ///
-    /// Accepts the same forms as `br update --agent-context`: inline JSON,
+    /// Accepts the same forms as `obr update --agent-context`: inline JSON,
     /// `@path/to/file.json`, or `@path/to/file.yaml` (normalized to JSON).
     /// An empty string leaves the field unset. Invalid context is rejected
     /// before any issue, event, or JSONL record is created.
@@ -1149,17 +1147,17 @@ pub struct CreateArgs {
 
     // Tier 1 attribution (issue #312, Layer 3 — capture-only). Recorded on the
     // creation audit event as a trail; NEVER gated or enforced on. Match the
-    // flag/env names used by `br close`.
-    /// Tier 1 attribution: agent name (env: BR_AGENT_NAME). Recorded only.
-    #[arg(long, value_name = "NAME", env = "BR_AGENT_NAME")]
+    // flag/env names used by `obr close`.
+    /// Tier 1 attribution: agent name (env: OBR_AGENT_NAME). Recorded only.
+    #[arg(long, value_name = "NAME", env = "OBR_AGENT_NAME")]
     pub agent_name: Option<String>,
 
-    /// Tier 1 attribution: harness identifier (env: BR_HARNESS). Recorded only.
-    #[arg(long, value_name = "HARNESS", env = "BR_HARNESS")]
+    /// Tier 1 attribution: harness identifier (env: OBR_HARNESS). Recorded only.
+    #[arg(long, value_name = "HARNESS", env = "OBR_HARNESS")]
     pub harness: Option<String>,
 
-    /// Tier 1 attribution: model identifier (env: BR_MODEL). Recorded only.
-    #[arg(long, value_name = "MODEL", env = "BR_MODEL")]
+    /// Tier 1 attribution: model identifier (env: OBR_MODEL). Recorded only.
+    #[arg(long, value_name = "MODEL", env = "OBR_MODEL")]
     pub model: Option<String>,
 }
 
@@ -1238,7 +1236,7 @@ pub struct UpdateArgs {
     pub transition_comment: Option<String>,
 
     /// Change status. Terminal states (`closed`, `tombstone`) are refused —
-    /// use the dedicated `br close` / `br delete` commands so close-policy
+    /// use the dedicated `obr close` / `obr delete` commands so close-policy
     /// and dependency-rewiring are enforced (beads_rust#301).
     #[arg(long, short = 's', add = ArgValueCompleter::new(status_completer))]
     pub status: Option<String>,
@@ -1304,7 +1302,7 @@ pub struct UpdateArgs {
     pub source_repo: Option<String>,
 
     /// Override `source_repo_path` (absolute path to the directory containing
-    /// the `.beads` folder; populates the canonical filesystem location of the
+    /// the workspace folder; populates the canonical filesystem location of the
     /// repo for cross-machine sync awareness — see #289)
     #[arg(long = "source-repo-path")]
     pub source_repo_path: Option<String>,
@@ -1313,9 +1311,9 @@ pub struct UpdateArgs {
     /// Accepts inline JSON or a `@path` to a JSON or YAML file (extension
     /// determines parser; YAML is normalized to JSON before storage).
     /// Pass `--agent-context ""` (empty string) to clear the field back
-    /// to NULL. Emitted on descendant `br show` / `br update --status
+    /// to NULL. Emitted on descendant `obr show` / `obr update --status
     /// in_progress` / `--claim` when `inherited_context.enabled` is set
-    /// in `.beads/config.yaml`.
+    /// in `.obr/config.yaml`.
     #[arg(long = "agent-context")]
     pub agent_context: Option<String>,
 
@@ -1325,17 +1323,17 @@ pub struct UpdateArgs {
 
     // Tier 1 attribution (issue #312, Layer 3 — capture-only). Recorded on the
     // update/status-change audit event as a trail; NEVER gated or enforced on.
-    // Match the flag/env names used by `br close`.
-    /// Tier 1 attribution: agent name (env: BR_AGENT_NAME). Recorded only.
-    #[arg(long, value_name = "NAME", env = "BR_AGENT_NAME")]
+    // Match the flag/env names used by `obr close`.
+    /// Tier 1 attribution: agent name (env: OBR_AGENT_NAME). Recorded only.
+    #[arg(long, value_name = "NAME", env = "OBR_AGENT_NAME")]
     pub agent_name: Option<String>,
 
-    /// Tier 1 attribution: harness identifier (env: BR_HARNESS). Recorded only.
-    #[arg(long, value_name = "HARNESS", env = "BR_HARNESS")]
+    /// Tier 1 attribution: harness identifier (env: OBR_HARNESS). Recorded only.
+    #[arg(long, value_name = "HARNESS", env = "OBR_HARNESS")]
     pub harness: Option<String>,
 
-    /// Tier 1 attribution: model identifier (env: BR_MODEL). Recorded only.
-    #[arg(long, value_name = "MODEL", env = "BR_MODEL")]
+    /// Tier 1 attribution: model identifier (env: OBR_MODEL). Recorded only.
+    #[arg(long, value_name = "MODEL", env = "OBR_MODEL")]
     pub model: Option<String>,
 }
 
@@ -1394,7 +1392,7 @@ pub struct InfoArgs {
 /// Arguments for the explicit VCS export-status diagnostic.
 #[derive(Args, Debug, Clone)]
 pub struct VcsStatusArgs {
-    /// Inspect this JSONL instead of the configured workspace export
+    /// Inspect this file instead of the configured workspace export
     #[arg(long, value_name = "PATH")]
     pub jsonl: Option<PathBuf>,
 
@@ -1433,7 +1431,7 @@ pub struct SchemaArgs {
     #[arg(value_enum, default_value_t)]
     pub target: SchemaTarget,
 
-    /// Output format (text, json, toon). Env: BR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
+    /// Output format (text, json, toon). Env: OBR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
     #[arg(long, value_enum)]
     pub format: Option<OutputFormatBasic>,
 
@@ -1449,7 +1447,7 @@ pub enum CoordinationCommands {
     Status(CoordinationStatusArgs),
 }
 
-/// Arguments for `br coordination status`.
+/// Arguments for `obr coordination status`.
 #[derive(Args, Debug, Clone, Default)]
 pub struct CoordinationStatusArgs {
     /// Assumed owner kind for current claims when no snapshot supplies owner metadata
@@ -1468,7 +1466,7 @@ pub struct CoordinationStatusArgs {
     #[arg(long)]
     pub agents: Option<PathBuf>,
 
-    /// Output format (text, json, toon). Env: BR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
+    /// Output format (text, json, toon). Env: OBR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
     #[arg(long, value_enum)]
     pub format: Option<OutputFormatBasic>,
 
@@ -1493,7 +1491,7 @@ pub enum CoordinationOwnerKindArg {
     Unknown,
 }
 
-/// Schema targets for `br schema`.
+/// Schema targets for `obr schema`.
 #[derive(ValueEnum, Debug, Clone, Copy, Default, Eq, PartialEq)]
 pub enum SchemaTarget {
     /// Emit a bundle containing all schemas and the per-command shape map
@@ -1534,7 +1532,7 @@ pub struct CapabilitiesArgs {
     #[arg(long, visible_alias = "for", value_name = "COMMAND_PATH")]
     pub command: Option<String>,
 
-    /// Output format (text, json, toon). Env: BR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
+    /// Output format (text, json, toon). Env: OBR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
     #[arg(long, value_enum)]
     pub format: Option<OutputFormatBasic>,
 
@@ -1550,10 +1548,10 @@ pub enum RobotDocsCommands {
     Guide(RobotDocsGuideArgs),
 }
 
-/// Arguments for `br robot-docs guide`.
+/// Arguments for `obr robot-docs guide`.
 #[derive(Args, Debug, Default, Clone)]
 pub struct RobotDocsGuideArgs {
-    /// Output format (text, json, toon). Env: BR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
+    /// Output format (text, json, toon). Env: OBR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
     #[arg(long, value_enum)]
     pub format: Option<OutputFormatBasic>,
 
@@ -1579,10 +1577,11 @@ pub enum OutputFormat {
 impl OutputFormat {
     /// Resolve output format from environment variables.
     ///
-    /// Precedence: BR_OUTPUT_FORMAT > TOON_DEFAULT_FORMAT.
+    /// Precedence: `OBR_OUTPUT_FORMAT`
+    /// over `TOON_DEFAULT_FORMAT`.
     #[must_use]
     pub fn from_env() -> Option<Self> {
-        if let Ok(value) = std::env::var("BR_OUTPUT_FORMAT")
+        if let Ok(value) = std::env::var("OBR_OUTPUT_FORMAT")
             && let Some(format) = Self::parse_env_value(&value)
         {
             return Some(format);
@@ -1851,7 +1850,7 @@ pub struct ListArgs {
     #[arg(long)]
     pub wrap: bool,
 
-    /// Output format (text, json, csv, toon). Env: BR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
+    /// Output format (text, json, csv, toon). Env: OBR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
     #[arg(long, value_enum)]
     pub format: Option<OutputFormat>,
 
@@ -1887,7 +1886,7 @@ pub struct ShowArgs {
     #[arg(add = ArgValueCompleter::new(issue_id_completer))]
     pub ids: Vec<String>,
 
-    /// Output format (text, json, toon). Env: BR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
+    /// Output format (text, json, toon). Env: OBR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
     #[arg(long, value_enum)]
     pub format: Option<OutputFormatBasic>,
 
@@ -1971,7 +1970,7 @@ pub enum GateStatus {
     Fail,
 }
 
-/// Arguments for `br gate report`.
+/// Arguments for `obr gate report`.
 #[derive(Args, Debug, Clone)]
 pub struct GateReportArgs {
     /// Issue ID to record the gate result against
@@ -2005,7 +2004,7 @@ pub struct GateReportArgs {
     pub robot: bool,
 }
 
-/// Arguments for `br gate list`.
+/// Arguments for `obr gate list`.
 #[derive(Args, Debug, Clone)]
 pub struct GateListArgs {
     /// Issue ID whose gate results to show
@@ -2030,7 +2029,7 @@ pub enum CapacityCommands {
     Exemptions(CapacityExemptionsArgs),
 }
 
-/// Arguments for `br capacity exempt`.
+/// Arguments for `obr capacity exempt`.
 #[derive(Args, Debug, Clone)]
 pub struct CapacityExemptArgs {
     /// Issue the exemption applies to (one issue, one named capacity)
@@ -2063,7 +2062,7 @@ pub struct CapacityExemptArgs {
     pub robot: bool,
 }
 
-/// Arguments for `br capacity renew`.
+/// Arguments for `obr capacity renew`.
 #[derive(Args, Debug, Clone)]
 pub struct CapacityRenewArgs {
     /// Issue whose exemption to renew
@@ -2095,7 +2094,7 @@ pub struct CapacityRenewArgs {
     pub robot: bool,
 }
 
-/// Arguments for `br capacity revoke`.
+/// Arguments for `obr capacity revoke`.
 #[derive(Args, Debug, Clone)]
 pub struct CapacityRevokeArgs {
     /// Issue whose exemption to revoke
@@ -2123,7 +2122,7 @@ pub struct CapacityRevokeArgs {
     pub robot: bool,
 }
 
-/// Arguments for `br capacity exemptions`.
+/// Arguments for `obr capacity exemptions`.
 #[derive(Args, Debug, Clone)]
 pub struct CapacityExemptionsArgs {
     /// Restrict to one issue (all exemptions when omitted)
@@ -2193,7 +2192,7 @@ pub struct DepListArgs {
     #[arg(long = "type", short = 't', add = ArgValueCompleter::new(dep_type_completer))]
     pub dep_type: Option<String>,
 
-    /// Output format (text, json, toon). Env: BR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
+    /// Output format (text, json, toon). Env: OBR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
     #[arg(long, value_enum)]
     pub format: Option<OutputFormatBasic>,
 
@@ -2375,7 +2374,7 @@ pub struct AuditRecordArgs {
     #[arg(long)]
     pub kind: Option<String>,
 
-    /// Related issue ID (bd-...)
+    /// Related issue ID (the workspace prefix plus a suffix, e.g. `obr-a1b2`)
     #[arg(long = "issue-id", add = ArgValueCompleter::new(issue_id_completer))]
     pub issue_id: Option<String>,
 
@@ -2415,7 +2414,7 @@ pub struct AuditCoordinationArgs {
     pub stdin: bool,
 
     /// Command that produced the coordination snapshot
-    #[arg(long, default_value = "br coordination status")]
+    #[arg(long, default_value = "obr coordination status")]
     pub command: String,
 }
 
@@ -2563,16 +2562,16 @@ pub struct DeferArgs {
 
     // Tier 1 attribution (issue #312, Layer 3 — capture-only). Recorded on the
     // defer status-change audit event; NEVER gated or enforced on.
-    /// Tier 1 attribution: agent name (env: BR_AGENT_NAME). Recorded only.
-    #[arg(long, value_name = "NAME", env = "BR_AGENT_NAME")]
+    /// Tier 1 attribution: agent name (env: OBR_AGENT_NAME). Recorded only.
+    #[arg(long, value_name = "NAME", env = "OBR_AGENT_NAME")]
     pub agent_name: Option<String>,
 
-    /// Tier 1 attribution: harness identifier (env: BR_HARNESS). Recorded only.
-    #[arg(long, value_name = "HARNESS", env = "BR_HARNESS")]
+    /// Tier 1 attribution: harness identifier (env: OBR_HARNESS). Recorded only.
+    #[arg(long, value_name = "HARNESS", env = "OBR_HARNESS")]
     pub harness: Option<String>,
 
-    /// Tier 1 attribution: model identifier (env: BR_MODEL). Recorded only.
-    #[arg(long, value_name = "MODEL", env = "BR_MODEL")]
+    /// Tier 1 attribution: model identifier (env: OBR_MODEL). Recorded only.
+    #[arg(long, value_name = "MODEL", env = "OBR_MODEL")]
     pub model: Option<String>,
 }
 
@@ -2593,16 +2592,16 @@ pub struct UndeferArgs {
 
     // Tier 1 attribution (issue #312, Layer 3 — capture-only). Recorded on the
     // undefer status-change audit event; NEVER gated or enforced on.
-    /// Tier 1 attribution: agent name (env: BR_AGENT_NAME). Recorded only.
-    #[arg(long, value_name = "NAME", env = "BR_AGENT_NAME")]
+    /// Tier 1 attribution: agent name (env: OBR_AGENT_NAME). Recorded only.
+    #[arg(long, value_name = "NAME", env = "OBR_AGENT_NAME")]
     pub agent_name: Option<String>,
 
-    /// Tier 1 attribution: harness identifier (env: BR_HARNESS). Recorded only.
-    #[arg(long, value_name = "HARNESS", env = "BR_HARNESS")]
+    /// Tier 1 attribution: harness identifier (env: OBR_HARNESS). Recorded only.
+    #[arg(long, value_name = "HARNESS", env = "OBR_HARNESS")]
     pub harness: Option<String>,
 
-    /// Tier 1 attribution: model identifier (env: BR_MODEL). Recorded only.
-    #[arg(long, value_name = "MODEL", env = "BR_MODEL")]
+    /// Tier 1 attribution: model identifier (env: OBR_MODEL). Recorded only.
+    #[arg(long, value_name = "MODEL", env = "OBR_MODEL")]
     pub model: Option<String>,
 }
 
@@ -2670,7 +2669,7 @@ pub struct ReadyArgs {
     #[arg(long)]
     pub wrap: bool,
 
-    /// Output format (text, json, toon). Env: BR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
+    /// Output format (text, json, toon). Env: OBR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
     #[arg(long, value_enum)]
     pub format: Option<OutputFormatBasic>,
 
@@ -2698,7 +2697,7 @@ pub struct SchedulerArgs {
     #[arg(long, default_value_t = 2)]
     pub stale_claim_hours: i64,
 
-    /// Output format (text, json, toon). Env: BR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
+    /// Output format (text, json, toon). Env: OBR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
     #[arg(long, value_enum)]
     pub format: Option<OutputFormatBasic>,
 
@@ -2739,7 +2738,7 @@ pub struct BlockedArgs {
     #[arg(long, short = 'l', add = ArgValueCompleter::new(label_completer))]
     pub label: Vec<String>,
 
-    /// Output format (text, json, toon). Env: BR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
+    /// Output format (text, json, toon). Env: OBR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
     #[arg(long, value_enum)]
     pub format: Option<OutputFormatBasic>,
 
@@ -2786,24 +2785,24 @@ pub struct CloseArgs {
 
     // Closure-time policy gates (issue #274 — Phase 1).
     //
-    // All fields below are inert when the project has no `.beads/policy.yaml`
+    // All fields below are inert when the project has no `.obr/policy.yaml`
     // file. Solo-dev workflows see no behavior change; only opt-in repos
     // observe gating or attribution capture.
     //
-    /// Tier 1 attribution: agent name (env: BR_AGENT_NAME).
-    #[arg(long, value_name = "NAME", env = "BR_AGENT_NAME")]
+    /// Tier 1 attribution: agent name (env: OBR_AGENT_NAME).
+    #[arg(long, value_name = "NAME", env = "OBR_AGENT_NAME")]
     pub agent_name: Option<String>,
 
-    /// Tier 1 attribution: harness identifier (env: BR_HARNESS).
-    #[arg(long, value_name = "HARNESS", env = "BR_HARNESS")]
+    /// Tier 1 attribution: harness identifier (env: OBR_HARNESS).
+    #[arg(long, value_name = "HARNESS", env = "OBR_HARNESS")]
     pub harness: Option<String>,
 
-    /// Tier 1 attribution: model identifier (env: BR_MODEL).
-    #[arg(long, value_name = "MODEL", env = "BR_MODEL")]
+    /// Tier 1 attribution: model identifier (env: OBR_MODEL).
+    #[arg(long, value_name = "MODEL", env = "OBR_MODEL")]
     pub model: Option<String>,
 
     /// Bypass closure-time policy gates. Requires `--bypass-reason`.
-    /// Only honoured when `.beads/policy.yaml` has `allow_bypass: true`
+    /// Only honoured when `.obr/policy.yaml` has `allow_bypass: true`
     /// (which is the default).
     #[arg(long)]
     pub bypass_policy: bool,
@@ -2830,16 +2829,16 @@ pub struct ReopenArgs {
 
     // Tier 1 attribution (issue #312, Layer 3 — capture-only). Recorded on the
     // reopen status-change audit event; NEVER gated or enforced on.
-    /// Tier 1 attribution: agent name (env: BR_AGENT_NAME). Recorded only.
-    #[arg(long, value_name = "NAME", env = "BR_AGENT_NAME")]
+    /// Tier 1 attribution: agent name (env: OBR_AGENT_NAME). Recorded only.
+    #[arg(long, value_name = "NAME", env = "OBR_AGENT_NAME")]
     pub agent_name: Option<String>,
 
-    /// Tier 1 attribution: harness identifier (env: BR_HARNESS). Recorded only.
-    #[arg(long, value_name = "HARNESS", env = "BR_HARNESS")]
+    /// Tier 1 attribution: harness identifier (env: OBR_HARNESS). Recorded only.
+    #[arg(long, value_name = "HARNESS", env = "OBR_HARNESS")]
     pub harness: Option<String>,
 
-    /// Tier 1 attribution: model identifier (env: BR_MODEL). Recorded only.
-    #[arg(long, value_name = "MODEL", env = "BR_MODEL")]
+    /// Tier 1 attribution: model identifier (env: OBR_MODEL). Recorded only.
+    #[arg(long, value_name = "MODEL", env = "OBR_MODEL")]
     pub model: Option<String>,
 }
 
@@ -2862,9 +2861,10 @@ pub const DEFAULT_WITNESS_PARALLELISM: usize = 64;
 #[derive(Args, Debug, Clone, Default)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct SyncArgs {
-    /// Export database to JSONL (DB → .beads/issues.jsonl)
+    /// Export database to the workspace export file (DB → .obr/issues.org)
     ///
-    /// Writes all issues from `SQLite` database to JSONL format.
+    /// Writes all issues from the `SQLite` database to the workspace's
+    /// flat-file format (Org by default; JSONL when pinned).
     #[arg(long, group = "sync_action")]
     pub flush_only: bool,
 
@@ -2887,7 +2887,7 @@ pub struct SyncArgs {
     /// Perform a 3-way merge (Base + Local DB + Remote JSONL)
     ///
     /// Reconciles changes when both the database and JSONL have been modified.
-    /// Uses `.beads/beads.base.jsonl` as the common ancestor.
+    /// Uses `.obr/merge.base.jsonl` as the common ancestor.
     #[arg(long)]
     pub merge: bool,
 
@@ -2913,16 +2913,17 @@ pub struct SyncArgs {
     /// Displays hash comparison and freshness info without modifications.
     /// With --json the payload also carries `workspace_health` plus a
     /// `reliability_audit` anomaly record (same write-gate vocabulary as
-    /// `br doctor --json`). Its compatibility `git_export` block is always
+    /// `obr doctor --json`). Its compatibility `git_export` block is always
     /// `{available:false, reason:"not_probed"}` and points to the explicit
-    /// `br vcs-status --json` diagnostic; sync never probes VCS.
+    /// `obr vcs-status --json` diagnostic; sync never probes VCS.
     #[arg(long)]
     pub status: bool,
 
     /// Emit deterministic JSONL chunk witness (read-only)
     ///
-    /// Reads the resolved issues.jsonl bytes and emits chunk/root hashes
-    /// without opening or mutating the SQLite database.
+    /// Reads the resolved JSONL export bytes and emits chunk/root hashes
+    /// without opening or mutating the SQLite database. JSONL-only: chunk
+    /// witnesses are line-oriented and are rejected for Org exports.
     #[arg(long)]
     pub witness: bool,
 
@@ -2985,7 +2986,7 @@ pub struct SyncArgs {
 
     /// Parallel worker cap for read-only JSONL witness hashing and work planning
     ///
-    /// Only used with --witness. When omitted, br uses a deterministic
+    /// Only used with --witness. When omitted, obr uses a deterministic
     /// 64-worker cap rather than host-dependent CPU detection so robot output
     /// remains stable across machines.
     #[arg(
@@ -2997,7 +2998,7 @@ pub struct SyncArgs {
 
     /// Parallel worker cap for JSONL export line preparation
     ///
-    /// Used by --flush-only and merge export writeback. When omitted, br uses
+    /// Used by --flush-only and merge export writeback. When omitted, obr uses
     /// up to 64 workers capped by host parallelism. Use 1 for the serial
     /// fallback.
     #[arg(long = "export-parallelism", value_name = "WORKERS")]
@@ -3018,9 +3019,10 @@ pub struct SyncArgs {
     #[arg(long, requires = "merge", conflicts_with_all = ["force", "force_db"])]
     pub force_jsonl: bool,
 
-    /// Allow using a JSONL path outside the .beads directory.
+    /// Allow using a JSONL path outside the workspace directory.
     ///
-    /// This flag enables paths set via `BEADS_JSONL` environment variable.
+    /// This flag enables paths set via the `OBR_JSONL` environment variable.
+    /// The workspace's own tracked surface is not external and never needs it.
     /// Paths inside .git/ are always rejected regardless of this flag.
     #[arg(long)]
     pub allow_external_jsonl: bool,
@@ -3150,7 +3152,7 @@ pub struct StatsArgs {
     #[arg(long, default_value_t = 24)]
     pub activity_hours: u32,
 
-    /// Output format (text, json, toon). Env: BR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
+    /// Output format (text, json, toon). Env: OBR_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT.
     #[arg(long, value_enum)]
     pub format: Option<OutputFormatBasic>,
 
@@ -3206,10 +3208,6 @@ pub enum HistoryCommands {
 /// Arguments for the version command.
 #[derive(Args, Debug, Clone, Default)]
 pub struct VersionArgs {
-    /// Check if a newer version is available (exit 0=up-to-date, 1=update-available)
-    #[arg(long, short = 'c')]
-    pub check: bool,
-
     /// Output only the version number (for scripts)
     #[arg(long, short = 's')]
     pub short: bool,
@@ -3217,7 +3215,7 @@ pub struct VersionArgs {
 
 /// Arguments for the doctor command.
 ///
-/// `br doctor` is dual-shaped: when no `subcommand` is supplied, the
+/// `obr doctor` is dual-shaped: when no `subcommand` is supplied, the
 /// flat command runs the legacy diagnostic+repair flow honoring
 /// `--repair`, `--dry-run`, `--allow-repeated-repair`, and `--robot-triage`.
 /// When a `subcommand` is supplied, dispatch is routed to the WP6
@@ -3236,7 +3234,7 @@ pub struct DoctorArgs {
     /// every user-defined index, runs `REINDEX "<name>"`
     /// inside a single transaction with a verbatim pre-snapshot
     /// backup, and never touches issue rows. Use when
-    /// `PRAGMA integrity_check` returns `ok` but `br doctor` reports
+    /// `PRAGMA integrity_check` returns `ok` but `obr doctor` reports
     /// `index <name> contains rowid N for a table row that does not
     /// satisfy the partial index predicate` — that's older SQLite
     /// not validating partial predicates on `integrity_check`.
@@ -3255,7 +3253,7 @@ pub struct DoctorArgs {
     #[arg(long)]
     pub dry_run: bool,
 
-    /// Emit the `br.doctor.triage.v1` mega-envelope (summary + findings +
+    /// Emit the `obr.doctor.triage.v1` mega-envelope (summary + findings +
     /// planned actions + recommended command) and exit. Read-only; ignores
     /// `--repair`. Designed for AI agents that want every triage signal
     /// in a single JSON read.
@@ -3323,10 +3321,10 @@ pub struct DoctorArgs {
 /// duplicate or shadow the flat-command flags.
 #[derive(Subcommand, Debug, Clone)]
 pub enum DoctorSubcommand {
-    /// Print the machine-readable `br.doctor.capabilities.v1` envelope
+    /// Print the machine-readable `obr.doctor.capabilities.v1` envelope
     /// (exit codes, write scopes, env vars, fixers, detectors).
     Capabilities(DoctorCapabilitiesArgs),
-    /// Print the paste-ready agent handbook for `br doctor`.
+    /// Print the paste-ready agent handbook for `obr doctor`.
     #[command(name = "robot-docs", alias = "robot_docs")]
     RobotDocs(DoctorRobotDocsArgs),
     /// Cheap (<200 ms) one-line liveness summary; exit-code = liveness.
@@ -3343,7 +3341,7 @@ pub enum DoctorSubcommand {
     Explain(DoctorExplainArgs),
 }
 
-/// Arguments for `br doctor capabilities`.
+/// Arguments for `obr doctor capabilities`.
 #[derive(Args, Debug, Clone, Default)]
 pub struct DoctorCapabilitiesArgs {
     /// Output format: `json` (default for machine readers) or `text`.
@@ -3357,7 +3355,7 @@ pub struct DoctorCapabilitiesArgs {
     pub command: Option<String>,
 }
 
-/// Arguments for `br doctor robot-docs`.
+/// Arguments for `obr doctor robot-docs`.
 #[derive(Args, Debug, Clone, Default)]
 pub struct DoctorRobotDocsArgs {
     /// Output format: `text` (Markdown) is default; `json` wraps the
@@ -3366,7 +3364,7 @@ pub struct DoctorRobotDocsArgs {
     pub format: OutputFormatBasic,
 }
 
-/// Arguments for `br doctor health`.
+/// Arguments for `obr doctor health`.
 #[derive(Args, Debug, Clone, Default)]
 pub struct DoctorHealthArgs {
     /// Emit JSON instead of the one-line text summary.
@@ -3374,16 +3372,16 @@ pub struct DoctorHealthArgs {
     pub json: bool,
 }
 
-/// Arguments for `br doctor ls`.
+/// Arguments for `obr doctor ls`.
 #[derive(Args, Debug, Clone, Default)]
 pub struct DoctorLsArgs {
-    /// Emit a JSON array (`br.doctor.runs_list.v1`) instead of a text
+    /// Emit a JSON array (`obr.doctor.runs_list.v1`) instead of a text
     /// table.
     #[arg(long)]
     pub json: bool,
 }
 
-/// Arguments for `br doctor undo`.
+/// Arguments for `obr doctor undo`.
 #[derive(Args, Debug, Clone)]
 pub struct DoctorUndoArgs {
     /// Run identifier to restore. Use the literal `latest` to resolve to
@@ -3399,7 +3397,7 @@ pub struct DoctorUndoArgs {
     pub json: bool,
 }
 
-/// Arguments for `br doctor migrate-schema`.
+/// Arguments for `obr doctor migrate-schema`.
 #[derive(Args, Debug, Clone)]
 pub struct DoctorMigrateSchemaArgs {
     /// Reviewed migration operation.
@@ -3418,7 +3416,7 @@ pub enum DoctorMigrateSchemaCommand {
     Undo(DoctorMigrateSchemaUndoArgs),
 }
 
-/// Arguments for `br doctor migrate-schema plan`.
+/// Arguments for `obr doctor migrate-schema plan`.
 #[derive(Args, Debug, Clone, Default)]
 pub struct DoctorMigrateSchemaPlanArgs {
     /// Emit the machine-readable receipt.
@@ -3426,7 +3424,7 @@ pub struct DoctorMigrateSchemaPlanArgs {
     pub json: bool,
 }
 
-/// Arguments for `br doctor migrate-schema apply`.
+/// Arguments for `obr doctor migrate-schema apply`.
 #[derive(Args, Debug, Clone)]
 pub struct DoctorMigrateSchemaApplyArgs {
     /// Exact token emitted by `migrate-schema plan`.
@@ -3438,7 +3436,7 @@ pub struct DoctorMigrateSchemaApplyArgs {
     pub json: bool,
 }
 
-/// Arguments for `br doctor migrate-schema undo`.
+/// Arguments for `obr doctor migrate-schema undo`.
 #[derive(Args, Debug, Clone)]
 pub struct DoctorMigrateSchemaUndoArgs {
     /// Migration run identifier emitted by `migrate-schema apply`.
@@ -3453,7 +3451,7 @@ pub struct DoctorMigrateSchemaUndoArgs {
     pub json: bool,
 }
 
-/// Arguments for `br doctor explain`.
+/// Arguments for `obr doctor explain`.
 #[derive(Args, Debug, Clone)]
 pub struct DoctorExplainArgs {
     /// Finding id (e.g. `fm-jsonl-tombstone-drift`).
@@ -3462,27 +3460,6 @@ pub struct DoctorExplainArgs {
     /// Emit JSON instead of text.
     #[arg(long)]
     pub json: bool,
-}
-
-/// Arguments for the upgrade command.
-#[cfg(feature = "self_update")]
-#[derive(Args, Debug, Clone, Default)]
-pub struct UpgradeArgs {
-    /// Check only, don't install
-    #[arg(long)]
-    pub check: bool,
-
-    /// Force reinstall current version
-    #[arg(long)]
-    pub force: bool,
-
-    /// Install specific version (e.g., "0.2.0")
-    #[arg(long)]
-    pub version: Option<String>,
-
-    /// Show what would happen without making changes
-    #[arg(long)]
-    pub dry_run: bool,
 }
 
 /// Arguments for the orphans command.
@@ -3572,13 +3549,13 @@ pub struct QueryDeleteArgs {
 /// Arguments for the graph command.
 ///
 /// The traversal follows *dependents* by default — issues blocked by the root —
-/// so `br graph <id>` answers "what does closing this unblock?". An issue that
+/// so `obr graph <id>` answers "what does closing this unblock?". An issue that
 /// is itself blocked and blocks nothing therefore reports no dependents. This
 /// is a deliberate divergence from classic `bd`, whose `graph` walks
 /// dependencies (`beads_rust-mf72`).
 ///
 /// `--dependencies` walks the other way — "what is blocking this?" — so one
-/// command covers both directions. `br dep tree <id>` remains the
+/// command covers both directions. `obr dep tree <id>` remains the
 /// dependency-shaped view for a single issue.
 #[derive(Args, Debug, Clone, Default)]
 pub struct GraphArgs {
@@ -3607,15 +3584,15 @@ pub struct GraphArgs {
 #[derive(Args, Debug, Clone, Default)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct AgentsArgs {
-    /// Add beads workflow instructions to AGENTS.md
+    /// Add obr workflow instructions to AGENTS.md
     #[arg(long, conflicts_with_all = ["remove", "update", "check"])]
     pub add: bool,
 
-    /// Remove beads workflow instructions from AGENTS.md
+    /// Remove obr workflow instructions from AGENTS.md
     #[arg(long, conflicts_with_all = ["add", "update", "check"])]
     pub remove: bool,
 
-    /// Update beads workflow instructions to latest version
+    /// Update obr workflow instructions to latest version
     #[arg(long, conflicts_with_all = ["add", "remove", "check"])]
     pub update: bool,
 
@@ -3651,7 +3628,7 @@ mod tests {
 
     #[test]
     fn test_list_limit_is_none_when_omitted() {
-        let cli = Cli::parse_from(["br", "list"]);
+        let cli = Cli::parse_from(["obr", "list"]);
         assert!(
             matches!(&cli.command, Commands::List(_)),
             "expected list command"
@@ -3664,7 +3641,7 @@ mod tests {
 
     #[test]
     fn test_list_limit_zero_parses_as_unlimited() {
-        let cli = Cli::parse_from(["br", "list", "--limit", "0"]);
+        let cli = Cli::parse_from(["obr", "list", "--limit", "0"]);
         assert!(
             matches!(&cli.command, Commands::List(_)),
             "expected list command"
@@ -3677,7 +3654,7 @@ mod tests {
 
     #[test]
     fn test_ready_assignee_flag_accepts_missing_value() {
-        let cli = Cli::parse_from(["br", "ready", "--assignee"]);
+        let cli = Cli::parse_from(["obr", "ready", "--assignee"]);
         assert!(
             matches!(&cli.command, Commands::Ready(_)),
             "expected ready command"
@@ -3690,7 +3667,7 @@ mod tests {
 
     #[test]
     fn test_ready_assignee_conflicts_with_unassigned() {
-        let err = Cli::try_parse_from(["br", "ready", "--assignee", "alice", "--unassigned"])
+        let err = Cli::try_parse_from(["obr", "ready", "--assignee", "alice", "--unassigned"])
             .expect_err("ready filters should conflict");
         assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
@@ -3698,7 +3675,7 @@ mod tests {
     #[test]
     fn test_doctor_fix_alias_parses_as_repair() {
         let cli = Cli::parse_from([
-            "br",
+            "obr",
             "doctor",
             "--fix",
             "--only",
@@ -3714,14 +3691,14 @@ mod tests {
 
     #[test]
     fn test_doctor_fix_alias_conflicts_with_repair_indexes() {
-        let err = Cli::try_parse_from(["br", "doctor", "--fix", "--repair-indexes"])
+        let err = Cli::try_parse_from(["obr", "doctor", "--fix", "--repair-indexes"])
             .expect_err("--fix must share --repair's repair-index conflict");
         assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
     #[test]
     fn test_doctor_migrate_schema_lifecycle_parses() {
-        let plan = Cli::parse_from(["br", "doctor", "migrate-schema", "plan", "--json"]);
+        let plan = Cli::parse_from(["obr", "doctor", "migrate-schema", "plan", "--json"]);
         let Commands::Doctor(plan_args) = plan.command else {
             panic!("expected doctor command");
         };
@@ -3735,7 +3712,7 @@ mod tests {
         ));
 
         let apply = Cli::parse_from([
-            "br",
+            "obr",
             "doctor",
             "migrate-schema",
             "apply",
@@ -3755,7 +3732,7 @@ mod tests {
         assert!(!apply.json);
 
         let undo = Cli::parse_from([
-            "br",
+            "obr",
             "doctor",
             "migrate-schema",
             "undo",
@@ -3780,7 +3757,7 @@ mod tests {
     #[test]
     fn test_create_positional_title_conflicts_with_title_flag() {
         let err =
-            Cli::try_parse_from(["br", "create", "positional title", "--title", "flag title"])
+            Cli::try_parse_from(["obr", "create", "positional title", "--title", "flag title"])
                 .expect_err("create should reject ambiguous title sources");
         assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
@@ -3800,7 +3777,7 @@ mod tests {
 
     #[test]
     fn test_agents_add_conflicts_with_check() {
-        let err = Cli::try_parse_from(["br", "agents", "--add", "--check"])
+        let err = Cli::try_parse_from(["obr", "agents", "--add", "--check"])
             .expect_err("agents actions should conflict");
         assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
@@ -3863,12 +3840,12 @@ mod tests {
         "`--cascade` | Delete dependents recursively",
         "`--force` | Bypass dependent checks, orphaning dependents",
         "`--hard` | Prune tombstones from JSONL immediately",
-        "br config <COMMAND>",
+        "obr config <COMMAND>",
         "`set <KEY=VALUE>` or `set <KEY> <VALUE>`",
         "`delete <KEY>` | Delete a config value; `unset` is an alias",
         "`save <NAME> [FILTERS...]`",
         "no free-form query string argument",
-        "`--allow-external-jsonl` | Allow JSONL path outside `.beads/`",
+        "`--allow-external-jsonl` | Allow JSONL path outside `.obr/`",
         "`--rename-prefix` | During import, rewrite mismatched issue-ID prefixes",
         "`--rebuild` | During import, rebuild SQLite from JSONL",
         "`--notes-contains <TEXT>` | Notes contains substring",
@@ -3876,8 +3853,8 @@ mod tests {
         "`--days <N>` | Issues not updated in N days (default: 30)",
         "`--reservations <PATH>` | Offline Agent Mail reservation snapshot",
         "`--agents <PATH>` | Offline Agent Mail agent snapshot",
-        "br coordination status --reservations reservations.json --agents agents.jsonl --json",
-        "beads://coordination/status",
+        "obr coordination status --reservations reservations.json --agents agents.jsonl --json",
+        "obr://coordination/status",
         "`issue-with-counts`, `issue-details`",
     ];
 

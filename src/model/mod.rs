@@ -1,4 +1,4 @@
-//! Core data types for `beads_rust`.
+//! Core data types for `obr`.
 //!
 //! This module defines the fundamental types used throughout the application:
 //! - `Issue` - The core work item
@@ -31,7 +31,7 @@ where
 /// Deserialize an optional metadata string, coercing a degenerate empty (or
 /// whitespace-only) string to `None`.
 ///
-/// Legacy JSONL written by older `br`/`bd` versions serialized absent
+/// Legacy JSONL written by older `obr`/`bd` versions serialized absent
 /// dependency metadata as `"metadata":""` rather than omitting the field or
 /// writing `"{}"`. The empty string is not valid JSON, so downstream consumers
 /// that parse `metadata` as JSON (e.g. the JSONL → SQLite rebuild/import path)
@@ -458,7 +458,11 @@ impl JsonSchema for EventType {
 /// The primary issue entity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct Issue {
-    /// Unique ID (e.g., "bd-abc123").
+    /// Unique issue ID: the project's issue prefix, a hyphen, and a base36
+    /// hash — for example "obr-abc123" under the default `obr` prefix. The
+    /// prefix is per-workspace configuration (`issue_prefix`), so do not
+    /// assume any particular one; read it from `obr://project/info` or
+    /// `obr info --json`.
     pub id: String,
 
     /// Content hash for deduplication and sync.
@@ -547,7 +551,7 @@ pub struct Issue {
     pub source_system: Option<String>,
 
     /// Source repository for multi-repo support — basename of the
-    /// canonicalized parent of `.beads/`. Stable across clones of the
+    /// canonicalized parent of the workspace directory. Stable across clones of the
     /// same repo on different machines (different absolute paths
     /// produce the same basename). See [`canonical_source_repo`] in
     /// `cli::commands::create`.
@@ -557,18 +561,18 @@ pub struct Issue {
     /// Absolute canonical path of the source repository. Distinct from
     /// `source_repo`: this field uniquely identifies the workspace on
     /// the machine that produced the issue, which is what multi-repo
-    /// fleet automation needs to route beads back to the right
-    /// directory (see beads_rust#289). Two clones of the same repo
+    /// fleet automation needs to route obr back to the right directory.
+    /// Two clones of the same repo
     /// under `~/Developer/foo` vs `~/Developer/scratch/foo` collide on
     /// `source_repo` but disagree here. Optional — older databases and
     /// hand-edited JSONL records without this field are valid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_repo_path: Option<String>,
 
-    /// Canonical-JSON governing instructions inherited by descendant
-    /// beads (beads_rust#297). When set on an ancestor and the project
-    /// has `inherited_context.enabled = true` in `.beads/config.yaml`,
-    /// `br update --status in_progress` / `--claim` and `br show` emit
+    /// Canonical-JSON governing instructions inherited by descendant issues.
+    /// When set on an ancestor and the project
+    /// has `inherited_context.enabled = true` in `.obr/config.yaml`,
+    /// `obr update --status in_progress` / `--claim` and `obr show` emit
     /// the ancestor's `agent_context` alongside the child's normal
     /// output so the working agent sees the constraints regardless of
     /// context compaction or cold-start lookups.
@@ -579,7 +583,7 @@ pub struct Issue {
     /// `None` means "no inherited context"; emission for descendants
     /// silently skips ancestors with `None` (no error, no noise).
     ///
-    /// Not displayed in `br list` / `br search` — this is per-bead
+    /// Not displayed in `obr list` / `obr search` — this is per-issue
     /// governance metadata, not browsable content.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_context: Option<String>,
@@ -678,7 +682,7 @@ impl Default for Issue {
 impl Issue {
     /// Compute the deterministic content hash for this issue.
     ///
-    /// Uses br's canonical field order with length-prefixed field encoding for
+    /// Uses obr's canonical field order with length-prefixed field encoding for
     /// unambiguous deduplication.
     /// Excludes IDs, timestamps, relations, and tombstone metadata.
     ///

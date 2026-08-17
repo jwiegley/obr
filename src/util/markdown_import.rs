@@ -1,4 +1,4 @@
-//! Markdown bulk import parser for `br create --file`.
+//! Markdown bulk import parser for `obr create --file`.
 //!
 //! Parses a markdown file with a specific grammar to create multiple issues.
 //!
@@ -64,7 +64,7 @@ pub struct ParsedIssue {
     /// Dependencies list (format: "type:id" or "id").
     pub dependencies: Vec<String>,
     /// Agent-context governance text (opaque, same semantics as
-    /// `br update --agent-context`). beads_rust#304.
+    /// `obr update --agent-context`). beads_rust#304.
     pub agent_context: Option<String>,
 }
 
@@ -322,7 +322,7 @@ fn apply_section_to_issue(issue: &mut ParsedIssue, section: Section, lines: &[St
             issue.dependencies = split_dependency_content(&content);
         }
         Section::AgentContext => {
-            // Opaque text, same semantics as `br update --agent-context`.
+            // Opaque text, same semantics as `obr update --agent-context`.
             issue.agent_context = Some(content);
         }
         Section::Unknown => {

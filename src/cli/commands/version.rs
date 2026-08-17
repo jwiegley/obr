@@ -1,8 +1,7 @@
 //! Version command implementation.
 
-use super::github_latest_release_api_url;
 use crate::cli::VersionArgs;
-use crate::error::{BeadsError, Result};
+use crate::error::Result;
 use crate::output::{OutputContext, OutputMode};
 use rich_rust::prelude::*;
 use serde::Serialize;
@@ -28,7 +27,7 @@ struct VersionOutput<'a> {
 ///
 /// # Errors
 ///
-/// Returns an error if JSON serialization fails or update check fails.
+/// Returns an error if JSON serialization fails.
 pub fn execute(args: &VersionArgs, ctx: &OutputContext) -> Result<()> {
     let version = env!("CARGO_PKG_VERSION");
 
@@ -37,12 +36,6 @@ pub fn execute(args: &VersionArgs, ctx: &OutputContext) -> Result<()> {
         if !ctx.is_quiet() {
             println!("{version}");
         }
-        return Ok(());
-    }
-
-    // Handle --check flag: check if update is available
-    if args.check {
-        execute_update_check(version, ctx);
         return Ok(());
     }
 
@@ -59,9 +52,6 @@ pub fn execute(args: &VersionArgs, ctx: &OutputContext) -> Result<()> {
 
     // Collect enabled features
     let mut features = Vec::new();
-    if cfg!(feature = "self_update") {
-        features.push("self_update");
-    }
     if cfg!(feature = "mcp") {
         features.push("mcp");
     }
@@ -114,7 +104,7 @@ pub fn execute(args: &VersionArgs, ctx: &OutputContext) -> Result<()> {
     }
 
     // Plain text output
-    let mut line = format!("br version {version} ({build})");
+    let mut line = format!("obr version {version} ({build})");
     match (branch, commit) {
         (Some(branch), Some(commit)) => {
             let short = &commit[..commit.len().min(7)];
@@ -153,7 +143,7 @@ fn render_version_rich(
     let mut content = Text::new("");
 
     // Version header with styling
-    content.append_styled(&format!("br {version}"), theme.emphasis.clone());
+    content.append_styled(&format!("obr {version}"), theme.emphasis.clone());
     content.append_styled(&format!(" ({build})"), theme.dimmed.clone());
     content.append("\n\n");
 
@@ -203,117 +193,10 @@ fn render_version_rich(
 
     // Wrap in panel
     let panel = Panel::from_rich_text(&content, width)
-        .title(Text::styled("br version", theme.panel_title.clone()))
+        .title(Text::styled("obr version", theme.panel_title.clone()))
         .box_style(theme.box_style);
 
     console.print_renderable(&panel);
-}
-
-/// Check for updates and exit with appropriate code.
-///
-/// Exit codes:
-/// - 0: Up-to-date
-/// - 1: Update available
-/// - 2: Error checking for updates
-fn execute_update_check(current_version: &str, ctx: &OutputContext) {
-    // Try to fetch latest version from GitHub releases
-    let latest = match fetch_latest_version() {
-        Ok(v) => v,
-        Err(e) => {
-            if ctx.is_toon() {
-                ctx.toon(&serde_json::json!({
-                    "current": current_version,
-                    "latest": null,
-                    "update_available": null,
-                    "error": e.to_string()
-                }));
-            } else if ctx.is_json() {
-                ctx.json(&serde_json::json!({
-                    "current": current_version,
-                    "latest": null,
-                    "update_available": null,
-                    "error": e.to_string()
-                }));
-            } else if !ctx.is_quiet() {
-                eprintln!("Error checking for updates: {e}");
-            }
-            crate::shutdown::exit_process(2);
-        }
-    };
-
-    let current = semver::Version::parse(current_version).ok();
-    let latest_ver = semver::Version::parse(&latest).ok();
-
-    let update_available = match (&current, &latest_ver) {
-        (Some(c), Some(l)) => l > c,
-        _ => false,
-    };
-
-    if ctx.is_toon() {
-        ctx.toon(&serde_json::json!({
-            "current": current_version,
-            "latest": latest,
-            "update_available": update_available
-        }));
-    } else if ctx.is_json() {
-        ctx.json(&serde_json::json!({
-            "current": current_version,
-            "latest": latest,
-            "update_available": update_available
-        }));
-    } else if ctx.is_quiet() {
-    } else if update_available {
-        println!("Update available: {current_version} → {latest}");
-        println!("Run `br upgrade` to update.");
-    } else {
-        println!("br {current_version} is up to date (latest: {latest})");
-    }
-
-    if update_available {
-        crate::shutdown::exit_process(1);
-    }
-}
-
-/// Fetch the latest release version from GitHub.
-fn fetch_latest_version() -> Result<String> {
-    use std::io::Read;
-
-    // Use GitHub API to get latest release
-    let url = github_latest_release_api_url();
-
-    // Build request with User-Agent (required by GitHub)
-    let mut handle = std::process::Command::new("curl")
-        .args(["-sS", "-H", "User-Agent: br-cli", url.as_str()])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| BeadsError::external_command("curl", format!("Failed to spawn curl: {e}")))?;
-
-    let mut output = String::new();
-    if let Some(ref mut stdout) = handle.stdout {
-        stdout.read_to_string(&mut output)?;
-    }
-
-    let status = handle.wait()?;
-    if !status.success() {
-        return Err(BeadsError::external_command(
-            "curl",
-            format!("curl failed with status {status}"),
-        ));
-    }
-
-    // Parse JSON response
-    let json: serde_json::Value = serde_json::from_str(&output)?;
-
-    // Extract tag_name (e.g., "v0.1.7")
-    let tag = json
-        .get("tag_name")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| BeadsError::validation("GitHub response", "missing tag_name"))?;
-
-    // Strip leading "v" if present
-    let version = tag.strip_prefix('v').unwrap_or(tag);
-    Ok(version.to_string())
 }
 
 #[cfg(test)]
@@ -330,7 +213,7 @@ mod tests {
             branch: Some("main"),
             rust_version: Some("1.85.0"),
             target: Some("x86_64-unknown-linux-gnu"),
-            features: vec!["self_update"],
+            features: vec!["mcp"],
         };
 
         let json = serde_json::to_value(&output).unwrap();
@@ -340,7 +223,7 @@ mod tests {
         assert_eq!(json["branch"], "main");
         assert_eq!(json["rust_version"], "1.85.0");
         assert_eq!(json["target"], "x86_64-unknown-linux-gnu");
-        assert_eq!(json["features"], serde_json::json!(["self_update"]));
+        assert_eq!(json["features"], serde_json::json!(["mcp"]));
     }
 
     #[test]
@@ -386,18 +269,18 @@ mod tests {
 
     #[test]
     fn test_feature_flags_detection() {
-        // Test that feature flags can be detected at compile time
+        // Test that feature flags can be detected at compile time. `mcp` is the
+        // only optional feature left; the default build enables nothing, so the
+        // list is empty unless the crate was compiled with `--features mcp`.
         let mut features = Vec::new();
-        if cfg!(feature = "self_update") {
-            features.push("self_update");
+        if cfg!(feature = "mcp") {
+            features.push("mcp");
         }
 
-        // In default build, self_update should be enabled
-        #[cfg(feature = "self_update")]
-        assert!(features.contains(&"self_update"));
+        #[cfg(feature = "mcp")]
+        assert!(features.contains(&"mcp"));
 
-        // Without the feature, the list should be empty
-        #[cfg(not(feature = "self_update"))]
+        #[cfg(not(feature = "mcp"))]
         assert!(features.is_empty());
     }
 
@@ -413,18 +296,6 @@ mod tests {
         assert!(
             version.split('.').count() >= 2,
             "Version should have at least major.minor"
-        );
-    }
-
-    #[test]
-    fn latest_release_api_url_uses_shared_repo_constants() {
-        assert_eq!(
-            github_latest_release_api_url(),
-            format!(
-                "https://api.github.com/repos/{}/{}/releases/latest",
-                crate::cli::commands::GITHUB_REPO_OWNER,
-                crate::cli::commands::GITHUB_REPO_NAME
-            )
         );
     }
 }

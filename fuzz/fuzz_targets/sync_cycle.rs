@@ -2,13 +2,13 @@
 
 mod common;
 
-use beads_rust::model::{DependencyType, Issue, Priority, Status};
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{
+use obr::model::{DependencyType, Issue, Priority, Status};
+use obr::storage::SqliteStorage;
+use obr::sync::{
     ExportConfig, ImportConfig, OrphanMode, compute_jsonl_hash, compute_staleness,
     ensure_no_conflict_markers, export_to_jsonl, import_from_jsonl, preflight_import,
 };
-use beads_rust::validation::IssueValidator;
+use obr::validation::IssueValidator;
 use chrono::Utc;
 use common::{BuiltInIssueCursorExt, ByteCursor};
 use libfuzzer_sys::fuzz_target;
@@ -39,15 +39,15 @@ fuzz_target!(|data: &[u8]| {
 fn run_sync_cycle_case(data: &[u8]) -> Result<(), Box<dyn Error>> {
     let mut cursor = ByteCursor::new(data);
     let workspace = FuzzWorkspace::new(&mut cursor)?;
-    let db_path = workspace.beads_dir.join("beads.db");
-    let jsonl_path = choose_jsonl_path(&workspace.beads_dir, &mut cursor);
+    let db_path = workspace.obr_dir.join("obr.db");
+    let jsonl_path = choose_jsonl_path(&workspace.obr_dir, &mut cursor);
     if let Some(parent) = jsonl_path.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    let wrote_db_sidecars = write_sidecar_files(&workspace.beads_dir, &mut cursor)?;
+    let wrote_db_sidecars = write_sidecar_files(&workspace.obr_dir, &mut cursor)?;
     let corrupt_db_family = wrote_db_sidecars
-        || maybe_write_corrupt_db_family(&workspace.beads_dir, &db_path, &mut cursor)?;
+        || maybe_write_corrupt_db_family(&workspace.obr_dir, &db_path, &mut cursor)?;
 
     {
         let mut storage = match SqliteStorage::open(&db_path) {
@@ -74,11 +74,11 @@ fn run_sync_cycle_case(data: &[u8]) -> Result<(), Box<dyn Error>> {
 
         exercise_rejected_paths(&storage, &workspace)?;
 
-        let export_config = export_config(&workspace.beads_dir, &jsonl_path, &mut cursor);
+        let export_config = export_config(&workspace.obr_dir, &jsonl_path, &mut cursor);
         match export_to_jsonl(&storage, &jsonl_path, &export_config) {
             Ok(_) => {
                 assert_jsonl_parseable(&jsonl_path)?;
-                maybe_save_base_snapshot(&workspace.beads_dir, &jsonl_path, &mut cursor)?;
+                maybe_save_base_snapshot(&workspace.obr_dir, &jsonl_path, &mut cursor)?;
             }
             Err(err) => assert_nonempty_error(err)?,
         }
@@ -89,7 +89,7 @@ fn run_sync_cycle_case(data: &[u8]) -> Result<(), Box<dyn Error>> {
             allow_error(ensure_no_conflict_markers(&jsonl_path))?;
             allow_error(preflight_import(
                 &jsonl_path,
-                &import_config(&workspace.beads_dir, &mut cursor),
+                &import_config(&workspace.obr_dir, &mut cursor),
                 Some("bd"),
             ))?;
             allow_error(compute_staleness(&storage, &jsonl_path))?;
@@ -98,7 +98,7 @@ fn run_sync_cycle_case(data: &[u8]) -> Result<(), Box<dyn Error>> {
             let import_result = import_from_jsonl(
                 &mut storage,
                 &jsonl_path,
-                &import_config(&workspace.beads_dir, &mut cursor),
+                &import_config(&workspace.obr_dir, &mut cursor),
                 Some("bd"),
             );
             match import_result {
@@ -131,7 +131,7 @@ fn run_sync_cycle_case(data: &[u8]) -> Result<(), Box<dyn Error>> {
             &ExportConfig {
                 force: true,
                 is_default_path: true,
-                beads_dir: Some(workspace.beads_dir.clone()),
+                obr_dir: Some(workspace.obr_dir.clone()),
                 show_progress: false,
                 ..ExportConfig::default()
             },
@@ -163,11 +163,11 @@ fn run_sync_cycle_case(data: &[u8]) -> Result<(), Box<dyn Error>> {
     }
 
     if jsonl_path.exists() && cursor.next_bool() {
-        let mut rebuilt = SqliteStorage::open(&workspace.beads_dir.join("rebuild-cycle.db"))?;
+        let mut rebuilt = SqliteStorage::open(&workspace.obr_dir.join("rebuild-cycle.db"))?;
         match import_from_jsonl(
             &mut rebuilt,
             &jsonl_path,
-            &import_config(&workspace.beads_dir, &mut cursor),
+            &import_config(&workspace.obr_dir, &mut cursor),
             Some("bd"),
         ) {
             Ok(_) => {
@@ -186,7 +186,7 @@ fn run_sync_cycle_case(data: &[u8]) -> Result<(), Box<dyn Error>> {
 
 struct FuzzWorkspace {
     _temp: TempDir,
-    beads_dir: PathBuf,
+    obr_dir: PathBuf,
     outside_dir: PathBuf,
     outside_sentinel: PathBuf,
     outside_contents: String,
@@ -204,12 +204,12 @@ impl FuzzWorkspace {
         let outside_contents = "outside sentinel\n".to_string();
         fs::write(&outside_sentinel, &outside_contents)?;
 
-        let beads_dir = workspace_dir.join(".beads");
-        create_beads_dir(temp.path(), &beads_dir, cursor.next_bool())?;
+        let obr_dir = workspace_dir.join(".obr");
+        create_obr_dir(temp.path(), &obr_dir, cursor.next_bool())?;
 
         Ok(Self {
             _temp: temp,
-            beads_dir,
+            obr_dir,
             outside_dir,
             outside_sentinel,
             outside_contents,
@@ -226,7 +226,7 @@ impl FuzzWorkspace {
             let path = entry?.path();
             if path != self.outside_sentinel {
                 return Err(
-                    format!("unexpected write outside beads dir: {}", path.display()).into(),
+                    format!("unexpected write outside obr dir: {}", path.display()).into(),
                 );
             }
         }
@@ -236,42 +236,42 @@ impl FuzzWorkspace {
 }
 
 #[cfg(unix)]
-fn create_beads_dir(
+fn create_obr_dir(
     temp_root: &Path,
-    beads_dir: &Path,
+    obr_dir: &Path,
     symlinked: bool,
 ) -> Result<(), Box<dyn Error>> {
     if symlinked {
         let target = temp_root.join("linked-beads");
         fs::create_dir(&target)?;
-        std::os::unix::fs::symlink(&target, beads_dir)?;
+        std::os::unix::fs::symlink(&target, obr_dir)?;
     } else {
-        fs::create_dir(beads_dir)?;
+        fs::create_dir(obr_dir)?;
     }
     Ok(())
 }
 
 #[cfg(not(unix))]
-fn create_beads_dir(
+fn create_obr_dir(
     _temp_root: &Path,
-    beads_dir: &Path,
+    obr_dir: &Path,
     _symlinked: bool,
 ) -> Result<(), Box<dyn Error>> {
-    fs::create_dir(beads_dir)?;
+    fs::create_dir(obr_dir)?;
     Ok(())
 }
 
-fn choose_jsonl_path(beads_dir: &Path, cursor: &mut ByteCursor<'_>) -> PathBuf {
+fn choose_jsonl_path(obr_dir: &Path, cursor: &mut ByteCursor<'_>) -> PathBuf {
     match cursor.next_byte() % 4 {
-        0 => beads_dir.join("issues.jsonl"),
-        1 => beads_dir.join("custom-sync.jsonl"),
-        2 => beads_dir.join("nested").join("issues.jsonl"),
-        _ => beads_dir.join("nested").join("deeper").join("issues.jsonl"),
+        0 => obr_dir.join("issues.jsonl"),
+        1 => obr_dir.join("custom-sync.jsonl"),
+        2 => obr_dir.join("nested").join("issues.jsonl"),
+        _ => obr_dir.join("nested").join("deeper").join("issues.jsonl"),
     }
 }
 
 fn write_sidecar_files(
-    beads_dir: &Path,
+    obr_dir: &Path,
     cursor: &mut ByteCursor<'_>,
 ) -> Result<bool, Box<dyn Error>> {
     let sidecars = [
@@ -285,7 +285,7 @@ fn write_sidecar_files(
 
     for sidecar in sidecars {
         if cursor.next_bool() {
-            fs::write(beads_dir.join(sidecar), cursor.bytes(96))?;
+            fs::write(obr_dir.join(sidecar), cursor.bytes(96))?;
             if matches!(sidecar, "beads.db-wal" | "beads.db-shm") {
                 wrote_db_sidecars = true;
             }
@@ -293,7 +293,7 @@ fn write_sidecar_files(
     }
 
     if cursor.next_bool() {
-        let recovery_dir = beads_dir.join(".br_recovery");
+        let recovery_dir = obr_dir.join(".br_recovery");
         fs::create_dir_all(&recovery_dir)?;
         fs::write(recovery_dir.join("candidate.jsonl"), cursor.bytes(96))?;
     }
@@ -302,7 +302,7 @@ fn write_sidecar_files(
 }
 
 fn maybe_write_corrupt_db_family(
-    beads_dir: &Path,
+    obr_dir: &Path,
     db_path: &Path,
     cursor: &mut ByteCursor<'_>,
 ) -> Result<bool, Box<dyn Error>> {
@@ -318,18 +318,18 @@ fn maybe_write_corrupt_db_family(
         }
         3 => {
             fs::write(db_path, b"SQLite format 3\0truncated")?;
-            fs::write(beads_dir.join("beads.db-wal"), cursor.bytes(128))?;
+            fs::write(obr_dir.join("beads.db-wal"), cursor.bytes(128))?;
             Ok(true)
         }
         4 => {
             fs::write(db_path, [])?;
-            fs::write(beads_dir.join("beads.db-shm"), cursor.bytes(128))?;
+            fs::write(obr_dir.join("beads.db-shm"), cursor.bytes(128))?;
             Ok(true)
         }
         _ => {
             fs::write(db_path, b"SQLite format 3\0")?;
-            fs::write(beads_dir.join("beads.db-wal"), cursor.bytes(256))?;
-            fs::write(beads_dir.join("beads.db-shm"), cursor.bytes(256))?;
+            fs::write(obr_dir.join("beads.db-wal"), cursor.bytes(256))?;
+            fs::write(obr_dir.join("beads.db-shm"), cursor.bytes(256))?;
             Ok(true)
         }
     }
@@ -411,19 +411,19 @@ fn issue_from_cursor(id: String, cursor: &mut ByteCursor<'_>, index: usize) -> I
     }
 }
 
-fn export_config(beads_dir: &Path, jsonl_path: &Path, cursor: &mut ByteCursor<'_>) -> ExportConfig {
+fn export_config(obr_dir: &Path, jsonl_path: &Path, cursor: &mut ByteCursor<'_>) -> ExportConfig {
     ExportConfig {
         force: cursor.next_bool(),
         is_default_path: jsonl_path.file_name().and_then(|name| name.to_str())
             == Some("issues.jsonl"),
-        beads_dir: Some(beads_dir.to_path_buf()),
+        obr_dir: Some(obr_dir.to_path_buf()),
         allow_external_jsonl: false,
         show_progress: false,
         ..ExportConfig::default()
     }
 }
 
-fn import_config(beads_dir: &Path, cursor: &mut ByteCursor<'_>) -> ImportConfig {
+fn import_config(obr_dir: &Path, cursor: &mut ByteCursor<'_>) -> ImportConfig {
     ImportConfig {
         skip_prefix_validation: cursor.next_bool(),
         rename_on_import: false,
@@ -435,7 +435,7 @@ fn import_config(beads_dir: &Path, cursor: &mut ByteCursor<'_>) -> ImportConfig 
             _ => OrphanMode::Resurrect,
         },
         force_upsert: cursor.next_bool(),
-        beads_dir: Some(beads_dir.to_path_buf()),
+        obr_dir: Some(obr_dir.to_path_buf()),
         allow_external_jsonl: false,
         show_progress: false,
     }
@@ -499,13 +499,13 @@ fn append_duplicate_line(path: &Path) -> Result<(), Box<dyn Error>> {
 }
 
 fn maybe_save_base_snapshot(
-    beads_dir: &Path,
+    obr_dir: &Path,
     jsonl_path: &Path,
     cursor: &mut ByteCursor<'_>,
 ) -> Result<(), Box<dyn Error>> {
     if cursor.next_bool() {
         let content = fs::read(jsonl_path)?;
-        fs::write(beads_dir.join("beads.base.jsonl"), content)?;
+        fs::write(obr_dir.join("beads.base.jsonl"), content)?;
     }
     Ok(())
 }
@@ -514,10 +514,10 @@ fn exercise_rejected_paths(
     storage: &SqliteStorage,
     workspace: &FuzzWorkspace,
 ) -> Result<(), Box<dyn Error>> {
-    let rejected_git_path = workspace.beads_dir.join(".git").join("issues.jsonl");
+    let rejected_git_path = workspace.obr_dir.join(".git").join("issues.jsonl");
     let config = ExportConfig {
         force: true,
-        beads_dir: Some(workspace.beads_dir.clone()),
+        obr_dir: Some(workspace.obr_dir.clone()),
         show_progress: false,
         ..ExportConfig::default()
     };
@@ -569,7 +569,7 @@ fn exercise_symlink_escape_path(
     config: &ExportConfig,
 ) -> Result<(), Box<dyn Error>> {
     let outside_target = workspace.outside_dir.join("escape.jsonl");
-    let link_path = workspace.beads_dir.join("escape.jsonl");
+    let link_path = workspace.obr_dir.join("escape.jsonl");
     if !link_path.exists() {
         std::os::unix::fs::symlink(&outside_target, &link_path)?;
     }

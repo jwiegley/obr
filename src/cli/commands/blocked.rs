@@ -1,11 +1,11 @@
-//! `br blocked` command implementation.
+//! `obr blocked` command implementation.
 //!
 //! Lists blocked issues from the `blocked_issues_cache`.
 
 use super::auto_import_external_projects_if_stale;
 use crate::cli::{BlockedArgs, OutputFormat, resolve_output_format_basic_with_outer_mode};
 use crate::config::{
-    CliOverrides, discover_beads_dir_with_cli, external_project_db_paths, open_storage_with_cli,
+    CliOverrides, discover_obr_dir_with_cli, external_project_db_paths, open_storage_with_cli,
     should_use_color,
 };
 use crate::error::Result;
@@ -21,7 +21,7 @@ use std::str::FromStr;
 /// # Errors
 ///
 /// Returns an error if:
-/// - The beads directory cannot be found
+/// - The obr directory cannot be found
 /// - The database cannot be opened
 /// - Querying blocked issues fails
 #[allow(clippy::too_many_lines)]
@@ -33,8 +33,8 @@ pub fn execute(
 ) -> Result<()> {
     tracing::info!("Fetching blocked issues from cache");
 
-    let beads_dir = discover_beads_dir_with_cli(overrides)?;
-    execute_inner(args, overrides, outer_ctx, &beads_dir, None, None)
+    let obr_dir = discover_obr_dir_with_cli(overrides)?;
+    execute_inner(args, overrides, outer_ctx, &obr_dir, None, None)
 }
 
 /// Execute blocked using storage that was already opened by the caller.
@@ -46,10 +46,10 @@ pub fn execute_with_storage(
     args: &BlockedArgs,
     overrides: &CliOverrides,
     outer_ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     storage: &SqliteStorage,
 ) -> Result<()> {
-    execute_inner(args, overrides, outer_ctx, beads_dir, Some(storage), None)
+    execute_inner(args, overrides, outer_ctx, obr_dir, Some(storage), None)
 }
 
 /// Execute blocked using the caller's preopened storage context.
@@ -61,17 +61,10 @@ pub fn execute_with_storage_ctx(
     args: &BlockedArgs,
     overrides: &CliOverrides,
     outer_ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     storage_ctx: &crate::config::OpenStorageResult,
 ) -> Result<()> {
-    execute_inner(
-        args,
-        overrides,
-        outer_ctx,
-        beads_dir,
-        None,
-        Some(storage_ctx),
-    )
+    execute_inner(args, overrides, outer_ctx, obr_dir, None, Some(storage_ctx))
 }
 
 #[allow(clippy::too_many_lines)]
@@ -79,14 +72,14 @@ fn execute_inner(
     args: &BlockedArgs,
     overrides: &CliOverrides,
     outer_ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     preloaded_storage: Option<&SqliteStorage>,
     preloaded_storage_ctx: Option<&crate::config::OpenStorageResult>,
 ) -> Result<()> {
     let owned_storage_ctx = if preloaded_storage.is_some() || preloaded_storage_ctx.is_some() {
         None
     } else {
-        Some(open_storage_with_cli(beads_dir, overrides)?)
+        Some(open_storage_with_cli(obr_dir, overrides)?)
     };
     let storage = preloaded_storage
         .or_else(|| preloaded_storage_ctx.map(|ctx| &ctx.storage))
@@ -115,7 +108,7 @@ fn execute_inner(
             if let Some(storage_ctx) = preloaded_storage_ctx.or(owned_storage_ctx.as_ref()) {
                 storage_ctx.load_config(overrides)?
             } else {
-                crate::config::load_config(beads_dir, Some(storage), overrides)?
+                crate::config::load_config(obr_dir, Some(storage), overrides)?
             },
         )
     } else {
@@ -148,8 +141,8 @@ fn execute_inner(
         let config_layer = config_layer
             .as_ref()
             .expect("external dependencies require config");
-        auto_import_external_projects_if_stale(config_layer, beads_dir, overrides);
-        let external_db_paths = external_project_db_paths(config_layer, beads_dir);
+        auto_import_external_projects_if_stale(config_layer, obr_dir, overrides);
+        let external_db_paths = external_project_db_paths(config_layer, obr_dir);
         let external_statuses =
             storage.resolve_external_dependency_statuses(&external_db_paths, true)?;
         let mut external_blockers = storage.external_blockers(&external_statuses)?;

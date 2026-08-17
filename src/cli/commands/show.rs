@@ -34,8 +34,8 @@ pub fn execute(
     cli: &config::CliOverrides,
     outer_ctx: &OutputContext,
 ) -> Result<()> {
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    execute_routed(args, cli, outer_ctx, &beads_dir, None, None)
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    execute_routed(args, cli, outer_ctx, &obr_dir, None, None)
 }
 
 /// Execute show using storage that was already opened by the caller.
@@ -47,10 +47,10 @@ pub fn execute_with_storage(
     args: &ShowArgs,
     cli: &config::CliOverrides,
     outer_ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     storage: &SqliteStorage,
 ) -> Result<()> {
-    execute_routed(args, cli, outer_ctx, beads_dir, Some(storage), None)
+    execute_routed(args, cli, outer_ctx, obr_dir, Some(storage), None)
 }
 
 /// Execute show using the caller's preopened storage context.
@@ -62,10 +62,10 @@ pub fn execute_with_storage_ctx(
     args: &ShowArgs,
     cli: &config::CliOverrides,
     outer_ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     storage_ctx: &config::OpenStorageResult,
 ) -> Result<()> {
-    execute_routed(args, cli, outer_ctx, beads_dir, None, Some(storage_ctx))
+    execute_routed(args, cli, outer_ctx, obr_dir, None, Some(storage_ctx))
 }
 
 #[allow(clippy::too_many_lines)]
@@ -73,18 +73,18 @@ fn execute_routed(
     args: &ShowArgs,
     cli: &config::CliOverrides,
     outer_ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     preloaded_storage: Option<&SqliteStorage>,
     preloaded_storage_ctx: Option<&config::OpenStorageResult>,
 ) -> Result<()> {
-    let target_ids = requested_target_ids(args, beads_dir)?;
-    let routed_batches = config::routing::group_issue_inputs_by_route(&target_ids, beads_dir)?;
+    let target_ids = requested_target_ids(args, obr_dir)?;
+    let routed_batches = config::routing::group_issue_inputs_by_route(&target_ids, obr_dir)?;
     if !routed_batches.iter().any(|batch| batch.is_external) {
         return execute_inner(
             args,
             cli,
             outer_ctx,
-            beads_dir,
+            obr_dir,
             preloaded_storage,
             preloaded_storage_ctx,
         );
@@ -96,8 +96,8 @@ fn execute_routed(
         false,
     );
     let quiet = cli.quiet.unwrap_or(false);
-    let normalized_local_beads_dir =
-        dunce::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
+    let normalized_local_obr_dir =
+        dunce::canonicalize(obr_dir).unwrap_or_else(|_| obr_dir.to_path_buf());
 
     if matches!(
         output_format,
@@ -108,13 +108,13 @@ fn execute_routed(
             let mut batch_args = args.clone();
             batch_args.ids.clone_from(&batch.issue_inputs);
 
-            let batch_beads_dir = batch.beads_dir;
-            let normalized_batch_beads_dir =
-                dunce::canonicalize(&batch_beads_dir).unwrap_or_else(|_| batch_beads_dir.clone());
-            let use_preloaded = normalized_batch_beads_dir == normalized_local_beads_dir;
+            let batch_obr_dir = batch.obr_dir;
+            let normalized_batch_obr_dir =
+                dunce::canonicalize(&batch_obr_dir).unwrap_or_else(|_| batch_obr_dir.clone());
+            let use_preloaded = normalized_batch_obr_dir == normalized_local_obr_dir;
             let mut batch_cli = cli_for_routed_workspace(cli, !use_preloaded);
             let routed_write_lock = acquire_routed_workspace_write_lock(
-                &batch_beads_dir,
+                &batch_obr_dir,
                 !use_preloaded,
                 batch_cli.lock_timeout,
             )?;
@@ -122,7 +122,7 @@ fn execute_routed(
             let (batch_details, _) = load_issue_details_for_route(
                 &batch_args,
                 &batch_cli,
-                &batch_beads_dir,
+                &batch_obr_dir,
                 if use_preloaded {
                     preloaded_storage
                 } else {
@@ -137,7 +137,7 @@ fn execute_routed(
             let mut batch_details = batch_details;
             attach_inherited_context(
                 &mut batch_details,
-                &batch_beads_dir,
+                &batch_obr_dir,
                 &batch_cli,
                 if use_preloaded {
                     preloaded_storage
@@ -175,12 +175,12 @@ fn execute_routed(
         let mut batch_args = args.clone();
         batch_args.ids.clone_from(&batch.issue_inputs);
 
-        let normalized_batch_beads_dir =
-            dunce::canonicalize(&batch.beads_dir).unwrap_or_else(|_| batch.beads_dir.clone());
-        let use_preloaded = normalized_batch_beads_dir == normalized_local_beads_dir;
+        let normalized_batch_obr_dir =
+            dunce::canonicalize(&batch.obr_dir).unwrap_or_else(|_| batch.obr_dir.clone());
+        let use_preloaded = normalized_batch_obr_dir == normalized_local_obr_dir;
         let mut batch_cli = cli_for_routed_workspace(cli, !use_preloaded);
         let routed_write_lock = acquire_routed_workspace_write_lock(
-            &batch.beads_dir,
+            &batch.obr_dir,
             !use_preloaded,
             batch_cli.lock_timeout,
         )?;
@@ -188,7 +188,7 @@ fn execute_routed(
         let (batch_details, use_color) = load_issue_details_for_route(
             &batch_args,
             &batch_cli,
-            &batch.beads_dir,
+            &batch.obr_dir,
             if use_preloaded {
                 preloaded_storage
             } else {
@@ -233,10 +233,10 @@ fn execute_routed(
     Ok(())
 }
 
-fn requested_target_ids(args: &ShowArgs, beads_dir: &Path) -> Result<Vec<String>> {
+fn requested_target_ids(args: &ShowArgs, obr_dir: &Path) -> Result<Vec<String>> {
     let mut target_ids = args.ids.clone();
     if target_ids.is_empty() {
-        let last_touched = crate::util::get_last_touched_id(beads_dir);
+        let last_touched = crate::util::get_last_touched_id(obr_dir);
         if last_touched.is_empty() {
             return Err(BeadsError::validation(
                 "ids",
@@ -292,17 +292,12 @@ fn execute_inner(
     args: &ShowArgs,
     cli: &config::CliOverrides,
     outer_ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     preloaded_storage: Option<&SqliteStorage>,
     preloaded_storage_ctx: Option<&config::OpenStorageResult>,
 ) -> Result<()> {
-    let (mut details_list, use_color) = load_issue_details_for_route(
-        args,
-        cli,
-        beads_dir,
-        preloaded_storage,
-        preloaded_storage_ctx,
-    )?;
+    let (mut details_list, use_color) =
+        load_issue_details_for_route(args, cli, obr_dir, preloaded_storage, preloaded_storage_ctx)?;
     let output_format = resolve_output_format_basic_with_outer_mode(
         args.format,
         outer_ctx.inherited_output_mode(),
@@ -322,7 +317,7 @@ fn execute_inner(
     ) {
         attach_inherited_context(
             &mut details_list,
-            beads_dir,
+            obr_dir,
             cli,
             preloaded_storage,
             preloaded_storage_ctx,
@@ -340,15 +335,15 @@ fn execute_inner(
             // bead before its own details, when the project has opted
             // in. Prefer the caller's preloaded storage; fall back to
             // opening a transient read connection so the feature works
-            // from both `br show` and `br show --workspace …` paths.
+            // from both `obr show` and `obr show --workspace …` paths.
             // Failure to open is non-fatal — the alternative would be
             // failing the entire show over an optional feature.
-            let inheritance_enabled = crate::inheritance::is_enabled(beads_dir);
+            let inheritance_enabled = crate::inheritance::is_enabled(obr_dir);
             let transient_ctx = if inheritance_enabled
                 && preloaded_storage.is_none()
                 && preloaded_storage_ctx.is_none()
             {
-                config::open_storage_with_cli(beads_dir, cli).ok()
+                config::open_storage_with_cli(obr_dir, cli).ok()
             } else {
                 None
             };
@@ -456,11 +451,11 @@ fn reorder_routed_items_by_requested_inputs<T>(
 fn load_issue_details_for_route(
     args: &ShowArgs,
     cli: &config::CliOverrides,
-    beads_dir: &Path,
+    obr_dir: &Path,
     preloaded_storage: Option<&SqliteStorage>,
     preloaded_storage_ctx: Option<&config::OpenStorageResult>,
 ) -> Result<(Vec<IssueDetails>, bool)> {
-    let target_ids = requested_target_ids(args, beads_dir)?;
+    let target_ids = requested_target_ids(args, obr_dir)?;
 
     if let Some(storage_ctx) = preloaded_storage_ctx {
         let config_layer = storage_ctx.load_config(cli)?;
@@ -470,7 +465,7 @@ fn load_issue_details_for_route(
         let external_db_paths = external_project_db_paths_after_auto_import_if_needed(
             &storage_ctx.storage,
             &config_layer,
-            beads_dir,
+            obr_dir,
             cli,
         )?;
         let details_list = load_issue_details_from_storage(
@@ -483,14 +478,14 @@ fn load_issue_details_for_route(
         return Ok((details_list, use_color));
     }
 
-    let startup = config::load_startup_config_with_paths(beads_dir, cli.db.as_ref())?;
+    let startup = config::load_startup_config_with_paths(obr_dir, cli.db.as_ref())?;
     let mut bootstrap_config = startup.merged_config.clone();
     bootstrap_config.merge_from(&cli.as_layer());
     let no_db = config::no_db_from_layer(&bootstrap_config).unwrap_or(false);
     let mut owned_storage_ctx = if no_db || preloaded_storage.is_some() {
         None
     } else {
-        Some(config::open_storage_with_cli(beads_dir, cli)?)
+        Some(config::open_storage_with_cli(obr_dir, cli)?)
     };
     if let Some(storage_ctx) = owned_storage_ctx.as_mut() {
         auto_import_storage_ctx_if_stale(storage_ctx, cli)?;
@@ -498,13 +493,13 @@ fn load_issue_details_for_route(
     let config_layer = if let Some(storage_ctx) = owned_storage_ctx.as_ref() {
         storage_ctx.load_config(cli)?
     } else {
-        config::load_config(beads_dir, preloaded_storage, cli)?
+        config::load_config(obr_dir, preloaded_storage, cli)?
     };
     let use_color = config::should_use_color(&config_layer);
     let id_config = config::id_config_from_layer(&config_layer);
     let resolver = IdResolver::new(ResolverConfig::with_prefix(id_config.prefix));
     let details_list = if no_db {
-        let external_db_paths = config::external_project_db_paths(&config_layer, beads_dir);
+        let external_db_paths = config::external_project_db_paths(&config_layer, obr_dir);
         load_issue_details_from_jsonl(
             &target_ids,
             &resolver,
@@ -521,7 +516,7 @@ fn load_issue_details_for_route(
         let external_db_paths = external_project_db_paths_after_auto_import_if_needed(
             storage,
             &config_layer,
-            beads_dir,
+            obr_dir,
             cli,
         )?;
         load_issue_details_from_storage(
@@ -734,6 +729,12 @@ fn load_exact_issue_details_from_jsonl(
     jsonl_path: &Path,
     external_db_paths: &HashMap<String, PathBuf>,
 ) -> Result<Option<Vec<IssueDetails>>> {
+    if crate::sync::org_bridge::ExportFormat::for_path(jsonl_path).is_org() {
+        // The exact-scan fast path is a line-oriented JSONL streaming
+        // optimization; Org documents parse as a whole anyway, so fall
+        // through to the materialized loader (whose reader is format-aware).
+        return Ok(None);
+    }
     let Some(direct_target_ids) = direct_jsonl_target_ids(target_ids, resolver) else {
         return Ok(None);
     };
@@ -1186,7 +1187,7 @@ fn print_issue_details(details: &IssueDetails, use_color: bool, wrap: bool) {
 }
 
 /// Width used to soft-wrap free-text bodies in the non-Rich (piped / no-TTY)
-/// `br show --format text` output. Honors `$COLUMNS` when set to a sane value,
+/// `obr show --format text` output. Honors `$COLUMNS` when set to a sane value,
 /// otherwise falls back to a readable 100 columns (#370). The Rich panel path
 /// uses the live terminal width instead.
 fn compact_wrap_width() -> usize {

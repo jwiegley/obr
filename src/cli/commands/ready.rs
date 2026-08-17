@@ -34,8 +34,8 @@ pub fn execute(
     cli: &config::CliOverrides,
     outer_ctx: &OutputContext,
 ) -> Result<()> {
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    execute_inner(args, cli, outer_ctx, &beads_dir, None, None)
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    execute_inner(args, cli, outer_ctx, &obr_dir, None, None)
 }
 
 /// Execute ready using storage that was already opened by the caller.
@@ -47,10 +47,10 @@ pub fn execute_with_storage(
     args: &ReadyArgs,
     cli: &config::CliOverrides,
     outer_ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     storage: &SqliteStorage,
 ) -> Result<()> {
-    execute_inner(args, cli, outer_ctx, beads_dir, Some(storage), None)
+    execute_inner(args, cli, outer_ctx, obr_dir, Some(storage), None)
 }
 
 /// Execute ready using the caller's preopened storage context.
@@ -62,10 +62,10 @@ pub fn execute_with_storage_ctx(
     args: &ReadyArgs,
     cli: &config::CliOverrides,
     outer_ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     storage_ctx: &config::OpenStorageResult,
 ) -> Result<()> {
-    execute_inner(args, cli, outer_ctx, beads_dir, None, Some(storage_ctx))
+    execute_inner(args, cli, outer_ctx, obr_dir, None, Some(storage_ctx))
 }
 
 #[allow(clippy::too_many_lines)]
@@ -73,14 +73,14 @@ fn execute_inner(
     args: &ReadyArgs,
     cli: &config::CliOverrides,
     outer_ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     preloaded_storage: Option<&SqliteStorage>,
     preloaded_storage_ctx: Option<&config::OpenStorageResult>,
 ) -> Result<()> {
     let owned_storage_ctx = if preloaded_storage.is_some() || preloaded_storage_ctx.is_some() {
         None
     } else {
-        Some(config::open_storage_with_cli(beads_dir, cli)?)
+        Some(config::open_storage_with_cli(obr_dir, cli)?)
     };
     let storage = preloaded_storage
         .or_else(|| preloaded_storage_ctx.map(|ctx| &ctx.storage))
@@ -103,7 +103,7 @@ fn execute_inner(
         {
             storage_ctx.load_config(cli)?
         } else {
-            config::load_config(beads_dir, Some(storage), cli)?
+            config::load_config(obr_dir, Some(storage), cli)?
         };
         config_layer = Some(loaded.clone());
         Ok(loaded)
@@ -127,10 +127,10 @@ fn execute_inner(
         .transpose()?;
 
     // Resolve the configured "ready" status group (#354). Defaults to `[open]`
-    // when `.beads/policy.yaml` has no `workflow.status_groups.ready`, which is
+    // when `policy.yaml` has no `workflow.status_groups.ready`, which is
     // a zero-behavior-change for existing repos. Strict-mode validation rejects
     // an out-of-vocabulary group before we ever query.
-    let workflow = crate::close_policy::load_for_beads_dir(beads_dir)?.workflow;
+    let workflow = crate::close_policy::load_for_obr_dir(obr_dir)?.workflow;
     workflow.validate_ready_status_group()?;
     let ready_statuses = workflow.ready_status_group();
 
@@ -161,7 +161,7 @@ fn execute_inner(
 
     // Fetch the full ready set (no SQL LIMIT) so we always know the exact total
     // before truncation — this lets us emit an accurate "showing N of M" note
-    // when `--limit` actually truncates, consistent with `br list` and the MCP
+    // when `--limit` actually truncates, consistent with `obr list` and the MCP
     // ready surface (which prints "N total, showing top M"). See issue #91:
     // results must never be *silently* truncated.
     let mut filters = filters;
@@ -174,8 +174,8 @@ fn execute_inner(
 
     if !ready_issues.is_empty() && storage.has_external_dependencies(true)? {
         let config_layer = load_config_layer()?;
-        auto_import_external_projects_if_stale(&config_layer, beads_dir, cli);
-        let external_db_paths = config::external_project_db_paths(&config_layer, beads_dir);
+        auto_import_external_projects_if_stale(&config_layer, obr_dir, cli);
+        let external_db_paths = config::external_project_db_paths(&config_layer, obr_dir);
         let external_statuses =
             storage.resolve_external_dependency_statuses(&external_db_paths, true)?;
         let external_blockers = storage.external_blockers(&external_statuses)?;
@@ -260,7 +260,7 @@ fn execute_inner(
 
             // Surface truncation explicitly so the top-priority rows filling the
             // limit never read as "queue drained" (#91, #356). Mirrors the
-            // `br list` note and the MCP ready surface's "N total, showing top M".
+            // `obr list` note and the MCP ready surface's "N total, showing top M".
             if truncated && !quiet {
                 eprintln!(
                     "[note] Showing {} of {} ready issues. Use --limit 0 for all results.",
@@ -278,7 +278,7 @@ fn execute_inner(
 ///
 /// The ready candidate query hydrates only the columns stored directly on the
 /// `issues` row; labels live in a separate table, so JSON/TOON consumers need a
-/// single extra batched lookup to get full parity with `br list --json`.
+/// single extra batched lookup to get full parity with `obr list --json`.
 fn hydrate_ready_labels(storage: &SqliteStorage, issues: &mut [crate::model::Issue]) -> Result<()> {
     if issues.is_empty() {
         return Ok(());

@@ -52,7 +52,7 @@ pub enum ErrorCode {
     SchemaMismatch,
     /// Database operation failed
     DatabaseError,
-    /// Beads workspace not initialized
+    /// Obr workspace not initialized
     NotInitialized,
     /// Already initialized
     AlreadyInitialized,
@@ -358,11 +358,11 @@ impl StructuredError {
         }
     }
 
-    fn innermost_beads_error(err: &BeadsError) -> &BeadsError {
+    fn innermost_obr_error(err: &BeadsError) -> &BeadsError {
         match err {
             BeadsError::WithContext { source, .. } => source
                 .downcast_ref::<BeadsError>()
-                .map_or(err, Self::innermost_beads_error),
+                .map_or(err, Self::innermost_obr_error),
             _ => err,
         }
     }
@@ -381,7 +381,7 @@ impl StructuredError {
             };
         };
 
-        match Self::innermost_beads_error(source) {
+        match Self::innermost_obr_error(source) {
             BeadsError::JsonlPublishedButNotDurable { .. } => ArtifactCommitEvidence {
                 state: "committed_not_durable",
                 namespace_changed: true,
@@ -432,7 +432,7 @@ impl StructuredError {
         let similar = find_similar_ids(searched_id, existing_ids, 3);
 
         let hint = if similar.is_empty() {
-            Some("Run 'br list' to see available issues.".to_string())
+            Some("Run 'obr list' to see available issues.".to_string())
         } else if similar.len() == 1 {
             Some(format!("Did you mean '{}'?", similar[0]))
         } else {
@@ -504,8 +504,8 @@ impl StructuredError {
     pub fn not_initialized() -> Self {
         Self {
             code: ErrorCode::NotInitialized,
-            message: "Beads not initialized: run 'br init' first".to_string(),
-            hint: Some("Run: br init".to_string()),
+            message: "Obr not initialized: run 'obr init' first".to_string(),
+            hint: Some("Run: obr init".to_string()),
             retryable: false,
             context: None,
         }
@@ -958,7 +958,7 @@ impl StructuredError {
         // Generate additional hints based on context
         match err {
             BeadsError::IssueNotFound { .. } => {
-                Some("Run 'br list' to see available issues.".to_string())
+                Some("Run 'obr list' to see available issues.".to_string())
             }
             BeadsError::InvalidPriority { priority } => {
                 Some(detect_priority_intent(priority).map_or_else(
@@ -985,7 +985,7 @@ impl StructuredError {
             BeadsError::NothingToDo { reason } => Some(skip_reason_hint(reason)),
             BeadsError::CloseIncomplete { summary, .. } => Some(skip_reason_hint(summary)),
             BeadsError::ShuttingDown => {
-                Some("Retry after starting a fresh br process.".to_string())
+                Some("Retry after starting a fresh obr process.".to_string())
             }
             BeadsError::JsonlParse { line, .. } => Some(format!(
                 "Check line {line} of the JSONL file for syntax errors."
@@ -1503,7 +1503,7 @@ mod tests {
     fn test_structured_error_not_initialized() {
         let err = StructuredError::not_initialized();
         assert_eq!(err.code, ErrorCode::NotInitialized);
-        assert!(err.hint.as_ref().unwrap().contains("br init"));
+        assert!(err.hint.as_ref().unwrap().contains("obr init"));
     }
 
     #[test]
@@ -1531,7 +1531,7 @@ mod tests {
     }
 
     #[test]
-    fn test_structured_error_preserves_wrapped_beads_error_code() {
+    fn test_structured_error_preserves_wrapped_obr_error_code() {
         let err = BeadsError::WithContext {
             context: "failed to preserve blocked cache after partial close mutation".to_string(),
             source: Box::new(BeadsError::validation("ids", "boom")),

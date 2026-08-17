@@ -1,4 +1,4 @@
-//! Text formatting functions for `beads_rust`.
+//! Text formatting functions for `obr`.
 //!
 //! Provides plain text (non-ANSI) formatting for terminal output:
 //! - Status icons (○ ◐ ● ❄ ✓ ✗ 📌)

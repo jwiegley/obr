@@ -1,6 +1,6 @@
-//! `beads_rust` - Agent-first issue tracker library
+//! `obr` - Agent-first issue tracker library
 //!
-//! This crate provides the core functionality for the `br` CLI tool,
+//! This crate provides the core functionality for the `obr` CLI tool,
 //! a Rust port of the classic beads issue tracker.
 //!
 //! # Architecture
@@ -27,7 +27,6 @@
 // Lint configuration is in Cargo.toml [lints.clippy] section
 #![allow(clippy::module_name_repetitions)]
 
-pub mod cache;
 pub mod cli;
 pub mod close_policy;
 pub mod config;
@@ -37,6 +36,7 @@ pub mod format;
 pub mod franken_sync;
 pub mod health;
 pub mod inheritance;
+pub mod legacy_compat;
 pub mod logging;
 pub mod model;
 pub mod output;
@@ -84,11 +84,5 @@ mod tests {
         let structured = StructuredError::from_error(&err);
         assert_eq!(structured.code, ErrorCode::IssueNotFound);
         assert_eq!(structured.code.exit_code(), 3);
-    }
-
-    #[cfg(feature = "self_update")]
-    #[test]
-    fn upgrade_module_is_available_when_feature_enabled() {
-        let _ = crate::cli::commands::upgrade::execute;
     }
 }

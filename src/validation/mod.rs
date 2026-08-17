@@ -1,4 +1,4 @@
-//! Validation helpers for `beads_rust`.
+//! Validation helpers for `obr`.
 //!
 //! These routines enforce classic bd data constraints and return
 //! structured validation errors without mutating storage.
@@ -6,7 +6,7 @@
 //! # Sync Safety Guarantees
 //!
 //! The sync subsystem enforces these invariants by design:
-//! - **No git operations**: br sync NEVER executes git commands
+//! - **No git operations**: obr sync NEVER executes git commands
 //! - **Path confinement**: All I/O stays within `.beads/` (unless explicitly opted-in)
 //! - **No .git access**: Sync code paths never read from or write to `.git/`
 //!
@@ -458,9 +458,9 @@ pub fn is_valid_id_format(id: &str) -> bool {
 
 /// Validates sync operations adhere to safety invariants.
 ///
-/// # Safety Guarantees (Non-Goals - What br sync NEVER does)
+/// # Safety Guarantees (Non-Goals - What obr sync NEVER does)
 ///
-/// 1. **No git commands**: br sync never executes `git` subprocess commands
+/// 1. **No git commands**: obr sync never executes `git` subprocess commands
 /// 2. **No git library calls**: No gitoxide, libgit2, or similar
 /// 3. **No .git access**: Never reads from or writes to `.git/` directory
 /// 4. **No auto-commit**: All git operations are user-initiated
@@ -543,12 +543,12 @@ impl SyncSafetyValidator {
         Ok(())
     }
 
-    /// Validates that a path is within the allowed beads directory.
+    /// Validates that a path is within the allowed obr directory.
     ///
     /// # Arguments
     ///
     /// * `path` - The path to validate
-    /// * `beads_dir` - The .beads directory that contains allowed paths
+    /// * `obr_dir` - The .beads directory that contains allowed paths
     /// * `allow_external` - Whether external paths are permitted (opt-in)
     ///
     /// # Errors
@@ -556,7 +556,7 @@ impl SyncSafetyValidator {
     /// Returns `ValidationError` if path escapes the allowlist.
     pub fn validate_path_containment(
         path: &Path,
-        beads_dir: &Path,
+        obr_dir: &Path,
         allow_external: bool,
     ) -> Result<(), ValidationError> {
         // First, ensure no .git access
@@ -569,18 +569,17 @@ impl SyncSafetyValidator {
 
         // Canonicalize if possible, otherwise use the path as-is
         let canonical_path = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        let canonical_beads =
-            dunce::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
+        let canonical_obr = dunce::canonicalize(obr_dir).unwrap_or_else(|_| obr_dir.to_path_buf());
 
-        // Check if path starts with beads_dir
-        if !canonical_path.starts_with(&canonical_beads) {
+        // Check if path starts with obr_dir
+        if !canonical_path.starts_with(&canonical_obr) {
             return Err(ValidationError::new(
                 "path",
                 format!(
                     "path '{}' is outside allowed directory '{}' \
                      (use --allow-external-jsonl to override)",
                     path.display(),
-                    beads_dir.display()
+                    obr_dir.display()
                 ),
             ));
         }
@@ -1282,11 +1281,11 @@ mod tests {
     }
 
     #[test]
-    fn sync_safety_allows_beads_path() {
+    fn sync_safety_allows_obr_path() {
         use std::path::PathBuf;
 
-        let beads_path = PathBuf::from("/project/.beads/issues.jsonl");
-        let result = SyncSafetyValidator::validate_no_git_path(&beads_path);
+        let obr_path = PathBuf::from("/project/.beads/issues.jsonl");
+        let result = SyncSafetyValidator::validate_no_git_path(&obr_path);
         assert!(result.is_ok());
     }
 
@@ -1318,13 +1317,12 @@ mod tests {
         use tempfile::TempDir;
 
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
 
-        // Path outside beads_dir
+        // Path outside obr_dir
         let outside_path = temp.path().join("src/main.rs");
-        let result =
-            SyncSafetyValidator::validate_path_containment(&outside_path, &beads_dir, false);
+        let result = SyncSafetyValidator::validate_path_containment(&outside_path, &obr_dir, false);
         assert!(result.is_err());
         assert!(
             result
@@ -1335,18 +1333,18 @@ mod tests {
     }
 
     #[test]
-    fn sync_safety_containment_allows_beads_subpath() {
+    fn sync_safety_containment_allows_obr_subpath() {
         use tempfile::TempDir;
 
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        std::fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        std::fs::create_dir_all(&obr_dir).unwrap();
 
         // Create the file so canonicalize works
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let jsonl_path = obr_dir.join("issues.jsonl");
         std::fs::write(&jsonl_path, "").unwrap();
 
-        let result = SyncSafetyValidator::validate_path_containment(&jsonl_path, &beads_dir, false);
+        let result = SyncSafetyValidator::validate_path_containment(&jsonl_path, &obr_dir, false);
         assert!(result.is_ok());
     }
 
@@ -1355,12 +1353,11 @@ mod tests {
         use tempfile::TempDir;
 
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
 
-        // Path outside beads_dir but external allowed
+        // Path outside obr_dir but external allowed
         let outside_path = temp.path().join("external.jsonl");
-        let result =
-            SyncSafetyValidator::validate_path_containment(&outside_path, &beads_dir, true);
+        let result = SyncSafetyValidator::validate_path_containment(&outside_path, &obr_dir, true);
         assert!(result.is_ok());
     }
 
@@ -1368,11 +1365,11 @@ mod tests {
     fn sync_safety_containment_rejects_git_even_with_external_flag() {
         use std::path::PathBuf;
 
-        let beads_dir = PathBuf::from("/project/.beads");
+        let obr_dir = PathBuf::from("/project/.beads");
         let git_path = PathBuf::from("/project/.git/config");
 
         // Even with allow_external=true, .git should be rejected
-        let result = SyncSafetyValidator::validate_path_containment(&git_path, &beads_dir, true);
+        let result = SyncSafetyValidator::validate_path_containment(&git_path, &obr_dir, true);
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains(".git"));
     }

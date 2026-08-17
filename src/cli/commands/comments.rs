@@ -31,19 +31,19 @@ pub fn execute(
     cli: &config::CliOverrides,
     ctx: &OutputContext,
 ) -> Result<()> {
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
 
     match &args.command {
-        Some(CommentCommands::Add(add_args)) => execute_add(add_args, cli, ctx, &beads_dir),
+        Some(CommentCommands::Add(add_args)) => execute_add(add_args, cli, ctx, &obr_dir),
         Some(CommentCommands::List(list_args)) => {
-            execute_list(&list_args.id, json, cli, ctx, &beads_dir, list_args.wrap)
+            execute_list(&list_args.id, json, cli, ctx, &obr_dir, list_args.wrap)
         }
         None => {
             let id = args
                 .id
                 .as_deref()
                 .ok_or_else(|| BeadsError::validation("id", "missing issue id"))?;
-            execute_list(id, json, cli, ctx, &beads_dir, args.wrap)
+            execute_list(id, json, cli, ctx, &obr_dir, args.wrap)
         }
     }
 }
@@ -60,7 +60,7 @@ pub fn execute_with_storage_ctx(
     json: bool,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    local_beads_dir: &Path,
+    local_obr_dir: &Path,
     storage_ctx: &config::OpenStorageResult,
 ) -> Result<bool> {
     match &args.command {
@@ -70,7 +70,7 @@ pub fn execute_with_storage_ctx(
             json,
             cli,
             ctx,
-            local_beads_dir,
+            local_obr_dir,
             list_args.wrap,
             storage_ctx,
         ),
@@ -79,15 +79,7 @@ pub fn execute_with_storage_ctx(
                 .id
                 .as_deref()
                 .ok_or_else(|| BeadsError::validation("id", "missing issue id"))?;
-            execute_list_with_storage_ctx(
-                id,
-                json,
-                cli,
-                ctx,
-                local_beads_dir,
-                args.wrap,
-                storage_ctx,
-            )
+            execute_list_with_storage_ctx(id, json, cli, ctx, local_obr_dir, args.wrap, storage_ctx)
         }
     }
 }
@@ -96,10 +88,10 @@ fn execute_add(
     args: &CommentAddArgs,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
 ) -> Result<()> {
     let (mut storage_ctx, route_cli, auto_flush_external, _routed_write_lock) =
-        open_routed_storage_for_input(beads_dir, cli, &args.id)?;
+        open_routed_storage_for_input(obr_dir, cli, &args.id)?;
     let config_layer = storage_ctx.load_config(&route_cli)?;
     let id_config = config::id_config_from_layer(&config_layer);
     let resolver = IdResolver::new(ResolverConfig::with_prefix(id_config.prefix));
@@ -118,12 +110,12 @@ fn execute_add(
     if auto_flush_external && let Err(error) = storage_ctx.auto_flush_if_enabled() {
         report_auto_flush_failure(
             ctx,
-            &storage_ctx.paths.beads_dir,
+            &storage_ctx.paths.obr_dir,
             &storage_ctx.paths.jsonl_path,
             &error,
         );
     }
-    crate::util::set_last_touched_id(beads_dir, &issue_id);
+    crate::util::set_last_touched_id(obr_dir, &issue_id);
 
     if matches!(ctx.mode(), OutputMode::Quiet) {
         return Ok(());
@@ -147,11 +139,11 @@ fn execute_list(
     json: bool,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     wrap: bool,
 ) -> Result<()> {
     let (storage_ctx, route_cli, _, _routed_write_lock) =
-        open_routed_storage_for_input(beads_dir, cli, issue_input)?;
+        open_routed_storage_for_input(obr_dir, cli, issue_input)?;
     let config_layer = storage_ctx.load_config(&route_cli)?;
     let id_config = config::id_config_from_layer(&config_layer);
     let resolver = IdResolver::new(ResolverConfig::with_prefix(id_config.prefix));
@@ -171,11 +163,11 @@ fn execute_list_with_storage_ctx(
     json: bool,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    local_beads_dir: &Path,
+    local_obr_dir: &Path,
     wrap: bool,
     storage_ctx: &config::OpenStorageResult,
 ) -> Result<bool> {
-    let route = config::routing::resolve_route(issue_input, local_beads_dir)?;
+    let route = config::routing::resolve_route(issue_input, local_obr_dir)?;
     if route.is_external {
         return Ok(false);
     }
@@ -196,7 +188,7 @@ fn execute_list_with_storage_ctx(
 }
 
 fn open_routed_storage_for_input(
-    local_beads_dir: &Path,
+    local_obr_dir: &Path,
     cli: &config::CliOverrides,
     issue_input: &str,
 ) -> Result<(
@@ -205,15 +197,15 @@ fn open_routed_storage_for_input(
     bool,
     RoutedWorkspaceWriteLock,
 )> {
-    let route = config::routing::resolve_route(issue_input, local_beads_dir)?;
+    let route = config::routing::resolve_route(issue_input, local_obr_dir)?;
     let mut route_cli = cli_for_routed_workspace(cli, route.is_external);
     let routed_write_lock = acquire_routed_workspace_write_lock(
-        &route.beads_dir,
+        &route.obr_dir,
         route.is_external,
         route_cli.lock_timeout,
     )?;
     routed_write_lock.mark_cli_write_lock_held(&mut route_cli);
-    let mut storage_ctx = config::open_storage_with_cli(&route.beads_dir, &route_cli)?;
+    let mut storage_ctx = config::open_storage_with_cli(&route.obr_dir, &route_cli)?;
     auto_import_storage_ctx_if_stale(&mut storage_ctx, &route_cli)?;
     Ok((storage_ctx, route_cli, route.is_external, routed_write_lock))
 }
@@ -465,10 +457,11 @@ fn resolve_author(author_override: Option<&str>, actor: Option<&str>) -> String 
 }
 
 fn resolve_author_from_env(mut lookup: impl FnMut(&str) -> Option<String>) -> Option<String> {
-    for key in ["BD_ACTOR", "BEADS_ACTOR", "USER", "LOGNAME", "USERNAME"] {
-        if let Some(value) = lookup(key)
-            && !value.trim().is_empty()
-        {
+    if let Some(value) = lookup("OBR_ACTOR").filter(|value| !value.trim().is_empty()) {
+        return Some(value);
+    }
+    for key in ["USER", "LOGNAME", "USERNAME"] {
+        if let Some(value) = lookup(key).filter(|value| !value.trim().is_empty()) {
             return Some(value);
         }
     }

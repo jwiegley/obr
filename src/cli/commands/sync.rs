@@ -313,14 +313,14 @@ const HUMAN_WITNESS_LIMIT: usize = 32;
 /// divergent ids to grep for; counts always reflect the true totals.
 const RECONCILE_PREVIEW_LIMIT: usize = 50;
 
-/// Versioned receipt for `br sync --reconcile` (`br.sync.reconcile.v1`).
+/// Versioned receipt for `obr sync --reconcile` (`obr.sync.reconcile.v1`).
 ///
 /// Emitted by both `--dry-run` (plan only, `applied: false`) and apply
 /// (`applied: true`, with the `apply` block present). Deletion is impossible
 /// in this mode, so `plan.deleted` is a constant `0`.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct SyncReconcileReceipt {
-    /// Receipt schema identifier (`br.sync.reconcile.v1`).
+    /// Receipt schema identifier (`obr.sync.reconcile.v1`).
     pub schema_version: &'static str,
     /// `"dry_run"` or `"apply"`.
     pub mode: &'static str,
@@ -456,7 +456,7 @@ pub struct SyncStatus {
     /// `recoverable` / `unsafe`) computed from the cheap signals this
     /// command already evaluates: file-state probes plus the
     /// DB↔JSONL drift booleans above. Same write-gate vocabulary as
-    /// `br doctor --json` (beads_rust#334; docs/reliability/HEALTH_CONTRACT.md).
+    /// `obr doctor --json` (beads_rust#334; docs/reliability/HEALTH_CONTRACT.md).
     pub workspace_health: String,
     /// Anomaly evidence backing `workspace_health`, in the same shape
     /// doctor emits (`anomalies[].code` / `severity` / `message`).
@@ -473,12 +473,12 @@ pub struct SyncStatus {
     /// Stable VCS-observation slot for the canonical JSONL export.
     ///
     /// Sync deliberately never probes Git. The object therefore reports
-    /// `reason: "not_probed"` and points to the explicit `br vcs-status`
+    /// `reason: "not_probed"` and points to the explicit `obr vcs-status`
     /// diagnostic that owns the separate, user-requested VCS capability.
     pub git_export: GitExportStatus,
 }
 
-/// VCS-observation state carried by `br sync --status`.
+/// VCS-observation state carried by `obr sync --status`.
 ///
 /// The legacy fields remain optional so existing machine consumers keep a
 /// stable shape, but sync itself has no process or VCS authority and never
@@ -518,7 +518,7 @@ impl GitExportStatus {
         Self {
             available: false,
             reason: "not_probed",
-            diagnostic_command: "br vcs-status --json",
+            diagnostic_command: "obr vcs-status --json",
             tracked: None,
             worktree_clean: None,
             index_clean: None,
@@ -559,13 +559,13 @@ struct SyncPathPolicy {
     jsonl_path: PathBuf,
     jsonl_temp_path: PathBuf,
     manifest_path: PathBuf,
-    beads_dir: PathBuf,
+    obr_dir: PathBuf,
     is_external: bool,
     allow_external_jsonl: bool,
 }
 
 struct SyncStartupState {
-    beads_dir: PathBuf,
+    obr_dir: PathBuf,
     path_policy: SyncPathPolicy,
     open_result: config::OpenStorageResult,
 }
@@ -660,9 +660,9 @@ pub fn execute(
     }
 
     if args.reconcile_additive && !args.apply {
-        let beads_dir = config::discover_beads_dir_with_cli(cli)?;
+        let obr_dir = config::discover_obr_dir_with_cli(cli)?;
         let plan = plan_reviewed_additive_reconcile(&ReviewedAdditiveReconcilePlanRequest {
-            beads_dir,
+            obr_dir,
             db_override: cli.db.clone(),
             source_path_override: None,
             allow_external_jsonl: args.allow_external_jsonl,
@@ -676,7 +676,7 @@ pub fn execute(
     }
 
     if args.reconcile_additive {
-        let beads_dir = config::discover_beads_dir_with_cli(cli)?;
+        let obr_dir = config::discover_obr_dir_with_cli(cli)?;
         let expected_plan_sha256 =
             args.expect_plan_sha256
                 .clone()
@@ -686,7 +686,7 @@ pub fn execute(
                 })?;
         let receipt = apply_reviewed_additive_reconcile_under_authority(
             &ReviewedAdditiveReconcileRequest {
-                beads_dir,
+                obr_dir,
                 db_override: cli.db.clone(),
                 source_path_override: None,
                 allow_external_jsonl: args.allow_external_jsonl,
@@ -715,7 +715,7 @@ pub fn execute(
                 args,
                 cli,
                 ctx,
-                &startup.beads_dir,
+                &startup.obr_dir,
                 &startup.path_policy,
                 &mut startup.open_result,
             )
@@ -735,7 +735,7 @@ fn prepare_sync_startup(
     cli: &config::CliOverrides,
     _startup_write_lock_held: bool,
 ) -> Result<SyncStartupState> {
-    let (beads_dir, startup, path_policy) = resolve_sync_startup_paths(args, cli)?;
+    let (obr_dir, startup, path_policy) = resolve_sync_startup_paths(args, cli)?;
     let allow_external_jsonl = path_policy.allow_external_jsonl;
 
     let open_result = config::open_storage_with_startup_config_and_jsonl_policy(
@@ -746,7 +746,7 @@ fn prepare_sync_startup(
     )?;
 
     Ok(SyncStartupState {
-        beads_dir,
+        obr_dir,
         path_policy,
         open_result,
     })
@@ -756,16 +756,16 @@ fn resolve_sync_startup_paths(
     args: &SyncArgs,
     cli: &config::CliOverrides,
 ) -> Result<(PathBuf, config::StartupConfig, SyncPathPolicy)> {
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    let startup = config::load_startup_config_with_paths(&beads_dir, cli.db.as_ref())?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    let startup = config::load_startup_config_with_paths(&obr_dir, cli.db.as_ref())?;
     let allow_external_jsonl = args.allow_external_jsonl
         || config::implicit_external_jsonl_allowed(
-            &startup.paths.beads_dir,
+            &startup.paths.obr_dir,
             &startup.paths.db_path,
             &startup.paths.jsonl_path,
         );
     let path_policy =
-        validate_sync_paths(&beads_dir, &startup.paths.jsonl_path, allow_external_jsonl)?;
+        validate_sync_paths(&obr_dir, &startup.paths.jsonl_path, allow_external_jsonl)?;
     let jsonl_log_path = if path_policy.is_external {
         "<external-source>".to_string()
     } else {
@@ -784,7 +784,7 @@ fn resolve_sync_startup_paths(
         "Resolved sync path policy"
     );
 
-    Ok((beads_dir, startup, path_policy))
+    Ok((obr_dir, startup, path_policy))
 }
 
 /// For `--rename-prefix` imports, defer any implicit JSONL recovery until the
@@ -1097,7 +1097,7 @@ fn dispatch_sync_subcommand(
     args: &SyncArgs,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     path_policy: &SyncPathPolicy,
     open_result: &mut config::OpenStorageResult,
 ) -> Result<SyncDispatchCompletion> {
@@ -1132,7 +1132,7 @@ fn dispatch_sync_subcommand(
             args,
             cli,
             ctx,
-            beads_dir,
+            obr_dir,
             path_policy,
             open_result,
             &options,
@@ -1150,7 +1150,7 @@ fn dispatch_publishing_sync_subcommand(
     args: &SyncArgs,
     cli: &config::CliOverrides,
     ctx: &OutputContext,
-    beads_dir: &Path,
+    obr_dir: &Path,
     path_policy: &SyncPathPolicy,
     open_result: &mut config::OpenStorageResult,
     options: &SyncDispatchOptions,
@@ -1182,7 +1182,7 @@ fn dispatch_publishing_sync_subcommand(
                 open_result.jsonl_write_context();
             execute_flush(
                 storage,
-                beads_dir,
+                obr_dir,
                 path_policy,
                 args,
                 options.use_json,
@@ -1222,7 +1222,7 @@ fn dispatch_publishing_sync_subcommand(
             let (storage, retained_source, retained_authority) = open_result.import_context();
             execute_import(
                 storage,
-                beads_dir,
+                obr_dir,
                 cli,
                 path_policy,
                 args,
@@ -1349,10 +1349,13 @@ fn finalize_pending_sync_merge_after_adoption(
         });
     }
     let terminal_base = pending.base_authority.capture_target()?;
-    if terminal_base.raw_sha256() != published_source.raw_sha256()
-        || terminal_base.content_sha256() != published_source.content_sha256()
-        || terminal_base.size() != published_source.size()
-    {
+    let expected_base_content_sha256 =
+        crate::sync::expected_base_anchor_content_sha256(published_source)?;
+    if !base_anchor_matches_published(
+        &terminal_base,
+        published_source,
+        &expected_base_content_sha256,
+    ) {
         return Err(BeadsError::SyncConflict {
             message: "Merge base changed before outer completion adopted the JSONL".to_string(),
         });
@@ -1718,22 +1721,22 @@ fn should_render_human_sync_output(ctx: &OutputContext, use_json: bool) -> bool 
 }
 
 fn validate_sync_paths(
-    beads_dir: &Path,
+    obr_dir: &Path,
     jsonl_path: &Path,
     allow_external_jsonl: bool,
 ) -> Result<SyncPathPolicy> {
     debug!(
-        beads_dir = %beads_dir.display(),
+        obr_dir = %obr_dir.display(),
         jsonl_path = %jsonl_path.display(),
         allow_external_jsonl,
         "Validating sync paths"
     );
-    validate_operator_requested_sync_path(beads_dir, jsonl_path)?;
+    validate_operator_requested_sync_path(obr_dir, jsonl_path)?;
 
-    let canonical_beads = dunce::canonicalize(beads_dir).map_err(|e| {
+    let canonical_obr = dunce::canonicalize(obr_dir).map_err(|e| {
         BeadsError::Config(format!(
             "Failed to resolve .beads directory {}: {e}",
-            beads_dir.display()
+            obr_dir.display()
         ))
     })?;
 
@@ -1747,27 +1750,29 @@ fn validate_sync_paths(
         .extension()
         .and_then(|ext| ext.to_str())
         .map(str::to_ascii_lowercase);
-    if extension.as_deref() != Some("jsonl") {
+    if !matches!(extension.as_deref(), Some("jsonl" | "org")) {
         return Err(BeadsError::Config(format!(
-            "JSONL path must end with .jsonl: {}",
+            "Sync path must end with .jsonl or .org: {}",
             jsonl_path.display()
         )));
     }
 
-    let is_external = !jsonl_path.starts_with(&canonical_beads);
+    // "Internal" is not a prefix test — D-SURFACE puts the tracked surface
+    // outside `.obr/` — so ask the sync layer, which owns the definition.
+    let is_external = !crate::sync::path::is_internal_sync_path(&jsonl_path, obr_dir);
     if is_external && !allow_external_jsonl {
         warn!(
             path = %jsonl_path.display(),
-            "Rejected JSONL path outside .beads"
+            "Rejected export path outside the workspace"
         );
         return Err(BeadsError::Config(format!(
-            "Refusing to use JSONL path outside .beads: {}.\n\
+            "Refusing to use an export path outside the workspace: {}.\n\
              Hint: pass --allow-external-jsonl if this is intentional.",
             jsonl_path.display()
         )));
     }
 
-    let manifest_path = canonical_beads.join(".manifest.json");
+    let manifest_path = canonical_obr.join(".manifest.json");
     let jsonl_temp_path = export_temp_path(&jsonl_path);
 
     if contains_git_dir(&jsonl_path) {
@@ -1782,7 +1787,7 @@ fn validate_sync_paths(
         )));
     }
 
-    validate_sync_path_with_external(&jsonl_path, &canonical_beads, allow_external_jsonl)?;
+    validate_sync_path_with_external(&jsonl_path, &canonical_obr, allow_external_jsonl)?;
 
     debug!(
         jsonl_path = %jsonl_path.display(),
@@ -1796,13 +1801,13 @@ fn validate_sync_paths(
         jsonl_path,
         jsonl_temp_path,
         manifest_path,
-        beads_dir: canonical_beads,
+        obr_dir: canonical_obr,
         is_external,
         allow_external_jsonl,
     })
 }
 
-fn validate_operator_requested_sync_path(beads_dir: &Path, jsonl_path: &Path) -> Result<()> {
+fn validate_operator_requested_sync_path(obr_dir: &Path, jsonl_path: &Path) -> Result<()> {
     let git_check = validate_no_git_path(jsonl_path);
     if !git_check.is_allowed() {
         return Err(BeadsError::Config(
@@ -1812,10 +1817,10 @@ fn validate_operator_requested_sync_path(beads_dir: &Path, jsonl_path: &Path) ->
         ));
     }
 
-    let canonical_beads = dunce::canonicalize(beads_dir).map_err(|e| {
+    let canonical_obr = dunce::canonicalize(obr_dir).map_err(|e| {
         BeadsError::Config(format!(
             "Failed to resolve .beads directory {}: {e}",
-            beads_dir.display()
+            obr_dir.display()
         ))
     })?;
 
@@ -1832,7 +1837,7 @@ fn validate_operator_requested_sync_path(beads_dir: &Path, jsonl_path: &Path) ->
             })?
     };
 
-    if !operator_path.starts_with(beads_dir) && !operator_path.starts_with(&canonical_beads) {
+    if !operator_path.starts_with(obr_dir) && !operator_path.starts_with(&canonical_obr) {
         return Ok(());
     }
 
@@ -1862,7 +1867,7 @@ fn validate_operator_requested_sync_path(beads_dir: &Path, jsonl_path: &Path) ->
         };
         let canonical_target =
             dunce::canonicalize(&absolute_target).unwrap_or_else(|_| absolute_target.clone());
-        if !crate::sync::path::path_within(&canonical_target, &canonical_beads) {
+        if !crate::sync::path::path_within(&canonical_target, &canonical_obr) {
             return Err(BeadsError::Config(format!(
                 "Refusing to use JSONL path through symlink escaping .beads: {} -> {}",
                 candidate.display(),
@@ -2234,6 +2239,15 @@ fn execute_witness(
     ctx: &OutputContext,
 ) -> Result<()> {
     let jsonl_path = &path_policy.jsonl_path;
+    if crate::sync::org_bridge::ExportFormat::for_path(jsonl_path).is_org() {
+        return Err(BeadsError::Config(
+            "sync --witness requires a JSONL export: chunk witnesses are only \
+             defined for line-oriented JSONL files. This workspace's export is \
+             Org; pin metadata.json's jsonl_export to a .jsonl path to use \
+             witnesses."
+                .to_string(),
+        ));
+    }
     if !jsonl_path.is_file() {
         return Err(BeadsError::Config(format!(
             "JSONL file not found: {}",
@@ -2305,7 +2319,7 @@ fn build_base_witness_artifacts(
     max_parallelism: usize,
     current_witness: &JsonlMerkleWitness,
 ) -> Result<BaseWitnessArtifacts> {
-    let base_jsonl_path = path_policy.beads_dir.join("beads.base.jsonl");
+    let base_jsonl_path = config::merge_base_jsonl_path(&path_policy.obr_dir);
     match fs::symlink_metadata(&base_jsonl_path) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
             return Err(BeadsError::Config(format!(
@@ -2337,7 +2351,7 @@ fn build_base_witness_artifacts(
         }
     }
 
-    require_valid_sync_path(&base_jsonl_path, &path_policy.beads_dir)?;
+    require_valid_sync_path(&base_jsonl_path, &path_policy.obr_dir)?;
 
     let base_witness = build_witness_for_path(&base_jsonl_path, chunk_size_lines, max_parallelism)?;
     let comparison = compare_jsonl_merkle_witnesses(&base_witness, current_witness);
@@ -2447,7 +2461,7 @@ fn render_witness_text(result: &SyncWitnessResult) {
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 fn execute_flush(
     storage: &mut crate::storage::SqliteStorage,
-    _beads_dir: &Path,
+    _obr_dir: &Path,
     path_policy: &SyncPathPolicy,
     args: &SyncArgs,
     use_json: bool,
@@ -2575,7 +2589,7 @@ fn execute_flush(
 
         // Even with nothing to export, maintain the merge anchor from the
         // clean JSONL (issues #378/#394): a missing anchor is materialized
-        // and a stale anchor is replaced, making `br sync --flush-only` an
+        // and a stale anchor is replaced, making `obr sync --flush-only` an
         // idempotent recovery command for the doctor's
         // `base_jsonl.missing_post_flush` / stale-anchor findings.
         //
@@ -2593,9 +2607,9 @@ fn execute_flush(
                 BeadsError::Config(
                     "Cannot certify a no-op flush because the stored JSONL content hash is \
                      missing. The merge anchor was not changed.\n\
-                     Inspect/reconcile with `br sync --merge`, accept the JSONL intentionally \
-                     with `br sync --import-only --force`, or replace it from the database with \
-                     `br sync --flush-only --force`."
+                     Inspect/reconcile with `obr sync --merge`, accept the JSONL intentionally \
+                     with `obr sync --import-only --force`, or replace it from the database with \
+                     `obr sync --flush-only --force`."
                         .to_string(),
                 )
             })?;
@@ -2605,9 +2619,9 @@ fn execute_flush(
                 "Refusing a no-op flush because the JSONL changed since its last certified \
                  sync (stored hash {stored_content_hash}, observed hash \
                  {observed_content_hash}). The merge anchor was not changed.\n\
-                 Inspect/reconcile with `br sync --merge`, accept the JSONL intentionally with \
-                 `br sync --import-only --force`, or replace it from the database with \
-                 `br sync --flush-only --force`."
+                 Inspect/reconcile with `obr sync --merge`, accept the JSONL intentionally with \
+                 `obr sync --import-only --force`, or replace it from the database with \
+                 `obr sync --flush-only --force`."
             )));
         }
 
@@ -2617,7 +2631,7 @@ fn execute_flush(
         // inode; anything else (missing, symlinked, byte-divergent — even
         // whitespace-only drift the content hash cannot see) is replaced
         // with the exact snapshot bytes.
-        let anchor_path = path_policy.beads_dir.join("beads.base.jsonl");
+        let anchor_path = config::merge_base_jsonl_path(&path_policy.obr_dir);
         let snapshot_bytes = {
             let mut bytes = Vec::with_capacity(usize::try_from(noop_source.size()).unwrap_or(0));
             std::io::copy(&mut noop_source.reader(), &mut bytes).map_err(BeadsError::Io)?;
@@ -2628,7 +2642,7 @@ fn execute_flush(
             .unwrap_or(false)
             && fs::read(&anchor_path).is_ok_and(|bytes| bytes == snapshot_bytes);
         if !anchor_is_exact {
-            refresh_base_snapshot_from_flushed_jsonl_snapshot(noop_source, &path_policy.beads_dir)?;
+            refresh_base_snapshot_from_flushed_jsonl_snapshot(noop_source, &path_policy.obr_dir)?;
         }
 
         if use_json {
@@ -2659,13 +2673,20 @@ fn execute_flush(
     // guards, letting a post-merge flush silently destroy JSONL issues the
     // DB had never imported (#405). Intentional purges are excluded from the
     // guard via the purged-pending-export marker instead.
+    // D-SURFACE: record `#+ISSUE_PREFIX` whenever the prefix is KNOWN, not
+    // merely when some issue happens to be exported. The writer's fallback
+    // (the first exported id) leaves an empty workspace with no keyword at
+    // all, which is exactly the corpus a fresh clone would have to bootstrap
+    // from. Reading it from the workspace config closes that hole.
+    let issue_prefix = storage.get_config("issue_prefix")?;
     let export_config = ExportConfig {
         force: args.force,
+        issue_prefix,
         is_default_path: true,
         error_policy: export_policy,
         retention_days,
         export_as_of: None,
-        beads_dir: Some(path_policy.beads_dir.clone()),
+        obr_dir: Some(path_policy.obr_dir.clone()),
         allow_external_jsonl: path_policy.allow_external_jsonl,
         show_progress,
         history: history_config,
@@ -2702,36 +2723,40 @@ fn execute_flush(
 
     // A clean flush leaves DB == JSONL, so the JSONL that just reached disk
     // is the new common state future 3-way merges should diff against.
-    // Refresh the merge anchor to match (issue #378): historically only the
-    // merge path wrote `beads.base.jsonl`, leaving flush-only workspaces
-    // permanently anchor-less and tripping the doctor's
-    // `base_jsonl.missing_post_flush` warning while `br sync --status`
-    // reported "In sync". Skip when the export had per-record errors — a
-    // partial export must not become the merge base. Publish the anchor
-    // BEFORE clearing dirty/export metadata so an anchor publication failure
-    // keeps the workspace dirty and remains recoverable by a later explicit
-    // flush: certifying "In sync" over a stale anchor would hand future
-    // 3-way merges the wrong ancestor. (This fail-closed ordering shipped in
-    // 5414143b alongside the failure-injection coverage; the 77ae88ff
-    // tree-preference merge silently reverted it to the older best-effort
-    // wording while keeping the test.)
+    // Publish that anchor (issue #378) BEFORE clearing dirty/export metadata.
+    // Certifying a flush over an anchor that was never written produces a
+    // workspace that reports "In sync" while `obr doctor` reports `base_jsonl`
+    // — silently clean, with no automated recovery. The no-op flush branch
+    // and the merge path already fail closed on this exact artifact; this
+    // path was the lone outlier, and only because a merge took upstream's
+    // `execute_flush` wholesale and discarded the product half of the fix.
+    // A failure here leaves the export on disk, the rows dirty, and the retry
+    // with the operator. Skip when the export had per-record errors — a
+    // partial export must not become the merge base.
+    //
+    // MERGE-NOTE (fork): re-taking upstream's `execute_flush` wholesale will
+    // revert this again. `cli_sync_flush_anchor_publication_failure_retains_
+    // dirty_state_and_retries` in tests/e2e_sync_failure_injection.rs is the
+    // witness; if it goes red after a merge, this block was dropped.
     if !report.has_errors() {
+        let anchor_path = config::merge_base_jsonl_path(&path_policy.obr_dir);
         refresh_base_snapshot_from_flushed_jsonl_snapshot(
             export_result.published_source()?,
-            &path_policy.beads_dir,
+            &path_policy.obr_dir,
         )
-        .map_err(|source| BeadsError::WithContext {
-            context: format!(
-                "Failed to publish the merge anchor {} for the flushed JSONL; \
-                 dirty/export metadata was retained so this flush can be retried",
-                path_policy.beads_dir.join("beads.base.jsonl").display()
-            ),
-            source: Box::new(source),
+        .map_err(|source| {
+            BeadsError::Config(format!(
+                "Flush published '{}' but could not publish the merge anchor '{}': {source}\n\
+                 The export is on disk and its issues remain dirty. Repair the anchor path \
+                 and re-run `obr sync --flush-only`.",
+                jsonl_path.display(),
+                anchor_path.display()
+            ))
         })?;
     }
 
-    // Finalize export (clear dirty flags, update metadata) only after a
-    // clean export's anchor is durable.
+    // Finalize export (clear dirty flags, update metadata) only once the clean
+    // export's merge anchor is durable.
     finalize_export_under_authority(
         storage,
         &export_result,
@@ -2758,7 +2783,7 @@ fn execute_flush(
         let manifest_file = path_policy.manifest_path.clone();
         require_safe_sync_overwrite_path(
             &manifest_file,
-            &path_policy.beads_dir,
+            &path_policy.obr_dir,
             path_policy.allow_external_jsonl,
             "write manifest",
         )?;
@@ -2815,7 +2840,7 @@ fn execute_flush(
     } else if ctx.is_rich() {
         render_flush_result_rich(&result, &report.errors, ctx);
     } else {
-        if report.policy_used != ExportErrorPolicy::Strict || report.has_errors() {
+        if should_report_export_policy(report.policy_used, report.has_errors()) {
             println!("Export completed with policy: {}", report.policy_used);
         }
         println!("Exported:");
@@ -2951,11 +2976,26 @@ fn write_manifest_atomically(
     crate::sync::publish_staged_file_conditionally(&temp_path, manifest_path)
 }
 
-/// Render flush (export) result with rich formatting.
-fn render_flush_result_rich(result: &FlushResult, errors: &[ExportError], ctx: &OutputContext) {
-    let _console = Console::default();
-    let theme = ctx.theme();
+/// Whether the export policy in force is worth stating.
+///
+/// A clean `strict` export is the default and says nothing; anything else —
+/// a relaxed policy, or errors that a policy decided to tolerate — changes
+/// how the numbers below it should be read. Both the plain branch and the
+/// Rich panel ask this one question, so they cannot answer it differently.
+const fn should_report_export_policy(policy: ExportErrorPolicy, has_errors: bool) -> bool {
+    !matches!(policy, ExportErrorPolicy::Strict) || has_errors
+}
 
+/// Body of the flush (export) panel.
+///
+/// Split out from `render_flush_result_rich` so the Rich rendering can be
+/// asserted in-process: the panel is only reachable on a TTY, which is how it
+/// came to omit the export policy that the plain branch has always printed.
+fn build_flush_result_text(
+    result: &FlushResult,
+    errors: &[ExportError],
+    theme: &crate::output::Theme,
+) -> Text {
     let mut text = Text::new("");
 
     // Success indicator
@@ -2972,6 +3012,13 @@ fn render_flush_result_rich(result: &FlushResult, errors: &[ExportError], ctx: &
     text.append_styled("Direction     ", theme.dimmed.clone());
     text.append_styled("SQLite → JSONL", theme.info.clone());
     text.append("\n");
+
+    // Export policy, under exactly the condition the plain branch uses.
+    if should_report_export_policy(result.policy, !errors.is_empty()) {
+        text.append_styled("Policy        ", theme.dimmed.clone());
+        text.append_styled(&result.policy.to_string(), theme.warning.clone());
+        text.append("\n");
+    }
 
     // Exported counts
     text.append_styled("Issues        ", theme.dimmed.clone());
@@ -3026,6 +3073,15 @@ fn render_flush_result_rich(result: &FlushResult, errors: &[ExportError], ctx: &
         );
     }
 
+    text
+}
+
+/// Render flush (export) result with rich formatting.
+fn render_flush_result_rich(result: &FlushResult, errors: &[ExportError], ctx: &OutputContext) {
+    let _console = Console::default();
+    let theme = ctx.theme();
+
+    let text = build_flush_result_text(result, errors, theme);
     let panel = Panel::from_rich_text(&text, ctx.width())
         .title(Text::new("Flush (Export)"))
         .box_style(theme.box_style);
@@ -3154,7 +3210,7 @@ fn fresh_force_import_maintenance_gate_applies(
 #[allow(clippy::too_many_arguments)]
 fn replace_database_from_jsonl_snapshot(
     storage: &mut crate::storage::SqliteStorage,
-    beads_dir: &Path,
+    obr_dir: &Path,
     cli: &config::CliOverrides,
     source: &JsonlSourceSnapshot,
     jsonl_authority: &crate::sync::JsonlFamilyWriteLock,
@@ -3163,7 +3219,7 @@ fn replace_database_from_jsonl_snapshot(
     target_prefix: Option<&str>,
     preserved_tombstones: &[crate::sync::PreservedIssue],
 ) -> Result<ImportResult> {
-    let startup = config::load_startup_config_with_paths(beads_dir, cli.db.as_ref())?;
+    let startup = config::load_startup_config_with_paths(obr_dir, cli.db.as_ref())?;
     let mut bootstrap_layer = startup.merged_config;
     if let Some(prefix) = target_prefix {
         bootstrap_layer
@@ -3178,9 +3234,9 @@ fn replace_database_from_jsonl_snapshot(
     drop(previous_storage);
 
     let recovery =
-        if let Some(authority) = cli.database_family_write_authority_for(beads_dir, db_path) {
+        if let Some(authority) = cli.database_family_write_authority_for(obr_dir, db_path) {
             config::repair_database_from_jsonl_snapshot_with_import_config_under_write_authority(
-                beads_dir,
+                obr_dir,
                 db_path,
                 cli.lock_timeout,
                 &bootstrap_layer,
@@ -3191,7 +3247,7 @@ fn replace_database_from_jsonl_snapshot(
             )
         } else {
             config::repair_database_from_jsonl_snapshot_with_import_config(
-                beads_dir,
+                obr_dir,
                 db_path,
                 cli.lock_timeout,
                 &bootstrap_layer,
@@ -3205,7 +3261,7 @@ fn replace_database_from_jsonl_snapshot(
         Ok(rebuilt) => rebuilt,
         Err(error) => {
             let reopened = cli
-                .database_family_write_authority_for(beads_dir, db_path)
+                .database_family_write_authority_for(obr_dir, db_path)
                 .map_or_else(
                     || crate::storage::SqliteStorage::open_with_timeout(db_path, cli.lock_timeout),
                     |authority| {
@@ -3229,7 +3285,7 @@ fn replace_database_from_jsonl_snapshot(
 
 fn repair_import_integrity_if_needed(
     storage: &mut crate::storage::SqliteStorage,
-    beads_dir: &Path,
+    obr_dir: &Path,
     cli: &config::CliOverrides,
     source: &JsonlSourceSnapshot,
     jsonl_authority: &crate::sync::JsonlFamilyWriteLock,
@@ -3253,7 +3309,7 @@ fn repair_import_integrity_if_needed(
 
     replace_database_from_jsonl_snapshot(
         storage,
-        beads_dir,
+        obr_dir,
         cli,
         source,
         jsonl_authority,
@@ -3274,7 +3330,7 @@ fn auto_rebuild_semantic_flag_conflict_reason(
         return None;
     }
 
-    let mut rerun = vec!["br".to_string()];
+    let mut rerun = vec!["obr".to_string()];
     if let Some(path) = db_path {
         rerun.push("--db".to_string());
         rerun.push(shell_quote(&path.display().to_string()));
@@ -3371,7 +3427,7 @@ fn emit_auto_rebuild_import_result(
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 fn execute_import(
     storage: &mut crate::storage::SqliteStorage,
-    beads_dir: &std::path::Path,
+    obr_dir: &std::path::Path,
     cli: &config::CliOverrides,
     path_policy: &SyncPathPolicy,
     args: &SyncArgs,
@@ -3460,7 +3516,7 @@ fn execute_import(
         && let Some(salvage) = salvage_invalid_jsonl_records_under_authority(
             source,
             jsonl_path,
-            &path_policy.beads_dir,
+            &path_policy.obr_dir,
             path_policy.allow_external_jsonl,
             jsonl_authority,
         )?
@@ -3483,14 +3539,14 @@ fn execute_import(
     // asked to rename imported IDs into the configured prefix.
     let target_prefix = if args.rename_prefix {
         let layer = config::load_config_with_external_jsonl_policy_snapshot(
-            beads_dir,
+            obr_dir,
             Some(storage),
             cli,
             path_policy.allow_external_jsonl,
             source,
         )?;
         let id_cfg = config::id_config_from_layer(&layer);
-        Some(if id_cfg.prefix == "br" {
+        Some(if id_cfg.prefix == "obr" {
             // Prefix is still the default — check if we should auto-detect from JSONL
             let db_prefix = storage.get_config("issue_prefix")?;
             if let Some(p) = db_prefix {
@@ -3501,7 +3557,7 @@ fn execute_import(
                 storage.set_config("issue_prefix", &detected)?;
                 detected
             } else {
-                "br".to_string()
+                "obr".to_string()
             }
         } else {
             // Config layer resolved a non-default prefix — use it
@@ -3536,7 +3592,7 @@ fn execute_import(
                 || jsonl_contains_duplicate_external_refs(source).unwrap_or(true)
         });
     if rename_semantics_were_skipped {
-        let rerun_db_path = config::resolve_paths(beads_dir, None)
+        let rerun_db_path = config::resolve_paths(obr_dir, None)
             .ok()
             .filter(|paths| paths.db_path != *db_path)
             .map(|_| db_path);
@@ -3651,7 +3707,7 @@ fn execute_import(
         clear_duplicate_external_refs: args.rename_prefix,
         orphan_mode,
         force_upsert: args.force,
-        beads_dir: Some(path_policy.beads_dir.clone()),
+        obr_dir: Some(path_policy.obr_dir.clone()),
         allow_external_jsonl: path_policy.allow_external_jsonl,
         show_progress,
     };
@@ -3705,7 +3761,7 @@ fn execute_import(
     let mut import_result = if import_used_backup_rebuild {
         replace_database_from_jsonl_snapshot(
             storage,
-            beads_dir,
+            obr_dir,
             cli,
             source,
             jsonl_authority,
@@ -3814,10 +3870,10 @@ fn execute_import(
     // Post-import VACUUM + REINDEX to eliminate B-tree/index corruption
     // artifacts that frankensqlite's bulk-insert and metadata-update paths
     // can leave behind.  This mirrors what `rebuild_database_family` (used
-    // by `br doctor --repair` and auto recovery) does at the equivalent
+    // by `obr doctor --repair` and auto recovery) does at the equivalent
     // chokepoint.
     //
-    // Without this, large `br sync --import-only` runs can produce a DB
+    // Without this, large `obr sync --import-only` runs can produce a DB
     // where C sqlite3's `PRAGMA integrity_check` reports free-space or
     // index-entry corruption.  Force/rebuild imports hit this through
     // `reset_data_tables()` + bulk import (issue #248); the FrankenTorch
@@ -3895,7 +3951,7 @@ fn execute_import(
             Ok(compacted_storage) => *storage = compacted_storage,
             Err(err) => {
                 let reopened = cli
-                    .database_family_write_authority_for(beads_dir, db_path)
+                    .database_family_write_authority_for(obr_dir, db_path)
                     .map_or_else(
                         || {
                             crate::storage::SqliteStorage::open_with_timeout(
@@ -3919,7 +3975,7 @@ fn execute_import(
         }
         repair_import_integrity_if_needed(
             storage,
-            beads_dir,
+            obr_dir,
             cli,
             source,
             jsonl_authority,
@@ -4196,7 +4252,7 @@ fn execute_reconcile(
         clear_duplicate_external_refs: false,
         orphan_mode: OrphanMode::Strict,
         force_upsert: false,
-        beads_dir: Some(path_policy.beads_dir.clone()),
+        obr_dir: Some(path_policy.obr_dir.clone()),
         allow_external_jsonl: path_policy.allow_external_jsonl,
         show_progress: false,
     };
@@ -4349,7 +4405,7 @@ fn render_reconcile_receipt_text(receipt: &SyncReconcileReceipt) {
         }
         if apply.needs_flush_set {
             println!(
-                "  Local state still diverges from JSONL; database marked for flush (run: br sync --flush-only)"
+                "  Local state still diverges from JSONL; database marked for flush (run: obr sync --flush-only)"
             );
         }
     } else {
@@ -4371,6 +4427,29 @@ fn optional_source_matches(
         }
         _ => false,
     }
+}
+
+/// Whether `base` is the merge-base anchor that `published_source` publishes.
+///
+/// The anchor file is always JSONL, so the witness depends on the export
+/// format. For JSONL the anchor is a byte copy of the export and the full
+/// byte-exact triple (raw digest, content digest, size) must still hold. For
+/// Org the anchor is *derived* — the export is parsed and re-serialized as
+/// canonical JSONL — so only the derived content digest
+/// (`crate::sync::expected_base_anchor_content_sha256`) is a meaningful
+/// witness; the Org file's raw bytes and size describe a different artifact.
+fn base_anchor_matches_published(
+    base: &JsonlSourceSnapshot,
+    published_source: &JsonlSourceSnapshot,
+    expected_content_sha256: &str,
+) -> bool {
+    if base.content_sha256() != expected_content_sha256 {
+        return false;
+    }
+    if crate::sync::org_bridge::ExportFormat::for_path(published_source.display_path()).is_org() {
+        return true;
+    }
+    base.raw_sha256() == published_source.raw_sha256() && base.size() == published_source.size()
 }
 
 fn source_matches_pending_merge_output(
@@ -4483,13 +4562,18 @@ fn reconcile_pending_sync_merge_artifacts(
                             .to_string(),
                 });
             }
+            // Same source of truth as the flush path, so the republished bytes
+            // carry the header the staged bytes did. Any disagreement is loud,
+            // not silent: `expected_staged_output` below pins the exact
+            // raw_sha256 the receipt recorded.
             let export_config = ExportConfig {
                 force: true,
+                issue_prefix: storage.get_config("issue_prefix")?,
                 is_default_path: true,
                 error_policy: ExportErrorPolicy::Strict,
                 retention_days: receipt.intent.retention_days,
                 export_as_of: Some(receipt.intent.export_as_of),
-                beads_dir: Some(path_policy.beads_dir.clone()),
+                obr_dir: Some(path_policy.obr_dir.clone()),
                 allow_external_jsonl: path_policy.allow_external_jsonl,
                 show_progress,
                 history: history_config,
@@ -4602,10 +4686,10 @@ fn reconcile_pending_sync_merge_artifacts(
         &receipt.intent.base_before,
         receipt.intent.base_before_content_sha256.as_deref(),
     );
+    let expected_base_content_sha256 =
+        crate::sync::expected_base_anchor_content_sha256(&published_source)?;
     let base_is_after = current_base.is_some_and(|base| {
-        base.raw_sha256() == published_source.raw_sha256()
-            && base.content_sha256() == published_source.content_sha256()
-            && base.size() == published_source.size()
+        base_anchor_matches_published(base, &published_source, &expected_base_content_sha256)
     });
     if !base_is_before && !base_is_after {
         return Err(BeadsError::SyncConflict {
@@ -4624,7 +4708,7 @@ fn reconcile_pending_sync_merge_artifacts(
     crate::sync::verify_jsonl_source_snapshot_current(&published_source, jsonl_authority)?;
     let base_publication = refresh_base_snapshot_from_flushed_jsonl_snapshot_under_authority(
         &published_source,
-        &path_policy.beads_dir,
+        &path_policy.obr_dir,
         &current_base_state,
         base_authority,
     )?;
@@ -4632,7 +4716,7 @@ fn reconcile_pending_sync_merge_artifacts(
         database_authority.verify_database_authority()?;
     }
     crate::sync::verify_jsonl_source_snapshot_current(&published_source, jsonl_authority)?;
-    if base_publication.content_sha256() != published_source.content_sha256() {
+    if base_publication.content_sha256() != expected_base_content_sha256 {
         return Err(BeadsError::SyncConflict {
             message: "Published merge base does not match the exact finalized JSONL generation"
                 .to_string(),
@@ -4640,17 +4724,18 @@ fn reconcile_pending_sync_merge_artifacts(
     }
     if !base_publication.cleanup_durable() {
         warn!(
-            base_path = %path_policy.beads_dir.join("beads.base.jsonl").display(),
+            base_path = %config::merge_base_jsonl_path(&path_policy.obr_dir).display(),
             recovery_path = base_publication.retained_recovery_path(),
             "Base snapshot is verified, but displaced-generation cleanup was not certified durable"
         );
     }
 
     let terminal_base = base_authority.capture_target()?;
-    if terminal_base.raw_sha256() != published_source.raw_sha256()
-        || terminal_base.content_sha256() != published_source.content_sha256()
-        || terminal_base.size() != published_source.size()
-    {
+    if !base_anchor_matches_published(
+        &terminal_base,
+        &published_source,
+        &expected_base_content_sha256,
+    ) {
         return Err(BeadsError::SyncConflict {
             message: "Terminal merge base witness differs from the exact finalized JSONL"
                 .to_string(),
@@ -5052,7 +5137,7 @@ fn execute_source_repo_path_migration(
         });
     }
 
-    let base_path = path_policy.beads_dir.join("beads.base.jsonl");
+    let base_path = path_policy.obr_dir.join("beads.base.jsonl");
     if let Some(receipt) = storage.pending_sync_merge_receipt()? {
         let base_authority = crate::sync::blocking_jsonl_family_write_lock_with_timeout(
             &base_path,
@@ -5086,7 +5171,7 @@ fn execute_source_repo_path_migration(
         });
     }
 
-    let mut plan = build_source_repo_path_migration_plan(storage, &path_policy.beads_dir, source)?;
+    let mut plan = build_source_repo_path_migration_plan(storage, &path_policy.obr_dir, source)?;
     if !args.apply {
         render_source_repo_path_migration_receipt(&plan.receipt, ctx, use_json);
         return Ok(SyncDispatchCompletion::default());
@@ -5173,7 +5258,13 @@ fn execute_source_repo_path_migration(
         database_before: plan.database_before,
     };
     let pending_receipt =
-        storage.apply_sync_merge_atomically(&plan.changed_kept, &[], &[], &intent)?;
+        storage.apply_sync_merge_atomically_with_format(
+            &plan.changed_kept,
+            &[],
+            &[],
+            &intent,
+            crate::sync::org_bridge::ExportFormat::for_path(jsonl_path),
+        )?;
     plan.receipt
         .warnings
         .clone_from(&pending_receipt.capacity_warnings);
@@ -5238,7 +5329,7 @@ fn execute_merge(
     ctx: &OutputContext,
 ) -> Result<SyncDispatchCompletion> {
     info!("Starting 3-way merge");
-    let beads_dir = &path_policy.beads_dir;
+    let obr_dir = &path_policy.obr_dir;
     let jsonl_path = &path_policy.jsonl_path;
 
     let owned_jsonl_authority = retained_authority
@@ -5265,7 +5356,7 @@ fn execute_merge(
         });
     }
 
-    let base_path = beads_dir.join("beads.base.jsonl");
+    let base_path = config::merge_base_jsonl_path(obr_dir);
     let base_authority =
         crate::sync::blocking_jsonl_family_write_lock_with_timeout(&base_path, cli.lock_timeout)?;
     base_authority.verify_jsonl_authority()?;
@@ -5369,7 +5460,7 @@ fn execute_merge(
     if base_source.is_none() && left != right && !args.force_db && !args.force_jsonl {
         return Err(BeadsError::SyncConflict {
             message:
-                "beads.base.jsonl is missing and the database differs from JSONL; choose --force-db or --force-jsonl explicitly instead of guessing a merge ancestor"
+                "merge.base.jsonl is missing and the database differs from JSONL; choose --force-db or --force-jsonl explicitly instead of guessing a merge ancestor"
                     .to_string(),
         });
     }
@@ -5415,7 +5506,7 @@ fn execute_merge(
         return Err(BeadsError::Config(msg));
     }
 
-    let actor = cli.actor.as_deref().unwrap_or("br");
+    let actor = cli.actor.as_deref().unwrap_or("obr");
     let note_target_ids = report
         .notes
         .iter()
@@ -5475,11 +5566,12 @@ fn execute_merge(
         note_witnesses,
         database_before,
     };
-    let pending_receipt = storage.apply_sync_merge_atomically(
+    let pending_receipt = storage.apply_sync_merge_atomically_with_format(
         &changed_kept,
         &report.deleted,
         &report.notes,
         &intent,
+        crate::sync::org_bridge::ExportFormat::for_path(jsonl_authority.canonical_jsonl_path()),
     )?;
     let capacity_warnings = pending_receipt.capacity_warnings.clone();
     let _ = storage.take_capacity_warnings();
@@ -5626,12 +5718,13 @@ fn render_merge_result_rich(report: &crate::sync::MergeReport, ctx: &OutputConte
 #[cfg(test)]
 mod tests {
     use super::{
-        GitExportStatus, SyncOperation, SyncPathPolicy, additive_conflict_human_lines,
+        FlushResult, GitExportStatus, SyncOperation, SyncPathPolicy, additive_conflict_human_lines,
         auto_rebuild_semantic_conflict_field, auto_rebuild_semantic_flag_conflict_reason,
-        build_base_witness_artifacts, classify_sync_status_workspace, detect_prefix_from_jsonl,
-        fresh_force_import_maintenance_gate_applies, jsonl_contains_duplicate_external_refs,
-        jsonl_contains_prefix_mismatch, merge_conflict_resolution, prepare_sync_startup,
-        should_defer_jsonl_recovery, should_render_human_sync_output, sync_operation,
+        build_base_witness_artifacts, build_flush_result_text, classify_sync_status_workspace,
+        detect_prefix_from_jsonl, fresh_force_import_maintenance_gate_applies,
+        jsonl_contains_duplicate_external_refs, jsonl_contains_prefix_mismatch,
+        merge_conflict_resolution, prepare_sync_startup, should_defer_jsonl_recovery,
+        should_render_human_sync_output, should_report_export_policy, sync_operation,
         validate_operator_requested_sync_path, validate_sync_mode_args, validate_sync_paths,
         write_manifest_atomically,
     };
@@ -5648,10 +5741,89 @@ mod tests {
         tombstones_missing_from_jsonl_tombstones,
     };
     use chrono::Utc;
+    use rich_rust::Console;
     use std::collections::{BTreeSet, HashSet};
     use std::fs;
     use std::path::{Path, PathBuf};
     use tempfile::TempDir;
+
+    /// Wide enough that no panel row wraps.
+    const RICH_WIDTH: usize = 200;
+
+    fn flush_result_with_policy(policy: crate::sync::ExportErrorPolicy) -> FlushResult {
+        FlushResult {
+            exported_issues: 3,
+            exported_dependencies: 0,
+            exported_labels: 0,
+            exported_comments: 0,
+            content_hash: String::new(),
+            cleared_dirty: 0,
+            policy,
+            success_rate: 1.0,
+            errors: Vec::new(),
+            manifest_path: None,
+            publication_atomicity: None,
+        }
+    }
+
+    fn capture_flush_panel(result: &FlushResult) -> String {
+        let ctx = crate::output::OutputContext::with_mode(crate::output::OutputMode::Rich);
+        assert!(ctx.is_rich(), "the panel must be exercised in Rich mode");
+        let text = build_flush_result_text(result, &result.errors, ctx.theme());
+
+        let console = Console::builder()
+            .no_color()
+            .force_terminal(true)
+            .width(RICH_WIDTH)
+            .build();
+        console.begin_capture();
+        console.print_renderable(&text);
+        console
+            .end_capture()
+            .iter()
+            .map(|segment| segment.text.as_ref())
+            .collect::<String>()
+    }
+
+    /// The plain branch has always printed "Export completed with policy: X"
+    /// whenever the policy is not a clean `strict`; the Rich panel silently
+    /// dropped it, so a TTY user could not tell a tolerant export from a
+    /// strict one. No golden could catch that — goldens capture plain.
+    #[test]
+    fn rich_flush_panel_states_the_export_policy_plain_would_state() {
+        for policy in [
+            crate::sync::ExportErrorPolicy::BestEffort,
+            crate::sync::ExportErrorPolicy::Partial,
+            crate::sync::ExportErrorPolicy::RequiredCore,
+        ] {
+            let result = flush_result_with_policy(policy);
+            assert!(
+                should_report_export_policy(policy, false),
+                "plain prints the policy for {policy}; the premise of this test"
+            );
+            let rendered = capture_flush_panel(&result);
+            assert!(
+                rendered.contains(&policy.to_string()),
+                "rich flush panel never stated policy {policy}:\n{rendered}"
+            );
+        }
+    }
+
+    /// And it stays quiet for the default clean strict export, matching plain
+    /// exactly rather than gaining a row plain does not print.
+    #[test]
+    fn rich_flush_panel_is_silent_about_a_clean_strict_export() {
+        let result = flush_result_with_policy(crate::sync::ExportErrorPolicy::Strict);
+        assert!(!should_report_export_policy(
+            crate::sync::ExportErrorPolicy::Strict,
+            false
+        ));
+        let rendered = capture_flush_panel(&result);
+        assert!(
+            !rendered.contains("Policy"),
+            "rich flush panel reported a policy plain would not print:\n{rendered}"
+        );
+    }
 
     fn make_test_issue(id: &str, title: &str) -> Issue {
         Issue {
@@ -5732,7 +5904,7 @@ mod tests {
             &storage,
             &jsonl_path,
             &AdditiveReconcileConfig {
-                beads_dir: Some(temp.path().to_path_buf()),
+                obr_dir: Some(temp.path().to_path_buf()),
                 database_path: None,
                 allow_external_jsonl: false,
                 source_authoritative_ids: BTreeSet::new(),
@@ -5775,10 +5947,10 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
 
-        let manifest_path = beads_dir.join(".manifest.json");
+        let manifest_path = obr_dir.join(".manifest.json");
         let temp_path = manifest_path.with_extension(format!("json.{}.tmp", std::process::id()));
         let outside_target = temp.path().join("outside.json");
         fs::write(&outside_target, "preserve").unwrap();
@@ -5821,10 +5993,10 @@ mod tests {
     #[test]
     fn test_write_manifest_atomically_skips_stale_regular_temp_file() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
 
-        let manifest_path = beads_dir.join(".manifest.json");
+        let manifest_path = obr_dir.join(".manifest.json");
         let stale_temp_path =
             manifest_path.with_extension(format!("json.{}.tmp", std::process::id()));
         fs::write(&stale_temp_path, "stale temp").unwrap();
@@ -5918,22 +6090,22 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let outside_dir = temp.path().join("outside");
-        fs::create_dir_all(&beads_dir).unwrap();
+        fs::create_dir_all(&obr_dir).unwrap();
         fs::create_dir_all(&outside_dir).unwrap();
 
-        let current_jsonl_path = beads_dir.join("issues.jsonl");
+        let current_jsonl_path = obr_dir.join("issues.jsonl");
         fs::write(&current_jsonl_path, "current\n").unwrap();
-        let outside_base_path = outside_dir.join("beads.base.jsonl");
+        let outside_base_path = outside_dir.join("merge.base.jsonl");
         fs::write(&outside_base_path, "outside\n").unwrap();
-        symlink(&outside_base_path, beads_dir.join("beads.base.jsonl")).unwrap();
+        symlink(&outside_base_path, obr_dir.join("merge.base.jsonl")).unwrap();
 
         let path_policy = SyncPathPolicy {
             jsonl_path: current_jsonl_path.clone(),
             jsonl_temp_path: current_jsonl_path.with_extension("jsonl.tmp"),
-            manifest_path: beads_dir.join(".manifest.json"),
-            beads_dir,
+            manifest_path: obr_dir.join(".manifest.json"),
+            obr_dir,
             is_external: false,
             allow_external_jsonl: false,
         };
@@ -6354,17 +6526,17 @@ mod tests {
                 pre-merge snapshot); tracked for completion by the owning workstream"]
     fn sync_status_fast_open_miss_reuses_caller_write_lock_for_rebuild() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
-        let db_path = beads_dir.join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let db_path = obr_dir.join("beads.db");
+        let jsonl_path = obr_dir.join("issues.jsonl");
         let issue = make_test_issue("bd-sync-selflock", "Recovered while caller holds lock");
         fs::write(
             &jsonl_path,
             format!("{}\n", serde_json::to_string(&issue).unwrap()),
         )
         .unwrap();
-        let _held_lock = crate::sync::blocking_write_lock(&beads_dir).unwrap();
+        let _held_lock = crate::sync::blocking_write_lock(&obr_dir).unwrap();
         let args = SyncArgs {
             status: true,
             ..SyncArgs::default()
@@ -6394,7 +6566,7 @@ mod tests {
         let status = GitExportStatus::not_probed();
         assert!(!status.available, "{status:?}");
         assert_eq!(status.reason, "not_probed");
-        assert_eq!(status.diagnostic_command, "br vcs-status --json");
+        assert_eq!(status.diagnostic_command, "obr vcs-status --json");
         assert!(status.tracked.is_none(), "{status:?}");
         assert!(status.worktree_clean.is_none(), "{status:?}");
         assert!(status.index_clean.is_none(), "{status:?}");
@@ -6407,7 +6579,7 @@ mod tests {
             serde_json::json!({
                 "available": false,
                 "reason": "not_probed",
-                "diagnostic_command": "br vcs-status --json"
+                "diagnostic_command": "obr vcs-status --json"
             })
         );
     }
@@ -6915,11 +7087,11 @@ mod tests {
     #[test]
     fn test_validate_sync_paths_allows_missing_internal_parent_directory() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
 
-        let jsonl_path = beads_dir.join("nested").join("issues.jsonl");
-        let policy = validate_sync_paths(&beads_dir, &jsonl_path, false).expect("path policy");
+        let jsonl_path = obr_dir.join("nested").join("issues.jsonl");
+        let policy = validate_sync_paths(&obr_dir, &jsonl_path, false).expect("path policy");
 
         assert_eq!(policy.jsonl_path, jsonl_path);
         assert!(!policy.is_external);
@@ -6929,15 +7101,15 @@ mod tests {
     #[test]
     fn test_validate_sync_paths_allows_missing_external_parent_directory_with_opt_in() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
 
         let jsonl_path = temp
             .path()
             .join("external")
             .join("nested")
             .join("issues.jsonl");
-        let policy = validate_sync_paths(&beads_dir, &jsonl_path, true).expect("path policy");
+        let policy = validate_sync_paths(&obr_dir, &jsonl_path, true).expect("path policy");
 
         assert_eq!(policy.jsonl_path, jsonl_path);
         assert!(policy.is_external);
@@ -6947,19 +7119,19 @@ mod tests {
     #[test]
     fn test_validate_sync_paths_allows_external_db_family_effective_policy() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let external_dir = temp.path().join("external");
-        fs::create_dir_all(&beads_dir).unwrap();
+        fs::create_dir_all(&obr_dir).unwrap();
         fs::create_dir_all(&external_dir).unwrap();
 
         let db_path = external_dir.join("beads.db");
         let jsonl_path = external_dir.join("issues.jsonl");
         let allow_external_jsonl =
-            config::implicit_external_jsonl_allowed(&beads_dir, &db_path, &jsonl_path);
+            config::implicit_external_jsonl_allowed(&obr_dir, &db_path, &jsonl_path);
         assert!(allow_external_jsonl);
 
-        let policy = validate_sync_paths(&beads_dir, &jsonl_path, allow_external_jsonl)
-            .expect("path policy");
+        let policy =
+            validate_sync_paths(&obr_dir, &jsonl_path, allow_external_jsonl).expect("path policy");
 
         assert_eq!(policy.jsonl_path, jsonl_path);
         assert!(policy.is_external);
@@ -6969,13 +7141,13 @@ mod tests {
     #[test]
     fn test_validate_sync_paths_rejects_external_path_without_effective_policy() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let external_dir = temp.path().join("external");
-        fs::create_dir_all(&beads_dir).unwrap();
+        fs::create_dir_all(&obr_dir).unwrap();
         fs::create_dir_all(&external_dir).unwrap();
 
         let jsonl_path = external_dir.join("issues.jsonl");
-        let err = validate_sync_paths(&beads_dir, &jsonl_path, false).unwrap_err();
+        let err = validate_sync_paths(&obr_dir, &jsonl_path, false).unwrap_err();
 
         assert!(
             matches!(&err, BeadsError::Config(_)),
@@ -6995,11 +7167,11 @@ mod tests {
     #[test]
     fn test_validate_operator_requested_sync_path_rejects_git_before_resolution() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
 
         let err =
-            validate_operator_requested_sync_path(&beads_dir, Path::new(".git/../issues.jsonl"))
+            validate_operator_requested_sync_path(&obr_dir, Path::new(".git/../issues.jsonl"))
                 .unwrap_err();
 
         assert!(
@@ -7023,16 +7195,16 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let external_dir = temp.path().join("external");
-        fs::create_dir_all(&beads_dir).unwrap();
+        fs::create_dir_all(&obr_dir).unwrap();
         fs::create_dir_all(&external_dir).unwrap();
 
-        let symlink_parent = beads_dir.join("external-link");
+        let symlink_parent = obr_dir.join("external-link");
         symlink(&external_dir, &symlink_parent).unwrap();
 
         let jsonl_path = symlink_parent.join("issues.jsonl");
-        let err = validate_sync_paths(&beads_dir, &jsonl_path, true).unwrap_err();
+        let err = validate_sync_paths(&obr_dir, &jsonl_path, true).unwrap_err();
 
         assert!(
             matches!(&err, BeadsError::Config(_)),
@@ -7052,16 +7224,16 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let git_dir = temp.path().join(".git");
-        fs::create_dir_all(&beads_dir).unwrap();
+        fs::create_dir_all(&obr_dir).unwrap();
         fs::create_dir_all(&git_dir).unwrap();
 
         let git_link = temp.path().join("git-link");
         symlink(&git_dir, &git_link).unwrap();
 
         let jsonl_path = git_link.join("issues.jsonl");
-        let err = validate_sync_paths(&beads_dir, &jsonl_path, true).unwrap_err();
+        let err = validate_sync_paths(&obr_dir, &jsonl_path, true).unwrap_err();
 
         assert!(
             matches!(&err, BeadsError::Config(_)),
@@ -7081,11 +7253,11 @@ mod tests {
     #[test]
     fn test_validate_sync_paths_rejects_traversal_for_missing_external_parent() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
 
         let traversal_path = PathBuf::from("../outside/issues.jsonl");
-        let err = validate_sync_paths(&beads_dir, &traversal_path, true).unwrap_err();
+        let err = validate_sync_paths(&obr_dir, &traversal_path, true).unwrap_err();
 
         assert!(
             matches!(&err, BeadsError::Config(_)),
@@ -7108,8 +7280,8 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
 
         let outside_target = temp.path().join("outside.jsonl");
         fs::write(&outside_target, "{}\n").unwrap();
@@ -7117,7 +7289,7 @@ mod tests {
         let symlink_path = temp.path().join("linked.jsonl");
         symlink(&outside_target, &symlink_path).unwrap();
 
-        let err = validate_sync_paths(&beads_dir, &symlink_path, true).unwrap_err();
+        let err = validate_sync_paths(&obr_dir, &symlink_path, true).unwrap_err();
 
         assert!(
             matches!(&err, BeadsError::Config(_)),
@@ -7137,9 +7309,9 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let git_dir = temp.path().join(".git");
-        fs::create_dir_all(&beads_dir).unwrap();
+        fs::create_dir_all(&obr_dir).unwrap();
         fs::create_dir_all(&git_dir).unwrap();
 
         let outside_target = temp.path().join("outside.jsonl");
@@ -7148,7 +7320,7 @@ mod tests {
         let git_link = git_dir.join("linked.jsonl");
         symlink(&outside_target, &git_link).unwrap();
 
-        let err = validate_sync_paths(&beads_dir, &git_link, true).unwrap_err();
+        let err = validate_sync_paths(&obr_dir, &git_link, true).unwrap_err();
 
         assert!(
             matches!(&err, BeadsError::Config(_)),
@@ -7243,7 +7415,7 @@ mod tests {
                 .expect("rename-prefix conflict");
         assert!(reason.contains("`--rename-prefix`"), "reason: {reason}");
         assert!(
-            reason.contains("`br sync --import-only --force --rename-prefix`"),
+            reason.contains("`obr sync --import-only --force --rename-prefix`"),
             "reason: {reason}"
         );
     }
@@ -7277,7 +7449,7 @@ mod tests {
                 .expect("combined conflict");
         assert!(reason.contains("`--rename-prefix`"), "reason: {reason}");
         assert!(
-            reason.contains("`br sync --import-only --force --rebuild --rename-prefix`"),
+            reason.contains("`obr sync --import-only --force --rebuild --rename-prefix`"),
             "reason: {reason}"
         );
     }
@@ -7299,7 +7471,7 @@ mod tests {
         .expect("rename-prefix conflict");
         assert!(
             reason.contains(
-                "`br --db '/tmp/custom db.sqlite' sync --import-only --force --rename-prefix`"
+                "`obr --db '/tmp/custom db.sqlite' sync --import-only --force --rename-prefix`"
             ),
             "reason: {reason}"
         );
@@ -7318,8 +7490,9 @@ mod tests {
             auto_rebuild_semantic_flag_conflict_reason(&args, &CliOverrides::default(), None)
                 .expect("rename-prefix conflict");
         assert!(
-            reason
-                .contains("`br sync --import-only --allow-external-jsonl --force --rename-prefix`"),
+            reason.contains(
+                "`obr sync --import-only --allow-external-jsonl --force --rename-prefix`"
+            ),
             "reason: {reason}"
         );
     }
@@ -7344,7 +7517,7 @@ mod tests {
             .expect("rename-prefix conflict");
         assert!(
             reason.contains(
-                "`br --json --allow-stale --no-auto-import --no-auto-flush --lock-timeout 17 sync --import-only --force --rename-prefix`"
+                "`obr --json --allow-stale --no-auto-import --no-auto-flush --lock-timeout 17 sync --import-only --force --rename-prefix`"
             ),
             "reason: {reason}"
         );

@@ -1,9 +1,9 @@
-//! WP6 — agent-ergonomics surface for `br doctor`.
+//! WP6 — agent-ergonomics surface for `obr doctor`.
 //!
-//! Implements the dispatch targets for the `br doctor <subcommand>` group
+//! Implements the dispatch targets for the `obr doctor <subcommand>` group
 //! defined by [`crate::cli::DoctorSubcommand`]:
 //!
-//! - `capabilities` — `br.doctor.capabilities.v1` envelope (JSON or table).
+//! - `capabilities` — `obr.doctor.capabilities.v1` envelope (JSON or table).
 //! - `robot-docs`  — paste-ready agent handbook (Markdown or wrapped JSON).
 //! - `health`      — sub-200 ms liveness summary; exit-code = liveness.
 //! - `ls`          — list runs in `.doctor/runs/`.
@@ -63,8 +63,8 @@ fn metadata_mode(metadata: &fs::Metadata) -> u32 {
     }
 }
 
-/// Top-level dispatcher for `br doctor <subcommand>`. Resolves the
-/// repo root via `config::discover_optional_beads_dir_with_cli` and
+/// Top-level dispatcher for `obr doctor <subcommand>`. Resolves the
+/// repo root via `config::discover_optional_obr_dir_with_cli` and
 /// hands off to the per-subcommand handler.
 ///
 /// # Errors
@@ -76,7 +76,7 @@ pub fn dispatch_subcommand(
     cli: &config::CliOverrides,
     ctx: &OutputContext,
 ) -> Result<()> {
-    let repo_root = match config::discover_optional_beads_dir_with_cli(cli)? {
+    let repo_root = match config::discover_optional_obr_dir_with_cli(cli)? {
         Some(beads) => beads
             .parent()
             .map(Path::to_path_buf)
@@ -101,21 +101,23 @@ pub fn dispatch_subcommand(
 }
 
 /// Stable schema-version constants — every JSON envelope pins one.
-pub const CAPABILITIES_SCHEMA: &str = "br.doctor.capabilities.v1";
-pub const HEALTH_SCHEMA: &str = "br.doctor.health.v1";
-pub const RUNS_LIST_SCHEMA: &str = "br.doctor.runs_list.v1";
-pub const TRIAGE_SCHEMA: &str = "br.doctor.triage.v1";
-pub const ROBOT_DOCS_SCHEMA: &str = "br.doctor.robot_docs.v1";
-pub const UNDO_SCHEMA: &str = "br.doctor.undo.v1";
-pub const EXPLAIN_SCHEMA: &str = "br.doctor.explain.v1";
+pub const CAPABILITIES_SCHEMA: &str = "obr.doctor.capabilities.v1";
+pub const HEALTH_SCHEMA: &str = "obr.doctor.health.v1";
+pub const RUNS_LIST_SCHEMA: &str = "obr.doctor.runs_list.v1";
+pub const TRIAGE_SCHEMA: &str = "obr.doctor.triage.v1";
+pub const ROBOT_DOCS_SCHEMA: &str = "obr.doctor.robot_docs.v1";
+pub const UNDO_SCHEMA: &str = "obr.doctor.undo.v1";
+/// Schema of the per-table snapshot envelopes `doctor --undo` reads back.
+pub const DB_SNAPSHOT_SCHEMA: &str = "obr.doctor.db_snapshot.v1";
+pub const EXPLAIN_SCHEMA: &str = "obr.doctor.explain.v1";
 
 // =============================================================================
 // capabilities
 // =============================================================================
 
-/// Top-level envelope for `br doctor capabilities`. Wraps the inner
+/// Top-level envelope for `obr doctor capabilities`. Wraps the inner
 /// [`DoctorCapabilities`] struct with a stable
-/// `schema_version = "br.doctor.capabilities.v1"`.
+/// `schema_version = "obr.doctor.capabilities.v1"`.
 #[derive(Debug, Clone, Serialize)]
 pub struct CapabilitiesEnvelope<'a> {
     pub schema_version: &'static str,
@@ -123,7 +125,7 @@ pub struct CapabilitiesEnvelope<'a> {
     pub inner: &'a DoctorCapabilities,
 }
 
-/// Execute `br doctor capabilities`.
+/// Execute `obr doctor capabilities`.
 ///
 /// Read-only. Always exits 0 (the doctor's contract: capabilities is a
 /// pure diagnostic).
@@ -159,7 +161,7 @@ pub fn execute_capabilities(args: &DoctorCapabilitiesArgs, _ctx: &OutputContext)
 }
 
 fn render_capabilities_text(env: &CapabilitiesEnvelope<'_>) {
-    println!("br doctor capabilities");
+    println!("obr doctor capabilities");
     println!("  schema_version  : {}", env.schema_version);
     println!("  contract_version: {}", env.inner.contract_version);
     println!("  doctor_version  : {}", env.inner.doctor_version);
@@ -185,20 +187,20 @@ fn render_capabilities_text(env: &CapabilitiesEnvelope<'_>) {
     println!("  Fixers     : {} registered", env.inner.fixers.len());
     println!("  Detectors  : {} registered", env.inner.detectors.len());
     println!();
-    println!("Use `br doctor capabilities --format json` for the machine envelope.");
+    println!("Use `obr doctor capabilities --format json` for the machine envelope.");
 }
 
 // =============================================================================
 // robot-docs
 // =============================================================================
 
-const ROBOT_HANDBOOK_BODY: &str = r#"# br doctor — Agent Handbook
+const ROBOT_HANDBOOK_TEMPLATE: &str = r#"# obr doctor — Agent Handbook
 
-Contract version: **br.doctor.contract.v1**
+Contract version: **obr.doctor.contract.v1**
 
-`br doctor` is a diagnose-and-(optionally)-repair surface designed for AI
+`obr doctor` is a diagnose-and-(optionally)-repair surface designed for AI
 agents. Every disk write under `--repair` flows through a single
-[`mutate()`](https://docs.rs/beads_rust) chokepoint that records a verbatim
+[`mutate()`](https://docs.rs/obr) chokepoint that records a verbatim
 backup, an `actions.jsonl` audit line, and an `undo.sh` fallback before
 touching any byte of state.
 
@@ -206,16 +208,16 @@ touching any byte of state.
 
 | Subcommand | Purpose | Mutates? |
 |------------|---------|----------|
-| (flat) `br doctor` | Run all detectors. Print findings. | NO |
-| (flat) `br doctor --repair` | Apply fixers; back up everything. | YES (via `mutate()`) |
-| `br doctor --robot-triage` | Single JSON envelope for swarm triage. | NO |
-| `br doctor capabilities --format json` | Machine-readable contract. | NO |
-| `br doctor robot-docs` | This handbook. | NO |
-| `br doctor health` | Cheap one-line liveness summary. | NO |
-| `br doctor ls` | List `.doctor/runs/` directories. | NO |
-| `br doctor undo <run-id>` | Restore from `.doctor/runs/<id>/backups/`. | YES (restore) |
-| `br doctor undo latest` | Resolve `latest` and restore. | YES (restore) |
-| `br doctor explain <finding-id>` | Expand a single finding. | NO |
+| (flat) `obr doctor` | Run all detectors. Print findings. | NO |
+| (flat) `obr doctor --repair` | Apply fixers; back up everything. | YES (via `mutate()`) |
+| `obr doctor --robot-triage` | Single JSON envelope for swarm triage. | NO |
+| `obr doctor capabilities --format json` | Machine-readable contract. | NO |
+| `obr doctor robot-docs` | This handbook. | NO |
+| `obr doctor health` | Cheap one-line liveness summary. | NO |
+| `obr doctor ls` | List `.doctor/runs/` directories. | NO |
+| `obr doctor undo <run-id>` | Restore from `.doctor/runs/<id>/backups/`. | YES (restore) |
+| `obr doctor undo latest` | Resolve `latest` and restore. | YES (restore) |
+| `obr doctor explain <finding-id>` | Expand a single finding. | NO |
 
 ## Top-level flags (flat command)
 
@@ -224,7 +226,7 @@ touching any byte of state.
 | `--repair` | Apply fixers. Routes through `mutate()`. |
 | `--dry-run` | Print the plan; do NOT execute. Pair with `--repair`. |
 | `--allow-repeated-repair` | Permit a fresh JSONL rebuild after a prior failed recovery. |
-| `--robot-triage` | Emit `br.doctor.triage.v1` and exit. |
+| `--robot-triage` | Emit `obr.doctor.triage.v1` and exit. |
 
 ## Exit codes
 
@@ -238,7 +240,7 @@ touching any byte of state.
 | `5`  | `concurrency_lost` | workspace lock unavailable |
 | `6`  | `online_required` | network probe required `--online` |
 | `64` | `usage_error` | clap rejected the invocation |
-| `66` | `no_input` | required input missing (no `.beads/`) |
+| `66` | `no_input` | required input missing (no workspace directory) |
 | `73` | `cannot_create_output` | could not create the run-dir |
 | `74` | `io_error` | generic I/O fault during a non-mutating op |
 
@@ -247,18 +249,18 @@ touching any byte of state.
 ### Happy path (workspace healthy)
 
 ```sh
-br doctor               # exit 0; no findings
-br doctor --robot-triage  # exit 0; envelope shows zero findings
+obr doctor               # exit 0; no findings
+obr doctor --robot-triage  # exit 0; envelope shows zero findings
 ```
 
 ### Broken path (findings present)
 
 ```sh
-br doctor                                   # exit 1; findings printed
-br doctor --robot-triage                    # exit 1; JSON shows recommended_command
-br doctor --repair --dry-run                # exit 0; prints the plan
-br doctor --repair                          # exit 0/2/3 depending on fixer outcomes
-br doctor undo latest                       # exit 0; restores from the latest run
+obr doctor                                   # exit 1; findings printed
+obr doctor --robot-triage                    # exit 1; JSON shows recommended_command
+obr doctor --repair --dry-run                # exit 0; prints the plan
+obr doctor --repair                          # exit 0/2/3 depending on fixer outcomes
+obr doctor undo latest                       # exit 0; restores from the latest run
 ```
 
 ### Recovery (worked through `mutate()`)
@@ -270,26 +272,26 @@ Every `--repair` lays down `<repo>/.doctor/runs/<run-id>/`:
   actions.jsonl     # one JSON line per mutation
   backups/          # verbatim pre-mutation copies
   report.json       # final report (written at end of run)
-  undo.sh           # pure-bash fallback when br itself is broken
-.doctor/latest -> runs/<run-id>/   # best-effort convenience symlink
+  undo.sh           # pure-bash fallback when obr itself is broken
+.doctor/latest -> runs/<run-id>/   # atomic symlink
 ```
 
-## What `br doctor` will NEVER do
+## What `obr doctor` will NEVER do
 
 1. Delete files. Anything that "needs to delete" is renamed into
    `<run-dir>/quarantine/` instead, so `undo` can reverse it.
 2. Run destructive shell. There is no `Command::new("git")` in the
    doctor — the chokepoint is the only writer.
-3. Write outside its declared `write_scopes` (`.beads/`, `.doctor/`).
+3. Write outside its declared `write_scopes` ({write_scopes}).
 4. Skip the verbatim backup — every mutation is preceded by a strict
    byte-by-byte `cmp -s` of the live file against the freshly-written
    backup.
 5. Mutate without an audit trail — every action lands in
-   `actions.jsonl` so `br doctor undo` can replay it in reverse.
+   `actions.jsonl` so `obr doctor undo` can replay it in reverse.
 
-## Recovery without br
+## Recovery without obr
 
-If the `br` binary itself is broken, the per-run directory ships with a
+If the `obr` binary itself is broken, the per-run directory ships with a
 pure-bash `undo.sh` that needs only `bash`, `jq`, `cp`, and `mv`. Run:
 
 ```sh
@@ -298,19 +300,20 @@ bash .doctor/runs/<run-id>/undo.sh
 
 ## See also
 
-- `br doctor capabilities --format json` — machine-readable contract
-- `br doctor health --json` — liveness summary
+- `obr doctor capabilities --format json` — machine-readable contract
+- `obr doctor health --json` — liveness summary
 - The operator playbook lives at
   `<repo>/.../doctor_workspace/playbook.md`; consult it before running
   `--repair` on production workspaces.
 "#;
 
-/// Execute `br doctor robot-docs`.
+/// Execute `obr doctor robot-docs`.
 ///
 /// # Errors
 ///
 /// Returns [`BeadsError`] only if the JSON envelope fails to serialize.
 pub fn execute_robot_docs(args: &DoctorRobotDocsArgs, _ctx: &OutputContext) -> Result<()> {
+    let body = robot_handbook();
     match args.format {
         OutputFormatBasic::Json | OutputFormatBasic::Toon => {
             #[derive(Serialize)]
@@ -325,41 +328,59 @@ pub fn execute_robot_docs(args: &DoctorRobotDocsArgs, _ctx: &OutputContext) -> R
             }
             let envelope = Envelope {
                 schema_version: ROBOT_DOCS_SCHEMA,
-                tool: "br",
+                tool: "obr",
                 tool_version: env!("CARGO_PKG_VERSION"),
-                contract_version: "br.doctor.contract.v1",
-                title: "br doctor — Agent Handbook",
-                line_count: ROBOT_HANDBOOK_BODY.lines().count(),
-                handbook: ROBOT_HANDBOOK_BODY,
+                contract_version: "obr.doctor.contract.v1",
+                title: "obr doctor — Agent Handbook",
+                line_count: body.lines().count(),
+                handbook: &body,
             };
             let json = serde_json::to_string_pretty(&envelope).map_err(BeadsError::Json)?;
             println!("{json}");
         }
         OutputFormatBasic::Text => {
-            print!("{ROBOT_HANDBOOK_BODY}");
+            print!("{body}");
         }
     }
     Ok(())
 }
 
+/// The handbook, with the capability-derived placeholders filled in.
+///
+/// The write-scope sentence is generated from [`DoctorCapabilities`] rather
+/// than written out, because this handbook is the document agents read to
+/// learn the doctor's blast radius: the two used to be edited independently
+/// and drifted, leaving the handbook advertising a `.beads/` scope that the
+/// emitted contract had already renamed.
+fn robot_handbook() -> String {
+    let caps = DoctorCapabilities::build();
+    let scopes = caps
+        .write_scopes
+        .iter()
+        .map(|scope| format!("`{scope}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    ROBOT_HANDBOOK_TEMPLATE.replace("{write_scopes}", &scopes)
+}
+
 /// Pure accessor — used by tests and by `--robot-triage` to embed the
 /// handbook command in the envelope.
 #[must_use]
-pub const fn robot_handbook_body() -> &'static str {
-    ROBOT_HANDBOOK_BODY
+pub fn robot_handbook_body() -> String {
+    robot_handbook()
 }
 
 // =============================================================================
 // health
 // =============================================================================
 
-/// Output of `br doctor health`. Shape pinned by [`HEALTH_SCHEMA`].
+/// Output of `obr doctor health`. Shape pinned by [`HEALTH_SCHEMA`].
 #[derive(Debug, Clone, Serialize)]
 pub struct HealthOutput {
     pub schema_version: &'static str,
     pub status: &'static str,
     pub exit_code: i32,
-    pub beads_dir_present: bool,
+    pub obr_dir_present: bool,
     pub db_present: bool,
     pub jsonl_present: bool,
     pub merge_artifacts_present: bool,
@@ -379,7 +400,7 @@ pub struct HealthOutput {
     pub line: String,
 }
 
-/// Execute `br doctor health`.
+/// Execute `obr doctor health`.
 ///
 /// Stays under 200 ms by avoiding any DB query — only stat checks
 /// against the workspace tree.
@@ -395,12 +416,16 @@ pub fn execute_health(args: &DoctorHealthArgs, repo_root: &Path) -> Result<i32> 
 }
 
 fn build_health_output(repo_root: &Path, start: Instant) -> HealthOutput {
-    let beads = repo_root.join(".beads");
-    let beads_dir_present = beads.is_dir();
+    // Resolve through the shared four-name chain (`.obr`, `_obr`, then the
+    // legacy `.beads`/`_beads`) rather than probing one hardcoded name: this
+    // check previously looked only for `.beads`, so every workspace the
+    // current binary creates reported `no_workspace`.
+    let obr_dir = crate::config::workspace_dir_in(repo_root);
+    let obr_dir_present = obr_dir.is_dir();
 
-    if !beads_dir_present {
+    if !obr_dir_present {
         let line = format!(
-            "no_workspace  br={} reason=missing_dot_beads",
+            "no_workspace  obr={} reason=missing_workspace_dir",
             env!("CARGO_PKG_VERSION")
         );
         let exit_code = DoctorExitCode::NoInput.as_i32();
@@ -408,7 +433,7 @@ fn build_health_output(repo_root: &Path, start: Instant) -> HealthOutput {
             schema_version: HEALTH_SCHEMA,
             status: "no_workspace",
             exit_code,
-            beads_dir_present,
+            obr_dir_present,
             db_present: false,
             jsonl_present: false,
             merge_artifacts_present: false,
@@ -422,23 +447,32 @@ fn build_health_output(repo_root: &Path, start: Instant) -> HealthOutput {
         };
     }
 
-    let db = beads.join("beads.db");
+    // Resolve both artifacts through `ConfigPaths::resolve`, the same seam
+    // every other command uses, including the tracked PLAN.org surface.
+    let paths = crate::config::ConfigPaths::resolve(&obr_dir, None).ok();
+    let db = paths.as_ref().map_or_else(
+        || {
+            let default = obr_dir.join(crate::config::DEFAULT_DB_FILENAME);
+            if default.is_file() {
+                default
+            } else {
+                obr_dir.join(crate::config::LEGACY_DB_FILENAME)
+            }
+        },
+        |paths| paths.db_path.clone(),
+    );
     let db_present = db.is_file();
-    let jsonl_present = beads.join("issues.jsonl").is_file() || beads.join("beads.jsonl").is_file();
+    let jsonl_present = paths.as_ref().map_or_else(
+        || crate::config::discover_jsonl(&obr_dir).is_some(),
+        |paths| paths.jsonl_path.is_file(),
+    );
 
-    // Engine-free schema-version tripwire (#464): a database file can exist yet
-    // carry a schema version this binary refuses to mutate ("Schema version
-    // mismatch: expected N, found M"). Read the checkpointed header version
-    // (no engine open, well under the 200 ms budget) and treat any present,
-    // non-zero value other than CURRENT_SCHEMA_VERSION as an incompatibility so
-    // `health` no longer reports "healthy" on a tracker that rejects every
-    // write. A value of 0 (no user_version set) stays indeterminate.
+    // Engine-free schema-version tripwire keeps health from reporting a
+    // workspace healthy when this binary refuses every write.
     let schema_expected = CURRENT_SCHEMA_VERSION;
-    let schema_user_version = if db_present {
-        database_header_user_version(&db)
-    } else {
-        None
-    };
+    let schema_user_version = db_present
+        .then(|| database_header_user_version(&db))
+        .flatten();
     let schema_incompatible = matches!(
         schema_user_version,
         Some(found) if found != 0 && i64::from(found) != i64::from(schema_expected)
@@ -446,7 +480,7 @@ fn build_health_output(repo_root: &Path, start: Instant) -> HealthOutput {
     let schema_compatible = !schema_incompatible;
 
     // MERGE_* artifacts indicate a torn previous merge.
-    let merge_artifacts_present = match fs::read_dir(&beads) {
+    let merge_artifacts_present = match fs::read_dir(&obr_dir) {
         Ok(it) => it.flatten().any(|e| {
             let n = e.file_name();
             let s = n.to_string_lossy();
@@ -456,8 +490,8 @@ fn build_health_output(repo_root: &Path, start: Instant) -> HealthOutput {
     };
 
     // Orphan locks: present-but-empty, owner unknown.
-    let orphan_write_lock = beads.join(".write.lock").exists();
-    let orphan_sync_lock = beads.join(".sync.lock").exists();
+    let orphan_write_lock = obr_dir.join(".write.lock").exists();
+    let orphan_sync_lock = obr_dir.join(".sync.lock").exists();
 
     let findings_present =
         !db_present || !jsonl_present || merge_artifacts_present || schema_incompatible;
@@ -471,7 +505,7 @@ fn build_health_output(repo_root: &Path, start: Instant) -> HealthOutput {
     };
 
     let mut line = format!(
-        "{status}  br={ver} doctor=1 db={db} jsonl={jsonl}",
+        "{status}  obr={ver} doctor=1 db={db} jsonl={jsonl}",
         status = status,
         ver = env!("CARGO_PKG_VERSION"),
         db = if !db_present {
@@ -500,7 +534,7 @@ fn build_health_output(repo_root: &Path, start: Instant) -> HealthOutput {
         schema_version: HEALTH_SCHEMA,
         status,
         exit_code,
-        beads_dir_present,
+        obr_dir_present,
         db_present,
         jsonl_present,
         merge_artifacts_present,
@@ -528,7 +562,7 @@ fn emit_health(args: &DoctorHealthArgs, payload: &HealthOutput) {
 // ls
 // =============================================================================
 
-/// One row of `br doctor ls`.
+/// One row of `obr doctor ls`.
 #[derive(Debug, Clone, Serialize)]
 pub struct RunListRow {
     pub run_id: String,
@@ -546,7 +580,7 @@ pub struct RunsListEnvelope {
     pub runs: Vec<RunListRow>,
 }
 
-/// Execute `br doctor ls`.
+/// Execute `obr doctor ls`.
 ///
 /// # Errors
 ///
@@ -688,7 +722,7 @@ pub struct UndoStep {
     pub backup_used: Option<String>,
 }
 
-/// Top-level envelope for `br doctor undo`.
+/// Top-level envelope for `obr doctor undo`.
 #[derive(Debug, Clone, Serialize)]
 pub struct UndoEnvelope {
     pub schema_version: &'static str,
@@ -702,7 +736,7 @@ pub struct UndoEnvelope {
     pub failed: usize,
 }
 
-/// Execute `br doctor undo`.
+/// Execute `obr doctor undo`.
 ///
 /// Per-action contract:
 /// 1. Look up the verbatim backup at `<run-dir>/backups/<rel-path>`.
@@ -991,7 +1025,7 @@ fn restore_one(
     // For DbExec we replay the JSON snapshot back into the live DB
     // inside a single BEGIN IMMEDIATE / COMMIT. The chokepoint
     // recorded snapshot file paths under `db_snapshots`; each snapshot
-    // is a `br.doctor.db_snapshot.v1` envelope with the table, the
+    // is a `obr.doctor.db_snapshot.v1` envelope with the table, the
     // predicate, the column list, and the row vector taken before the
     // forward DbExec ran.
     if record.op == "db_exec" {
@@ -1043,7 +1077,7 @@ fn restore_one(
 /// Replay a `db_exec` action by restoring the rows captured in the
 /// snapshot envelope back into the live DB. We expect each entry in
 /// `record.db_snapshots` to be a workspace-relative path to a
-/// `br.doctor.db_snapshot.v1` JSON file. The snapshot envelope carries
+/// `obr.doctor.db_snapshot.v1` JSON file. The snapshot envelope carries
 /// the table name, predicate, column list, and pre-mutation rows.
 ///
 /// Replay shape (per snapshot):
@@ -1172,7 +1206,7 @@ fn validate_db_snapshot_envelopes(
     envelopes: &[DbSnapshotEnvelope],
 ) -> std::result::Result<(), String> {
     for env in envelopes {
-        if env.schema_version != "br.doctor.db_snapshot.v1" {
+        if !crate::legacy_compat::schema_id_accepted(&env.schema_version, DB_SNAPSHOT_SCHEMA) {
             return Err(format!(
                 "failed_unknown_snapshot_schema:{}",
                 env.schema_version
@@ -1342,7 +1376,7 @@ fn normalize_predicate(raw: Option<&str>) -> Option<&str> {
     raw.map(str::trim).filter(|s| !s.is_empty())
 }
 
-/// In-memory shape of `br.doctor.db_snapshot.v1`. Mirrors the writer
+/// In-memory shape of `obr.doctor.db_snapshot.v1`. Mirrors the writer
 /// in `mutate.rs::run_db_exec`.
 #[derive(Debug, Clone, Deserialize)]
 struct DbSnapshotEnvelope {
@@ -1942,7 +1976,7 @@ fn now_ns() -> u128 {
 // explain (stub)
 // =============================================================================
 
-/// Execute `br doctor explain <finding-id>`. WP6 ships a stub envelope;
+/// Execute `obr doctor explain <finding-id>`. WP6 ships a stub envelope;
 /// the full evidence-expansion path lands in a later pass.
 ///
 /// # Errors
@@ -1971,11 +2005,11 @@ pub fn execute_explain(args: &DoctorExplainArgs, _repo_root: &Path) -> Result<()
         evidence: "The full evidence-expansion path is implemented in a later pass; \
              this envelope pins the contract surface so agents can rely on it.",
         remediation: Remediation {
-            command: "br doctor --repair --dry-run".to_string(),
-            explain_command: format!("br doctor explain {}", args.finding_id),
-            capabilities_url: "br doctor capabilities --format json",
+            command: "obr doctor --repair --dry-run".to_string(),
+            explain_command: format!("obr doctor explain {}", args.finding_id),
+            capabilities_url: "obr doctor capabilities --format json",
         },
-        note: "WP6 stub; consult the full diagnostic via `br doctor`.",
+        note: "WP6 stub; consult the full diagnostic via `obr doctor`.",
     };
     if args.json {
         if let Ok(json) = serde_json::to_string_pretty(&env) {
@@ -1983,8 +2017,8 @@ pub fn execute_explain(args: &DoctorExplainArgs, _repo_root: &Path) -> Result<()
         }
     } else {
         println!("doctor explain {} (stub)", args.finding_id);
-        println!("  See: br doctor --repair --dry-run");
-        println!("  See: br doctor capabilities --format json");
+        println!("  See: obr doctor --repair --dry-run");
+        println!("  See: obr doctor capabilities --format json");
     }
     Ok(())
 }
@@ -2038,11 +2072,11 @@ pub fn build_triage_envelope(
         format!("{error} error(s) and {warn} warning(s) detected")
     };
     let recommended_command = if error > 0 {
-        "br doctor --repair --dry-run".to_string()
+        "obr doctor --repair --dry-run".to_string()
     } else if warn > 0 {
-        "br doctor".to_string()
+        "obr doctor".to_string()
     } else {
-        "br doctor health".to_string()
+        "obr doctor health".to_string()
     };
     TriageEnvelope {
         schema_version: TRIAGE_SCHEMA,
@@ -2050,8 +2084,8 @@ pub fn build_triage_envelope(
         findings,
         actions_planned: Vec::new(),
         recommended_command,
-        capabilities_url: "br doctor capabilities --format json".to_string(),
-        robot_docs_command: "br doctor robot-docs".to_string(),
+        capabilities_url: "obr doctor capabilities --format json".to_string(),
+        robot_docs_command: "obr doctor robot-docs".to_string(),
         quick_ref: TriageQuickRef {
             healthy,
             warn,
@@ -2093,7 +2127,7 @@ mod tests {
         };
         let json = serde_json::to_string(&env).expect("json");
         let v: serde_json::Value = serde_json::from_str(&json).expect("parse");
-        assert_eq!(v["schema_version"], "br.doctor.capabilities.v1");
+        assert_eq!(v["schema_version"], "obr.doctor.capabilities.v1");
         assert!(v["exit_codes"].is_array());
         assert!(v["write_scopes"].is_array());
         assert!(v["env_vars"].is_array());
@@ -2111,9 +2145,189 @@ mod tests {
                 "robot-docs missing exit code {code}"
             );
         }
-        assert!(body.contains("br doctor undo"));
-        assert!(body.contains("br doctor capabilities"));
-        assert!(body.contains("br doctor health"));
+        assert!(body.contains("obr doctor undo"));
+        assert!(body.contains("obr doctor capabilities"));
+        assert!(body.contains("obr doctor health"));
+    }
+
+    #[test]
+    fn doctor_health_sees_an_org_workspace_export_as_present() {
+        // Regression: an Org workspace with a healthy issues.org previously
+        // classified as "no export file" via a hand-rolled two-tier probe,
+        // silently changing which checks run and which remediations doctor
+        // offers.
+        let tmp = unique_temp_root("health-org-present");
+        let beads = tmp.path().join(".beads");
+        fs::create_dir_all(&beads).unwrap();
+        fs::write(beads.join("beads.db"), b"sqlite header...").unwrap();
+        fs::write(beads.join("issues.org"), b"#+TITLE: Beads Issues\n\n").unwrap();
+        let args = DoctorHealthArgs { json: false };
+        let code = execute_health(&args, tmp.path()).expect("health");
+        assert_eq!(code, 0, "an Org workspace with a healthy export is healthy");
+    }
+
+    #[test]
+    fn doctor_health_reports_healthy_for_a_current_obr_workspace() {
+        // Regression: `build_health_output` probed a hardcoded `.beads`, so
+        // every workspace `obr init` creates reported `no_workspace` — the
+        // health probe was dead on arrival for the current on-disk layout.
+        let tmp = unique_temp_root("health-obr-current");
+        let obr_dir = tmp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        fs::create_dir_all(&obr_dir).unwrap();
+        fs::write(
+            obr_dir.join(crate::config::DEFAULT_DB_FILENAME),
+            b"sqlite header...",
+        )
+        .unwrap();
+        fs::write(obr_dir.join("issues.org"), b"#+TITLE: Obr Issues\n\n").unwrap();
+
+        let output = build_health_output(tmp.path(), Instant::now());
+
+        assert_eq!(output.status, "healthy", "{}", output.line);
+        assert_eq!(output.exit_code, 0);
+        assert!(output.obr_dir_present, ".obr must be discovered");
+        assert!(output.db_present, "obr.db must be recognised");
+        assert!(output.jsonl_present);
+    }
+
+    /// The shape `obr init` actually creates: the export is the tracked
+    /// surface at the workspace ROOT, and nothing is seeded inside `.obr/`.
+    /// This probe used to scan the workspace directory, so every current
+    /// workspace reported `jsonl=missing` and `doctor health` exited 1 —
+    /// the liveness signal was inverted on the default layout.
+    #[test]
+    fn doctor_health_reports_healthy_for_a_root_surface_workspace() {
+        let tmp = unique_temp_root("health-surface-root");
+        let obr_dir = tmp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        fs::create_dir_all(&obr_dir).unwrap();
+        fs::write(
+            obr_dir.join(crate::config::DEFAULT_DB_FILENAME),
+            b"sqlite header...",
+        )
+        .unwrap();
+        fs::write(
+            tmp.path().join(crate::config::SURFACE_FILENAME),
+            b"#+TITLE: Obr Issues\n\n",
+        )
+        .unwrap();
+
+        let output = build_health_output(tmp.path(), Instant::now());
+
+        assert_eq!(output.status, "healthy", "{}", output.line);
+        assert_eq!(output.exit_code, 0);
+        assert!(output.jsonl_present, "the tracked surface is the export");
+    }
+
+    /// The same, with the surface under `doc/` — the location a project that
+    /// already has a `doc/` directory gets.
+    #[test]
+    fn doctor_health_reports_healthy_for_a_doc_surface_workspace() {
+        let tmp = unique_temp_root("health-surface-doc");
+        let obr_dir = tmp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        fs::create_dir_all(&obr_dir).unwrap();
+        fs::write(
+            obr_dir.join(crate::config::DEFAULT_DB_FILENAME),
+            b"sqlite header...",
+        )
+        .unwrap();
+        let doc = tmp.path().join("doc");
+        fs::create_dir_all(&doc).unwrap();
+        fs::write(
+            doc.join(crate::config::SURFACE_FILENAME),
+            b"#+TITLE: Obr Issues\n\n",
+        )
+        .unwrap();
+
+        let output = build_health_output(tmp.path(), Instant::now());
+
+        assert_eq!(output.status, "healthy", "{}", output.line);
+        assert!(output.jsonl_present, "doc/PLAN.org is the export");
+    }
+
+    /// A workspace pinned to JSONL by `metadata.json`, and a database pinned
+    /// to a non-default name: both are resolved, not guessed.
+    #[test]
+    fn doctor_health_reports_healthy_for_a_pinned_workspace() {
+        let tmp = unique_temp_root("health-pinned");
+        let obr_dir = tmp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        fs::create_dir_all(&obr_dir).unwrap();
+        fs::write(obr_dir.join("custom.db"), b"sqlite header...").unwrap();
+        fs::write(obr_dir.join("issues.jsonl"), b"{}\n").unwrap();
+        fs::write(
+            obr_dir.join("metadata.json"),
+            br#"{"database":"custom.db","jsonl_export":"issues.jsonl"}"#,
+        )
+        .unwrap();
+
+        let output = build_health_output(tmp.path(), Instant::now());
+
+        assert_eq!(output.status, "healthy", "{}", output.line);
+        assert!(output.db_present, "a pinned database name must resolve");
+        assert!(output.jsonl_present, "a pinned export must resolve");
+    }
+
+    /// A pinned export that is genuinely absent must still be a finding —
+    /// resolving through the config layer must not make the probe blind.
+    #[test]
+    fn doctor_health_reports_a_missing_pinned_export() {
+        let tmp = unique_temp_root("health-pinned-missing");
+        let obr_dir = tmp.path().join(crate::config::WORKSPACE_DIR_NAME);
+        fs::create_dir_all(&obr_dir).unwrap();
+        fs::write(
+            obr_dir.join(crate::config::DEFAULT_DB_FILENAME),
+            b"sqlite header...",
+        )
+        .unwrap();
+        fs::write(
+            obr_dir.join("metadata.json"),
+            br#"{"database":"obr.db","jsonl_export":"issues.jsonl"}"#,
+        )
+        .unwrap();
+
+        let output = build_health_output(tmp.path(), Instant::now());
+
+        assert_eq!(output.status, "findings_present", "{}", output.line);
+        assert!(!output.jsonl_present);
+    }
+
+    #[test]
+    fn doctor_health_reports_healthy_for_a_legacy_beads_workspace() {
+        // The legacy layout must keep working: `.beads/` holding `beads.db`.
+        let tmp = unique_temp_root("health-beads-legacy");
+        let legacy = tmp.path().join(".beads");
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(legacy.join("beads.db"), b"sqlite header...").unwrap();
+        fs::write(legacy.join("issues.jsonl"), b"{}\n").unwrap();
+
+        let output = build_health_output(tmp.path(), Instant::now());
+
+        assert_eq!(output.status, "healthy", "{}", output.line);
+        assert!(output.obr_dir_present, "legacy .beads must be discovered");
+        assert!(
+            output.db_present,
+            "legacy beads.db must still be recognised"
+        );
+        assert!(output.jsonl_present);
+    }
+
+    #[test]
+    fn doctor_health_missing_workspace_reason_is_de_branded() {
+        let tmp = unique_temp_root("health-no-workspace");
+
+        let output = build_health_output(tmp.path(), Instant::now());
+
+        assert_eq!(output.status, "no_workspace");
+        assert!(!output.obr_dir_present);
+        assert!(
+            output.line.contains("reason=missing_workspace_dir"),
+            "reason must not name a branded directory: {}",
+            output.line
+        );
+        assert!(
+            !output.line.contains("beads"),
+            "no_workspace line still branded: {}",
+            output.line
+        );
     }
 
     #[test]
@@ -2126,9 +2340,9 @@ mod tests {
         let args = DoctorHealthArgs { json: false };
         let start = Instant::now();
         // Use the inner pure helper to avoid println noise in test.
-        let beads_present = beads.is_dir();
+        let obr_present = beads.is_dir();
         let elapsed_pre = start.elapsed();
-        let _ = beads_present;
+        let _ = obr_present;
         // The full execute_health writes to stdout — call it and check
         // wall-clock from start.
         let started = Instant::now();
@@ -2159,7 +2373,7 @@ mod tests {
         let output = build_health_output(&repo, Instant::now());
 
         assert_eq!(output.status, "findings_present");
-        assert!(output.beads_dir_present);
+        assert!(output.obr_dir_present);
         assert!(output.db_present);
         assert!(output.jsonl_present);
         assert!(output.merge_artifacts_present);
@@ -2198,7 +2412,10 @@ mod tests {
             "schema 15 is incompatible with {CURRENT_SCHEMA_VERSION}"
         );
         assert_eq!(output.status, "findings_present");
-        assert_ne!(output.exit_code, 0, "must not exit healthy on a stale schema");
+        assert_ne!(
+            output.exit_code, 0,
+            "must not exit healthy on a stale schema"
+        );
         assert!(output.db_present, "the database file is present");
         assert!(
             output.line.contains("db=schema_incompatible"),
@@ -2272,7 +2489,7 @@ mod tests {
             affected_predicate: None,
         };
         let envelopes = vec![DbSnapshotEnvelope {
-            schema_version: "br.doctor.db_snapshot.v1".to_string(),
+            schema_version: "obr.doctor.db_snapshot.v1".to_string(),
             table: "other_cache".to_string(),
             predicate: None,
             columns: vec!["issue_id".to_string()],
@@ -2298,7 +2515,7 @@ mod tests {
             affected_predicate: Some("issue_id = 'bd-1'".to_string()),
         };
         let envelopes = vec![DbSnapshotEnvelope {
-            schema_version: "br.doctor.db_snapshot.v1".to_string(),
+            schema_version: "obr.doctor.db_snapshot.v1".to_string(),
             table: "blocked_issues_cache".to_string(),
             predicate: Some("issue_id = 'bd-2'".to_string()),
             columns: vec!["issue_id".to_string()],
@@ -2421,7 +2638,7 @@ mod tests {
         fs::create_dir_all(snap.parent().unwrap()).unwrap();
         fs::write(
             &snap,
-            br#"{"schema_version":"br.doctor.db_snapshot.v1","table":"blocked_issues_cache","predicate":null,"columns":[],"rows":[]}"#,
+            br#"{"schema_version":"obr.doctor.db_snapshot.v1","table":"blocked_issues_cache","predicate":null,"columns":[],"rows":[]}"#,
         )
         .unwrap();
         let record = StoredActionRecord {
@@ -2987,14 +3204,14 @@ mod tests {
         // Write a "genuine" snapshot body and record its hash. Then
         // overwrite the file (simulating tampering) and ask the plan
         // path what it thinks.
-        let genuine = b"{\"schema_version\":\"br.doctor.db_snapshot.v1\",\"rows\":[]}";
+        let genuine = b"{\"schema_version\":\"obr.doctor.db_snapshot.v1\",\"rows\":[]}";
         fs::write(&snap_abs, genuine).unwrap();
         let expected_sha = sha256_bytes_hex_prefixed(genuine);
 
         // Tamper.
         fs::write(
             &snap_abs,
-            b"{\"schema_version\":\"br.doctor.db_snapshot.v1\",\"rows\":[{\"injected\":true}]}",
+            b"{\"schema_version\":\"obr.doctor.db_snapshot.v1\",\"rows\":[{\"injected\":true}]}",
         )
         .unwrap();
 
@@ -3032,7 +3249,7 @@ mod tests {
         );
         let json = serde_json::to_string(&env).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["schema_version"], "br.doctor.triage.v1");
+        assert_eq!(v["schema_version"], "obr.doctor.triage.v1");
         assert!(v["findings"].is_array());
         assert_eq!(v["quick_ref"]["error"], 1);
         assert_eq!(v["quick_ref"]["warn"], 2);
@@ -3041,7 +3258,7 @@ mod tests {
             v["recommended_command"]
                 .as_str()
                 .unwrap()
-                .starts_with("br doctor")
+                .starts_with("obr doctor")
         );
     }
 }

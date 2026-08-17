@@ -109,11 +109,11 @@ fn restore_temp_path_for_attempt(target_path: &Path, attempt: u32) -> PathBuf {
 
 fn create_restore_temp_file(
     target_path: &Path,
-    beads_dir: &Path,
+    obr_dir: &Path,
 ) -> Result<(PathBuf, File, TempRestoreGuard)> {
     for attempt in 0..MAX_HISTORY_RESTORE_TEMP_PATH_ATTEMPTS {
         let temp_path = restore_temp_path_for_attempt(target_path, attempt);
-        validate_temp_file_path(&temp_path, target_path, beads_dir, true)?;
+        validate_temp_file_path(&temp_path, target_path, obr_dir, true)?;
 
         match OpenOptions::new()
             .write(true)
@@ -146,14 +146,14 @@ fn create_restore_temp_file(
 
 fn create_restore_rollback_snapshot(
     target_path: &Path,
-    beads_dir: &Path,
+    obr_dir: &Path,
 ) -> Result<TempRestoreGuard> {
     let pid = u64::from(std::process::id());
 
     for offset in 1..=MAX_RESTORE_ROLLBACK_PATH_ATTEMPTS {
         let rollback_path =
             target_path.with_extension(format!("jsonl.{}.tmp", pid.saturating_add(offset)));
-        validate_temp_file_path(&rollback_path, target_path, beads_dir, true)?;
+        validate_temp_file_path(&rollback_path, target_path, obr_dir, true)?;
 
         let mut writer = match OpenOptions::new()
             .write(true)
@@ -227,9 +227,9 @@ fn emit_restore_output(
     backup_name: &str,
     target_path: &Path,
     target_name: &str,
-    beads_dir: &Path,
+    obr_dir: &Path,
 ) {
-    let next_step = restore_next_step(beads_dir, target_path);
+    let next_step = restore_next_step(obr_dir, target_path);
     let notes = [RESTORE_NOTE_DB_UNCHANGED, RESTORE_NOTE_TOMBSTONE_PROTECTION];
 
     if ctx.is_json() {
@@ -322,25 +322,19 @@ fn ensure_regular_backup_file(backup_path: &Path, backup_name: &str) -> Result<(
 ///
 /// Returns an error if history operations fail (e.g. IO error, invalid path).
 pub fn execute(args: HistoryArgs, cli: &config::CliOverrides, ctx: &OutputContext) -> Result<()> {
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    let history_dir = beads_dir.join(".br_history");
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    let history_dir = history::history_dir(&obr_dir);
     let _ = history::validate_history_dir_path(&history_dir)?;
 
     match args.command {
         Some(HistoryCommands::Diff { file }) => {
-            let active_jsonl_path = config::resolve_paths(&beads_dir, cli.db.as_ref())?.jsonl_path;
-            diff_backup(
-                &beads_dir,
-                &history_dir,
-                &file,
-                Some(&active_jsonl_path),
-                ctx,
-            )
+            let active_jsonl_path = config::resolve_paths(&obr_dir, cli.db.as_ref())?.jsonl_path;
+            diff_backup(&obr_dir, &history_dir, &file, Some(&active_jsonl_path), ctx)
         }
         Some(HistoryCommands::Restore { file, force }) => {
-            let active_jsonl_path = config::resolve_paths(&beads_dir, cli.db.as_ref())?.jsonl_path;
+            let active_jsonl_path = config::resolve_paths(&obr_dir, cli.db.as_ref())?.jsonl_path;
             restore_backup(
-                &beads_dir,
+                &obr_dir,
                 &history_dir,
                 &file,
                 force,
@@ -471,7 +465,7 @@ fn history_backup_list_payload(
 
 /// Show diff between current state and a backup.
 fn diff_backup(
-    beads_dir: &Path,
+    obr_dir: &Path,
     history_dir: &Path,
     filename: &str,
     active_jsonl_path: Option<&Path>,
@@ -481,7 +475,7 @@ fn diff_backup(
     let backup_path = history_dir.join(&backup_name);
     ensure_regular_backup_file(&backup_path, &backup_name)?;
 
-    let current_path = current_jsonl_path_for_backup(beads_dir, &backup_name, active_jsonl_path)?;
+    let current_path = current_jsonl_path_for_backup(obr_dir, &backup_name, active_jsonl_path)?;
     let current_name = current_path
         .file_name()
         .unwrap_or_default()
@@ -572,7 +566,7 @@ fn diff_backup(
 
 /// Restore a backup.
 fn restore_backup(
-    beads_dir: &Path,
+    obr_dir: &Path,
     history_dir: &Path,
     filename: &str,
     force: bool,
@@ -583,7 +577,7 @@ fn restore_backup(
     let backup_path = history_dir.join(&backup_name);
     ensure_regular_backup_file(&backup_path, &backup_name)?;
 
-    let target_path = current_jsonl_path_for_backup(beads_dir, &backup_name, active_jsonl_path)?;
+    let target_path = current_jsonl_path_for_backup(obr_dir, &backup_name, active_jsonl_path)?;
     let target_name = target_path
         .file_name()
         .unwrap_or_default()
@@ -600,15 +594,14 @@ fn restore_backup(
     validate_temp_file_path(
         &restore_temp_path_for_attempt(&target_path, 0),
         &target_path,
-        beads_dir,
+        obr_dir,
         true,
     )?;
     if let Some(parent) = target_path.parent() {
         fs::create_dir_all(parent)?;
     }
     let mut reader = File::open(&backup_path)?;
-    let (temp_path, mut writer, mut temp_guard) =
-        create_restore_temp_file(&target_path, beads_dir)?;
+    let (temp_path, mut writer, mut temp_guard) = create_restore_temp_file(&target_path, obr_dir)?;
     io::copy(&mut reader, &mut writer)?;
     writer.sync_all()?;
     drop(writer);
@@ -616,11 +609,11 @@ fn restore_backup(
     if force && target_path.exists() {
         require_safe_sync_overwrite_path(
             &target_path,
-            beads_dir,
+            obr_dir,
             true,
             "overwrite history restore target",
         )?;
-        rollback_guard = Some(create_restore_rollback_snapshot(&target_path, beads_dir)?);
+        rollback_guard = Some(create_restore_rollback_snapshot(&target_path, obr_dir)?);
     }
     commit_restored_target_with_rollback(
         &temp_path,
@@ -629,7 +622,7 @@ fn restore_backup(
         crate::util::durable_rename,
     )?;
     temp_guard.persist();
-    emit_restore_output(ctx, &backup_name, &target_path, &target_name, beads_dir);
+    emit_restore_output(ctx, &backup_name, &target_path, &target_name, obr_dir);
 
     Ok(())
 }
@@ -832,26 +825,26 @@ fn files_are_byte_identical(
 }
 
 fn current_jsonl_path_for_backup(
-    beads_dir: &Path,
+    obr_dir: &Path,
     filename: &str,
     active_jsonl_path: Option<&Path>,
 ) -> Result<PathBuf> {
     let cwd = std::env::current_dir().ok();
-    current_jsonl_path_for_backup_with_cwd(beads_dir, filename, active_jsonl_path, cwd.as_deref())
+    current_jsonl_path_for_backup_with_cwd(obr_dir, filename, active_jsonl_path, cwd.as_deref())
 }
 
 fn current_jsonl_path_for_backup_with_cwd(
-    beads_dir: &Path,
+    obr_dir: &Path,
     filename: &str,
     active_jsonl_path: Option<&Path>,
     cwd: Option<&Path>,
 ) -> Result<PathBuf> {
     let backup_name = validated_backup_filename(filename)?;
     let target_path = history::resolve_backup_target_path(
-        beads_dir,
-        &beads_dir.join(".br_history").join(backup_name),
+        obr_dir,
+        &history::history_dir(obr_dir).join(backup_name),
     )?;
-    let is_external_target = is_external_jsonl_target(beads_dir, &target_path);
+    let is_external_target = is_external_jsonl_target(obr_dir, &target_path);
 
     if is_external_target {
         let active_jsonl_path = active_jsonl_path.ok_or_else(|| {
@@ -878,40 +871,55 @@ fn current_jsonl_path_for_backup_with_cwd(
     Ok(target_path)
 }
 
-fn is_external_jsonl_target(beads_dir: &Path, target_path: &Path) -> bool {
-    let canonical_beads =
-        dunce::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
-    !target_path.starts_with(beads_dir) && !target_path.starts_with(&canonical_beads)
+fn is_external_jsonl_target(obr_dir: &Path, target_path: &Path) -> bool {
+    let canonical_obr = dunce::canonicalize(obr_dir).unwrap_or_else(|_| obr_dir.to_path_buf());
+    !target_path.starts_with(obr_dir) && !target_path.starts_with(&canonical_obr)
 }
 
-fn is_default_jsonl_target(beads_dir: &Path, target_path: &Path) -> bool {
-    let default_target = beads_dir.join("issues.jsonl");
-    if target_path == default_target {
-        return true;
-    }
+fn is_default_jsonl_target(obr_dir: &Path, target_path: &Path) -> bool {
+    // Recognize both the current default (issues.org) and the legacy JSONL
+    // default: a restore into a JSONL-pinned workspace is still a restore of
+    // "the workspace's live export" and must take the default-target safety
+    // branch, not the arbitrary-external-path branch.
+    for name in [crate::config::DEFAULT_JSONL_FILENAME, "issues.jsonl"] {
+        let default_target = obr_dir.join(name);
+        if target_path == default_target {
+            return true;
+        }
 
-    let canonical_target =
-        dunce::canonicalize(target_path).unwrap_or_else(|_| target_path.to_path_buf());
-    let canonical_default = dunce::canonicalize(&default_target).unwrap_or(default_target);
-    canonical_target == canonical_default
+        let canonical_target =
+            dunce::canonicalize(target_path).unwrap_or_else(|_| target_path.to_path_buf());
+        let canonical_default = dunce::canonicalize(&default_target).unwrap_or(default_target);
+        if canonical_target == canonical_default {
+            return true;
+        }
+    }
+    false
 }
 
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-fn restore_next_step(beads_dir: &Path, target_path: &Path) -> String {
+/// The command that imports the file `restore` just wrote.
+///
+/// The variable named here has to be the one the binary reads, because the
+/// user is expected to paste this line: it used to print `BEADS_JSONL=`,
+/// which nothing has read since the rename, so following the instruction
+/// imported the workspace default instead of the restored file.
+fn restore_next_step(obr_dir: &Path, target_path: &Path) -> String {
     let mut command = String::new();
 
-    if !is_default_jsonl_target(beads_dir, target_path) {
-        command.push_str("BEADS_JSONL=");
+    if !is_default_jsonl_target(obr_dir, target_path) {
+        command.push_str(crate::config::JSONL_PATH_ENV);
+        command.push('=');
         command.push_str(&shell_quote(&target_path.display().to_string()));
         command.push(' ');
     }
 
-    command.push_str("br sync --import-only --force");
+    command.push_str("obr sync --import-only --force");
 
-    if is_external_jsonl_target(beads_dir, target_path) {
+    if is_external_jsonl_target(obr_dir, target_path) {
         command.push_str(" --allow-external-jsonl");
     }
 
@@ -1018,7 +1026,7 @@ mod tests {
     #[test]
     fn test_current_jsonl_path_for_backup_rejects_missing_target_metadata() {
         let temp = TempDir::new().unwrap();
-        let history_dir = temp.path().join(".br_history");
+        let history_dir = history::history_dir(temp.path());
         fs::create_dir_all(&history_dir).unwrap();
         fs::write(
             history_dir.join("issues.20260220_120000.jsonl"),
@@ -1168,11 +1176,11 @@ mod tests {
     #[test]
     fn test_restore_backup_uses_metadata_target_path() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        let history_dir = beads_dir.join(".br_history");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        let history_dir = history::history_dir(&obr_dir);
+        fs::create_dir_all(&obr_dir).unwrap();
 
-        let target_path = beads_dir.join("custom.jsonl");
+        let target_path = obr_dir.join("custom.jsonl");
         fs::write(&target_path, "new-state\n").unwrap();
         let config = history::HistoryConfig {
             enabled: true,
@@ -1180,7 +1188,7 @@ mod tests {
             max_age_days: 30,
             min_interval_secs: 0,
         };
-        history::backup_before_export(&beads_dir, &config, &target_path).unwrap();
+        history::backup_before_export(&obr_dir, &config, &target_path).unwrap();
 
         let backup_name = history::list_backups(&history_dir, None)
             .unwrap()
@@ -1196,22 +1204,22 @@ mod tests {
         fs::write(&target_path, "old-state\n").unwrap();
 
         let ctx = OutputContext::from_flags(false, true, true);
-        restore_backup(&beads_dir, &history_dir, &backup_name, true, None, &ctx).unwrap();
+        restore_backup(&obr_dir, &history_dir, &backup_name, true, None, &ctx).unwrap();
 
         assert_eq!(
-            fs::read_to_string(beads_dir.join("custom.jsonl")).unwrap(),
+            fs::read_to_string(obr_dir.join("custom.jsonl")).unwrap(),
             "new-state\n"
         );
-        assert!(!beads_dir.join("issues.jsonl").exists());
+        assert!(!obr_dir.join("issues.jsonl").exists());
     }
 
     #[test]
     fn test_current_jsonl_path_for_backup_reads_target_metadata() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        let history_dir = beads_dir.join(".br_history");
+        let obr_dir = temp.path().join(".beads");
+        let history_dir = history::history_dir(&obr_dir);
         let external_dir = temp.path().join("external");
-        fs::create_dir_all(&beads_dir).unwrap();
+        fs::create_dir_all(&obr_dir).unwrap();
         fs::create_dir_all(&external_dir).unwrap();
 
         let external_target = external_dir.join("issues.jsonl");
@@ -1223,7 +1231,7 @@ mod tests {
             max_age_days: 30,
             min_interval_secs: 0,
         };
-        history::backup_before_export(&beads_dir, &config, &external_target).unwrap();
+        history::backup_before_export(&obr_dir, &config, &external_target).unwrap();
 
         let backup_name = history::list_backups(&history_dir, None)
             .unwrap()
@@ -1238,18 +1246,17 @@ mod tests {
             .expect("backup filename");
 
         let resolved =
-            current_jsonl_path_for_backup(&beads_dir, &backup_name, Some(&external_target))
-                .unwrap();
+            current_jsonl_path_for_backup(&obr_dir, &backup_name, Some(&external_target)).unwrap();
         assert_eq!(resolved, external_target);
     }
 
     #[test]
     fn test_current_jsonl_path_for_backup_accepts_relative_external_active_path_when_missing() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        let history_dir = beads_dir.join(".br_history");
+        let obr_dir = temp.path().join(".beads");
+        let history_dir = history::history_dir(&obr_dir);
         let external_dir = temp.path().join("external");
-        fs::create_dir_all(&beads_dir).unwrap();
+        fs::create_dir_all(&obr_dir).unwrap();
         fs::create_dir_all(&external_dir).unwrap();
 
         let external_target = external_dir.join("issues.jsonl");
@@ -1261,7 +1268,7 @@ mod tests {
             max_age_days: 30,
             min_interval_secs: 0,
         };
-        history::backup_before_export(&beads_dir, &config, &external_target).unwrap();
+        history::backup_before_export(&obr_dir, &config, &external_target).unwrap();
 
         let backup_name = history::list_backups(&history_dir, None)
             .unwrap()
@@ -1278,7 +1285,7 @@ mod tests {
         fs::remove_file(&external_target).unwrap();
 
         let resolved = current_jsonl_path_for_backup_with_cwd(
-            &beads_dir,
+            &obr_dir,
             &backup_name,
             Some(Path::new("external/issues.jsonl")),
             Some(temp.path()),
@@ -1290,25 +1297,25 @@ mod tests {
     #[test]
     fn test_restore_next_step_uses_default_import_for_internal_targets() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        let internal_target = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        let internal_target = obr_dir.join("issues.jsonl");
 
         assert_eq!(
-            restore_next_step(&beads_dir, &internal_target),
-            "br sync --import-only --force"
+            restore_next_step(&obr_dir, &internal_target),
+            "obr sync --import-only --force"
         );
     }
 
     #[test]
     fn test_restore_next_step_sets_jsonl_path_for_internal_custom_targets() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        let custom_target = beads_dir.join("custom.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        let custom_target = obr_dir.join("custom.jsonl");
 
         assert_eq!(
-            restore_next_step(&beads_dir, &custom_target),
+            restore_next_step(&obr_dir, &custom_target),
             format!(
-                "BEADS_JSONL={} br sync --import-only --force",
+                "OBR_JSONL={} obr sync --import-only --force",
                 shell_quote(&custom_target.display().to_string())
             )
         );
@@ -1317,13 +1324,13 @@ mod tests {
     #[test]
     fn test_restore_next_step_requires_external_flag_for_external_targets() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let external_target = temp.path().join("external").join("issues.jsonl");
 
         assert_eq!(
-            restore_next_step(&beads_dir, &external_target),
+            restore_next_step(&obr_dir, &external_target),
             format!(
-                "BEADS_JSONL={} br sync --import-only --force --allow-external-jsonl",
+                "OBR_JSONL={} obr sync --import-only --force --allow-external-jsonl",
                 shell_quote(&external_target.display().to_string())
             )
         );
@@ -1340,10 +1347,10 @@ mod tests {
     #[test]
     fn test_restore_backup_recreates_missing_target_parent_directories() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        let history_dir = beads_dir.join(".br_history");
-        let nested_target = beads_dir.join("snapshots").join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        let history_dir = history::history_dir(&obr_dir);
+        let nested_target = obr_dir.join("snapshots").join("issues.jsonl");
+        fs::create_dir_all(&obr_dir).unwrap();
         fs::create_dir_all(nested_target.parent().unwrap()).unwrap();
         fs::write(&nested_target, "nested-state\n").unwrap();
 
@@ -1353,7 +1360,7 @@ mod tests {
             max_age_days: 30,
             min_interval_secs: 0,
         };
-        history::backup_before_export(&beads_dir, &config, &nested_target).unwrap();
+        history::backup_before_export(&obr_dir, &config, &nested_target).unwrap();
 
         fs::remove_dir_all(nested_target.parent().unwrap()).unwrap();
 
@@ -1370,7 +1377,7 @@ mod tests {
             .expect("backup filename");
 
         let ctx = OutputContext::from_flags(false, true, true);
-        restore_backup(&beads_dir, &history_dir, &backup_name, true, None, &ctx).unwrap();
+        restore_backup(&obr_dir, &history_dir, &backup_name, true, None, &ctx).unwrap();
 
         assert_eq!(
             fs::read_to_string(&nested_target).unwrap(),
@@ -1381,11 +1388,11 @@ mod tests {
     #[test]
     fn test_restore_backup_skips_stale_regular_temp_file() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        let history_dir = beads_dir.join(".br_history");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        let history_dir = history::history_dir(&obr_dir);
+        fs::create_dir_all(&obr_dir).unwrap();
 
-        let target_path = beads_dir.join("issues.jsonl");
+        let target_path = obr_dir.join("issues.jsonl");
         fs::write(&target_path, "backup-state\n").unwrap();
         let config = history::HistoryConfig {
             enabled: true,
@@ -1393,7 +1400,7 @@ mod tests {
             max_age_days: 30,
             min_interval_secs: 0,
         };
-        history::backup_before_export(&beads_dir, &config, &target_path).unwrap();
+        history::backup_before_export(&obr_dir, &config, &target_path).unwrap();
         fs::write(&target_path, "current-state\n").unwrap();
 
         let stale_temp_path = restore_temp_path_for_attempt(&target_path, 0);
@@ -1412,7 +1419,7 @@ mod tests {
             .expect("backup filename");
 
         let ctx = OutputContext::from_flags(false, true, true);
-        restore_backup(&beads_dir, &history_dir, &backup_name, true, None, &ctx).unwrap();
+        restore_backup(&obr_dir, &history_dir, &backup_name, true, None, &ctx).unwrap();
 
         assert_eq!(fs::read_to_string(&target_path).unwrap(), "backup-state\n");
         assert_eq!(
@@ -1425,11 +1432,11 @@ mod tests {
     #[test]
     fn test_restore_backup_cleans_temp_file_when_rename_fails() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        let history_dir = beads_dir.join(".br_history");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        let history_dir = history::history_dir(&obr_dir);
+        fs::create_dir_all(&obr_dir).unwrap();
 
-        let target_path = beads_dir.join("issues.jsonl");
+        let target_path = obr_dir.join("issues.jsonl");
         fs::write(&target_path, "restored-state\n").unwrap();
         let config = history::HistoryConfig {
             enabled: true,
@@ -1437,7 +1444,7 @@ mod tests {
             max_age_days: 30,
             min_interval_secs: 0,
         };
-        history::backup_before_export(&beads_dir, &config, &target_path).unwrap();
+        history::backup_before_export(&obr_dir, &config, &target_path).unwrap();
 
         let backup_name = history::list_backups(&history_dir, None)
             .unwrap()
@@ -1450,21 +1457,21 @@ mod tests {
                     .map(|name| name.to_string_lossy().into_owned())
             })
             .expect("backup filename");
-        let target_dir = beads_dir.join("issues.jsonl");
+        let target_dir = obr_dir.join("issues.jsonl");
         fs::remove_file(&target_dir).unwrap();
         fs::create_dir_all(&target_dir).unwrap();
         fs::write(target_dir.join("occupied.txt"), "keep").unwrap();
 
         let ctx = OutputContext::from_flags(false, true, true);
         let err =
-            restore_backup(&beads_dir, &history_dir, &backup_name, true, None, &ctx).unwrap_err();
+            restore_backup(&obr_dir, &history_dir, &backup_name, true, None, &ctx).unwrap_err();
         assert!(
             matches!(err, BeadsError::Io(_) | BeadsError::Config(_)),
             "unexpected error: {err}"
         );
         let pid = std::process::id();
         assert!(
-            !beads_dir.join(format!("issues.jsonl.{pid}.tmp")).exists(),
+            !obr_dir.join(format!("issues.jsonl.{pid}.tmp")).exists(),
             "failed restore should clean up the temporary restore file"
         );
     }
@@ -1472,16 +1479,15 @@ mod tests {
     #[test]
     fn test_commit_restored_target_restores_original_file_when_replace_fails() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).unwrap();
 
-        let target_path = beads_dir.join("issues.jsonl");
-        let temp_path = beads_dir.join("issues.jsonl.100.tmp");
+        let target_path = obr_dir.join("issues.jsonl");
+        let temp_path = obr_dir.join("issues.jsonl.100.tmp");
         fs::write(&target_path, "original-state\n").unwrap();
         fs::write(&temp_path, "restored-state\n").unwrap();
 
-        let mut rollback_guard =
-            create_restore_rollback_snapshot(&target_path, &beads_dir).unwrap();
+        let mut rollback_guard = create_restore_rollback_snapshot(&target_path, &obr_dir).unwrap();
         fs::remove_file(&target_path).unwrap();
 
         let err = commit_restored_target_with_rollback(
@@ -1520,8 +1526,8 @@ mod tests {
     #[test]
     fn test_current_jsonl_path_for_backup_rejects_tampered_absolute_metadata() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        let history_dir = beads_dir.join(".br_history");
+        let obr_dir = temp.path().join(".beads");
+        let history_dir = history::history_dir(&obr_dir);
         fs::create_dir_all(&history_dir).unwrap();
 
         let backup_name = "issues.20260220_120000.jsonl";
@@ -1539,8 +1545,8 @@ mod tests {
         )
         .unwrap();
 
-        let active_jsonl_path = beads_dir.join("issues.jsonl");
-        let err = current_jsonl_path_for_backup(&beads_dir, backup_name, Some(&active_jsonl_path))
+        let active_jsonl_path = obr_dir.join("issues.jsonl");
+        let err = current_jsonl_path_for_backup(&obr_dir, backup_name, Some(&active_jsonl_path))
             .unwrap_err();
         match err {
             BeadsError::Config(msg) => {
@@ -1562,11 +1568,11 @@ mod tests {
     #[test]
     fn test_diff_backup_reports_missing_current_stem_file() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        let history_dir = beads_dir.join(".br_history");
-        fs::create_dir_all(&beads_dir).unwrap();
+        let obr_dir = temp.path().join(".beads");
+        let history_dir = history::history_dir(&obr_dir);
+        fs::create_dir_all(&obr_dir).unwrap();
 
-        let target_path = beads_dir.join("custom.jsonl");
+        let target_path = obr_dir.join("custom.jsonl");
         fs::write(&target_path, "backup\n").unwrap();
         let config = history::HistoryConfig {
             enabled: true,
@@ -1574,7 +1580,7 @@ mod tests {
             max_age_days: 30,
             min_interval_secs: 0,
         };
-        history::backup_before_export(&beads_dir, &config, &target_path).unwrap();
+        history::backup_before_export(&obr_dir, &config, &target_path).unwrap();
         let backup_name = history::list_backups(&history_dir, None)
             .unwrap()
             .into_iter()
@@ -1589,7 +1595,7 @@ mod tests {
         fs::remove_file(&target_path).unwrap();
 
         let ctx = OutputContext::from_flags(false, true, true);
-        let err = diff_backup(&beads_dir, &history_dir, &backup_name, None, &ctx).unwrap_err();
+        let err = diff_backup(&obr_dir, &history_dir, &backup_name, None, &ctx).unwrap_err();
 
         match err {
             BeadsError::Config(msg) => assert!(msg.contains("Current custom.jsonl not found")),
@@ -1606,8 +1612,8 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        let history_dir = beads_dir.join(".br_history");
+        let obr_dir = temp.path().join(".beads");
+        let history_dir = history::history_dir(&obr_dir);
         let outside_dir = temp.path().join("outside");
         fs::create_dir_all(&history_dir).unwrap();
         fs::create_dir_all(&outside_dir).unwrap();
@@ -1619,7 +1625,7 @@ mod tests {
 
         let ctx = OutputContext::from_flags(false, true, true);
         let err =
-            restore_backup(&beads_dir, &history_dir, backup_name, true, None, &ctx).unwrap_err();
+            restore_backup(&obr_dir, &history_dir, backup_name, true, None, &ctx).unwrap_err();
         match err {
             BeadsError::Config(msg) => assert!(msg.contains("must not be a symlink")),
             other => assert!(
@@ -1635,12 +1641,12 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        let history_dir = beads_dir.join(".br_history");
+        let obr_dir = temp.path().join(".beads");
+        let history_dir = history::history_dir(&obr_dir);
         let outside_dir = temp.path().join("outside");
         fs::create_dir_all(&history_dir).unwrap();
         fs::create_dir_all(&outside_dir).unwrap();
-        symlink(&outside_dir, beads_dir.join("linked")).unwrap();
+        symlink(&outside_dir, obr_dir.join("linked")).unwrap();
 
         let backup_name = "issues.20260220_120000.jsonl";
         let backup_path = history_dir.join(backup_name);
@@ -1659,7 +1665,7 @@ mod tests {
 
         let ctx = OutputContext::from_flags(false, true, true);
         let err =
-            restore_backup(&beads_dir, &history_dir, backup_name, true, None, &ctx).unwrap_err();
+            restore_backup(&obr_dir, &history_dir, backup_name, true, None, &ctx).unwrap_err();
 
         assert!(
             matches!(err, BeadsError::Config(_)),
@@ -1678,12 +1684,12 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        let history_dir = beads_dir.join(".br_history");
+        let obr_dir = temp.path().join(".beads");
+        let history_dir = history::history_dir(&obr_dir);
         let outside_dir = temp.path().join("outside");
         fs::create_dir_all(&history_dir).unwrap();
         fs::create_dir_all(&outside_dir).unwrap();
-        symlink(&outside_dir, beads_dir.join("linked")).unwrap();
+        symlink(&outside_dir, obr_dir.join("linked")).unwrap();
 
         let backup_name = "issues.20260220_120000.jsonl";
         let backup_path = history_dir.join(backup_name);
@@ -1702,7 +1708,7 @@ mod tests {
 
         let ctx = OutputContext::from_flags(false, true, true);
         let err =
-            restore_backup(&beads_dir, &history_dir, backup_name, true, None, &ctx).unwrap_err();
+            restore_backup(&obr_dir, &history_dir, backup_name, true, None, &ctx).unwrap_err();
 
         assert!(
             matches!(err, BeadsError::Config(_)),

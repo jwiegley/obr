@@ -44,13 +44,12 @@ use crate::storage::schema::{
     run_reviewed_schema_migration_steps_in_transaction, runtime_schema_compatible,
 };
 use crate::sync::{DatabaseFamilyWriteLock, DatabaseTargetAuthorityState};
-
-const PLAN_SCHEMA: &str = "br.doctor.schema_migration.plan.v1";
-const PREPARED_SCHEMA: &str = "br.doctor.schema_migration.prepared.v1";
 const COMMIT_READY_SCHEMA: &str = "br.doctor.schema_migration.commit_ready.v1";
-const APPLIED_SCHEMA: &str = "br.doctor.schema_migration.applied.v1";
-const FAILED_SCHEMA: &str = "br.doctor.schema_migration.failed.v1";
-const UNDO_SCHEMA: &str = "br.doctor.schema_migration.undo.v1";
+const PLAN_SCHEMA: &str = "obr.doctor.schema_migration.plan.v1";
+const PREPARED_SCHEMA: &str = "obr.doctor.schema_migration.prepared.v1";
+const APPLIED_SCHEMA: &str = "obr.doctor.schema_migration.applied.v1";
+const FAILED_SCHEMA: &str = "obr.doctor.schema_migration.failed.v1";
+const UNDO_SCHEMA: &str = "obr.doctor.schema_migration.undo.v1";
 const FAMILY_SUFFIXES: &[&str] = &["", "-wal", "-shm", "-journal"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -231,12 +230,12 @@ struct PlanTokenMaterial<'a> {
 }
 
 struct MigrationContext {
-    beads_dir: PathBuf,
+    obr_dir: PathBuf,
     db_path: PathBuf,
     write_authority: Arc<DatabaseFamilyWriteLock>,
 }
 
-/// Execute `br doctor migrate-schema ...`.
+/// Execute `obr doctor migrate-schema ...`.
 ///
 /// # Errors
 ///
@@ -256,18 +255,18 @@ pub fn execute(
 }
 
 fn resolve_context(cli: &config::CliOverrides) -> Result<MigrationContext> {
-    let beads_dir =
-        config::discover_optional_beads_dir_with_cli(cli)?.ok_or(BeadsError::NotInitialized)?;
-    let paths = config::resolve_paths(&beads_dir, cli.db.as_ref())?;
+    let obr_dir =
+        config::discover_optional_obr_dir_with_cli(cli)?.ok_or(BeadsError::NotInitialized)?;
+    let paths = config::resolve_paths(&obr_dir, cli.db.as_ref())?;
     let write_authority = if let Some(authority) =
-        cli.database_family_write_authority_for(&beads_dir, &paths.db_path)
+        cli.database_family_write_authority_for(&obr_dir, &paths.db_path)
     {
         authority.verify_database_authority()?;
         Arc::clone(authority)
     } else {
         Arc::new(
             crate::sync::blocking_database_family_write_lock_with_timeout(
-                &beads_dir,
+                &obr_dir,
                 &paths.db_path,
                 cli.lock_timeout,
             )?,
@@ -275,7 +274,7 @@ fn resolve_context(cli: &config::CliOverrides) -> Result<MigrationContext> {
     };
     write_authority.verify_database_authority()?;
     Ok(MigrationContext {
-        beads_dir,
+        obr_dir,
         db_path: paths.db_path,
         write_authority,
     })
@@ -330,7 +329,7 @@ fn build_plan(db_path: &Path) -> Result<MigrationPlanReceipt> {
                 logical_witness,
                 forecast: Some(forecast),
                 apply_command: Some(format!(
-                    "br doctor migrate-schema apply --plan-token {plan_token}"
+                    "obr doctor migrate-schema apply --plan-token {plan_token}"
                 )),
                 plan_token: Some(plan_token),
                 note: "the current schema has a repairable page-layout diagnostic; apply will \
@@ -401,7 +400,7 @@ fn build_plan(db_path: &Path) -> Result<MigrationPlanReceipt> {
         logical_witness,
         forecast: Some(forecast),
         apply_command: Some(format!(
-            "br doctor migrate-schema apply --plan-token {plan_token}"
+            "obr doctor migrate-schema apply --plan-token {plan_token}"
         )),
         plan_token: Some(plan_token),
         note: if integrity_clean {
@@ -465,7 +464,7 @@ fn execute_apply(args: &DoctorMigrateSchemaApplyArgs, migration: &MigrationConte
     if !constant_time_text_eq(recomputed_token, args.plan_token.trim()) {
         return Err(BeadsError::internal(format!(
             "schema migration plan token is stale or belongs to a different database state \
-             (provided {}, recomputed {}); run `br doctor migrate-schema plan` again",
+             (provided {}, recomputed {}); run `obr doctor migrate-schema plan` again",
             args.plan_token.trim(),
             recomputed_token
         )));
@@ -475,8 +474,8 @@ fn execute_apply(args: &DoctorMigrateSchemaApplyArgs, migration: &MigrationConte
         .clone()
         .ok_or_else(|| BeadsError::internal("eligible migration plan omitted its forecast"))?;
 
-    let run_id = allocate_run_id(&migration.beads_dir)?;
-    let run_dir = migration_runs_root(&migration.beads_dir).join(&run_id);
+    let run_id = allocate_run_id(&migration.obr_dir)?;
+    let run_dir = migration_runs_root(&migration.obr_dir).join(&run_id);
     let before_dir = run_dir.join("before");
     ensure_new_directory(&before_dir)?;
     copy_family_to_backup(&migration.db_path, &before_dir, &plan.raw_witness)?;
@@ -631,7 +630,7 @@ fn execute_apply(args: &DoctorMigrateSchemaApplyArgs, migration: &MigrationConte
         logical_after,
         attested,
         attestation_errors,
-        undo_command: format!("br doctor migrate-schema undo {run_id}"),
+        undo_command: format!("obr doctor migrate-schema undo {run_id}"),
     };
     let commit_ready: CommitReadyMigrationReceipt = read_json(&run_dir.join("commit-ready.json"))?;
     validate_applied_against_commit_ready(&applied, &commit_ready, &run_dir)?;
@@ -778,7 +777,7 @@ fn resume_commit_ready_migration(
     args: &DoctorMigrateSchemaApplyArgs,
     migration: &MigrationContext,
 ) -> Result<Option<(AppliedMigrationReceipt, PathBuf)>> {
-    let root = migration_runs_root(&migration.beads_dir);
+    let root = migration_runs_root(&migration.obr_dir);
     let entries = match fs::read_dir(&root) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -2255,7 +2254,7 @@ fn rollback_compacted_install(
 )]
 fn execute_undo(args: &DoctorMigrateSchemaUndoArgs, migration: &MigrationContext) -> Result<()> {
     validate_run_id(&args.run_id)?;
-    let run_dir = migration_runs_root(&migration.beads_dir).join(&args.run_id);
+    let run_dir = migration_runs_root(&migration.obr_dir).join(&args.run_id);
     if run_dir.join("undone.json").exists() {
         let receipt: UndoReceipt = read_json(&run_dir.join("undone.json"))?;
         validate_completed_undo_receipt(&receipt, args, migration)?;
@@ -2576,7 +2575,7 @@ fn validate_applied_receipt(
     if let Some(raw_after) = applied.raw_after.as_ref() {
         validate_raw_family_witness(raw_after)?;
     }
-    if applied.schema_version != APPLIED_SCHEMA {
+    if !crate::legacy_compat::schema_id_accepted(&applied.schema_version, APPLIED_SCHEMA) {
         return Err(BeadsError::internal(format!(
             "unsupported applied schema-migration receipt contract {:?}",
             applied.schema_version
@@ -2630,7 +2629,7 @@ fn validate_applied_receipt(
         )));
     }
     let prepared: PreparedMigrationReceipt = read_json(&prepared_path)?;
-    if prepared.schema_version != PREPARED_SCHEMA
+    if !crate::legacy_compat::schema_id_accepted(&prepared.schema_version, PREPARED_SCHEMA)
         || prepared.run_id != applied.run_id
         || prepared.database_path != applied.database_path
         || !constant_time_text_eq(&prepared.plan_token, &applied.plan_token)
@@ -2656,8 +2655,8 @@ fn validate_completed_undo_receipt(
 ) -> Result<()> {
     validate_raw_family_witness(&receipt.raw_expected_before)?;
     validate_raw_family_witness(&receipt.raw_live_before_undo)?;
-    let run_dir = migration_runs_root(&migration.beads_dir).join(&args.run_id);
-    if receipt.schema_version != UNDO_SCHEMA
+    let run_dir = migration_runs_root(&migration.obr_dir).join(&args.run_id);
+    if !crate::legacy_compat::schema_id_accepted(&receipt.schema_version, UNDO_SCHEMA)
         || receipt.run_id != args.run_id
         || receipt.database_path != migration.db_path.display().to_string()
         || receipt.dry_run
@@ -2728,7 +2727,7 @@ fn validate_prepared_undo_receipt(
 ) -> Result<()> {
     validate_raw_family_witness(&receipt.raw_expected_before)?;
     validate_raw_family_witness(&receipt.raw_live_before_undo)?;
-    if receipt.schema_version != UNDO_SCHEMA
+    if !crate::legacy_compat::schema_id_accepted(&receipt.schema_version, UNDO_SCHEMA)
         || receipt.run_id != args.run_id
         || receipt.dry_run
         || receipt.database_path != migration.db_path.display().to_string()
@@ -3269,15 +3268,15 @@ fn constant_time_text_eq(left: &str, right: &str) -> bool {
     difference == 0
 }
 
-fn migration_runs_root(beads_dir: &Path) -> PathBuf {
-    beads_dir.join(".br_recovery").join("schema-migrations")
+fn migration_runs_root(obr_dir: &Path) -> PathBuf {
+    obr_dir.join(".br_recovery").join("schema-migrations")
 }
 
-fn allocate_run_id(beads_dir: &Path) -> Result<String> {
-    let recovery_root = beads_dir.join(".br_recovery");
+fn allocate_run_id(obr_dir: &Path) -> Result<String> {
+    let recovery_root = obr_dir.join(".br_recovery");
     ensure_directory(&recovery_root)?;
     set_private_directory_permissions(&recovery_root)?;
-    let root = migration_runs_root(beads_dir);
+    let root = migration_runs_root(obr_dir);
     ensure_directory(&root)?;
     set_private_directory_permissions(&root)?;
     for counter in 0_u32..1000 {
@@ -3876,9 +3875,9 @@ mod tests {
         database_name: &str,
     ) -> (TempDir, MigrationContext) {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir(&beads_dir).expect("create beads dir");
-        let db_path = beads_dir.join(database_name);
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir(&obr_dir).expect("create obr dir");
+        let db_path = obr_dir.join(database_name);
         let conn = Connection::open(db_path.to_string_lossy().into_owned()).expect("open db");
         crate::storage::schema::apply_schema(&conn).expect("create current schema");
         conn.execute(
@@ -3897,7 +3896,7 @@ mod tests {
 
         let authority = Arc::new(
             crate::sync::blocking_database_family_write_lock_with_timeout(
-                &beads_dir,
+                &obr_dir,
                 &db_path,
                 Some(1000),
             )
@@ -3906,7 +3905,7 @@ mod tests {
         (
             temp,
             MigrationContext {
-                beads_dir,
+                obr_dir,
                 db_path,
                 write_authority: authority,
             },
@@ -4034,7 +4033,7 @@ mod tests {
         )
         .expect("apply reviewed migration");
 
-        let runs_root = migration_runs_root(&migration.beads_dir);
+        let runs_root = migration_runs_root(&migration.obr_dir);
         let run_ids: Vec<String> = fs::read_dir(&runs_root)
             .expect("read runs")
             .map(|entry| {
@@ -4156,7 +4155,7 @@ mod tests {
             &migration,
         )
         .expect("apply reviewed migration");
-        let run_dir = fs::read_dir(migration_runs_root(&migration.beads_dir))
+        let run_dir = fs::read_dir(migration_runs_root(&migration.obr_dir))
             .expect("read migration runs")
             .next()
             .expect("one run")
@@ -4167,7 +4166,7 @@ mod tests {
             .and_then(|value| value.to_str())
             .expect("UTF-8 run id")
             .to_string();
-        let applied_alias = migration.beads_dir.join("applied-generation-alias.db");
+        let applied_alias = migration.obr_dir.join("applied-generation-alias.db");
         fs::hard_link(&migration.db_path, &applied_alias).expect("create applied hardlink alias");
         let applied_identity = fs::metadata(&applied_alias).expect("alias metadata");
 
@@ -4230,7 +4229,7 @@ mod tests {
         .expect_err("stale token must be refused");
         assert!(error.to_string().contains("plan token is stale"), "{error}");
         assert!(
-            !migration_runs_root(&migration.beads_dir).exists(),
+            !migration_runs_root(&migration.obr_dir).exists(),
             "a stale token must be refused before allocating recovery artifacts"
         );
     }
@@ -4245,9 +4244,9 @@ mod tests {
     fn failed_post_adoption_verification_restores_database_and_authority() {
         let (_temp, migration) = reviewed_v14_migration_context();
         let raw_before = raw_family_witness(&migration.db_path).expect("original raw witness");
-        let candidate_path = migration.beads_dir.join("candidate.db");
-        let locked_stale_path = migration.beads_dir.join("locked-stale-candidate.db");
-        let displaced_main = migration.beads_dir.join("displaced-original.db");
+        let candidate_path = migration.obr_dir.join("candidate.db");
+        let locked_stale_path = migration.obr_dir.join("locked-stale-candidate.db");
+        let displaced_main = migration.obr_dir.join("displaced-original.db");
         fs::write(&candidate_path, b"candidate generation").expect("write candidate");
         fs::write(&locked_stale_path, b"stale locked generation")
             .expect("write stale locked generation");
@@ -4298,10 +4297,10 @@ mod tests {
     fn pre_adoption_fence_rejects_same_byte_foreign_canonical_inode() {
         let (_temp, migration) = reviewed_v14_migration_context();
         let original_metadata = fs::metadata(&migration.db_path).expect("original metadata");
-        let foreign = migration.beads_dir.join("same-byte-foreign.db");
-        let retained_original = migration.beads_dir.join("externally-retained-original.db");
-        let candidate = migration.beads_dir.join("fenced-candidate.db");
-        let displaced = migration.beads_dir.join("must-remain-absent.db");
+        let foreign = migration.obr_dir.join("same-byte-foreign.db");
+        let retained_original = migration.obr_dir.join("externally-retained-original.db");
+        let candidate = migration.obr_dir.join("fenced-candidate.db");
+        let displaced = migration.obr_dir.join("must-remain-absent.db");
         fs::copy(&migration.db_path, &foreign).expect("copy same-byte foreign inode");
         fs::write(&candidate, b"candidate generation").expect("write candidate");
         let replacement_lock = migration
@@ -4360,8 +4359,8 @@ mod tests {
     fn post_install_directory_sync_failure_restores_original_main_and_authority() {
         let (_temp, migration) = reviewed_v14_migration_context();
         let raw_before = raw_family_witness(&migration.db_path).expect("original raw witness");
-        let candidate_path = migration.beads_dir.join("sync-failure-candidate.db");
-        let displaced_dir = migration.beads_dir.join("sync-failure-displaced");
+        let candidate_path = migration.obr_dir.join("sync-failure-candidate.db");
+        let displaced_dir = migration.obr_dir.join("sync-failure-displaced");
         fs::create_dir(&displaced_dir).expect("create displaced directory");
         let displaced_main = displaced_dir.join("beads.db");
         fs::write(&candidate_path, b"candidate generation").expect("write candidate");
@@ -4434,8 +4433,8 @@ mod tests {
     ))]
     fn repeated_directory_sync_failure_is_reported_as_uncertain() {
         let (_temp, migration) = reviewed_v14_migration_context();
-        let candidate_path = migration.beads_dir.join("uncertain-sync-candidate.db");
-        let displaced_dir = migration.beads_dir.join("uncertain-sync-displaced");
+        let candidate_path = migration.obr_dir.join("uncertain-sync-candidate.db");
+        let displaced_dir = migration.obr_dir.join("uncertain-sync-displaced");
         fs::create_dir(&displaced_dir).expect("create displaced directory");
         let displaced_main = displaced_dir.join("beads.db");
         fs::write(&candidate_path, b"candidate generation").expect("write candidate");
@@ -4481,8 +4480,8 @@ mod tests {
         let plan = build_plan(&migration.db_path).expect("build migration plan");
         let forecast = plan.forecast.clone().expect("eligible forecast");
         let plan_token = plan.plan_token.clone().expect("plan token");
-        let run_id = allocate_run_id(&migration.beads_dir).expect("allocate run");
-        let run_dir = migration_runs_root(&migration.beads_dir).join(&run_id);
+        let run_id = allocate_run_id(&migration.obr_dir).expect("allocate run");
+        let run_dir = migration_runs_root(&migration.obr_dir).join(&run_id);
         let before_dir = run_dir.join("before");
         ensure_new_directory(&before_dir).expect("create before directory");
         copy_family_to_backup(&migration.db_path, &before_dir, &plan.raw_witness)
@@ -4600,19 +4599,19 @@ mod tests {
             "the fixture must stop at the crash boundary before applied receipt publication"
         );
 
-        let beads_dir = migration.beads_dir.clone();
+        let obr_dir = migration.obr_dir.clone();
         let db_path = migration.db_path.clone();
         drop(migration);
         let migration = MigrationContext {
             write_authority: Arc::new(
                 crate::sync::blocking_database_family_write_lock_with_timeout(
-                    &beads_dir,
+                    &obr_dir,
                     &db_path,
                     Some(1000),
                 )
                 .expect("reacquire authority after simulated crash"),
             ),
-            beads_dir,
+            obr_dir,
             db_path,
         };
         let (applied, resumed_before_dir) = resume_commit_ready_migration(
@@ -4653,8 +4652,8 @@ mod tests {
         let plan = build_plan(&migration.db_path).expect("build migration plan");
         let forecast = plan.forecast.clone().expect("eligible forecast");
         let plan_token = plan.plan_token.clone().expect("plan token");
-        let run_id = allocate_run_id(&migration.beads_dir).expect("allocate run");
-        let run_dir = migration_runs_root(&migration.beads_dir).join(&run_id);
+        let run_id = allocate_run_id(&migration.obr_dir).expect("allocate run");
+        let run_dir = migration_runs_root(&migration.obr_dir).join(&run_id);
         let before_dir = run_dir.join("before");
         ensure_new_directory(&before_dir).expect("create before directory");
         copy_family_to_backup(&migration.db_path, &before_dir, &plan.raw_witness)
@@ -4720,7 +4719,7 @@ mod tests {
         let journal = family_component_path(&migration.db_path, "-journal");
         fs::write(&journal, b"receipt-bound journal bytes").expect("write journal fixture");
         let expected = raw_family_witness(&migration.db_path).expect("expected raw family");
-        let run_dir = migration.beads_dir.join("preinstall-sidecar-crash");
+        let run_dir = migration.obr_dir.join("preinstall-sidecar-crash");
         let before_dir = run_dir.join("before");
         let displaced_dir = run_dir.join("maintenance-displaced");
         ensure_new_directory(&before_dir).expect("create before dir");
@@ -4766,7 +4765,7 @@ mod tests {
         )
         .expect("apply reviewed migration");
 
-        let run_dir = fs::read_dir(migration_runs_root(&migration.beads_dir))
+        let run_dir = fs::read_dir(migration_runs_root(&migration.obr_dir))
             .expect("read migration runs")
             .next()
             .expect("one run")
@@ -4820,7 +4819,7 @@ mod tests {
             &migration,
         )
         .expect("apply reviewed migration");
-        let run_dir = fs::read_dir(migration_runs_root(&migration.beads_dir))
+        let run_dir = fs::read_dir(migration_runs_root(&migration.obr_dir))
             .expect("read migration runs")
             .next()
             .expect("one run")
@@ -4868,7 +4867,7 @@ mod tests {
         )
         .expect("apply reviewed migration");
 
-        let run_dir = fs::read_dir(migration_runs_root(&migration.beads_dir))
+        let run_dir = fs::read_dir(migration_runs_root(&migration.obr_dir))
             .expect("read migration runs")
             .next()
             .expect("one run")
@@ -4917,19 +4916,19 @@ mod tests {
         exchange_database_paths(&restored_candidate, &migration.db_path)
             .expect("simulate atomic undo exchange before quarantine retention");
 
-        let beads_dir = migration.beads_dir.clone();
+        let obr_dir = migration.obr_dir.clone();
         let db_path = migration.db_path.clone();
         drop(migration);
         let migration = MigrationContext {
             write_authority: Arc::new(
                 crate::sync::blocking_database_family_write_lock_with_timeout(
-                    &beads_dir,
+                    &obr_dir,
                     &db_path,
                     Some(1000),
                 )
                 .expect("reacquire authority after simulated undo crash"),
             ),
-            beads_dir,
+            obr_dir,
             db_path,
         };
 
@@ -4964,15 +4963,15 @@ mod tests {
             &migration,
         )
         .expect("apply reviewed migration");
-        let run_dir = fs::read_dir(migration_runs_root(&migration.beads_dir))
+        let run_dir = fs::read_dir(migration_runs_root(&migration.obr_dir))
             .expect("read migration runs")
             .next()
             .expect("one run")
             .expect("run entry")
             .path();
         for directory in [
-            &migration.beads_dir.join(".br_recovery"),
-            &migration_runs_root(&migration.beads_dir),
+            &migration.obr_dir.join(".br_recovery"),
+            &migration_runs_root(&migration.obr_dir),
             &run_dir,
             &run_dir.join("before"),
         ] {
@@ -5143,8 +5142,8 @@ mod tests {
         let (_temp, migration) = reviewed_v14_migration_context();
         let plan = build_plan(&migration.db_path).expect("build plan");
         let forecast = plan.forecast.clone().expect("eligible forecast");
-        let run_id = allocate_run_id(&migration.beads_dir).expect("allocate run");
-        let run_dir = migration_runs_root(&migration.beads_dir).join(&run_id);
+        let run_id = allocate_run_id(&migration.obr_dir).expect("allocate run");
+        let run_dir = migration_runs_root(&migration.obr_dir).join(&run_id);
         let marked_at = Utc::now().to_rfc3339();
         let prepared = PreparedMigrationReceipt {
             schema_version: PREPARED_SCHEMA.to_string(),
@@ -5190,7 +5189,7 @@ mod tests {
         let database_name = format!("{}.db", "b".repeat(226));
         let (_temp, migration) = reviewed_v14_migration_context_with_database_name(&database_name);
         let plan = build_plan(&migration.db_path).expect("build plan");
-        let runs_root = migration_runs_root(&migration.beads_dir);
+        let runs_root = migration_runs_root(&migration.obr_dir);
         let result = execute_apply(
             &DoctorMigrateSchemaApplyArgs {
                 plan_token: plan.plan_token.expect("plan token"),

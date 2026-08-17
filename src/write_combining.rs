@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 
 /// Schema version for write-combining request and result envelopes.
-pub const WRITE_COMBINING_SCHEMA_VERSION: &str = "br.write-combining.v1";
+pub const WRITE_COMBINING_SCHEMA_VERSION: &str = "obr.write-combining.v1";
 /// Conservative default request count for one future combined batch.
 pub const DEFAULT_MAX_COMBINED_ENVELOPES: usize = 64;
 /// Conservative default serialized argument budget for one future combined batch.
@@ -152,7 +152,12 @@ impl MutationEnvelope {
 
     /// Validate envelope invariants that are independent of storage state.
     pub fn validate(&self) -> std::result::Result<(), EnvelopeValidationError> {
-        if self.schema_version != WRITE_COMBINING_SCHEMA_VERSION {
+        // legacy_compat: the envelope is `Deserialize`, so a submitter may
+        // still be sending the pre-rename schema string.
+        if !crate::legacy_compat::schema_id_accepted(
+            &self.schema_version,
+            WRITE_COMBINING_SCHEMA_VERSION,
+        ) {
             return Err(EnvelopeValidationError::UnsupportedSchemaVersion);
         }
         if self.idempotency_key.trim().is_empty() {
@@ -1477,37 +1482,37 @@ mod tests {
     fn parsed_cli_candidate_shapes_match_allowlist() {
         let cases: &[(&[&str], CompatibleMutation)] = &[
             (
-                &["br", "create", "Queueable issue"],
+                &["obr", "create", "Queueable issue"],
                 CompatibleMutation::CreateIssue,
             ),
             (
-                &["br", "create", "--title", "Queueable issue"],
+                &["obr", "create", "--title", "Queueable issue"],
                 CompatibleMutation::CreateIssue,
             ),
             (
-                &["br", "comments", "add", "br-1", "done"],
+                &["obr", "comments", "add", "br-1", "done"],
                 CompatibleMutation::AddComment,
             ),
             (
-                &["br", "comments", "add", "br-1", "--message", "done"],
+                &["obr", "comments", "add", "br-1", "--message", "done"],
                 CompatibleMutation::AddComment,
             ),
             (
-                &["br", "update", "br-1", "--status", "in_progress"],
+                &["obr", "update", "br-1", "--status", "in_progress"],
                 CompatibleMutation::UpdateIssue,
             ),
             (
-                &["br", "update", "br-1", "--add-label", "ops"],
+                &["obr", "update", "br-1", "--add-label", "ops"],
                 CompatibleMutation::UpdateIssue,
             ),
-            (&["br", "close", "br-1"], CompatibleMutation::CloseIssue),
-            (&["br", "reopen", "br-1"], CompatibleMutation::ReopenIssue),
+            (&["obr", "close", "br-1"], CompatibleMutation::CloseIssue),
+            (&["obr", "reopen", "br-1"], CompatibleMutation::ReopenIssue),
             (
-                &["br", "dep", "add", "br-1", "br-2"],
+                &["obr", "dep", "add", "br-1", "br-2"],
                 CompatibleMutation::AddDependency,
             ),
             (
-                &["br", "dep", "remove", "br-1", "br-2"],
+                &["obr", "dep", "remove", "br-1", "br-2"],
                 CompatibleMutation::RemoveDependency,
             ),
         ];
@@ -1525,68 +1530,71 @@ mod tests {
     fn parsed_cli_direct_only_shapes_match_reasons() {
         let cases: &[(&[&str], DirectOnlyReason)] = &[
             (
-                &["br", "create", "--dry-run", "Preview issue"],
+                &["obr", "create", "--dry-run", "Preview issue"],
                 DirectOnlyReason::DryRun,
             ),
             (
-                &["br", "create", "--file", "issues.md"],
+                &["obr", "create", "--file", "issues.md"],
                 DirectOnlyReason::FileInput,
             ),
-            (&["br", "create"], DirectOnlyReason::MissingPayload),
+            (&["obr", "create"], DirectOnlyReason::MissingPayload),
             (
-                &["br", "create", "Child issue", "--parent", "br-parent"],
+                &["obr", "create", "Child issue", "--parent", "br-parent"],
                 DirectOnlyReason::UnsupportedOption,
             ),
             (
-                &["br", "comments", "add", "br-1", "--file", "comment.md"],
+                &["obr", "comments", "add", "br-1", "--file", "comment.md"],
                 DirectOnlyReason::FileInput,
             ),
             (
-                &["br", "comments", "add", "br-1"],
+                &["obr", "comments", "add", "br-1"],
                 DirectOnlyReason::MissingPayload,
             ),
             (
-                &["br", "update", "--status", "open"],
+                &["obr", "update", "--status", "open"],
                 DirectOnlyReason::MissingExplicitTarget,
             ),
-            (&["br", "update", "br-1"], DirectOnlyReason::MissingPayload),
+            (&["obr", "update", "br-1"], DirectOnlyReason::MissingPayload),
             (
-                &["br", "update", "br-1", "--parent", "br-parent"],
+                &["obr", "update", "br-1", "--parent", "br-parent"],
                 DirectOnlyReason::UnsupportedOption,
             ),
             (
-                &["br", "close", "br-1", "--suggest-next"],
+                &["obr", "close", "br-1", "--suggest-next"],
                 DirectOnlyReason::UnsupportedOption,
             ),
             (
-                &["br", "dep", "add", "br-1", "br-2", "--metadata", "{}"],
+                &["obr", "dep", "add", "br-1", "br-2", "--metadata", "{}"],
                 DirectOnlyReason::UnsupportedOption,
             ),
             (
-                &["br", "audit", "record", "--stdin"],
-                DirectOnlyReason::UnsafeCommand,
-            ),
-            (&["br", "sync", "--status"], DirectOnlyReason::UnsafeCommand),
-            (
-                &["br", "sync", "--flush-only"],
+                &["obr", "audit", "record", "--stdin"],
                 DirectOnlyReason::UnsafeCommand,
             ),
             (
-                &["br", "config", "get", "ui.color"],
+                &["obr", "sync", "--status"],
+                DirectOnlyReason::UnsafeCommand,
+            ),
+            (
+                &["obr", "sync", "--flush-only"],
+                DirectOnlyReason::UnsafeCommand,
+            ),
+            (
+                &["obr", "config", "get", "ui.color"],
                 DirectOnlyReason::ReadOnly,
             ),
             (
-                &["br", "config", "set", "ui.color", "never"],
+                &["obr", "config", "set", "ui.color", "never"],
                 DirectOnlyReason::UnsafeCommand,
             ),
-            (&["br", "history", "list"], DirectOnlyReason::ReadOnly),
+            (&["obr", "history", "list"], DirectOnlyReason::ReadOnly),
             (
-                &["br", "history", "restore", "issues.backup.jsonl"],
+                &["obr", "history", "restore", "issues.backup.jsonl"],
                 DirectOnlyReason::UnsafeCommand,
             ),
-            (&["br", "doctor"], DirectOnlyReason::UnsafeCommand),
+            (&["obr", "doctor"], DirectOnlyReason::UnsafeCommand),
             (
-                &["br", "doctor", "--repair"],
+                &["obr", "doctor", "--repair"],
                 DirectOnlyReason::UnsafeCommand,
             ),
         ];
@@ -1953,7 +1961,7 @@ mod tests {
             FUTURE_UNIX_MS,
             json!({"title": "invalid"}),
         );
-        invalid.schema_version = "br.write-combining.v0".to_string();
+        invalid.schema_version = "obr.write-combining.v0".to_string();
         let envelopes = vec![
             invalid,
             envelope(
@@ -2189,7 +2197,7 @@ mod tests {
             FUTURE_UNIX_MS,
             json!({"title": "invalid"}),
         );
-        invalid.schema_version = "br.write-combining.v0".to_string();
+        invalid.schema_version = "obr.write-combining.v0".to_string();
         let envelopes = vec![
             envelope(
                 "request-1",
@@ -2241,7 +2249,7 @@ mod tests {
             FUTURE_UNIX_MS,
             json!({"title": "invalid"}),
         );
-        invalid.schema_version = "br.write-combining.v0".to_string();
+        invalid.schema_version = "obr.write-combining.v0".to_string();
         let envelopes = vec![
             envelope(
                 "request-1",
@@ -2347,7 +2355,7 @@ mod tests {
             FUTURE_UNIX_MS,
             json!({"title": "invalid"}),
         );
-        invalid.schema_version = "br.write-combining.v0".to_string();
+        invalid.schema_version = "obr.write-combining.v0".to_string();
         let envelopes = vec![
             envelope(
                 "request-1",

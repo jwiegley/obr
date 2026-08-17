@@ -1,13 +1,14 @@
-//! Configuration management for `beads_rust`.
+//! Configuration management for `obr`.
 //!
 //! Configuration sources and precedence (highest wins):
 //! 1. CLI overrides
-//! 2. Environment variables
-//! 3. Project config (.beads/config.yaml)
-//! 4. User config (~/.config/beads/config.yaml; falls back to ~/.config/bd/config.yaml)
-//! 5. Legacy user config (~/.beads/config.yaml)
-//! 6. DB config table
-//! 7. Defaults
+//! 2. Environment variables (`OBR_*` only — the pre-rename `BEADS_*`/`BD_*`/
+//!    `BR_*` names were removed outright, not deprecated)
+//! 3. Project config (`<workspace>/config.yaml`, i.e. `.obr/config.yaml`)
+//! 4. User config (`~/.config/obr/config.yaml` — the only user-config
+//!    location read; `~/.beads` and `~/.config/{beads,bd}` are not consulted)
+//! 5. DB config table
+//! 6. Defaults
 
 pub mod routing;
 
@@ -49,36 +50,155 @@ use std::time::UNIX_EPOCH;
 use tempfile::tempdir;
 use tracing::warn;
 
-/// Check whether a directory name is a valid beads directory name.
+/// Workspace directory name created by `obr init`.
+pub const WORKSPACE_DIR_NAME: &str = ".obr";
+/// Workspace directory name for monorepos that disallow dot-directories.
+pub const WORKSPACE_DIR_NAME_UNDERSCORE: &str = "_obr";
+/// Legacy workspace directory names, still readable. See [`crate::legacy_compat`].
+const LEGACY_WORKSPACE_DIR_NAMES: [&str; 2] = [".beads", "_beads"];
+
+/// Check whether a directory name is a valid workspace directory name.
 ///
-/// Accepts `.beads` (default) and `_beads` (for monorepos that
-/// disallow dot-directories).
+/// Accepts `.obr` (default) and `_obr` (for monorepos that disallow
+/// dot-directories), plus the legacy `.beads`/`_beads` spellings.
 #[must_use]
-pub fn is_beads_dir_name(name: &std::ffi::OsStr) -> bool {
-    name == ".beads" || name == "_beads"
+pub fn is_obr_dir_name(name: &std::ffi::OsStr) -> bool {
+    name == WORKSPACE_DIR_NAME
+        || name == WORKSPACE_DIR_NAME_UNDERSCORE
+        || is_legacy_obr_dir_name(name)
+}
+
+/// Check whether a directory name is one of the pre-rename workspace names.
+#[must_use]
+pub fn is_legacy_obr_dir_name(name: &std::ffi::OsStr) -> bool {
+    LEGACY_WORKSPACE_DIR_NAMES
+        .iter()
+        .any(|legacy| name == std::ffi::OsStr::new(legacy))
+}
+
+/// Resolve the workspace directory inside `project_root`.
+///
+/// Returns the first existing directory in `.obr`, `_obr`, `.beads`, `_beads`
+/// order, falling back to `.obr` so callers that create the directory land on
+/// the current name.
+#[must_use]
+pub fn workspace_dir_in(project_root: &Path) -> PathBuf {
+    for name in [
+        WORKSPACE_DIR_NAME,
+        WORKSPACE_DIR_NAME_UNDERSCORE,
+        LEGACY_WORKSPACE_DIR_NAMES[0],
+        LEGACY_WORKSPACE_DIR_NAMES[1],
+    ] {
+        let candidate = project_root.join(name);
+        if candidate.is_dir() {
+            warn_if_legacy_workspace_dir(&candidate);
+            return candidate;
+        }
+    }
+    project_root.join(WORKSPACE_DIR_NAME)
+}
+
+/// Emit the one-shot legacy-workspace warning when `path` is a legacy
+/// `.beads`/`_beads` directory. The current `_obr` spelling never warns.
+fn warn_if_legacy_workspace_dir(path: &Path) {
+    if let Some(name) = path.file_name().and_then(|name| name.to_str())
+        && is_legacy_obr_dir_name(std::ffi::OsStr::new(name))
+    {
+        let replacement = if name.starts_with('_') {
+            WORKSPACE_DIR_NAME_UNDERSCORE
+        } else {
+            WORKSPACE_DIR_NAME
+        };
+        crate::legacy_compat::warn_deprecated_artifact(name, replacement, path);
+    }
 }
 
 /// Default database filename used when metadata is missing.
-const DEFAULT_DB_FILENAME: &str = "beads.db";
-/// Default JSONL filename used when metadata is missing.
-const DEFAULT_JSONL_FILENAME: &str = "issues.jsonl";
-/// Legacy JSONL filename to fall back to.
-const LEGACY_JSONL_FILENAME: &str = "beads.jsonl";
+pub const DEFAULT_DB_FILENAME: &str = "obr.db";
+/// Pre-rename database filename, still opened when it is the only one present.
+pub(crate) const LEGACY_DB_FILENAME: &str = "beads.db";
+/// Default export filename used when metadata is missing. Org-mode is the
+/// default flat-file format; JSONL remains available by extension.
+/// Public because history, stats and the sync layer need the default name.
+pub const DEFAULT_JSONL_FILENAME: &str = "issues.org";
+/// Legacy JSONL filename to fall back to (workspaces created before the Org
+/// default, and workspaces pinned to JSONL via metadata.json).
+///
+/// Crate-visible so `doctor`'s "no export found" message can name the
+/// discovery chain [`discover_jsonl`] actually walked instead of restating it
+/// as a literal that drifts.
+pub(crate) const LEGACY_JSONL_FILENAME: &str = "issues.jsonl";
+/// Older legacy JSONL filename to fall back to.
+pub(crate) const OLDER_LEGACY_JSONL_FILENAME: &str = "beads.jsonl";
+/// Tracked human surface filename (D-SURFACE). `.obr/` is a per-machine cache
+/// and is entirely git-ignored; this file is what lives in version control.
+pub const SURFACE_FILENAME: &str = "PLAN.org";
+/// Subdirectories that may hold the surface, probed in this order before
+/// falling back to the workspace root. `doc/` outranks `docs/`.
+pub const SURFACE_SUBDIRS: &[&str] = &["doc", "docs"];
+/// The one line that makes the workspace directory ignore itself wholesale.
+///
+/// Shared by `init` (which writes it) and `doctor` (which requires it), because
+/// nothing under `.obr/` is ever tracked and the two must not drift.
+pub const WORKSPACE_SELF_IGNORE_PATTERN: &str = "*";
 /// Directory used for automatic database recovery backups.
-const RECOVERY_DIR_NAME: &str = ".br_recovery";
+pub(crate) const RECOVERY_DIR_NAME: &str = "recovery";
+/// Pre-rename recovery directory, still discovered when present.
+pub(crate) const LEGACY_RECOVERY_DIR_NAME: &str = ".br_recovery";
 const SYMLINKED_DB_RECOVERY_ERROR_PREFIX: &str =
     "refusing to rebuild symlinked SQLite database path";
 
 /// JSONL files that should never be treated as the main export file.
 /// Includes merge artifacts, deletion logs, and interaction logs.
+/// Both merge-artifact generations are listed: new writes use `merge.*`, but a
+/// workspace mid-merge when it was upgraded still has `beads.*` on disk.
 const EXCLUDED_JSONL_FILES: &[&str] = &[
     "deletions.jsonl",
     "interactions.jsonl",
+    "merge.base.jsonl",
+    "merge.left.jsonl",
+    "merge.right.jsonl",
     "beads.base.jsonl",
     "beads.left.jsonl",
     "beads.right.jsonl",
     "sync_base.jsonl",
 ];
+
+/// Merge-artifact basenames written by the three-way merge, newest generation
+/// first. Element 0 is what new merges write; the rest are read-only legacy.
+pub const MERGE_BASE_JSONL_FILENAMES: [&str; 2] = ["merge.base.jsonl", "beads.base.jsonl"];
+/// Basename of the merge ancestor snapshot written by new merges.
+pub const MERGE_BASE_JSONL_FILENAME: &str = MERGE_BASE_JSONL_FILENAMES[0];
+
+/// Whether `name` is a three-way-merge ancestor snapshot, either generation.
+#[must_use]
+pub fn is_merge_base_jsonl_name(name: &str) -> bool {
+    MERGE_BASE_JSONL_FILENAMES.contains(&name)
+}
+
+/// Locate the three-way-merge ancestor snapshot in `obr_dir`.
+///
+/// legacy_compat: an interrupted merge started before the rename left its
+/// ancestor under `beads.base.jsonl`; that snapshot is still consumed. New
+/// merges always write `merge.base.jsonl`, so the returned path is the current
+/// name whenever no legacy artifact is present.
+#[must_use]
+pub fn merge_base_jsonl_path(obr_dir: &Path) -> PathBuf {
+    let current = obr_dir.join(MERGE_BASE_JSONL_FILENAME);
+    if current.exists() {
+        return current;
+    }
+    let legacy = obr_dir.join(MERGE_BASE_JSONL_FILENAMES[1]);
+    if legacy.exists() {
+        crate::legacy_compat::warn_deprecated_artifact(
+            MERGE_BASE_JSONL_FILENAMES[1],
+            MERGE_BASE_JSONL_FILENAME,
+            &legacy,
+        );
+        return legacy;
+    }
+    current
+}
 
 /// Startup metadata describing DB + JSONL paths.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -98,7 +218,7 @@ fn default_database_filename() -> String {
 }
 
 fn default_jsonl_export_filename() -> String {
-    DEFAULT_JSONL_FILENAME.to_string()
+    SURFACE_FILENAME.to_string()
 }
 
 impl Default for Metadata {
@@ -113,13 +233,13 @@ impl Default for Metadata {
 }
 
 impl Metadata {
-    /// Load metadata.json from the beads directory.
+    /// Load metadata.json from the obr directory.
     ///
     /// # Errors
     ///
     /// Returns an error if the file exists but cannot be read or parsed.
-    pub fn load(beads_dir: &Path) -> Result<Self> {
-        let path = beads_dir.join("metadata.json");
+    pub fn load(obr_dir: &Path) -> Result<Self> {
+        let path = obr_dir.join("metadata.json");
         if !path.exists() {
             return Ok(Self::default());
         }
@@ -137,7 +257,7 @@ impl Metadata {
     }
 }
 
-/// Discover the best JSONL file in the beads directory.
+/// Discover the best JSONL file in the obr directory.
 ///
 /// Selection rules:
 /// 1. Prefer `issues.jsonl` if present.
@@ -146,20 +266,31 @@ impl Metadata {
 /// 4. Never use deletion logs (`deletions.jsonl`) or interaction logs (`interactions.jsonl`).
 /// 5. If no valid JSONL exists, return `None` (caller should use default for writing).
 #[must_use]
-pub fn discover_jsonl(beads_dir: &Path) -> Option<PathBuf> {
+pub fn discover_jsonl(obr_dir: &Path) -> Option<PathBuf> {
     // Check preferred file first
-    let issues_path = beads_dir.join(DEFAULT_JSONL_FILENAME);
+    let issues_path = obr_dir.join(DEFAULT_JSONL_FILENAME);
     if issues_path.is_file() {
         return Some(issues_path);
     }
 
-    // Check legacy file
-    let legacy_path = beads_dir.join(LEGACY_JSONL_FILENAME);
-    if legacy_path.is_file() {
-        return Some(legacy_path);
+    // Check legacy files, newest naming first
+    for legacy in [LEGACY_JSONL_FILENAME, OLDER_LEGACY_JSONL_FILENAME] {
+        let legacy_path = obr_dir.join(legacy);
+        if legacy_path.is_file() {
+            if legacy == OLDER_LEGACY_JSONL_FILENAME {
+                // legacy_compat: read-only fallback. Exports always write the
+                // current default; this name is never written again.
+                crate::legacy_compat::warn_deprecated_artifact(
+                    OLDER_LEGACY_JSONL_FILENAME,
+                    DEFAULT_JSONL_FILENAME,
+                    &legacy_path,
+                );
+            }
+            return Some(legacy_path);
+        }
     }
 
-    // No valid JSONL found
+    // No valid export file found
     None
 }
 
@@ -174,10 +305,94 @@ pub fn is_excluded_jsonl(filename: &str) -> bool {
         .is_some_and(|basename| EXCLUDED_JSONL_FILES.contains(&basename))
 }
 
+/// The workspace root for `obr_dir` — the directory that holds `.obr/`.
+///
+/// A bare relative `.obr` has an empty parent; that still denotes the current
+/// directory, so it resolves to `.` rather than failing.
+#[must_use]
+pub fn workspace_root_of(obr_dir: &Path) -> Option<PathBuf> {
+    let parent = obr_dir.parent()?;
+    if parent.as_os_str().is_empty() {
+        return obr_dir
+            .file_name()
+            .is_some_and(is_obr_dir_name)
+            .then(|| PathBuf::from("."));
+    }
+    Some(parent.to_path_buf())
+}
+
+/// Every place a surface may live, highest priority first:
+/// `<root>/doc/PLAN.org`, `<root>/docs/PLAN.org`, `<root>/PLAN.org`.
+#[must_use]
+pub fn surface_candidates(root: &Path) -> Vec<PathBuf> {
+    SURFACE_SUBDIRS
+        .iter()
+        .map(|subdir| root.join(subdir).join(SURFACE_FILENAME))
+        .chain(std::iter::once(root.join(SURFACE_FILENAME)))
+        .collect()
+}
+
+/// Where a FRESH workspace writes its surface: under the first of
+/// [`SURFACE_SUBDIRS`] that already exists as a directory, else at the root.
+///
+/// Those directories are never created by obr — they are only used when the
+/// project already has one, which is why this probes for a directory rather
+/// than assuming a layout.
+#[must_use]
+pub fn computed_surface_path(root: &Path) -> PathBuf {
+    SURFACE_SUBDIRS
+        .iter()
+        .map(|subdir| root.join(subdir))
+        .find(|dir| dir.is_dir())
+        .map_or_else(
+            || root.join(SURFACE_FILENAME),
+            |dir| dir.join(SURFACE_FILENAME),
+        )
+}
+
+/// The surface this workspace USES: the highest-priority one that already
+/// exists, falling back to [`computed_surface_path`] when none does.
+///
+/// An existing surface always outranks the directory preference, which is what
+/// keeps the write target stable for the life of a workspace: creating `doc/`
+/// next to a live `<root>/PLAN.org` must not move it. Every consumer that
+/// needs a surface path — including `init`, which seeds one — must ask here
+/// rather than compute; [`computed_surface_path`] answers only "where would a
+/// surface go if there were none", and is correct exclusively for that case.
+///
+/// Warns once when a lower-priority surface is shadowed. The files are never
+/// merged — a project that has ended up with two is told which one is live and
+/// left to reconcile them itself.
+#[must_use]
+pub fn resolve_surface_path(root: &Path) -> PathBuf {
+    let existing: Vec<PathBuf> = surface_candidates(root)
+        .into_iter()
+        .filter(|path| path.is_file())
+        .collect();
+    let Some((winner, shadowed)) = existing.split_first() else {
+        return computed_surface_path(root);
+    };
+    if !shadowed.is_empty() {
+        crate::legacy_compat::warn_once(
+            "shadowed-surface",
+            &format!(
+                "{} is shadowed by {} and will be ignored; obr never merges them.",
+                shadowed
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                winner.display()
+            ),
+        );
+    }
+    winner.clone()
+}
+
 /// Resolved paths for this workspace.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ConfigPaths {
-    pub beads_dir: PathBuf,
+    pub obr_dir: PathBuf,
     pub db_path: PathBuf,
     pub jsonl_path: PathBuf,
     pub metadata: Metadata,
@@ -189,54 +404,37 @@ impl ConfigPaths {
     /// # Errors
     ///
     /// Returns an error if metadata cannot be read.
-    pub fn resolve(beads_dir: &Path, db_override: Option<&PathBuf>) -> Result<Self> {
-        let metadata = Metadata::load(beads_dir)?;
+    pub fn resolve(obr_dir: &Path, db_override: Option<&PathBuf>) -> Result<Self> {
+        let metadata = Metadata::load(obr_dir)?;
         // Resolve an explicit database authority once before deriving either
-        // member of the DB/JSONL family. Keeping a raw `subdir/../.beads`
+        // member of the DB/JSONL family. Keeping a raw `subdir/../.obr`
         // spelling here made the database and its sibling JSONL disagree
         // with the already-canonical workspace route, and the JSONL safety
         // boundary then correctly refused the surviving traversal token.
         let normalized_db_override = db_override.map(|path| normalize_db_override_path(path));
         let normalized_db_override_ref = normalized_db_override.as_ref();
-        let db_path = resolve_db_path(beads_dir, &metadata, normalized_db_override_ref);
-        let jsonl_path = resolve_jsonl_path(beads_dir, &metadata, normalized_db_override_ref);
+        let db_path = resolve_db_path(obr_dir, &metadata, normalized_db_override_ref);
+        let jsonl_path = resolve_jsonl_path(obr_dir, &metadata, normalized_db_override_ref);
 
         Ok(Self {
-            beads_dir: beads_dir.to_path_buf(),
+            obr_dir: obr_dir.to_path_buf(),
             db_path,
             jsonl_path,
             metadata,
         })
     }
 
-    /// Get the user config path (~/.config/beads/config.yaml).
+    /// Get the user config path (`~/.config/obr/config.yaml`).
     /// Returns None if HOME is not set.
     #[must_use]
     pub fn user_config_path(&self) -> Option<PathBuf> {
-        env::var("HOME").ok().map(|home| {
-            let config_root = Path::new(&home).join(".config");
-            let beads_path = config_root.join("beads").join("config.yaml");
-            if beads_path.exists() {
-                beads_path
-            } else {
-                config_root.join("bd").join("config.yaml")
-            }
-        })
+        resolve_user_config_path()
     }
 
-    /// Get the legacy user config path (~/.beads/config.yaml).
-    /// Returns None if HOME is not set.
-    #[must_use]
-    pub fn legacy_user_config_path(&self) -> Option<PathBuf> {
-        env::var("HOME")
-            .ok()
-            .map(|home| Path::new(&home).join(".beads").join("config.yaml"))
-    }
-
-    /// Get the project config path (.beads/config.yaml).
+    /// Get the project config path (`<workspace>/config.yaml`).
     #[must_use]
     pub fn project_config_path(&self) -> Option<PathBuf> {
-        Some(self.beads_dir.join("config.yaml"))
+        Some(self.obr_dir.join("config.yaml"))
     }
 }
 
@@ -257,53 +455,52 @@ fn normalize_db_override_path(path: &Path) -> PathBuf {
         .unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// Discover the active `.beads` directory.
+/// Discover the active workspace directory.
 ///
-/// Honors `BEADS_DIR` when set, otherwise walks up from `start` (or CWD).
+/// Honors `OBR_DIR` when set (an empty value counts as unset), otherwise walks
+/// up from `start` (or CWD) looking for `.obr`, `_obr`, or the legacy
+/// `.beads`/`_beads`.
 ///
 /// # Errors
 ///
-/// Returns an error if no beads directory is found or the CWD cannot be read.
-pub fn discover_beads_dir(start: Option<&Path>) -> Result<PathBuf> {
-    let env_override = beads_dir_override_from_env();
-    discover_beads_dir_with_env(start, env_override.as_deref())
+/// Returns an error if no obr directory is found or the CWD cannot be read.
+pub fn discover_obr_dir(start: Option<&Path>) -> Result<PathBuf> {
+    let env_override = obr_dir_override_from_env();
+    discover_obr_dir_with_env(start, env_override.as_deref())
 }
 
-fn discover_beads_dir_with_env(
-    start: Option<&Path>,
-    env_override: Option<&Path>,
-) -> Result<PathBuf> {
-    discover_beads_dir_with_env_and_ceiling(start, env_override, None)
+fn discover_obr_dir_with_env(start: Option<&Path>, env_override: Option<&Path>) -> Result<PathBuf> {
+    discover_obr_dir_with_env_and_ceiling(start, env_override, None)
 }
 
-fn discover_beads_dir_with_env_and_ceiling(
+fn discover_obr_dir_with_env_and_ceiling(
     start: Option<&Path>,
     env_override: Option<&Path>,
     discovery_ceiling: Option<&Path>,
 ) -> Result<PathBuf> {
     if let Some(path) = env_override {
-        return resolve_explicit_beads_dir(path, "BEADS_DIR");
+        return resolve_explicit_obr_dir(path, WORKSPACE_DIR_ENV);
     }
 
     let candidate =
-        discover_beads_dir_candidate_with_env_and_ceiling(start, None, discovery_ceiling)?;
+        discover_obr_dir_candidate_with_env_and_ceiling(start, None, discovery_ceiling)?;
     routing::follow_redirects(&candidate, 10)
 }
 
-fn discover_beads_dir_candidate_with_env(
+fn discover_obr_dir_candidate_with_env(
     start: Option<&Path>,
     env_override: Option<&Path>,
 ) -> Result<PathBuf> {
-    discover_beads_dir_candidate_with_env_and_ceiling(start, env_override, None)
+    discover_obr_dir_candidate_with_env_and_ceiling(start, env_override, None)
 }
 
-fn discover_beads_dir_candidate_with_env_and_ceiling(
+fn discover_obr_dir_candidate_with_env_and_ceiling(
     start: Option<&Path>,
     env_override: Option<&Path>,
     discovery_ceiling: Option<&Path>,
 ) -> Result<PathBuf> {
     if let Some(path) = env_override {
-        return validate_explicit_beads_dir(path, "BEADS_DIR");
+        return validate_explicit_obr_dir(path, WORKSPACE_DIR_ENV);
     }
 
     let mut current = match start {
@@ -317,24 +514,26 @@ fn discover_beads_dir_candidate_with_env_and_ceiling(
     let mut linked_worktree_git_file: Option<PathBuf> = None;
 
     loop {
-        let candidate = current.join(".beads");
-        if candidate.is_dir() {
-            // Linked-worktree resolution (GitHub #429's underlying bug): a
-            // fresh linked worktree checks out the TRACKED half of `.beads`
-            // (issues.jsonl, metadata.json, config.yaml) but not the local
-            // database. Treating that snapshot as a workspace would rebuild
-            // a private database from potentially stale JSONL and split
-            // state from the primary checkout. When the candidate has no
-            // local database and no explicit redirect, resolve through the
-            // worktree's `.git` file to the primary checkout's `.beads`.
-            if let Some(primary) = linked_worktree_primary_beads_dir(&current, &candidate) {
-                return Ok(primary);
+        // New names win at every ancestor level before any legacy name is
+        // considered, so a repository mid-migration resolves to `.obr` even
+        // when a stale `.beads` still sits beside it.
+        for name in [
+            WORKSPACE_DIR_NAME,
+            WORKSPACE_DIR_NAME_UNDERSCORE,
+            LEGACY_WORKSPACE_DIR_NAMES[0],
+            LEGACY_WORKSPACE_DIR_NAMES[1],
+        ] {
+            let candidate = current.join(name);
+            if candidate.is_dir() {
+                warn_if_legacy_workspace_dir(&candidate);
+                // A linked worktree can contain only tracked workspace
+                // artifacts. If it has neither its own database nor an
+                // explicit redirect, use primary checkout's workspace.
+                if let Some(primary) = linked_worktree_primary_obr_dir(&current, &candidate) {
+                    return Ok(primary);
+                }
+                return Ok(candidate);
             }
-            return Ok(candidate);
-        }
-        let candidate_underscore = current.join("_beads");
-        if candidate_underscore.is_dir() {
-            return Ok(candidate_underscore);
         }
 
         if linked_worktree_git_file.is_none() {
@@ -354,10 +553,10 @@ fn discover_beads_dir_candidate_with_env_and_ceiling(
 
     // No workspace anywhere up the walk, but we passed a linked-worktree
     // marker: worktrees checked out OUTSIDE the primary tree (e.g.
-    // `git worktree add ../feature-x`) cannot reach the primary `.beads`
+    // `git worktree add ../feature-x`) cannot reach the primary workspace
     // by walking up, so resolve it through the worktree's gitdir instead.
     if let Some(git_file) = linked_worktree_git_file
-        && let Some(primary) = primary_beads_dir_from_git_file(&git_file)
+        && let Some(primary) = primary_workspace_dir_from_git_file(&git_file)
     {
         return Ok(primary);
     }
@@ -365,8 +564,8 @@ fn discover_beads_dir_candidate_with_env_and_ceiling(
     Err(BeadsError::NotInitialized)
 }
 
-/// Decide whether a discovered `.beads` candidate inside a linked git
-/// worktree should resolve to the primary checkout's `.beads` instead.
+/// Decide whether a discovered workspace candidate inside a linked git
+/// worktree should resolve to the primary checkout's workspace instead.
 ///
 /// Returns `Some(primary)` only when ALL of the following hold, keeping the
 /// resolution conservative:
@@ -377,12 +576,12 @@ fn discover_beads_dir_candidate_with_env_and_ceiling(
 ///   the operator's decision and is honored by `routing::follow_redirects`);
 /// - the candidate has no local database (a worktree where `br init` ran, or
 ///   that already imported once, keeps its own store — no rug-pull);
-/// - the primary checkout's `.beads` actually exists and is a different
+/// - the primary checkout has an active workspace and it is a different
 ///   directory.
 ///
 /// Never spawns git: the primary checkout is derived by parsing the
 /// worktree's `.git` file and gitdir `commondir` pointer.
-fn linked_worktree_primary_beads_dir(workspace_root: &Path, candidate: &Path) -> Option<PathBuf> {
+fn linked_worktree_primary_obr_dir(workspace_root: &Path, candidate: &Path) -> Option<PathBuf> {
     let git_file = workspace_root.join(".git");
     if !git_file.is_file() {
         return None;
@@ -393,7 +592,7 @@ fn linked_worktree_primary_beads_dir(workspace_root: &Path, candidate: &Path) ->
     if workspace_has_local_database(candidate) {
         return None;
     }
-    let primary = primary_beads_dir_from_git_file(&git_file)?;
+    let primary = primary_workspace_dir_from_git_file(&git_file)?;
     let same = match (
         dunce::canonicalize(&primary),
         dunce::canonicalize(candidate),
@@ -423,7 +622,7 @@ fn workspace_has_local_database(beads_dir: &Path) -> bool {
     beads_dir.join(db_name).is_file()
 }
 
-/// Resolve the primary checkout's `.beads` directory from a linked git
+/// Resolve the primary checkout's workspace directory from a linked git
 /// worktree's `.git` file, without spawning git.
 ///
 /// The `.git` file contains `gitdir: <path-to>/.git/worktrees/<name>`; the
@@ -432,7 +631,7 @@ fn workspace_has_local_database(beads_dir: &Path) -> bool {
 /// working tree. Falls back to stripping a trailing `worktrees/<name>` when
 /// `commondir` is missing. Bare repositories (common dir not named `.git`)
 /// resolve to `None` — there is no primary working tree to share.
-fn primary_beads_dir_from_git_file(git_file: &Path) -> Option<PathBuf> {
+fn primary_workspace_dir_from_git_file(git_file: &Path) -> Option<PathBuf> {
     let contents = fs::read_to_string(git_file).ok()?;
     let gitdir = contents
         .lines()
@@ -476,19 +675,23 @@ fn primary_beads_dir_from_git_file(git_file: &Path) -> Option<PathBuf> {
     if common_git_dir.file_name()? != ".git" {
         return None;
     }
-    let primary = common_git_dir.parent()?.join(".beads");
-    if primary.is_dir() {
-        Some(primary)
-    } else {
-        None
-    }
+    let primary_root = common_git_dir.parent()?;
+    [
+        WORKSPACE_DIR_NAME,
+        WORKSPACE_DIR_NAME_UNDERSCORE,
+        LEGACY_WORKSPACE_DIR_NAMES[0],
+        LEGACY_WORKSPACE_DIR_NAMES[1],
+    ]
+    .into_iter()
+    .map(|name| primary_root.join(name))
+    .find(|path| path.is_dir())
 }
 
-/// Discover beads directory, using `--db` path if provided.
+/// Discover obr directory, using `--db` path if provided.
 ///
 /// When `--db` is explicitly provided and the path itself lives under `.beads/`,
-/// derives the beads_dir from that path (e.g., `/path/to/.beads/beads.db` →
-/// `/path/to/.beads/`), allowing br to work from any directory.
+/// derives the obr_dir from that path (e.g., `/path/to/.beads/beads.db` →
+/// `/path/to/.beads/`), allowing obr to work from any directory.
 ///
 /// For external database overrides that live outside `.beads/`, falls back to
 /// normal workspace discovery so commands can still use the current project's
@@ -497,15 +700,15 @@ fn primary_beads_dir_from_git_file(git_file: &Path) -> Option<PathBuf> {
 /// # Errors
 ///
 /// Returns an error if:
-/// - `--db` path is external and no workspace can be discovered from CWD/BEADS_DIR
-/// - No beads directory found (when `--db` not provided)
-pub fn discover_beads_dir_with_cli(cli: &CliOverrides) -> Result<PathBuf> {
-    let beads_dir_env_override = beads_dir_override_from_env();
+/// - `--db` path is external and no workspace can be discovered from CWD/`OBR_DIR`
+/// - No obr directory found (when `--db` not provided)
+pub fn discover_obr_dir_with_cli(cli: &CliOverrides) -> Result<PathBuf> {
+    let obr_dir_env_override = obr_dir_override_from_env();
     let db_env_override = startup_db_override_from_env();
-    discover_beads_dir_with_cli_from(
+    discover_obr_dir_with_cli_from(
         None,
         cli,
-        beads_dir_env_override.as_deref(),
+        obr_dir_env_override.as_deref(),
         db_env_override.as_deref(),
     )
 }
@@ -522,13 +725,13 @@ pub fn discover_beads_dir_with_cli(cli: &CliOverrides) -> Result<PathBuf> {
 /// Returns an error when:
 /// - An explicit `--db` path is invalid
 /// - Discovery fails for reasons other than `NotInitialized`
-pub fn discover_optional_beads_dir_with_cli(cli: &CliOverrides) -> Result<Option<PathBuf>> {
-    let beads_dir_env_override = beads_dir_override_from_env();
+pub fn discover_optional_obr_dir_with_cli(cli: &CliOverrides) -> Result<Option<PathBuf>> {
+    let obr_dir_env_override = obr_dir_override_from_env();
     let db_env_override = startup_db_override_from_env();
-    match discover_beads_dir_with_cli_from(
+    match discover_obr_dir_with_cli_from(
         None,
         cli,
-        beads_dir_env_override.as_deref(),
+        obr_dir_env_override.as_deref(),
         db_env_override.as_deref(),
     ) {
         Ok(path) => Ok(Some(path)),
@@ -537,15 +740,15 @@ pub fn discover_optional_beads_dir_with_cli(cli: &CliOverrides) -> Result<Option
     }
 }
 
-pub(crate) fn discover_optional_beads_dir_candidate_with_cli(
+pub(crate) fn discover_optional_obr_dir_candidate_with_cli(
     cli: &CliOverrides,
 ) -> Result<Option<PathBuf>> {
-    let beads_dir_env_override = beads_dir_override_from_env();
+    let obr_dir_env_override = obr_dir_override_from_env();
     let db_env_override = startup_db_override_from_env();
-    match discover_beads_dir_candidate_with_cli_from(
+    match discover_obr_dir_candidate_with_cli_from(
         None,
         cli,
-        beads_dir_env_override.as_deref(),
+        obr_dir_env_override.as_deref(),
         db_env_override.as_deref(),
     ) {
         Ok(path) => Ok(Some(path)),
@@ -554,38 +757,38 @@ pub(crate) fn discover_optional_beads_dir_candidate_with_cli(
     }
 }
 
-fn discover_beads_dir_with_cli_from(
+fn discover_obr_dir_with_cli_from(
     start: Option<&Path>,
     cli: &CliOverrides,
-    beads_dir_env_override: Option<&Path>,
+    obr_dir_env_override: Option<&Path>,
     db_env_override: Option<&Path>,
 ) -> Result<PathBuf> {
-    discover_beads_dir_with_cli_from_and_ceiling(
+    discover_obr_dir_with_cli_from_and_ceiling(
         start,
         cli,
-        beads_dir_env_override,
+        obr_dir_env_override,
         db_env_override,
         None,
     )
 }
 
-fn discover_beads_dir_with_cli_from_and_ceiling(
+fn discover_obr_dir_with_cli_from_and_ceiling(
     start: Option<&Path>,
     cli: &CliOverrides,
-    beads_dir_env_override: Option<&Path>,
+    obr_dir_env_override: Option<&Path>,
     db_env_override: Option<&Path>,
     discovery_ceiling: Option<&Path>,
 ) -> Result<PathBuf> {
     let explicit_external_cli_db = cli
         .db
         .as_deref()
-        .filter(|db_path| beads_dir_from_db_path(db_path).is_none());
+        .filter(|db_path| obr_dir_from_db_path(db_path).is_none());
 
     if let Some(db_path) = cli.db.as_deref()
-        && let Some(beads_dir) = beads_dir_from_db_path(db_path)
+        && let Some(obr_dir) = obr_dir_from_db_path(db_path)
     {
-        return resolve_explicit_beads_dir(
-            &beads_dir,
+        return resolve_explicit_obr_dir(
+            &obr_dir,
             &format!("database override '{}'", db_path.display()),
         );
     }
@@ -593,17 +796,17 @@ fn discover_beads_dir_with_cli_from_and_ceiling(
     let startup_db_override = db_env_override.map(Path::to_path_buf);
 
     if let Some(db_path) = startup_db_override.as_deref()
-        && let Ok(beads_dir) = derive_beads_dir_from_db_path(db_path)
+        && let Ok(obr_dir) = derive_obr_dir_from_db_path(db_path)
     {
-        return resolve_explicit_beads_dir(
-            &beads_dir,
+        return resolve_explicit_obr_dir(
+            &obr_dir,
             &format!("database override '{}'", db_path.display()),
         );
     }
 
-    discover_beads_dir_with_env_and_ceiling(
+    discover_obr_dir_with_env_and_ceiling(
         start,
-        beads_dir_env_override,
+        obr_dir_env_override,
         discovery_ceiling,
     )
     .map_err(|err| {
@@ -613,7 +816,7 @@ fn discover_beads_dir_with_cli_from_and_ceiling(
         ) {
             (BeadsError::NotInitialized, Some(db_path)) => BeadsError::WithContext {
                 context: format!(
-                    "Cannot resolve the project .beads directory for database override '{}'; run from the target workspace or set BEADS_DIR",
+                    "Cannot resolve the project workspace directory for database override '{}'; run from the target workspace or set OBR_DIR",
                     db_path.display()
                 ),
                 source: Box::new(BeadsError::NotInitialized),
@@ -623,22 +826,22 @@ fn discover_beads_dir_with_cli_from_and_ceiling(
     })
 }
 
-fn discover_beads_dir_candidate_with_cli_from(
+fn discover_obr_dir_candidate_with_cli_from(
     start: Option<&Path>,
     cli: &CliOverrides,
-    beads_dir_env_override: Option<&Path>,
+    obr_dir_env_override: Option<&Path>,
     db_env_override: Option<&Path>,
 ) -> Result<PathBuf> {
     let explicit_external_cli_db = cli
         .db
         .as_deref()
-        .filter(|db_path| beads_dir_from_db_path(db_path).is_none());
+        .filter(|db_path| obr_dir_from_db_path(db_path).is_none());
 
     if let Some(db_path) = cli.db.as_deref()
-        && let Some(beads_dir) = beads_dir_from_db_path(db_path)
+        && let Some(obr_dir) = obr_dir_from_db_path(db_path)
     {
-        return validate_explicit_beads_dir(
-            &beads_dir,
+        return validate_explicit_obr_dir(
+            &obr_dir,
             &format!("database override '{}'", db_path.display()),
         );
     }
@@ -646,22 +849,22 @@ fn discover_beads_dir_candidate_with_cli_from(
     let startup_db_override = db_env_override.map(Path::to_path_buf);
 
     if let Some(db_path) = startup_db_override.as_deref()
-        && let Ok(beads_dir) = derive_beads_dir_from_db_path(db_path)
+        && let Ok(obr_dir) = derive_obr_dir_from_db_path(db_path)
     {
-        return validate_explicit_beads_dir(
-            &beads_dir,
+        return validate_explicit_obr_dir(
+            &obr_dir,
             &format!("database override '{}'", db_path.display()),
         );
     }
 
-    discover_beads_dir_candidate_with_env(start, beads_dir_env_override).map_err(
+    discover_obr_dir_candidate_with_env(start, obr_dir_env_override).map_err(
         |err| match (
             err,
             explicit_external_cli_db.or(startup_db_override.as_deref()),
         ) {
             (BeadsError::NotInitialized, Some(db_path)) => BeadsError::WithContext {
                 context: format!(
-                    "Cannot resolve the project .beads directory for database override '{}'; run from the target workspace or set BEADS_DIR",
+                    "Cannot resolve the project workspace directory for database override '{}'; run from the target workspace or set OBR_DIR",
                     db_path.display()
                 ),
                 source: Box::new(BeadsError::NotInitialized),
@@ -671,73 +874,79 @@ fn discover_beads_dir_candidate_with_cli_from(
     )
 }
 
+/// Environment variable naming the workspace directory explicitly.
+pub const WORKSPACE_DIR_ENV: &str = "OBR_DIR";
+/// Environment variable overriding the flat-file export path.
+pub const JSONL_PATH_ENV: &str = "OBR_JSONL";
+
 fn startup_db_override_from_env() -> Option<PathBuf> {
-    for key in ["BD_DB", "BD_DATABASE"] {
-        if let Some(value) = env::var_os(key).filter(|value| !value.is_empty()) {
-            return Some(PathBuf::from(value));
-        }
-    }
-    None
+    ["OBR_DB", "OBR_DATABASE"]
+        .into_iter()
+        .find_map(|name| env::var_os(name).filter(|value| !value.is_empty()))
+        .map(PathBuf::from)
 }
 
-fn beads_dir_override_from_env() -> Option<PathBuf> {
-    env::var("BEADS_DIR")
+fn obr_dir_override_from_env() -> Option<PathBuf> {
+    env::var(WORKSPACE_DIR_ENV)
         .ok()
         .filter(|value| !value.trim().is_empty())
         .map(PathBuf::from)
 }
 
-/// Extract the `.beads/` directory from a database path.
+/// Extract the workspace directory from a database path.
 ///
-/// E.g., `/path/to/.beads/beads.db` → `/path/to/.beads/`
-fn derive_beads_dir_from_db_path(db_path: &Path) -> Result<PathBuf> {
-    beads_dir_from_db_path(db_path).ok_or_else(|| {
+/// Accepts any name in the workspace chain — `.obr`, `_obr`, and the legacy
+/// `.beads`/`_beads` — so `/path/to/.obr/obr.db` → `/path/to/.obr/` and the
+/// pre-rename spelling still resolves.
+fn derive_obr_dir_from_db_path(db_path: &Path) -> Result<PathBuf> {
+    obr_dir_from_db_path(db_path).ok_or_else(|| {
         BeadsError::validation(
             "db",
             format!(
-                "Cannot derive beads directory from path '{}': expected path to contain '.beads/' component",
+                "Cannot derive the workspace directory from path '{}': expected a '.obr/' component (or the legacy '.beads/')",
                 db_path.display()
             ),
         )
     })
 }
 
-fn validate_explicit_beads_dir(path: &Path, source: &str) -> Result<PathBuf> {
+fn validate_explicit_obr_dir(path: &Path, source: &str) -> Result<PathBuf> {
     if !path.is_dir() {
         return Err(BeadsError::Config(format!(
-            "{source} not found or not a .beads directory: {}",
+            "{source} not found or not an obr workspace directory: {}",
             path.display()
         )));
     }
 
+    warn_if_legacy_workspace_dir(path);
     Ok(path.to_path_buf())
 }
 
-fn resolve_explicit_beads_dir(path: &Path, source: &str) -> Result<PathBuf> {
-    let candidate = validate_explicit_beads_dir(path, source)?;
+fn resolve_explicit_obr_dir(path: &Path, source: &str) -> Result<PathBuf> {
+    let candidate = validate_explicit_obr_dir(path, source)?;
     routing::follow_redirects(&candidate, 10).map_err(|err| BeadsError::WithContext {
         context: format!("{source} is invalid"),
         source: Box::new(err),
     })
 }
 
-fn beads_dir_from_db_path(db_path: &Path) -> Option<PathBuf> {
+fn obr_dir_from_db_path(db_path: &Path) -> Option<PathBuf> {
     let mut current = db_path.to_path_buf();
 
-    if current.file_name().is_some_and(is_beads_dir_name) {
+    if current.file_name().is_some_and(is_obr_dir_name) {
         return Some(current);
     }
 
     if current.is_file() {
         current.pop();
-        if current.file_name().is_some_and(is_beads_dir_name) {
+        if current.file_name().is_some_and(is_obr_dir_name) {
             return Some(current);
         }
     }
 
     db_path
         .ancestors()
-        .find(|ancestor| ancestor.file_name().is_some_and(is_beads_dir_name))
+        .find(|ancestor| ancestor.file_name().is_some_and(is_obr_dir_name))
         .map(Path::to_path_buf)
 }
 
@@ -816,7 +1025,7 @@ struct SqliteStartupOpenOptions<'a> {
 }
 
 fn open_sqlite_storage_with_recovery(
-    beads_dir: &Path,
+    obr_dir: &Path,
     paths: &ConfigPaths,
     lock_timeout: Option<u64>,
     bootstrap_layer: &ConfigLayer,
@@ -824,7 +1033,7 @@ fn open_sqlite_storage_with_recovery(
     write_authority: Option<&Arc<crate::sync::DatabaseFamilyWriteLock>>,
 ) -> Result<SqliteRecoveryOpenResult> {
     open_sqlite_storage_with_recovery_strategy(
-        beads_dir,
+        obr_dir,
         paths,
         lock_timeout,
         bootstrap_layer,
@@ -835,7 +1044,7 @@ fn open_sqlite_storage_with_recovery(
 }
 
 fn open_sqlite_storage_with_recovery_after_fast_open_miss(
-    beads_dir: &Path,
+    obr_dir: &Path,
     paths: &ConfigPaths,
     lock_timeout: Option<u64>,
     bootstrap_layer: &ConfigLayer,
@@ -849,7 +1058,7 @@ fn open_sqlite_storage_with_recovery_after_fast_open_miss(
         None
     } else {
         let authority = Arc::new(blocking_database_family_write_lock_with_timeout(
-            beads_dir,
+            obr_dir,
             &paths.db_path,
             lock_timeout,
         )?);
@@ -866,7 +1075,7 @@ fn open_sqlite_storage_with_recovery_after_fast_open_miss(
     // barriers under the authority it just acquired, before any open that
     // could recover or migrate: a valid database on a stale schema routes to
     // the reviewed migration workflow instead of auto-migrating, and a
-    // pending sync merge refuses writable recovery until `br sync --merge`
+    // pending sync merge refuses writable recovery until `obr sync --merge`
     // reconciles it. Missing files and non-SQLite bytes classify Absent and
     // keep the normal recovery path.
     if !database_was_missing {
@@ -878,7 +1087,7 @@ fn open_sqlite_storage_with_recovery_after_fast_open_miss(
             Ok(pending) => {
                 return Err(BeadsError::SyncConflict {
                     message: format!(
-                        "Refusing writable fast-open fallback because {}; run `br sync --merge` to resume and verify artifact reconciliation first",
+                        "Refusing writable fast-open fallback because {}; run `obr sync --merge` to resume and verify artifact reconciliation first",
                         pending.diagnostic()
                     ),
                 });
@@ -891,7 +1100,7 @@ fn open_sqlite_storage_with_recovery_after_fast_open_miss(
     }
     let open_result = if database_was_missing && paths.jsonl_path.is_file() {
         open_when_db_file_is_missing(
-            beads_dir,
+            obr_dir,
             paths,
             lock_timeout,
             bootstrap_layer,
@@ -901,7 +1110,7 @@ fn open_sqlite_storage_with_recovery_after_fast_open_miss(
         )?
     } else {
         open_sqlite_storage_with_recovery(
-            beads_dir,
+            obr_dir,
             paths,
             lock_timeout,
             bootstrap_layer,
@@ -913,7 +1122,7 @@ fn open_sqlite_storage_with_recovery_after_fast_open_miss(
 }
 
 fn open_sqlite_storage_with_deferred_jsonl_recovery(
-    beads_dir: &Path,
+    obr_dir: &Path,
     paths: &ConfigPaths,
     lock_timeout: Option<u64>,
     bootstrap_layer: &ConfigLayer,
@@ -921,7 +1130,7 @@ fn open_sqlite_storage_with_deferred_jsonl_recovery(
     write_authority: Option<&Arc<crate::sync::DatabaseFamilyWriteLock>>,
 ) -> Result<SqliteRecoveryOpenResult> {
     open_sqlite_storage_with_recovery_strategy(
-        beads_dir,
+        obr_dir,
         paths,
         lock_timeout,
         bootstrap_layer,
@@ -932,7 +1141,7 @@ fn open_sqlite_storage_with_deferred_jsonl_recovery(
 }
 
 fn open_sqlite_storage_with_recovery_strategy(
-    beads_dir: &Path,
+    obr_dir: &Path,
     paths: &ConfigPaths,
     lock_timeout: Option<u64>,
     bootstrap_layer: &ConfigLayer,
@@ -942,7 +1151,7 @@ fn open_sqlite_storage_with_recovery_strategy(
 ) -> Result<SqliteRecoveryOpenResult> {
     if !paths.db_path.is_file() && paths.jsonl_path.is_file() {
         return open_when_db_file_is_missing(
-            beads_dir,
+            obr_dir,
             paths,
             lock_timeout,
             bootstrap_layer,
@@ -960,16 +1169,11 @@ fn open_sqlite_storage_with_recovery_strategy(
     }
 
     authority.verify_database_authority()?;
-    quarantine_truncated_wal_sidecar(&paths.db_path, beads_dir);
+    quarantine_truncated_wal_sidecar(&paths.db_path, obr_dir);
     authority.verify_database_authority()?;
 
     let prepare_fresh_storage = || -> Result<(SqliteStorage, RecoveryBackupSet)> {
-        prepare_fresh_storage_for_deferred_import(
-            &paths.db_path,
-            beads_dir,
-            lock_timeout,
-            authority,
-        )
+        prepare_fresh_storage_for_deferred_import(&paths.db_path, obr_dir, lock_timeout, authority)
     };
 
     match SqliteStorage::open_with_timeout_under_write_authority(
@@ -987,7 +1191,7 @@ fn open_sqlite_storage_with_recovery_strategy(
             Ok(Some(anomaly)) => rebuild_or_defer_after_recoverable_anomaly(
                 storage,
                 &anomaly,
-                beads_dir,
+                obr_dir,
                 paths,
                 lock_timeout,
                 bootstrap_layer,
@@ -1007,7 +1211,7 @@ fn open_sqlite_storage_with_recovery_strategy(
                 rebuild_or_defer_after_probe_error(
                     storage,
                     &probe_err,
-                    beads_dir,
+                    obr_dir,
                     paths,
                     lock_timeout,
                     bootstrap_layer,
@@ -1024,7 +1228,7 @@ fn open_sqlite_storage_with_recovery_strategy(
             }
             rebuild_or_defer_after_open_error(
                 open_err,
-                beads_dir,
+                obr_dir,
                 paths,
                 lock_timeout,
                 bootstrap_layer,
@@ -1041,7 +1245,7 @@ fn open_sqlite_storage_with_recovery_strategy(
 /// DB from JSONL outright, or (for the deferred-recovery path) prepare a
 /// cleanup set and let the caller's explicit import populate a fresh DB.
 fn open_when_db_file_is_missing(
-    beads_dir: &Path,
+    obr_dir: &Path,
     paths: &ConfigPaths,
     lock_timeout: Option<u64>,
     bootstrap_layer: &ConfigLayer,
@@ -1052,7 +1256,7 @@ fn open_when_db_file_is_missing(
     match recovery_strategy {
         JsonlRecoveryStrategy::RebuildFromJsonl => {
             let (storage, recovered_jsonl) = rebuild_database_from_jsonl(
-                beads_dir,
+                obr_dir,
                 paths,
                 lock_timeout,
                 bootstrap_layer,
@@ -1078,7 +1282,7 @@ fn open_when_db_file_is_missing(
             })?;
             let (storage, cleanup_set) = prepare_fresh_storage_for_deferred_import(
                 &paths.db_path,
-                beads_dir,
+                obr_dir,
                 lock_timeout,
                 authority,
             )?;
@@ -1092,20 +1296,103 @@ fn open_when_db_file_is_missing(
     }
 }
 
+/// Quarantine a `-journal` whose magic proves it is not a rollback journal.
+///
+/// The same policy as [`quarantine_truncated_wal_sidecar`] applied to the other
+/// sidecar that can block an open, and for the same reason: SQLite refuses to
+/// open a database while a hot journal sits beside it, so a file merely *named*
+/// `-journal` keeps a perfectly good database unreachable with no route back
+/// except deleting it by hand. Bytes go to `recovery/`, never to /dev/null.
+///
+/// The test is a proof, not a heuristic. A rollback journal begins with the
+/// 8-byte magic below, so a file long enough to carry it that does not is
+/// provably not one and provably holds no undo image. Every uncertain case —
+/// too short to judge, unreadable, not a regular file, a symlinked database —
+/// is left alone, because a REAL hot journal is the single thing here that must
+/// never be moved: it is the only copy of the pre-transaction pages.
+/// Returns whether the `-journal` was actually moved to `recovery/`, for the
+/// same reason [`quarantine_truncated_wal_sidecar`] does.
+pub fn quarantine_bogus_journal_sidecar(db_path: &Path, obr_dir: &Path) -> bool {
+    const JOURNAL_MAGIC: [u8; 8] = [0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7];
+
+    match fs::symlink_metadata(db_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => return false,
+        Ok(_) => {}
+        Err(_) => return false,
+    }
+
+    let journal_path = PathBuf::from(format!("{}-journal", db_path.to_string_lossy()));
+    let Ok(meta) = fs::metadata(&journal_path) else {
+        return false;
+    };
+    if !meta.is_file() || meta.len() < JOURNAL_MAGIC.len() as u64 {
+        return false;
+    }
+    let Ok(mut file) = fs::File::open(&journal_path) else {
+        return false;
+    };
+    let mut magic = [0_u8; 8];
+    if std::io::Read::read_exact(&mut file, &mut magic).is_err() || magic == JOURNAL_MAGIC {
+        return false;
+    }
+    drop(file);
+
+    match quarantine_database_artifacts(db_path, obr_dir, [journal_path.clone()], "bogus-journal") {
+        Ok(quarantined_paths) => {
+            tracing::warn!(
+                journal_path = %journal_path.display(),
+                quarantined_paths = ?quarantined_paths,
+                "quarantined a -journal with invalid magic before open"
+            );
+            true
+        }
+        Err(err) => {
+            tracing::warn!(
+                journal_path = %journal_path.display(),
+                error = %err,
+                "failed to quarantine a -journal with invalid magic before open"
+            );
+            false
+        }
+    }
+}
+
+/// Whether `wal_path` begins with a SQLite WAL header magic.
+///
+/// Uncertainty answers `true` — unreadable, too short to judge — because the
+/// caller uses this to decide whether to MOVE the file, and a WAL that might be
+/// real must never be moved: it is the only copy of its committed frames.
+fn wal_magic_is_valid(wal_path: &Path) -> bool {
+    const WAL_MAGIC_LE: [u8; 4] = [0x37, 0x7f, 0x06, 0x82];
+    const WAL_MAGIC_BE: [u8; 4] = [0x37, 0x7f, 0x06, 0x83];
+
+    let Ok(mut file) = fs::File::open(wal_path) else {
+        return true;
+    };
+    let mut magic = [0_u8; 4];
+    if std::io::Read::read_exact(&mut file, &mut magic).is_err() {
+        return true;
+    }
+    magic == WAL_MAGIC_LE || magic == WAL_MAGIC_BE
+}
+
 /// Issue #228: proactively quarantine truncated WAL sidecar files before
 /// opening. A WAL file that exists but is shorter than 32 bytes (the WAL
 /// header size) cannot be valid and will cause frankensqlite to return
 /// `WalCorrupt` during rebuild. Moving the sidecars out of the live
 /// database family lets SQLite recreate them on the next write while
 /// preserving the original bytes for operator inspection.
-pub(crate) fn quarantine_truncated_wal_sidecar(db_path: &Path, beads_dir: &Path) {
+/// Returns whether a sidecar was actually moved to `recovery/`, so a caller
+/// that must account for the work — `doctor --repair` reports it as a repair
+/// action — can do so without re-deriving it by probing the filesystem.
+pub fn quarantine_truncated_wal_sidecar(db_path: &Path, obr_dir: &Path) -> bool {
     match fs::symlink_metadata(db_path) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
             tracing::warn!(
                 db_path = %db_path.display(),
                 "Skipping truncated WAL quarantine for symlinked database path"
             );
-            return;
+            return false;
         }
         Ok(_) => {}
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
@@ -1115,32 +1402,41 @@ pub(crate) fn quarantine_truncated_wal_sidecar(db_path: &Path, beads_dir: &Path)
                 error = %err,
                 "Skipping truncated WAL quarantine because the database path could not be inspected"
             );
-            return;
+            return false;
         }
     }
 
     let wal_path = PathBuf::from(format!("{}-wal", db_path.to_string_lossy()));
     let Ok(meta) = fs::metadata(&wal_path) else {
-        return;
+        return false;
     };
     if !meta.is_file() {
-        return;
+        return false;
     }
     // A 0-byte WAL is the documented post-`PRAGMA wal_checkpoint(TRUNCATE)`
     // state — SqliteStorage::Drop runs that pragma on every mutating
     // invocation, so quarantining the empty file would re-pathologize the
     // healthy hand-off between two well-behaved processes (#291).
     if meta.len() == 0 {
-        return;
+        return false;
     }
-    if meta.len() >= 32 {
-        return;
+    // Length alone was the wrong question. A file at least 32 bytes long was
+    // assumed to be a WAL, so `sidecar_wal_without_shm`'s 42 bytes of the plain
+    // text "stale wal sidecar from interrupted writer" sailed past this check
+    // and then blocked the open — the same total brick a bad-magic `-journal`
+    // caused, from the same cause. A WAL begins with magic 0x377f0682 or
+    // 0x377f0683 (the low bit selects the checksum endianness), so a file long
+    // enough to carry that and not carrying it is provably not a WAL and
+    // provably holds no frames. Too short to judge stays quarantined by length,
+    // exactly as before.
+    if meta.len() >= 32 && wal_magic_is_valid(&wal_path) {
+        return false;
     }
     let wal_size = meta.len();
     let shm_path = PathBuf::from(format!("{}-shm", db_path.to_string_lossy()));
     match quarantine_database_artifacts(
         db_path,
-        beads_dir,
+        obr_dir,
         [wal_path.clone(), shm_path],
         "truncated-wal",
     ) {
@@ -1149,8 +1445,9 @@ pub(crate) fn quarantine_truncated_wal_sidecar(db_path: &Path, beads_dir: &Path)
                 wal_path = %wal_path.display(),
                 wal_size,
                 quarantined_paths = ?quarantined_paths,
-                "quarantined truncated WAL sidecar (< 32 bytes) before open"
+                "quarantined WAL sidecar that is not a WAL before open"
             );
+            true
         }
         Err(err) => {
             tracing::warn!(
@@ -1159,22 +1456,23 @@ pub(crate) fn quarantine_truncated_wal_sidecar(db_path: &Path, beads_dir: &Path)
                 error = %err,
                 "failed to quarantine truncated WAL sidecar before open"
             );
+            false
         }
     }
 }
 
 /// Back up the current database family and reopen a fresh handle. Used
 /// by the deferred-import recovery path when we want to install a blank
-/// DB and let an explicit `br sync --import-only` populate it.
+/// DB and let an explicit `obr sync --import-only` populate it.
 fn prepare_fresh_storage_for_deferred_import(
     db_path: &Path,
-    beads_dir: &Path,
+    obr_dir: &Path,
     lock_timeout: Option<u64>,
     write_authority: &Arc<crate::sync::DatabaseFamilyWriteLock>,
 ) -> Result<(SqliteStorage, RecoveryBackupSet)> {
     let (mut storage, backup_set) = rebuild_database_family_with_backup(
         db_path,
-        beads_dir,
+        obr_dir,
         write_authority,
         SuccessfulRecoveryDisposition::RetainBackupUntilCommandSuccess,
         |fresh_witness| {
@@ -1205,7 +1503,7 @@ fn prepare_fresh_storage_for_deferred_import(
 #[allow(clippy::too_many_arguments)]
 fn rebuild_or_defer_after_open_error(
     open_err: BeadsError,
-    beads_dir: &Path,
+    obr_dir: &Path,
     paths: &ConfigPaths,
     lock_timeout: Option<u64>,
     bootstrap_layer: &ConfigLayer,
@@ -1217,7 +1515,7 @@ fn rebuild_or_defer_after_open_error(
     match recovery_strategy {
         JsonlRecoveryStrategy::RebuildFromJsonl => {
             match rebuild_database_from_jsonl(
-                beads_dir,
+                obr_dir,
                 paths,
                 lock_timeout,
                 bootstrap_layer,
@@ -1391,7 +1689,7 @@ fn is_recoverable_database_internal_error(detail: &str) -> bool {
 fn rebuild_or_defer_after_recoverable_anomaly(
     storage: SqliteStorage,
     anomaly: &str,
-    beads_dir: &Path,
+    obr_dir: &Path,
     paths: &ConfigPaths,
     lock_timeout: Option<u64>,
     bootstrap_layer: &ConfigLayer,
@@ -1419,7 +1717,7 @@ fn rebuild_or_defer_after_recoverable_anomaly(
             // state with them.
             let (storage, recovered_jsonl) = rebuild_with_tombstone_preservation(
                 storage,
-                beads_dir,
+                obr_dir,
                 paths,
                 lock_timeout,
                 bootstrap_layer,
@@ -1461,7 +1759,7 @@ fn rebuild_or_defer_after_recoverable_anomaly(
 fn rebuild_or_defer_after_probe_error(
     storage: SqliteStorage,
     probe_err: &BeadsError,
-    beads_dir: &Path,
+    obr_dir: &Path,
     paths: &ConfigPaths,
     lock_timeout: Option<u64>,
     bootstrap_layer: &ConfigLayer,
@@ -1488,7 +1786,7 @@ fn rebuild_or_defer_after_probe_error(
             // lost silently (GitHub #394).
             let (storage, recovered_jsonl) = rebuild_with_tombstone_preservation(
                 storage,
-                beads_dir,
+                obr_dir,
                 paths,
                 lock_timeout,
                 bootstrap_layer,
@@ -1528,7 +1826,7 @@ fn rebuild_or_defer_after_probe_error(
 /// flushed to the JSONL (GitHub #394).
 fn rebuild_with_tombstone_preservation(
     storage: SqliteStorage,
-    beads_dir: &Path,
+    obr_dir: &Path,
     paths: &ConfigPaths,
     lock_timeout: Option<u64>,
     bootstrap_layer: &ConfigLayer,
@@ -1539,14 +1837,14 @@ fn rebuild_with_tombstone_preservation(
         message: "Database recovery has no database-family authority".to_string(),
     })?;
     let import_config = import_config_for_resolved_jsonl(
-        beads_dir,
+        obr_dir,
         &paths.db_path,
         &paths.jsonl_path,
         allow_external_jsonl,
     );
     validate_sync_path_with_external(
         &paths.jsonl_path,
-        beads_dir,
+        obr_dir,
         import_config.allow_external_jsonl,
     )?;
     let jsonl_authority = Arc::new(crate::sync::blocking_jsonl_family_write_lock_with_timeout(
@@ -1561,7 +1859,7 @@ fn rebuild_with_tombstone_preservation(
         preserved_unflushed_state(&storage, &source);
     drop(storage);
     let mut storage = rebuild_database_from_jsonl_snapshot(
-        beads_dir,
+        obr_dir,
         paths,
         lock_timeout,
         bootstrap_layer,
@@ -1582,7 +1880,7 @@ fn rebuild_with_tombstone_preservation(
 }
 
 fn rebuild_database_from_jsonl(
-    beads_dir: &Path,
+    obr_dir: &Path,
     paths: &ConfigPaths,
     lock_timeout: Option<u64>,
     bootstrap_layer: &ConfigLayer,
@@ -1593,14 +1891,14 @@ fn rebuild_database_from_jsonl(
         message: "Database recovery has no database-family authority".to_string(),
     })?;
     let import_config = import_config_for_resolved_jsonl(
-        beads_dir,
+        obr_dir,
         &paths.db_path,
         &paths.jsonl_path,
         allow_external_jsonl,
     );
     validate_sync_path_with_external(
         &paths.jsonl_path,
-        beads_dir,
+        obr_dir,
         import_config.allow_external_jsonl,
     )?;
     let jsonl_authority = Arc::new(crate::sync::blocking_jsonl_family_write_lock_with_timeout(
@@ -1612,7 +1910,7 @@ fn rebuild_database_from_jsonl(
         &paths.jsonl_path,
     )?);
     let storage = rebuild_database_from_jsonl_snapshot(
-        beads_dir,
+        obr_dir,
         paths,
         lock_timeout,
         bootstrap_layer,
@@ -1632,7 +1930,7 @@ fn rebuild_database_from_jsonl(
 
 #[allow(clippy::too_many_arguments)]
 fn rebuild_database_from_jsonl_snapshot(
-    beads_dir: &Path,
+    obr_dir: &Path,
     paths: &ConfigPaths,
     lock_timeout: Option<u64>,
     bootstrap_layer: &ConfigLayer,
@@ -1642,7 +1940,7 @@ fn rebuild_database_from_jsonl_snapshot(
     write_authority: &Arc<crate::sync::DatabaseFamilyWriteLock>,
 ) -> Result<SqliteStorage> {
     repair_database_from_jsonl_snapshot_with_import_config_under_write_authority(
-        beads_dir,
+        obr_dir,
         &paths.db_path,
         lock_timeout,
         bootstrap_layer,
@@ -1698,7 +1996,7 @@ fn preserved_unflushed_state(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn repair_database_from_jsonl_snapshot(
-    beads_dir: &Path,
+    obr_dir: &Path,
     db_path: &Path,
     lock_timeout: Option<u64>,
     bootstrap_layer: &ConfigLayer,
@@ -1708,12 +2006,12 @@ pub(crate) fn repair_database_from_jsonl_snapshot(
     jsonl_authority: &crate::sync::JsonlFamilyWriteLock,
 ) -> Result<(SqliteStorage, ImportResult, Vec<RecoveryBackupVerification>)> {
     let write_authority = Arc::new(blocking_database_family_write_lock_with_timeout(
-        beads_dir,
+        obr_dir,
         db_path,
         lock_timeout,
     )?);
     repair_database_from_jsonl_snapshot_under_write_authority(
-        beads_dir,
+        obr_dir,
         db_path,
         lock_timeout,
         bootstrap_layer,
@@ -1727,7 +2025,7 @@ pub(crate) fn repair_database_from_jsonl_snapshot(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn repair_database_from_jsonl_snapshot_under_write_authority(
-    beads_dir: &Path,
+    obr_dir: &Path,
     db_path: &Path,
     lock_timeout: Option<u64>,
     bootstrap_layer: &ConfigLayer,
@@ -1738,7 +2036,7 @@ pub(crate) fn repair_database_from_jsonl_snapshot_under_write_authority(
     write_authority: &Arc<crate::sync::DatabaseFamilyWriteLock>,
 ) -> Result<(SqliteStorage, ImportResult, Vec<RecoveryBackupVerification>)> {
     let mut import_config = import_config_for_resolved_jsonl(
-        beads_dir,
+        obr_dir,
         db_path,
         source.display_path(),
         allow_external_jsonl,
@@ -1747,7 +2045,7 @@ pub(crate) fn repair_database_from_jsonl_snapshot_under_write_authority(
     import_config.skip_prefix_validation = true;
 
     repair_database_from_jsonl_snapshot_with_import_config_under_write_authority(
-        beads_dir,
+        obr_dir,
         db_path,
         lock_timeout,
         bootstrap_layer,
@@ -1760,7 +2058,7 @@ pub(crate) fn repair_database_from_jsonl_snapshot_under_write_authority(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn repair_database_from_jsonl_snapshot_with_import_config(
-    beads_dir: &Path,
+    obr_dir: &Path,
     db_path: &Path,
     lock_timeout: Option<u64>,
     bootstrap_layer: &ConfigLayer,
@@ -1769,12 +2067,12 @@ pub(crate) fn repair_database_from_jsonl_snapshot_with_import_config(
     jsonl_authority: &crate::sync::JsonlFamilyWriteLock,
 ) -> Result<(SqliteStorage, ImportResult, Vec<RecoveryBackupVerification>)> {
     let write_authority = Arc::new(blocking_database_family_write_lock_with_timeout(
-        beads_dir,
+        obr_dir,
         db_path,
         lock_timeout,
     )?);
     repair_database_from_jsonl_snapshot_with_import_config_under_write_authority(
-        beads_dir,
+        obr_dir,
         db_path,
         lock_timeout,
         bootstrap_layer,
@@ -1790,7 +2088,7 @@ pub(crate) fn repair_database_from_jsonl_snapshot_with_import_config(
 // the internal impl only borrows it.
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn repair_database_from_jsonl_snapshot_with_import_config_under_write_authority(
-    beads_dir: &Path,
+    obr_dir: &Path,
     db_path: &Path,
     lock_timeout: Option<u64>,
     bootstrap_layer: &ConfigLayer,
@@ -1801,7 +2099,7 @@ pub(crate) fn repair_database_from_jsonl_snapshot_with_import_config_under_write
 ) -> Result<(SqliteStorage, ImportResult, Vec<RecoveryBackupVerification>)> {
     let (storage, import_result, backup_set) =
         repair_database_from_jsonl_snapshot_with_import_config_under_write_authority_impl(
-            beads_dir,
+            obr_dir,
             db_path,
             lock_timeout,
             bootstrap_layer,
@@ -1816,7 +2114,7 @@ pub(crate) fn repair_database_from_jsonl_snapshot_with_import_config_under_write
 
 #[allow(clippy::too_many_arguments)]
 fn repair_database_from_jsonl_snapshot_with_import_config_deferred(
-    beads_dir: &Path,
+    obr_dir: &Path,
     db_path: &Path,
     lock_timeout: Option<u64>,
     bootstrap_layer: &ConfigLayer,
@@ -1826,7 +2124,7 @@ fn repair_database_from_jsonl_snapshot_with_import_config_deferred(
     write_authority: &Arc<crate::sync::DatabaseFamilyWriteLock>,
 ) -> Result<(SqliteStorage, ImportResult, RecoveryBackupSet)> {
     repair_database_from_jsonl_snapshot_with_import_config_under_write_authority_impl(
-        beads_dir,
+        obr_dir,
         db_path,
         lock_timeout,
         bootstrap_layer,
@@ -1840,7 +2138,7 @@ fn repair_database_from_jsonl_snapshot_with_import_config_deferred(
 
 #[allow(clippy::too_many_arguments)]
 fn repair_database_from_jsonl_snapshot_with_import_config_under_write_authority_impl(
-    beads_dir: &Path,
+    obr_dir: &Path,
     db_path: &Path,
     lock_timeout: Option<u64>,
     bootstrap_layer: &ConfigLayer,
@@ -1852,7 +2150,7 @@ fn repair_database_from_jsonl_snapshot_with_import_config_under_write_authority_
 ) -> Result<(SqliteStorage, ImportResult, RecoveryBackupSet)> {
     write_authority.verify_database_authority()?;
     jsonl_authority.verify_jsonl_authority()?;
-    let prefix = resolve_bootstrap_issue_prefix_snapshot(bootstrap_layer, beads_dir, source)?;
+    let prefix = resolve_bootstrap_issue_prefix_snapshot(bootstrap_layer, obr_dir, source)?;
 
     let mut preflight_config = import_config.clone();
     preflight_config.skip_prefix_validation = true;
@@ -1873,7 +2171,7 @@ fn repair_database_from_jsonl_snapshot_with_import_config_under_write_authority_
 
     let ((mut storage, import_result), backup_set) = rebuild_database_family_with_backup(
         db_path,
-        beads_dir,
+        obr_dir,
         write_authority,
         successful_disposition,
         |fresh_witness| {
@@ -2986,21 +3284,39 @@ pub(crate) const FSQLITE_WAL_CERT_SIDECAR_SUFFIXES: &[&str] = &["-wal-cert", "-w
 /// The classic SQLite sidecars.
 pub(crate) const CLASSIC_SIDECAR_SUFFIXES: &[&str] = &["-wal", "-shm", "-journal"];
 
-/// The engine-managed sidecar suffixes produced by br's fsqlite
-/// configuration — the classic `-wal`/`-shm`/`-journal` set plus the
-/// namespace-admission and WAL-durability-certificate sidecars.
+/// fsqlite's forward-error-correction sidecar for the WAL.
 ///
-/// This is deliberately scoped to the sidecars br can actually create: it
-/// does not enumerate fsqlite suffixes gated behind features br never
-/// enables (e.g. WAL-FEC `-wal-fec*`, `-wal-seg-*` segments, or the
-/// advisory `-lock-*` files fsqlite self-removes). If br ever turns on one
-/// of those features, add its suffix here and to the coverage tests so the
-/// temp-file reaper (#299) keeps up.
+/// It contains derivable repair symbols, but recovery must remove it with the
+/// database family so a replacement does not inherit stale symbols.
+pub(crate) const FSQLITE_WAL_FEC_SIDECAR_SUFFIXES: &[&str] = &["-wal-fec"];
+
+/// Every engine-managed sidecar suffix obr's fsqlite configuration can create.
 pub(crate) fn db_sidecar_suffixes() -> impl Iterator<Item = &'static &'static str> {
     CLASSIC_SIDECAR_SUFFIXES
         .iter()
         .chain(FSQLITE_NAMESPACE_SIDECAR_SUFFIXES.iter())
         .chain(FSQLITE_WAL_CERT_SIDECAR_SUFFIXES.iter())
+        .chain(FSQLITE_WAL_FEC_SIDECAR_SUFFIXES.iter())
+}
+
+/// Best-effort removal of every engine sidecar belonging to `db_path`.
+///
+/// Used both to drop the pre-compaction sidecars after an atomic swap and to
+/// clean up the temp target's sidecars, which `rename` leaves behind because
+/// it only moves the main file.
+fn remove_db_sidecars(db_path: &Path) {
+    for suffix in db_sidecar_suffixes() {
+        let sidecar = PathBuf::from(format!("{}{}", db_path.to_string_lossy(), suffix));
+        if fs::symlink_metadata(&sidecar).is_ok()
+            && let Err(err) = fs::remove_file(&sidecar)
+        {
+            tracing::debug!(
+                error = %err,
+                sidecar = %sidecar.display(),
+                "Failed to remove database sidecar; next open will re-derive it"
+            );
+        }
+    }
 }
 
 /// Compact a database at `db_path` by writing a fresh copy via `VACUUM
@@ -3347,7 +3663,7 @@ fn rollback_compacted_database_install(
 
 fn rebuild_database_family_with_backup<T, F>(
     db_path: &Path,
-    beads_dir: &Path,
+    obr_dir: &Path,
     write_authority: &crate::sync::DatabaseFamilyWriteLock,
     successful_disposition: SuccessfulRecoveryDisposition,
     rebuild: F,
@@ -3357,7 +3673,7 @@ where
 {
     rebuild_database_family_with_backup_before_install(
         db_path,
-        beads_dir,
+        obr_dir,
         write_authority,
         successful_disposition,
         || {},
@@ -3367,7 +3683,7 @@ where
 
 fn rebuild_database_family_with_backup_before_install<T, B, F>(
     db_path: &Path,
-    beads_dir: &Path,
+    obr_dir: &Path,
     write_authority: &crate::sync::DatabaseFamilyWriteLock,
     successful_disposition: SuccessfulRecoveryDisposition,
     before_install: B,
@@ -3378,7 +3694,7 @@ where
     F: FnOnce(FreshDatabaseReplacementWitness) -> Result<T>,
 {
     let mut backup_set =
-        prepare_database_family_backup_for_recovery(db_path, beads_dir, write_authority)?;
+        prepare_database_family_backup_for_recovery(db_path, obr_dir, write_authority)?;
     before_install();
     let staged_backup_verification = verify_recovery_backup_set(&backup_set).and_then(|()| {
         if !backup_set.had_original_database {
@@ -3615,19 +3931,19 @@ fn prepare_database_family_backup_for_recovery(
 
 fn backup_database_family_for_recovery(
     db_path: &Path,
-    beads_dir: &Path,
+    obr_dir: &Path,
 ) -> Result<RecoveryBackupSet> {
     let stamp = Utc::now().format("%Y%m%d_%H%M%S_%f").to_string();
-    move_database_family_to_recovery(db_path, beads_dir, &stamp)
+    move_database_family_to_recovery(db_path, obr_dir, &stamp)
 }
 
 fn prepare_missing_database_cleanup_for_recovery(
     db_path: &Path,
-    beads_dir: &Path,
+    obr_dir: &Path,
 ) -> Result<RecoveryBackupSet> {
     reject_symlinked_database_path_for_recovery(db_path)?;
     let stamp = Utc::now().format("%Y%m%d_%H%M%S_%f").to_string();
-    let recovery_dir = recovery_dir_for_db_path(db_path, beads_dir);
+    let recovery_dir = recovery_dir_for_db_path(db_path, obr_dir);
     fs::create_dir_all(&recovery_dir)?;
     Ok(RecoveryBackupSet {
         db_path: db_path.to_path_buf(),
@@ -3663,11 +3979,11 @@ fn move_orphaned_database_sidecars_to_recovery(backup_set: &mut RecoveryBackupSe
 
 fn move_database_family_to_recovery(
     db_path: &Path,
-    beads_dir: &Path,
+    obr_dir: &Path,
     stamp: &str,
 ) -> Result<RecoveryBackupSet> {
     reject_symlinked_database_path_for_recovery(db_path)?;
-    let recovery_dir = recovery_dir_for_db_path(db_path, beads_dir);
+    let recovery_dir = recovery_dir_for_db_path(db_path, obr_dir);
     fs::create_dir_all(&recovery_dir)?;
     let (files, verified_files) = rename_existing_paths_with_backup_verification(
         database_family_paths(db_path).into_iter().map(|original| {
@@ -3964,11 +4280,23 @@ where
     Ok(())
 }
 
-pub(crate) fn recovery_dir_for_db_path(db_path: &Path, beads_dir: &Path) -> PathBuf {
-    db_path
-        .parent()
-        .unwrap_or(beads_dir)
-        .join(RECOVERY_DIR_NAME)
+/// Locate the recovery-backup directory beside the database.
+///
+/// legacy_compat: a workspace that already accumulated backups under
+/// `.br_recovery/` keeps using that directory, so nothing written before the
+/// rename becomes unreachable. Fresh workspaces get `recovery/`.
+pub(crate) fn recovery_dir_for_db_path(db_path: &Path, obr_dir: &Path) -> PathBuf {
+    let parent = db_path.parent().unwrap_or(obr_dir);
+    let legacy = parent.join(LEGACY_RECOVERY_DIR_NAME);
+    if legacy.is_dir() {
+        crate::legacy_compat::warn_deprecated_artifact(
+            LEGACY_RECOVERY_DIR_NAME,
+            RECOVERY_DIR_NAME,
+            &legacy,
+        );
+        return legacy;
+    }
+    parent.join(RECOVERY_DIR_NAME)
 }
 
 fn database_family_paths(db_path: &Path) -> Vec<PathBuf> {
@@ -4059,27 +4387,29 @@ fn recovery_backup_filename(path: &Path, stamp: &str, suffix: &str) -> String {
 
 pub(crate) fn quarantine_database_artifacts<I>(
     db_path: &Path,
-    beads_dir: &Path,
+    obr_dir: &Path,
     artifact_paths: I,
     suffix: &str,
 ) -> Result<Vec<PathBuf>>
 where
     I: IntoIterator<Item = PathBuf>,
 {
-    Ok(quarantine_database_artifacts_with_original_paths(
-        db_path,
-        beads_dir,
-        artifact_paths,
-        suffix,
-    )?
-    .into_iter()
-    .map(|(_, backup)| backup)
-    .collect())
+    Ok(
+        quarantine_database_artifacts_with_original_paths(
+            db_path,
+            obr_dir,
+            artifact_paths,
+            suffix,
+        )?
+        .into_iter()
+        .map(|(_, backup)| backup)
+        .collect(),
+    )
 }
 
 fn quarantine_database_artifacts_with_original_paths<I>(
     db_path: &Path,
-    beads_dir: &Path,
+    obr_dir: &Path,
     artifact_paths: I,
     suffix: &str,
 ) -> Result<Vec<RecoveryBackupPath>>
@@ -4087,7 +4417,7 @@ where
     I: IntoIterator<Item = PathBuf>,
 {
     let stamp = Utc::now().format("%Y%m%d_%H%M%S_%f").to_string();
-    let recovery_dir = recovery_dir_for_db_path(db_path, beads_dir);
+    let recovery_dir = recovery_dir_for_db_path(db_path, obr_dir);
     fs::create_dir_all(&recovery_dir)?;
 
     let (renamed_paths, verified_files) = rename_existing_paths_with_backup_verification(
@@ -4116,11 +4446,11 @@ where
 ///
 /// Returns an error if metadata cannot be read or the database cannot be opened.
 pub fn open_storage(
-    beads_dir: &Path,
+    obr_dir: &Path,
     db_override: Option<&PathBuf>,
     lock_timeout: Option<u64>,
 ) -> Result<(SqliteStorage, ConfigPaths)> {
-    let startup = load_startup_config_with_paths(beads_dir, db_override)?;
+    let startup = load_startup_config_with_paths(obr_dir, db_override)?;
     let merged_layer = ConfigLayer::merge_layers(&startup.layers);
 
     let resolved_lock_timeout = lock_timeout
@@ -4128,13 +4458,13 @@ pub fn open_storage(
         .or(Some(30000));
 
     let write_authority = Arc::new(blocking_database_family_write_lock_with_timeout(
-        beads_dir,
+        obr_dir,
         &startup.paths.db_path,
         resolved_lock_timeout,
     )?);
     write_authority.bind_database_inode_for_mutation()?;
     let mut open_result = open_sqlite_storage_with_recovery(
-        beads_dir,
+        obr_dir,
         &startup.paths,
         resolved_lock_timeout,
         &merged_layer,
@@ -4143,7 +4473,7 @@ pub fn open_storage(
     )?;
     write_authority.verify_database_authority()?;
     open_result.storage.attach_write_authority(write_authority);
-    let workflow = crate::close_policy::load_for_beads_dir(beads_dir)?.workflow;
+    let workflow = crate::close_policy::load_for_obr_dir(obr_dir)?.workflow;
     open_result.storage.set_workflow_policy(workflow);
     Ok((open_result.storage, startup.paths))
 }
@@ -4181,7 +4511,7 @@ pub struct OpenStorageResult {
     /// `open_storage_with_cli` call (either because the file didn't exist, or
     /// because a recoverable anomaly was detected after opening). Callers that
     /// would otherwise re-run a full rebuild (e.g.
-    /// `br sync --import-only --rebuild`) can skip the redundant work — the DB
+    /// `obr sync --import-only --rebuild`) can skip the redundant work — the DB
     /// is already a fresh import.
     pub auto_rebuilt: bool,
     allow_external_jsonl: bool,
@@ -4288,7 +4618,7 @@ impl OpenStorageResult {
         };
         load_config_from_startup_layers(
             &self.startup_layers,
-            &self.paths.beads_dir,
+            &self.paths.obr_dir,
             &self.paths.jsonl_path,
             self.allow_external_jsonl,
             jsonl_source,
@@ -4344,7 +4674,7 @@ impl OpenStorageResult {
     ///
     /// On success, `auto_rebuilt` is set to `true` so downstream code can
     /// detect that the storage is now a fresh import of the JSONL and skip
-    /// redundant rebuilds (for example, `br sync --import-only --rebuild`
+    /// redundant rebuilds (for example, `obr sync --import-only --rebuild`
     /// short-circuits when it sees this flag).
     ///
     /// # Errors
@@ -4381,14 +4711,14 @@ impl OpenStorageResult {
         let preserved_attribution = self.storage.take_pending_event_attribution();
         let preserved_workflow_policy = self.storage.workflow_policy();
         let import_config = import_config_for_resolved_jsonl(
-            &self.paths.beads_dir,
+            &self.paths.obr_dir,
             &self.paths.db_path,
             &self.paths.jsonl_path,
             self.allow_external_jsonl,
         );
         validate_sync_path_with_external(
             &self.paths.jsonl_path,
-            &self.paths.beads_dir,
+            &self.paths.obr_dir,
             import_config.allow_external_jsonl,
         )?;
         let jsonl_authority = Arc::new(crate::sync::blocking_jsonl_family_write_lock_with_timeout(
@@ -4410,7 +4740,7 @@ impl OpenStorageResult {
 
         let (storage, _, backup_set) =
             repair_database_from_jsonl_snapshot_with_import_config_deferred(
-                &self.paths.beads_dir,
+                &self.paths.obr_dir,
                 &self.paths.db_path,
                 self.resolved_lock_timeout,
                 &self.bootstrap_layer,
@@ -4480,7 +4810,7 @@ impl OpenStorageResult {
 
         let quarantine_db_path = self.paths.db_path.clone();
         let reopen_db_path = self.paths.db_path.clone();
-        let quarantine_beads_dir = self.paths.beads_dir.clone();
+        let quarantine_obr_dir = self.paths.obr_dir.clone();
         let resolved_lock_timeout = self.resolved_lock_timeout;
         let reopen_authority = Arc::clone(&write_authority);
         let verify_authority = Arc::clone(&write_authority);
@@ -4489,7 +4819,7 @@ impl OpenStorageResult {
                 let db_path_str = quarantine_db_path.to_string_lossy();
                 quarantine_database_artifacts_with_original_paths(
                     &quarantine_db_path,
-                    &quarantine_beads_dir,
+                    &quarantine_obr_dir,
                     FSQLITE_WAL_CERT_SIDECAR_SUFFIXES
                         .iter()
                         .map(|suffix| PathBuf::from(format!("{db_path_str}{suffix}"))),
@@ -4890,8 +5220,9 @@ impl OpenStorageResult {
             // used to need force is handled by the purged-pending-export
             // marker, which the guard subtracts from its loss computation.
             force: false,
-            is_default_path: self.paths.jsonl_path == self.paths.beads_dir.join("issues.jsonl"),
-            beads_dir: Some(self.paths.beads_dir.clone()),
+            is_default_path: self.paths.jsonl_path
+                == self.paths.obr_dir.join(DEFAULT_JSONL_FILENAME),
+            obr_dir: Some(self.paths.obr_dir.clone()),
             allow_external_jsonl: self.allow_external_jsonl,
             show_progress: false,
             history: history_config,
@@ -4963,7 +5294,7 @@ impl OpenStorageResult {
         if let Some(receipt) = self.storage.pending_sync_merge_receipt()? {
             return Err(BeadsError::SyncConflict {
                 message: format!(
-                    "Committed sync merge {} is pending {:?} reconciliation; refusing auto-flush. Run `br sync --merge` first.",
+                    "Committed sync merge {} is pending {:?} reconciliation; refusing auto-flush. Run `obr sync --merge` first.",
                     receipt.receipt_id, receipt.phase
                 ),
             });
@@ -4971,7 +5302,7 @@ impl OpenStorageResult {
 
         auto_flush(
             &mut self.storage,
-            &self.paths.beads_dir,
+            &self.paths.obr_dir,
             &self.paths.jsonl_path,
             self.allow_external_jsonl,
         )?;
@@ -4983,7 +5314,7 @@ impl OpenStorageResult {
     /// Operators who set `sync.history_enabled: false` (or the inverted
     /// `no-history: true`) get a config with `enabled = false`, which causes
     /// [`crate::sync::history::backup_before_export`] to short-circuit instead
-    /// of creating the `.br_history/` directory. See br#293.
+    /// of creating the `history/` snapshot directory. See br#293.
     #[must_use]
     pub fn resolved_history_config(&self) -> crate::sync::history::HistoryConfig {
         let mut cfg = crate::sync::history::HistoryConfig::default();
@@ -5056,7 +5387,7 @@ fn open_storage_with_owned_write_authority(
     }
 
     if let Some(authority) =
-        cli.database_family_write_authority_for(&startup.paths.beads_dir, &startup.paths.db_path)
+        cli.database_family_write_authority_for(&startup.paths.obr_dir, &startup.paths.db_path)
     {
         authority.verify_database_authority()?;
         let mut result = open_storage_with_startup_config_impl(
@@ -5069,11 +5400,11 @@ fn open_storage_with_owned_write_authority(
         result.write_authority = Some(Arc::clone(authority));
         return Ok(result);
     }
-    if cli.holds_write_lock_for(&startup.paths.beads_dir) {
+    if cli.holds_write_lock_for(&startup.paths.obr_dir) {
         return Err(BeadsError::SyncConflict {
             message: format!(
                 "Database routing changed after acquiring the write authority for {}",
-                startup.paths.beads_dir.display()
+                startup.paths.obr_dir.display()
             ),
         });
     }
@@ -5090,7 +5421,7 @@ fn open_storage_with_owned_write_authority(
 
     let authority = Arc::new(
         crate::sync::blocking_database_family_write_lock_with_timeout(
-            &startup.paths.beads_dir,
+            &startup.paths.obr_dir,
             &startup.paths.db_path,
             lock_timeout,
         )?,
@@ -5138,7 +5469,7 @@ pub fn open_storage_with_startup_config_under_write_lock(
 }
 
 fn open_sqlite_storage_for_startup(
-    beads_dir: &Path,
+    obr_dir: &Path,
     paths: &ConfigPaths,
     lock_timeout: Option<u64>,
     bootstrap_layer: &ConfigLayer,
@@ -5155,7 +5486,7 @@ fn open_sqlite_storage_for_startup(
             .unwrap_or(false);
         let result = if database_was_missing && paths.jsonl_path.is_file() {
             open_when_db_file_is_missing(
-                beads_dir,
+                obr_dir,
                 paths,
                 lock_timeout,
                 bootstrap_layer,
@@ -5165,7 +5496,7 @@ fn open_sqlite_storage_for_startup(
             )?
         } else {
             open_sqlite_storage_with_deferred_jsonl_recovery(
-                beads_dir,
+                obr_dir,
                 paths,
                 lock_timeout,
                 bootstrap_layer,
@@ -5186,7 +5517,7 @@ fn open_sqlite_storage_for_startup(
                 None,
             )),
             Ok(Some(_) | None) => open_sqlite_storage_with_recovery_after_fast_open_miss(
-                beads_dir,
+                obr_dir,
                 paths,
                 lock_timeout,
                 bootstrap_layer,
@@ -5199,7 +5530,7 @@ fn open_sqlite_storage_for_startup(
                     "read-only fast open failed; falling back to normal storage open"
                 );
                 open_sqlite_storage_with_recovery_after_fast_open_miss(
-                    beads_dir,
+                    obr_dir,
                     paths,
                     lock_timeout,
                     bootstrap_layer,
@@ -5216,7 +5547,7 @@ fn open_sqlite_storage_for_startup(
             .unwrap_or(false);
         let result = if database_was_missing && paths.jsonl_path.is_file() {
             open_when_db_file_is_missing(
-                beads_dir,
+                obr_dir,
                 paths,
                 lock_timeout,
                 bootstrap_layer,
@@ -5226,7 +5557,7 @@ fn open_sqlite_storage_for_startup(
             )?
         } else {
             open_sqlite_storage_with_recovery(
-                beads_dir,
+                obr_dir,
                 paths,
                 lock_timeout,
                 bootstrap_layer,
@@ -5251,7 +5582,7 @@ fn open_storage_with_startup_config_impl(
         layers: startup_layers,
         ..
     } = startup;
-    let beads_dir = paths.beads_dir.clone();
+    let obr_dir = paths.obr_dir.clone();
     let cli_layer = cli.as_layer();
 
     let mut all_layers = startup_layers.clone();
@@ -5260,7 +5591,7 @@ fn open_storage_with_startup_config_impl(
 
     let no_db = no_db_from_layer(&merged_layer).unwrap_or(false);
     let allow_external_jsonl = explicit_allow_external_jsonl
-        || implicit_external_jsonl_allowed(&beads_dir, &paths.db_path, &paths.jsonl_path);
+        || implicit_external_jsonl_allowed(&obr_dir, &paths.db_path, &paths.jsonl_path);
 
     let resolved_lock_timeout = cli
         .lock_timeout
@@ -5269,7 +5600,7 @@ fn open_storage_with_startup_config_impl(
 
     if no_db {
         let mut storage = SqliteStorage::open_memory()?;
-        validate_sync_path_with_external(&paths.jsonl_path, &beads_dir, allow_external_jsonl)?;
+        validate_sync_path_with_external(&paths.jsonl_path, &obr_dir, allow_external_jsonl)?;
         let jsonl_write_authority = if cli.no_db_write_intent {
             let parent = paths.jsonl_path.parent().ok_or_else(|| {
                 BeadsError::Config("Resolved no-DB JSONL path has no parent".to_string())
@@ -5287,9 +5618,9 @@ fn open_storage_with_startup_config_impl(
         let loaded_jsonl_snapshot = capture_optional_jsonl_source(&paths.jsonl_path)?;
         let prefix = match loaded_jsonl_snapshot.as_ref() {
             Some(source) => {
-                resolve_bootstrap_issue_prefix_snapshot(&merged_layer, &beads_dir, source)?
+                resolve_bootstrap_issue_prefix_snapshot(&merged_layer, &obr_dir, source)?
             }
-            None => resolve_bootstrap_issue_prefix_without_jsonl(&merged_layer, &beads_dir)?,
+            None => resolve_bootstrap_issue_prefix_without_jsonl(&merged_layer, &obr_dir)?,
         };
         storage.set_config("issue_prefix", &prefix)?;
 
@@ -5303,7 +5634,7 @@ fn open_storage_with_startup_config_impl(
         );
         if let Some(source) = loaded_jsonl_snapshot.as_ref() {
             let mut import_config = import_config_for_resolved_jsonl(
-                &beads_dir,
+                &obr_dir,
                 &paths.db_path,
                 &paths.jsonl_path,
                 allow_external_jsonl,
@@ -5315,7 +5646,7 @@ fn open_storage_with_startup_config_impl(
             authority.verify_jsonl_authority()?;
         }
 
-        let workflow = crate::close_policy::load_for_beads_dir(&beads_dir)?.workflow;
+        let workflow = crate::close_policy::load_for_obr_dir(&obr_dir)?.workflow;
         storage.set_workflow_policy(workflow);
 
         let loaded_jsonl_source = loaded_jsonl_snapshot
@@ -5340,7 +5671,7 @@ fn open_storage_with_startup_config_impl(
         })
     } else {
         let (mut sqlite_open, owned_write_authority) = open_sqlite_storage_for_startup(
-            &beads_dir,
+            &obr_dir,
             &paths,
             resolved_lock_timeout,
             &merged_layer,
@@ -5357,7 +5688,7 @@ fn open_storage_with_startup_config_impl(
                 .storage
                 .attach_write_authority(Arc::clone(authority));
         }
-        let workflow = crate::close_policy::load_for_beads_dir(&beads_dir)?.workflow;
+        let workflow = crate::close_policy::load_for_obr_dir(&obr_dir)?.workflow;
         sqlite_open.storage.set_workflow_policy(workflow);
         let (loaded_jsonl_state, loaded_jsonl_source, jsonl_write_authority) =
             match sqlite_open.recovered_jsonl {
@@ -5400,23 +5731,23 @@ fn open_storage_with_startup_config_impl(
 ///
 /// Returns an error if configuration loading, JSONL import, or storage setup fails.
 fn open_storage_with_cli_impl(
-    beads_dir: &Path,
+    obr_dir: &Path,
     cli: &CliOverrides,
     defer_jsonl_recovery: bool,
 ) -> Result<OpenStorageResult> {
-    let startup = load_startup_config_with_paths(beads_dir, cli.db.as_ref())?;
+    let startup = load_startup_config_with_paths(obr_dir, cli.db.as_ref())?;
     open_storage_with_startup_config(startup, cli, defer_jsonl_recovery)
 }
 
-pub fn open_storage_with_cli(beads_dir: &Path, cli: &CliOverrides) -> Result<OpenStorageResult> {
-    open_storage_with_cli_impl(beads_dir, cli, false)
+pub fn open_storage_with_cli(obr_dir: &Path, cli: &CliOverrides) -> Result<OpenStorageResult> {
+    open_storage_with_cli_impl(obr_dir, cli, false)
 }
 
 pub fn open_storage_with_cli_deferred_jsonl_recovery(
-    beads_dir: &Path,
+    obr_dir: &Path,
     cli: &CliOverrides,
 ) -> Result<OpenStorageResult> {
-    open_storage_with_cli_impl(beads_dir, cli, true)
+    open_storage_with_cli_impl(obr_dir, cli, true)
 }
 
 #[must_use]
@@ -5450,35 +5781,36 @@ pub fn no_auto_flush_from_layer(layer: &ConfigLayer) -> Option<bool> {
         .and_then(|value| parse_bool(value))
 }
 
-/// Check merged config for `sync.history_enabled` (positive) or legacy `no-history` (inverted).
+/// Resolve an override for the `history/` snapshot throttle (#313) from the
+/// `OBR_HISTORY_MIN_INTERVAL_SECS` environment variable.
 ///
-/// Priority order (highest first):
-/// 1. `sync.history_enabled` / `sync.history-enabled` / `sync.history.enabled` — canonical positive key
-/// 2. `no-history` / `no_history` / `no.history` — inverted convenience key
-///
-/// The canonical `sync.history_enabled: false` means "disable `.br_history/` backups".
-/// `no-history: true` means the same thing. Returns `None` when no key is set so the
-/// caller can keep the default-enabled behavior unchanged.
-///
-/// This is the storage-policy switch requested in
-/// <https://github.com/Dicklesworthstone/beads_rust/issues/293> — operators who
-/// want `issues.jsonl` to be the single durable state file can flip this and
-/// stop the `.br_history/` directory from being created.
-/// Resolve an override for the `.br_history` snapshot throttle (#313) from the
-/// `BR_HISTORY_MIN_INTERVAL_SECS` environment variable.
-///
-/// The throttle collapses bursts of `br` mutations into at most one snapshot per
+/// The throttle collapses bursts of `obr` mutations into at most one snapshot per
 /// interval (default 5s — see [`crate::sync::history::HistoryConfig`]). Set this
 /// to `0` to disable the throttle (snapshot on every export), or to a larger
 /// value to snapshot less often. Returns `None` when unset/unparsable so the
 /// default applies.
 #[must_use]
 pub fn history_min_interval_secs_from_env() -> Option<u64> {
-    std::env::var("BR_HISTORY_MIN_INTERVAL_SECS")
+    std::env::var("OBR_HISTORY_MIN_INTERVAL_SECS")
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
 }
 
+/// Check merged config for `sync.history_enabled` (positive) or legacy
+/// `no-history` (inverted).
+///
+/// Priority order (highest first):
+/// 1. `sync.history_enabled` / `sync.history-enabled` / `sync.history.enabled` — canonical positive key
+/// 2. `no-history` / `no_history` / `no.history` — inverted convenience key
+///
+/// The canonical `sync.history_enabled: false` means "disable `history/`
+/// snapshots". `no-history: true` means the same thing. Returns `None` when no
+/// key is set so the caller can keep the default-enabled behavior unchanged.
+///
+/// This is the storage-policy switch requested in
+/// <https://github.com/Dicklesworthstone/beads_rust/issues/293> — operators who
+/// want the export to be the single durable state file can flip this and stop
+/// the snapshot directory from being created.
 #[must_use]
 pub fn history_enabled_from_layer(layer: &ConfigLayer) -> Option<bool> {
     if let Some(v) = get_startup_value(
@@ -5525,7 +5857,7 @@ pub fn no_auto_import_from_layer(layer: &ConfigLayer) -> Option<bool> {
 #[cfg(test)]
 fn resolve_bootstrap_issue_prefix(
     bootstrap_layer: &ConfigLayer,
-    beads_dir: &Path,
+    obr_dir: &Path,
     jsonl_path: &Path,
     allow_external_jsonl: bool,
 ) -> Result<String> {
@@ -5534,12 +5866,12 @@ fn resolve_bootstrap_issue_prefix(
     }
 
     if let Some(prefix) =
-        first_prefix_from_resolved_jsonl(beads_dir, jsonl_path, allow_external_jsonl)?
+        first_prefix_from_resolved_jsonl(obr_dir, jsonl_path, allow_external_jsonl)?
     {
         return Ok(normalize_prefix(&prefix));
     }
 
-    if let Some(name) = beads_dir
+    if let Some(name) = obr_dir
         .parent()
         .and_then(|p| p.file_name())
         .and_then(|name| name.to_str())
@@ -5549,12 +5881,12 @@ fn resolve_bootstrap_issue_prefix(
         return Ok(abbreviate_prefix(name));
     }
 
-    Ok("br".to_string())
+    Ok("obr".to_string())
 }
 
 fn resolve_bootstrap_issue_prefix_snapshot(
     bootstrap_layer: &ConfigLayer,
-    beads_dir: &Path,
+    obr_dir: &Path,
     source: &crate::sync::JsonlSourceSnapshot,
 ) -> Result<String> {
     if let Some(prefix) = get_value(bootstrap_layer, &["issue_prefix", "issue-prefix", "prefix"]) {
@@ -5565,7 +5897,7 @@ fn resolve_bootstrap_issue_prefix_snapshot(
         return Ok(normalize_prefix(&prefix));
     }
 
-    if let Some(name) = beads_dir
+    if let Some(name) = obr_dir
         .parent()
         .and_then(|path| path.file_name())
         .and_then(|name| name.to_str())
@@ -5575,18 +5907,18 @@ fn resolve_bootstrap_issue_prefix_snapshot(
         return Ok(abbreviate_prefix(name));
     }
 
-    Ok("br".to_string())
+    Ok("obr".to_string())
 }
 
 fn resolve_bootstrap_issue_prefix_without_jsonl(
     bootstrap_layer: &ConfigLayer,
-    beads_dir: &Path,
+    obr_dir: &Path,
 ) -> Result<String> {
     if let Some(prefix) = get_value(bootstrap_layer, &["issue_prefix", "issue-prefix", "prefix"]) {
         return normalize_configured_prefix(prefix);
     }
 
-    if let Some(name) = beads_dir
+    if let Some(name) = obr_dir
         .parent()
         .and_then(|path| path.file_name())
         .and_then(|name| name.to_str())
@@ -5596,7 +5928,7 @@ fn resolve_bootstrap_issue_prefix_without_jsonl(
         return Ok(abbreviate_prefix(name));
     }
 
-    Ok("br".to_string())
+    Ok("obr".to_string())
 }
 
 fn validate_configured_issue_prefix(layer: &ConfigLayer) -> Result<()> {
@@ -5607,27 +5939,46 @@ fn validate_configured_issue_prefix(layer: &ConfigLayer) -> Result<()> {
 }
 
 fn first_prefix_from_resolved_jsonl(
-    beads_dir: &Path,
+    obr_dir: &Path,
     jsonl_path: &Path,
     allow_external_jsonl: bool,
 ) -> Result<Option<String>> {
     if !jsonl_path.is_file() {
         return Ok(None);
     }
-    validate_sync_path_with_external(jsonl_path, beads_dir, allow_external_jsonl)?;
+    validate_sync_path_with_external(jsonl_path, obr_dir, allow_external_jsonl)?;
+    // A tracked Org surface may declare `#+ISSUE_PREFIX:`; that keyword is
+    // authoritative here, because it survives in a fresh clone that has no
+    // `.obr/config.yaml` to consult. Files without it fall back to inferring
+    // the prefix from the first issue id.
+    if let Some(prefix) = issue_prefix_keyword_from_org(jsonl_path) {
+        return Ok(Some(prefix));
+    }
     first_prefix_from_jsonl(jsonl_path)
 }
 
+/// Read `#+ISSUE_PREFIX:` from an Org export, if the file is Org and declares it.
+fn issue_prefix_keyword_from_org(path: &Path) -> Option<String> {
+    // `ExportFormat` owns the extension probe; the hand-rolled version here
+    // also missed staged `.org.<pid>.tmp` names, so this silently declined to
+    // read the prefix out of a file it was about to publish.
+    if !crate::sync::org_bridge::ExportFormat::for_path(path).is_org() {
+        return None;
+    }
+    let text = std::fs::read_to_string(path).ok()?;
+    crate::sync::org_bridge::issue_prefix_from_org(&text)
+}
+
 fn import_config_for_resolved_jsonl(
-    beads_dir: &Path,
+    obr_dir: &Path,
     db_path: &Path,
     jsonl_path: &Path,
     explicit_allow_external_jsonl: bool,
 ) -> ImportConfig {
     ImportConfig {
-        beads_dir: Some(beads_dir.to_path_buf()),
+        obr_dir: Some(obr_dir.to_path_buf()),
         allow_external_jsonl: explicit_allow_external_jsonl
-            || implicit_external_jsonl_allowed(beads_dir, db_path, jsonl_path),
+            || implicit_external_jsonl_allowed(obr_dir, db_path, jsonl_path),
         show_progress: false,
         // Every caller re-ingests the workspace's own resolved sidecar
         // (rebuild/recovery/bootstrap), never a foreign JSONL. The configured
@@ -5641,32 +5992,27 @@ fn import_config_for_resolved_jsonl(
     }
 }
 
-pub(crate) fn resolved_jsonl_path_is_external(beads_dir: &Path, jsonl_path: &Path) -> bool {
-    !path_is_within_beads_dir(jsonl_path, beads_dir)
+pub(crate) fn resolved_jsonl_path_is_external(obr_dir: &Path, jsonl_path: &Path) -> bool {
+    !path_is_within_obr_dir(jsonl_path, obr_dir)
 }
 
 /// Return whether an external JSONL path can be trusted implicitly without
 /// a command-level `--allow-external-jsonl` opt-in.
 ///
-/// This is only allowed when the database itself also lives outside `.beads/`
-/// and the JSONL is its sibling, which covers explicit external DB families
-/// without allowing ambient `BEADS_JSONL` or metadata overrides to bypass the
-/// external-path safety model.
+/// This is only allowed when the database itself also lives outside the
+/// workspace directory and the JSONL is its sibling, which covers explicit
+/// external DB families without allowing ambient `OBR_JSONL` or metadata
+/// overrides to bypass the external-path safety model.
 #[must_use]
-pub fn implicit_external_jsonl_allowed(
-    beads_dir: &Path,
-    db_path: &Path,
-    jsonl_path: &Path,
-) -> bool {
-    resolved_jsonl_path_is_external(beads_dir, jsonl_path)
-        && !path_is_within_beads_dir(db_path, beads_dir)
+pub fn implicit_external_jsonl_allowed(obr_dir: &Path, db_path: &Path, jsonl_path: &Path) -> bool {
+    resolved_jsonl_path_is_external(obr_dir, jsonl_path)
+        && !path_is_within_obr_dir(db_path, obr_dir)
         && db_path.parent().is_some()
         && db_path.parent() == jsonl_path.parent()
 }
 
-fn path_is_within_beads_dir(path: &Path, beads_dir: &Path) -> bool {
-    let canonical_beads =
-        dunce::canonicalize(beads_dir).unwrap_or_else(|_| beads_dir.to_path_buf());
+fn path_is_within_obr_dir(path: &Path, obr_dir: &Path) -> bool {
+    let canonical_obr = dunce::canonicalize(obr_dir).unwrap_or_else(|_| obr_dir.to_path_buf());
 
     let effective_path = if path.exists() {
         dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
@@ -5680,7 +6026,7 @@ fn path_is_within_beads_dir(path: &Path, beads_dir: &Path) -> bool {
         path.to_path_buf()
     };
 
-    effective_path.starts_with(beads_dir) || effective_path.starts_with(&canonical_beads)
+    effective_path.starts_with(obr_dir) || effective_path.starts_with(&canonical_obr)
 }
 
 /// Fast prefix inference: reads only the first issue from JSONL.
@@ -5692,13 +6038,39 @@ pub(crate) fn first_prefix_from_jsonl(jsonl_path: &Path) -> Result<Option<String
 
     let file = std::fs::File::open(jsonl_path)?;
     crate::sync::path::validate_jsonl_fd_metadata(&file, jsonl_path)?;
+    if crate::sync::org_bridge::ExportFormat::for_path(jsonl_path).is_org() {
+        return first_prefix_from_org_reader(std::io::BufReader::new(file));
+    }
     first_prefix_from_jsonl_reader(std::io::BufReader::new(file))
 }
 
 pub(crate) fn first_prefix_from_jsonl_snapshot(
     source: &crate::sync::JsonlSourceSnapshot,
 ) -> Result<Option<String>> {
+    if crate::sync::org_bridge::ExportFormat::for_path(source.display_path()).is_org() {
+        return first_prefix_from_org_reader(source.reader());
+    }
     first_prefix_from_jsonl_reader(source.reader())
+}
+
+/// Org counterpart of `first_prefix_from_jsonl_reader`: the first
+/// non-tombstone heading's id prefix wins (upstream semantics), used during
+/// `--no-db` bootstrap so new issues mint the workspace's real prefix.
+fn first_prefix_from_org_reader(mut reader: impl BufRead) -> Result<Option<String>> {
+    let mut text = String::new();
+    reader.read_to_string(&mut text)?;
+    let (issues, _failures) = crate::sync::org_bridge::parse_issues_collecting_failures(&text);
+    for (_, issue) in issues {
+        if issue.status == crate::model::Status::Tombstone {
+            continue;
+        }
+        if let Some((prefix, _)) = split_prefix_remainder(&issue.id)
+            && !prefix.is_empty()
+        {
+            return Ok(Some(prefix.to_string()));
+        }
+    }
+    Ok(None)
 }
 
 fn first_prefix_from_jsonl_reader(reader: impl BufRead) -> Result<Option<String>> {
@@ -5743,74 +6115,222 @@ fn first_prefix_from_jsonl_reader(reader: impl BufRead) -> Result<Option<String>
 /// # Errors
 ///
 /// Returns an error if startup config cannot be read or metadata cannot be loaded.
-pub fn resolve_paths(beads_dir: &Path, db_override: Option<&PathBuf>) -> Result<ConfigPaths> {
-    let startup = load_startup_config_with_paths(beads_dir, db_override)?;
+pub fn resolve_paths(obr_dir: &Path, db_override: Option<&PathBuf>) -> Result<ConfigPaths> {
+    let startup = load_startup_config_with_paths(obr_dir, db_override)?;
     Ok(startup.paths)
 }
 
-fn resolve_db_path(
-    beads_dir: &Path,
-    metadata: &Metadata,
-    db_override: Option<&PathBuf>,
-) -> PathBuf {
+fn resolve_db_path(obr_dir: &Path, metadata: &Metadata, db_override: Option<&PathBuf>) -> PathBuf {
     if let Some(override_path) = db_override {
         return override_path.clone();
     }
 
     let candidate = PathBuf::from(&metadata.database);
     if candidate.is_absolute() {
-        candidate
-    } else {
-        // Use BEADS_CACHE_DIR if set, otherwise beads_dir
-        // This allows storing the database on a fast local filesystem
-        // when .beads is on a slow network mount
-        crate::util::resolve_cache_dir(beads_dir).join(candidate)
+        return candidate;
     }
+    // Use OBR_CACHE_DIR if set, otherwise obr_dir. This allows storing the
+    // database on a fast local filesystem when the workspace is on a slow
+    // network mount.
+    let resolved = crate::util::resolve_cache_dir(obr_dir).join(candidate);
+
+    // legacy_compat: a workspace created before the rename has `beads.db` and
+    // no recorded database name. Open it in place — never rename it behind the
+    // user's back — and only when nothing has claimed the new name.
+    if metadata.database == DEFAULT_DB_FILENAME
+        && !resolved.exists()
+        && let Some(parent) = resolved.parent()
+    {
+        let legacy = parent.join(LEGACY_DB_FILENAME);
+        if legacy.exists() && metadata_database_is_defaulted(obr_dir) {
+            crate::legacy_compat::warn_deprecated_artifact(
+                LEGACY_DB_FILENAME,
+                DEFAULT_DB_FILENAME,
+                &legacy,
+            );
+            return legacy;
+        }
+    }
+
+    resolved
+}
+
+/// Whether `metadata.json` leaves the database filename unset.
+///
+/// Guards the `beads.db` fallback so an explicit recorded filename is never
+/// second-guessed. Only reached when the new filename is missing from disk,
+/// so the extra read stays off the common path.
+fn metadata_database_is_defaulted(obr_dir: &Path) -> bool {
+    let Ok(contents) = fs::read_to_string(obr_dir.join("metadata.json")) else {
+        return true;
+    };
+    serde_json::from_str::<serde_json::Value>(&contents)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("database")
+                .and_then(serde_json::Value::as_str)
+                .map(|name| name.trim().is_empty())
+        })
+        .unwrap_or(true)
 }
 
 fn resolve_jsonl_path(
-    beads_dir: &Path,
+    obr_dir: &Path,
     metadata: &Metadata,
     db_override: Option<&PathBuf>,
 ) -> PathBuf {
-    // Priority 1: BEADS_JSONL environment variable (highest priority)
-    if let Ok(env_path) = env::var("BEADS_JSONL")
-        && !env_path.trim().is_empty()
+    // Priority 1: OBR_JSONL environment variable (highest priority)
+    if let Some(env_path) = env::var(JSONL_PATH_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
     {
         return PathBuf::from(env_path);
     }
 
-    // Priority 2: metadata.json override (if explicitly set to non-default)
+    // Priority 2: metadata.json override (if explicitly set to non-default).
+    // Both `PLAN.org` (current default) and `issues.org` (the pre-D-SURFACE
+    // default) count as "defaulted", so a workspace written by either version
+    // follows the surface rule rather than being treated as pinned.
     let metadata_jsonl = &metadata.jsonl_export;
     let is_explicit_override =
-        metadata_jsonl != DEFAULT_JSONL_FILENAME && !is_excluded_jsonl(metadata_jsonl);
+        !is_defaulted_jsonl_export(metadata_jsonl) && !is_excluded_jsonl(metadata_jsonl);
 
     if is_explicit_override {
         let candidate = PathBuf::from(metadata_jsonl);
         return if candidate.is_absolute() {
             candidate
         } else {
-            beads_dir.join(candidate)
+            obr_dir.join(candidate)
         };
     }
 
-    // Priority 3: DB override uses a sibling JSONL file. Prefer an existing
-    // issues.jsonl/beads.jsonl next to the overridden DB before falling back
-    // to the default issues.jsonl path.
-    if db_override.is_some() {
-        return db_override.and_then(|path| path.parent()).map_or_else(
-            || beads_dir.join(DEFAULT_JSONL_FILENAME),
-            |parent| discover_jsonl(parent).unwrap_or_else(|| parent.join(DEFAULT_JSONL_FILENAME)),
-        );
+    // Priority 3: the JSONL belonging to an overridden database.
+    if let Some(db_parent) = db_override.and_then(|path| path.parent()) {
+        // An export that already exists beside the database always wins: that
+        // is the pre-D-SURFACE layout, and the e2e fixtures that pin one.
+        if let Some(sibling) = discover_jsonl(db_parent) {
+            return sibling;
+        }
+        // Otherwise derive one — unless the alternate database lives inside
+        // the workspace directory. Deriving `<obr_dir>/issues.org` there
+        // contradicts the very directory it was derived from: the workspace
+        // has a surface, and `.obr/` is the cache that is explicitly not it.
+        // That is how `--db .obr/scratch.db` came to hide a tracked PLAN.org
+        // sitting right beside it — `sync --status` reported "JSONL exists:
+        // false" and `sync --import-only` imported nothing. A database
+        // anywhere else still gets its own sibling, so an out-of-tree database
+        // stays self-contained.
+        //
+        // `path_is_within_obr_dir` is the existing owner of this question --
+        // the same one `implicit_external_jsonl_allowed` asks of a database --
+        // and it already canonicalizes through a parent for a path that does
+        // not exist yet, which `--db <new-path>.db` always is.
+        if !path_is_within_obr_dir(db_override.expect("db_parent implies db_override"), obr_dir) {
+            return db_parent.join(DEFAULT_JSONL_FILENAME);
+        }
+    } else if db_override.is_some() {
+        return obr_dir.join(DEFAULT_JSONL_FILENAME);
     }
 
-    // Priority 4: File discovery (prefer issues.jsonl, fall back to beads.jsonl)
-    if let Some(discovered) = discover_jsonl(beads_dir) {
-        return discovered;
+    // Priority 4 (D-SURFACE): the tracked surface, when the workspace root is
+    // derivable. An existing surface always wins; otherwise a pre-existing
+    // in-dir artifact keeps working (no forced migration, warn once); a fresh
+    // workspace lands on the computed surface location.
+    if let Some(root) = workspace_root_of(obr_dir) {
+        let surface = resolve_surface_path(&root);
+        let resolved = defaulted_jsonl_path(obr_dir);
+        if resolved == surface {
+            // The surface won. If an in-dir export also exists, the workspace
+            // just stopped using it — the common way to reach this is a
+            // `git pull` that brings a `PLAN.org` into a workspace that had
+            // been exporting to `.obr/issues.org`. The switch is correct (the
+            // tracked file is the surface) but it must not be silent, or the
+            // in-dir file goes stale with nothing to say so. Costs the same
+            // handful of stats the resolution above already spends.
+            if let Some(in_dir) = discover_jsonl(obr_dir) {
+                crate::legacy_compat::warn_once(
+                    "surface-supersedes-in-dir",
+                    &format!(
+                        "{} is now the workspace's export; the in-dir {} is no longer \
+                         read or written and can be removed once you have checked it \
+                         holds nothing newer.",
+                        surface.display(),
+                        in_dir.display()
+                    ),
+                );
+            }
+        } else {
+            crate::legacy_compat::warn_once(
+                "in-dir-surface",
+                &format!(
+                    "{} is a pre-D-SURFACE in-dir export and will keep being used; \
+                     move it to {} to track the surface in git.",
+                    resolved.display(),
+                    surface.display()
+                ),
+            );
+        }
+        return resolved;
     }
 
-    // Priority 5: Default (issues.jsonl) for writing when nothing exists
-    beads_dir.join(DEFAULT_JSONL_FILENAME)
+    // No derivable root: fall back to the historical in-dir behavior.
+    discover_jsonl(obr_dir).unwrap_or_else(|| obr_dir.join(DEFAULT_JSONL_FILENAME))
+}
+
+/// True when a `metadata.json` `jsonl_export` value names the default rather
+/// than pinning a specific file.
+///
+/// Both spellings count: `PLAN.org` is the current default, `issues.org` the
+/// pre-D-SURFACE one, so a workspace initialised by either version follows the
+/// surface rule instead of being mistaken for a pinned export.
+#[must_use]
+pub fn is_defaulted_jsonl_export(jsonl_export: &str) -> bool {
+    jsonl_export == SURFACE_FILENAME || jsonl_export == DEFAULT_JSONL_FILENAME
+}
+
+/// Rule 2 of the D-SURFACE resolution: where a DEFAULTED export lands.
+///
+/// An existing surface always wins; failing that a pre-existing in-dir artifact
+/// keeps being used (no forced migration); a fresh workspace lands on the
+/// computed surface location.
+///
+/// Pure by design — the legacy advisory belongs to [`resolve_jsonl_path`], the
+/// one caller on the command path, so that other callers can ask "where does
+/// this resolve?" without emitting operator-facing warnings.
+fn defaulted_jsonl_path(obr_dir: &Path) -> PathBuf {
+    let Some(root) = workspace_root_of(obr_dir) else {
+        return discover_jsonl(obr_dir).unwrap_or_else(|| obr_dir.join(DEFAULT_JSONL_FILENAME));
+    };
+    if let Some(existing) = surface_candidates(&root)
+        .into_iter()
+        .find(|path| path.is_file())
+    {
+        return existing;
+    }
+    // Rule 2b only reaches the legacy in-dir artifact when NO surface exists;
+    // reordering these two would force a migration on every workspace that
+    // predates D-SURFACE.
+    discover_jsonl(obr_dir).unwrap_or_else(|| computed_surface_path(&root))
+}
+
+/// Where a `metadata.json` `jsonl_export` value actually points.
+///
+/// Defaulted values name the tracked surface, which under D-SURFACE lives
+/// OUTSIDE `.obr/`; anything else is an explicit override and stays resolved
+/// relative to `.obr/` as it always was. Consumers that only have the declared
+/// string — notably the doctor's metadata-drift check — need this to avoid
+/// reporting a healthy workspace as pointing at a missing `.obr/PLAN.org`.
+#[must_use]
+pub fn resolve_metadata_jsonl_export(obr_dir: &Path, jsonl_export: &str) -> PathBuf {
+    let candidate = PathBuf::from(jsonl_export);
+    if candidate.is_absolute() {
+        return candidate;
+    }
+    if is_defaulted_jsonl_export(jsonl_export) {
+        return defaulted_jsonl_path(obr_dir);
+    }
+    obr_dir.join(candidate)
 }
 
 /// A configuration layer split into startup-only and runtime (DB) keys.
@@ -5894,25 +6414,28 @@ impl ConfigLayer {
     pub fn from_env() -> Self {
         let mut layer = Self::default();
 
+        // Dynamic config namespace: any `OBR_<KEY>` sets the config key `<key>`.
         for (key, value) in env::vars() {
-            if let Some(stripped) = key.strip_prefix("BD_") {
-                let normalized = stripped.to_lowercase();
-                for variant in env_key_variants(&normalized) {
-                    insert_key_value(&mut layer, &variant, value.clone());
-                }
+            let Some(stripped) = key.strip_prefix("OBR_") else {
+                continue;
+            };
+            let normalized = stripped.to_lowercase();
+            for variant in env_key_variants(&normalized) {
+                insert_key_value(&mut layer, &variant, value.clone());
             }
         }
 
-        if let Ok(value) = env::var("BEADS_FLUSH_DEBOUNCE") {
-            insert_key_value(&mut layer, "flush-debounce", value);
+        for (name, key) in [
+            ("OBR_FLUSH_DEBOUNCE", "flush-debounce"),
+            ("OBR_IDENTITY", "identity"),
+            ("OBR_ACTOR", "actor"),
+            ("OBR_REMOTE_SYNC_INTERVAL", "remote-sync-interval"),
+        ] {
+            if let Some(value) = env::var(name).ok().filter(|value| !value.trim().is_empty()) {
+                insert_key_value(&mut layer, key, value);
+            }
         }
-        if let Ok(value) = env::var("BEADS_IDENTITY") {
-            insert_key_value(&mut layer, "identity", value);
-        }
-        if let Ok(value) = env::var("BEADS_REMOTE_SYNC_INTERVAL") {
-            insert_key_value(&mut layer, "remote-sync-interval", value);
-        }
-        if let Ok(value) = env::var("BEADS_AUTO_START_DAEMON")
+        if let Ok(value) = env::var("OBR_AUTO_START_DAEMON")
             && let Some(enabled) = parse_bool(&value)
         {
             insert_key_value(&mut layer, "no-daemon", (!enabled).to_string());
@@ -5954,12 +6477,12 @@ pub struct CliOverrides {
     pub no_auto_flush: Option<bool>,
     pub no_auto_import: Option<bool>,
     pub lock_timeout: Option<u64>,
-    /// `.beads` directory whose `.write.lock` is already held by the caller.
+    /// Workspace directory whose `.write.lock` is already held by the caller.
     ///
     /// This is process-local execution state, not persisted configuration. It
     /// lets command-local storage opens reuse the startup lock kept alive by
     /// `main` instead of trying to acquire the same advisory lock again.
-    pub(crate) held_write_lock_beads_dir: Option<PathBuf>,
+    pub(crate) held_write_lock_obr_dir: Option<PathBuf>,
     /// Owned, opaque lock capability. Cloning `CliOverrides` clones this `Arc`,
     /// so no copied marker can outlive the actual database-family authority.
     pub(crate) held_write_authority: Option<Arc<crate::sync::DatabaseFamilyWriteLock>>,
@@ -5976,10 +6499,10 @@ impl CliOverrides {
 
     pub fn mark_database_family_lock_held(
         &mut self,
-        beads_dir: &Path,
+        obr_dir: &Path,
         guard: &Arc<crate::sync::DatabaseFamilyWriteLock>,
     ) {
-        self.held_write_lock_beads_dir = Some(beads_dir.to_path_buf());
+        self.held_write_lock_obr_dir = Some(obr_dir.to_path_buf());
         self.held_write_authority = Some(Arc::clone(guard));
     }
 
@@ -5988,26 +6511,26 @@ impl CliOverrides {
     /// The marker holds a live `Arc` clone of the flock guard, so a caller
     /// that releases its own guard but keeps a marked `CliOverrides` alive
     /// would silently keep the workspace lock held. Long-lived commands that
-    /// only needed startup authority for a gate check (e.g. `br serve`) must
+    /// only needed startup authority for a gate check (e.g. `obr serve`) must
     /// clear the marker alongside dropping the guard.
     pub fn clear_database_family_lock_marker(&mut self) {
-        self.held_write_lock_beads_dir = None;
+        self.held_write_lock_obr_dir = None;
         self.held_write_authority = None;
     }
 
     #[must_use]
-    pub fn holds_write_lock_for(&self, beads_dir: &Path) -> bool {
+    pub fn holds_write_lock_for(&self, obr_dir: &Path) -> bool {
         self.held_write_authority.is_some()
-            && self.held_write_lock_beads_dir.as_deref() == Some(beads_dir)
+            && self.held_write_lock_obr_dir.as_deref() == Some(obr_dir)
     }
 
     pub(crate) fn database_family_write_authority_for(
         &self,
-        beads_dir: &Path,
+        obr_dir: &Path,
         database_path: &Path,
     ) -> Option<&Arc<crate::sync::DatabaseFamilyWriteLock>> {
         let authority = self.held_write_authority.as_ref()?;
-        (self.holds_write_lock_for(beads_dir)
+        (self.holds_write_lock_for(obr_dir)
             && crate::sync::database_write_authority_sha256(database_path)
                 .is_ok_and(|planned| planned == authority.authority_path_sha256())
             && crate::sync::canonical_database_authority_path(database_path)
@@ -6016,8 +6539,8 @@ impl CliOverrides {
     }
 
     #[must_use]
-    pub fn holds_database_family_lock_for(&self, beads_dir: &Path, database_path: &Path) -> bool {
-        self.database_family_write_authority_for(beads_dir, database_path)
+    pub fn holds_database_family_lock_for(&self, obr_dir: &Path, database_path: &Path) -> bool {
+        self.database_family_write_authority_for(obr_dir, database_path)
             .is_some()
     }
 
@@ -6071,39 +6594,37 @@ impl CliOverrides {
 /// # Errors
 ///
 /// Returns an error if the file exists but cannot be read or parsed.
-pub fn load_project_config(beads_dir: &Path) -> Result<ConfigLayer> {
-    ConfigLayer::from_yaml(&beads_dir.join("config.yaml"))
+pub fn load_project_config(obr_dir: &Path) -> Result<ConfigLayer> {
+    ConfigLayer::from_yaml(&obr_dir.join("config.yaml"))
 }
 
-/// Load user config (~/.config/beads/config.yaml), falling back to ~/.config/bd/config.yaml.
+/// Load user config from the first existing entry in the XDG search chain.
 ///
 /// # Errors
 ///
 /// Returns an error if the file exists but cannot be read or parsed.
 pub fn load_user_config() -> Result<ConfigLayer> {
-    let Ok(home) = env::var("HOME") else {
-        return Ok(ConfigLayer::default());
-    };
-    let config_root = Path::new(&home).join(".config");
-    let beads_path = config_root.join("beads").join("config.yaml");
-    if beads_path.exists() {
-        return ConfigLayer::from_yaml(&beads_path);
+    match resolve_user_config_path() {
+        Some(path) => ConfigLayer::from_yaml(&path),
+        None => Ok(ConfigLayer::default()),
     }
-    let legacy_path = config_root.join("bd").join("config.yaml");
-    ConfigLayer::from_yaml(&legacy_path)
 }
 
-/// Load legacy user config (~/.beads/config.yaml).
+/// Resolve `~/.config/obr/config.yaml`.
 ///
-/// # Errors
-///
-/// Returns an error if the file exists but cannot be read or parsed.
-pub fn load_legacy_user_config() -> Result<ConfigLayer> {
-    let Ok(home) = env::var("HOME") else {
-        return Ok(ConfigLayer::default());
-    };
-    let path = Path::new(&home).join(".beads").join("config.yaml");
-    ConfigLayer::from_yaml(&path)
+/// Returns `None` only when `HOME` is unset. The pre-rename locations
+/// (`~/.config/beads`, `~/.config/bd`, `~/.beads`) are not consulted.
+#[must_use]
+pub fn resolve_user_config_path() -> Option<PathBuf> {
+    let home = env::var("HOME")
+        .ok()
+        .filter(|home| !home.trim().is_empty())?;
+    Some(
+        Path::new(&home)
+            .join(".config")
+            .join("obr")
+            .join("config.yaml"),
+    )
 }
 
 /// Load startup-only configuration layers (YAML + env, no DB).
@@ -6111,18 +6632,12 @@ pub fn load_legacy_user_config() -> Result<ConfigLayer> {
 /// # Errors
 ///
 /// Returns an error if any config file cannot be read or parsed.
-pub fn load_startup_config(beads_dir: &Path) -> Result<ConfigLayer> {
-    let legacy_user = load_legacy_user_config()?;
+pub fn load_startup_config(obr_dir: &Path) -> Result<ConfigLayer> {
     let user = load_user_config()?;
-    let project = load_project_config(beads_dir)?;
+    let project = load_project_config(obr_dir)?;
     let env_layer = ConfigLayer::from_env();
 
-    Ok(ConfigLayer::merge_layers(&[
-        legacy_user,
-        user,
-        project,
-        env_layer,
-    ]))
+    Ok(ConfigLayer::merge_layers(&[user, project, env_layer]))
 }
 
 /// Default config layer (lowest precedence).
@@ -6131,7 +6646,7 @@ pub fn default_config_layer() -> ConfigLayer {
     let mut layer = ConfigLayer::default();
     layer
         .runtime
-        .insert("issue_prefix".to_string(), "br".to_string());
+        .insert("issue_prefix".to_string(), "obr".to_string());
     layer
 }
 
@@ -6141,29 +6656,29 @@ pub fn default_config_layer() -> ConfigLayer {
 ///
 /// Returns an error if any config file cannot be read or parsed, or DB access fails.
 pub fn load_config(
-    beads_dir: &Path,
+    obr_dir: &Path,
     storage: Option<&SqliteStorage>,
     cli: &CliOverrides,
 ) -> Result<ConfigLayer> {
-    load_config_with_external_jsonl_policy(beads_dir, storage, cli, false)
+    load_config_with_external_jsonl_policy(obr_dir, storage, cli, false)
 }
 
 pub(crate) fn load_config_with_external_jsonl_policy(
-    beads_dir: &Path,
+    obr_dir: &Path,
     storage: Option<&SqliteStorage>,
     cli: &CliOverrides,
     allow_external_jsonl: bool,
 ) -> Result<ConfigLayer> {
-    let startup = load_startup_config_with_paths(beads_dir, cli.db.as_ref())?;
+    let startup = load_startup_config_with_paths(obr_dir, cli.db.as_ref())?;
     let allow_external_jsonl = allow_external_jsonl
         || implicit_external_jsonl_allowed(
-            &startup.paths.beads_dir,
+            &startup.paths.obr_dir,
             &startup.paths.db_path,
             &startup.paths.jsonl_path,
         );
     load_config_from_startup_layers(
         &startup.layers,
-        &startup.paths.beads_dir,
+        &startup.paths.obr_dir,
         &startup.paths.jsonl_path,
         allow_external_jsonl,
         JsonlConfigSource::Uncaptured,
@@ -6173,22 +6688,22 @@ pub(crate) fn load_config_with_external_jsonl_policy(
 }
 
 pub(crate) fn load_config_with_external_jsonl_policy_snapshot(
-    beads_dir: &Path,
+    obr_dir: &Path,
     storage: Option<&SqliteStorage>,
     cli: &CliOverrides,
     allow_external_jsonl: bool,
     source: &JsonlSourceSnapshot,
 ) -> Result<ConfigLayer> {
-    let startup = load_startup_config_with_paths(beads_dir, cli.db.as_ref())?;
+    let startup = load_startup_config_with_paths(obr_dir, cli.db.as_ref())?;
     let allow_external_jsonl = allow_external_jsonl
         || implicit_external_jsonl_allowed(
-            &startup.paths.beads_dir,
+            &startup.paths.obr_dir,
             &startup.paths.db_path,
             source.display_path(),
         );
     load_config_from_startup_layers(
         &startup.layers,
-        &startup.paths.beads_dir,
+        &startup.paths.obr_dir,
         source.display_path(),
         allow_external_jsonl,
         JsonlConfigSource::Present(source),
@@ -6199,7 +6714,7 @@ pub(crate) fn load_config_with_external_jsonl_policy_snapshot(
 
 fn load_config_from_startup_layers(
     startup_layers: &[ConfigLayer],
-    beads_dir: &Path,
+    obr_dir: &Path,
     jsonl_path: &Path,
     allow_external_jsonl: bool,
     jsonl_source: JsonlConfigSource<'_>,
@@ -6216,7 +6731,7 @@ fn load_config_from_startup_layers(
     let mut jsonl_inferred = ConfigLayer::default();
     let inferred_prefix = match jsonl_source {
         JsonlConfigSource::Uncaptured => {
-            first_prefix_from_resolved_jsonl(beads_dir, jsonl_path, allow_external_jsonl)?
+            first_prefix_from_resolved_jsonl(obr_dir, jsonl_path, allow_external_jsonl)?
         }
         JsonlConfigSource::Missing => None,
         JsonlConfigSource::Present(source) => first_prefix_from_jsonl_snapshot(source)?,
@@ -6250,8 +6765,8 @@ pub struct StartupConfig {
 }
 
 const STARTUP_CACHE_VERSION: u32 = 2;
-const STARTUP_CACHE_ENABLE_ENV: &str = "BR_STARTUP_CACHE";
-const STARTUP_CACHE_DIR_ENV: &str = "BR_STARTUP_CACHE_DIR";
+const STARTUP_CACHE_ENABLE_ENV: &str = "OBR_STARTUP_CACHE";
+const STARTUP_CACHE_DIR_ENV: &str = "OBR_STARTUP_CACHE_DIR";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StartupCacheRecord {
@@ -6281,9 +6796,9 @@ struct StartupCacheWitness {
 }
 
 impl StartupCacheWitness {
-    fn capture(beads_dir: &Path, db_override: Option<&PathBuf>) -> Self {
+    fn capture(obr_dir: &Path, db_override: Option<&PathBuf>) -> Self {
         let env = startup_cache_env_witness();
-        let mut files = startup_cache_watch_paths(beads_dir)
+        let mut files = startup_cache_watch_paths(obr_dir)
             .into_iter()
             .map(StartupFileWitness::capture)
             .collect::<Vec<_>>();
@@ -6402,42 +6917,40 @@ fn startup_unix_file_witness(metadata: &fs::Metadata) -> StartupUnixFileWitness 
 /// Returns an error if any startup config layer cannot be read or parsed, or if
 /// path resolution fails.
 pub fn load_startup_config_with_paths(
-    beads_dir: &Path,
+    obr_dir: &Path,
     db_override: Option<&PathBuf>,
 ) -> Result<StartupConfig> {
     if startup_cache_enabled() {
         let cache_dir = startup_cache_dir_from_env();
-        return load_startup_config_with_paths_cached_at(beads_dir, db_override, &cache_dir);
+        return load_startup_config_with_paths_cached_at(obr_dir, db_override, &cache_dir);
     }
 
-    load_startup_config_with_paths_uncached(beads_dir, db_override)
+    load_startup_config_with_paths_uncached(obr_dir, db_override)
 }
 
 pub(crate) fn load_startup_config_with_paths_uncached(
-    beads_dir: &Path,
+    obr_dir: &Path,
     db_override: Option<&PathBuf>,
 ) -> Result<StartupConfig> {
-    let legacy_user = load_legacy_user_config()?;
     let user = load_user_config()?;
-    let project = load_project_config(beads_dir)?;
+    let project = load_project_config(obr_dir)?;
     let env_layer = ConfigLayer::from_env();
 
     let resolved_db_override = db_override.cloned().or_else(|| {
         [
-            resolve_db_override_from_layer(beads_dir, &env_layer),
-            resolve_db_override_from_layer(beads_dir, &project),
-            resolve_db_override_from_layer(beads_dir, &user),
-            resolve_db_override_from_layer(beads_dir, &legacy_user),
+            resolve_db_override_from_layer(obr_dir, &env_layer),
+            resolve_db_override_from_layer(obr_dir, &project),
+            resolve_db_override_from_layer(obr_dir, &user),
         ]
         .into_iter()
         .flatten()
         .next()
     });
 
-    let layers = vec![legacy_user, user, project, env_layer];
+    let layers = vec![user, project, env_layer];
     let merged_startup = ConfigLayer::merge_layers(&layers);
 
-    let paths = ConfigPaths::resolve(beads_dir, resolved_db_override.as_ref())?;
+    let paths = ConfigPaths::resolve(obr_dir, resolved_db_override.as_ref())?;
 
     Ok(StartupConfig {
         paths,
@@ -6447,22 +6960,21 @@ pub(crate) fn load_startup_config_with_paths_uncached(
 }
 
 fn load_startup_config_with_paths_cached_at(
-    beads_dir: &Path,
+    obr_dir: &Path,
     db_override: Option<&PathBuf>,
     cache_dir: &Path,
 ) -> Result<StartupConfig> {
-    let before = StartupCacheWitness::capture(beads_dir, db_override);
-    let key = startup_cache_key(beads_dir, &before);
+    let before = StartupCacheWitness::capture(obr_dir, db_override);
+    let key = startup_cache_key(obr_dir, &before);
     let cache_path = startup_cache_path(cache_dir, &key);
 
-    if let Some(startup) =
-        try_read_startup_cache(&cache_path, &key, &before, beads_dir, db_override)
+    if let Some(startup) = try_read_startup_cache(&cache_path, &key, &before, obr_dir, db_override)
     {
         return Ok(startup);
     }
 
-    let direct = load_startup_config_with_paths_uncached(beads_dir, db_override)?;
-    let after = StartupCacheWitness::capture(beads_dir, db_override);
+    let direct = load_startup_config_with_paths_uncached(obr_dir, db_override)?;
+    let after = StartupCacheWitness::capture(obr_dir, db_override);
     if before == after {
         let record = StartupCacheRecord {
             version: STARTUP_CACHE_VERSION,
@@ -6481,7 +6993,7 @@ fn try_read_startup_cache(
     cache_path: &Path,
     key: &str,
     before: &StartupCacheWitness,
-    beads_dir: &Path,
+    obr_dir: &Path,
     db_override: Option<&PathBuf>,
 ) -> Option<StartupConfig> {
     let contents = fs::read_to_string(cache_path).ok()?;
@@ -6490,7 +7002,7 @@ fn try_read_startup_cache(
         return None;
     }
 
-    let after = StartupCacheWitness::capture(beads_dir, db_override);
+    let after = StartupCacheWitness::capture(obr_dir, db_override);
     if after == *before {
         Some(record.into_startup())
     } else {
@@ -6529,6 +7041,10 @@ fn startup_cache_enabled() -> bool {
         .unwrap_or(false)
 }
 
+/// Locate the startup cache.
+///
+/// Pure cache: the pre-rename `beads` locations are simply abandoned, not read.
+/// A stale cache under the old path costs one cold start and nothing else.
 fn startup_cache_dir_from_env() -> PathBuf {
     if let Some(path) = env::var_os(STARTUP_CACHE_DIR_ENV)
         .filter(|value| !value.is_empty())
@@ -6540,21 +7056,21 @@ fn startup_cache_dir_from_env() -> PathBuf {
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
     {
-        return path.join("beads").join("startup");
+        return path.join("obr").join("startup");
     }
     if let Some(home) = env::var_os("HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
     {
-        return home.join(".cache").join("beads").join("startup");
+        return home.join(".cache").join("obr").join("startup");
     }
-    env::temp_dir().join("beads-startup-cache")
+    env::temp_dir().join("obr-startup-cache")
 }
 
-fn startup_cache_key(beads_dir: &Path, witness: &StartupCacheWitness) -> String {
+fn startup_cache_key(obr_dir: &Path, witness: &StartupCacheWitness) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"br-startup-cache-v2");
-    hasher.update(beads_dir.to_string_lossy().as_bytes());
+    hasher.update(obr_dir.to_string_lossy().as_bytes());
     hasher.update(b"\0");
     if let Some(db_override) = &witness.db_override {
         hasher.update(db_override.to_string_lossy().as_bytes());
@@ -6575,114 +7091,21 @@ fn startup_cache_path(cache_dir: &Path, key: &str) -> PathBuf {
     cache_dir.join(format!("startup-{key}.json"))
 }
 
-/// Doctor-facing view of one poisoned startup-cache file. Pass-4 cycle 2:
-/// the cache types themselves stay private to this module; this struct is
-/// the narrow surface the doctor walks.
-#[derive(Debug, Clone)]
-pub struct PoisonedStartupCacheFile {
-    pub path: PathBuf,
-    pub kind: PoisonedStartupCacheKind,
-}
-
-#[derive(Debug, Clone)]
-pub enum PoisonedStartupCacheKind {
-    /// The file exists but cannot be opened or read (corrupt FS, partial
-    /// write, perms drift).
-    Unreadable { error: String },
-    /// The file is readable but doesn't parse as a `StartupCacheRecord` — the
-    /// most common cause of silent cache misses with an on-disk artifact left
-    /// behind. We carry a short raw excerpt so the operator (or agent) has
-    /// something to triage.
-    ParseError { error: String, raw_excerpt: String },
-}
-
-/// Inspect the current workspace's startup-cache file and return it if it is
-/// poisoned (unreadable or unparseable). Used by `br doctor` (detector) and
-/// the `--repair` quarantine fixer.
-///
-/// This intentionally checks only the exact cache key the production startup
-/// path would read for `beads_dir` + `db_override`. Other `startup-*.json`
-/// files in the cache directory may belong to unrelated workspaces and must
-/// not make this workspace's doctor report noisy.
-#[must_use]
-pub fn doctor_inspect_startup_cache(
-    beads_dir: &Path,
-    db_override: Option<&PathBuf>,
-) -> Vec<PoisonedStartupCacheFile> {
-    doctor_inspect_startup_cache_at(&startup_cache_dir_from_env(), beads_dir, db_override)
-}
-
-#[must_use]
-pub(crate) fn doctor_inspect_startup_cache_at(
-    cache_dir: &Path,
-    beads_dir: &Path,
-    db_override: Option<&PathBuf>,
-) -> Vec<PoisonedStartupCacheFile> {
-    let path = doctor_startup_cache_path_at(cache_dir, beads_dir, db_override);
-    let contents = match fs::read_to_string(&path) {
-        Ok(contents) => contents,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
-        Err(err) => {
-            return vec![PoisonedStartupCacheFile {
-                path,
-                kind: PoisonedStartupCacheKind::Unreadable {
-                    error: err.to_string(),
-                },
-            }];
-        }
-    };
-
-    if let Err(err) = serde_json::from_str::<StartupCacheRecord>(&contents) {
-        let raw_excerpt: String = contents.chars().take(256).collect();
-        return vec![PoisonedStartupCacheFile {
-            path,
-            kind: PoisonedStartupCacheKind::ParseError {
-                error: err.to_string(),
-                raw_excerpt,
-            },
-        }];
-    }
-
-    Vec::new()
-}
-
-/// Resolved startup-cache directory, exported so the doctor's repair flow
-/// can extend its `write_scopes` to include the cache dir without
-/// reaching for private cache internals.
-#[must_use]
-pub fn doctor_startup_cache_dir() -> PathBuf {
-    startup_cache_dir_from_env()
-}
-
-/// Resolved startup-cache file for the current workspace key.
-#[must_use]
-pub fn doctor_startup_cache_path(beads_dir: &Path, db_override: Option<&PathBuf>) -> PathBuf {
-    doctor_startup_cache_path_at(&startup_cache_dir_from_env(), beads_dir, db_override)
-}
-
-#[must_use]
-pub(crate) fn doctor_startup_cache_path_at(
-    cache_dir: &Path,
-    beads_dir: &Path,
-    db_override: Option<&PathBuf>,
-) -> PathBuf {
-    let witness = StartupCacheWitness::capture(beads_dir, db_override);
-    let key = startup_cache_key(beads_dir, &witness);
-    startup_cache_path(cache_dir, &key)
-}
-
 fn startup_cache_env_witness() -> Vec<(String, Option<String>)> {
+    // Only the names that actually steer resolution are witnessed; the
+    // pre-rename spellings are no longer read, so a change to one cannot
+    // invalidate anything.
     let mut keys = vec![
-        "BEADS_AUTO_START_DAEMON".to_string(),
-        "BEADS_CACHE_DIR".to_string(),
-        "BEADS_DIR".to_string(),
-        "BEADS_FLUSH_DEBOUNCE".to_string(),
-        "BEADS_IDENTITY".to_string(),
-        "BEADS_JSONL".to_string(),
-        "BEADS_REMOTE_SYNC_INTERVAL".to_string(),
+        "OBR_AUTO_START_DAEMON".to_string(),
+        "OBR_CACHE_DIR".to_string(),
+        "OBR_DIR".to_string(),
+        "OBR_FLUSH_DEBOUNCE".to_string(),
+        "OBR_IDENTITY".to_string(),
+        "OBR_JSONL".to_string(),
+        "OBR_REMOTE_SYNC_INTERVAL".to_string(),
         "HOME".to_string(),
     ];
-    keys.extend(env::vars().filter_map(|(key, _)| key.starts_with("BD_").then_some(key)));
+    keys.extend(env::vars().filter_map(|(key, _)| key.starts_with("OBR_").then_some(key)));
     keys.sort();
     keys.dedup();
 
@@ -6694,30 +7117,32 @@ fn startup_cache_env_witness() -> Vec<(String, Option<String>)> {
         .collect()
 }
 
-fn startup_cache_watch_paths(beads_dir: &Path) -> Vec<PathBuf> {
+fn startup_cache_watch_paths(obr_dir: &Path) -> Vec<PathBuf> {
     let mut paths = vec![
-        beads_dir.join("metadata.json"),
-        beads_dir.join("config.yaml"),
-        beads_dir.join("routes.jsonl"),
-        beads_dir.join("redirect"),
+        obr_dir.join("metadata.json"),
+        obr_dir.join("config.yaml"),
+        obr_dir.join("routes.jsonl"),
+        obr_dir.join("redirect"),
     ];
 
     if let Ok(home) = env::var("HOME")
         && !home.trim().is_empty()
     {
         let home_path = PathBuf::from(home);
-        let config_root = home_path.join(".config");
-        paths.push(config_root.join("beads").join("config.yaml"));
-        paths.push(config_root.join("bd").join("config.yaml"));
-        paths.push(home_path.join(".beads").join("config.yaml"));
+        paths.push(home_path.join(".config").join("obr").join("config.yaml"));
     }
 
-    if let Some(project_root) = beads_dir.parent() {
+    if let Some(project_root) = obr_dir.parent() {
         for ancestor in project_root.ancestors() {
             paths.push(ancestor.join("mayor").join("town.json"));
         }
         if let Some(town_root) = routing::find_town_root(project_root) {
-            paths.push(town_root.join(".beads").join("routes.jsonl"));
+            paths.push(town_root.join(WORKSPACE_DIR_NAME).join("routes.jsonl"));
+            paths.push(
+                town_root
+                    .join(LEGACY_WORKSPACE_DIR_NAMES[0])
+                    .join("routes.jsonl"),
+            );
         }
     }
 
@@ -6745,7 +7170,7 @@ pub fn id_config_from_layer(layer: &ConfigLayer) -> IdConfig {
     let prefix = get_value(layer, &["issue_prefix", "issue-prefix", "prefix"])
         .cloned()
         .filter(|p| !p.trim().is_empty())
-        .map_or_else(|| "br".to_string(), |prefix| normalize_prefix(&prefix));
+        .map_or_else(|| "obr".to_string(), |prefix| normalize_prefix(&prefix));
 
     let min_hash_length = parse_usize(layer, &["min_hash_length", "min-hash-length"]).unwrap_or(3);
     let max_hash_length = parse_usize(layer, &["max_hash_length", "max-hash-length"]).unwrap_or(8);
@@ -6809,13 +7234,13 @@ pub fn should_use_color(layer: &ConfigLayer) -> bool {
 /// Resolve external project mappings from config.
 ///
 /// Supports `external_projects.<name>` or `external-projects.<name>` keys.
-/// Relative paths are resolved against the project root (parent of `.beads`).
+/// Relative paths are resolved against the project root (parent of `.obr`).
 #[must_use]
 pub fn external_projects_from_layer(
     layer: &ConfigLayer,
-    beads_dir: &Path,
+    obr_dir: &Path,
 ) -> HashMap<String, PathBuf> {
-    let base_dir = beads_dir.parent().unwrap_or(beads_dir);
+    let base_dir = obr_dir.parent().unwrap_or(obr_dir);
     let mut map = HashMap::new();
     // Startup keys are lower precedence than runtime keys in merged config.
     // Insert startup first so runtime values win on duplicate project names.
@@ -6848,24 +7273,21 @@ pub fn external_projects_from_layer(
 
 /// Resolve external project DB paths from config.
 ///
-/// Projects are expected to be either a `.beads` directory or a project root
-/// containing `.beads/`.
+/// Projects are expected to be either a workspace directory or a project root
+/// containing one.
 #[must_use]
-pub fn external_project_db_paths(
-    layer: &ConfigLayer,
-    beads_dir: &Path,
-) -> HashMap<String, PathBuf> {
+pub fn external_project_db_paths(layer: &ConfigLayer, obr_dir: &Path) -> HashMap<String, PathBuf> {
     let mut db_paths = HashMap::new();
 
-    for (name, beads_path) in external_project_beads_dirs(layer, beads_dir) {
-        match ConfigPaths::resolve(&beads_path, None) {
+    for (name, obr_path) in external_project_obr_dirs(layer, obr_dir) {
+        match ConfigPaths::resolve(&obr_path, None) {
             Ok(paths) => {
                 db_paths.insert(name, paths.db_path);
             }
             Err(err) => {
                 warn!(
                     project = %name,
-                    path = %beads_path.display(),
+                    path = %obr_path.display(),
                     error = %err,
                     "Failed to resolve external project DB path"
                 );
@@ -6876,43 +7298,38 @@ pub fn external_project_db_paths(
     db_paths
 }
 
-/// Resolve configured external project `.beads` directories.
+/// Resolve configured external project workspace directories.
 ///
-/// Projects are expected to be either a `.beads` directory or a project root
-/// containing `.beads/`.
+/// Projects are expected to be either a workspace directory or a project root
+/// containing one.
 #[must_use]
-pub fn external_project_beads_dirs(
-    layer: &ConfigLayer,
-    beads_dir: &Path,
-) -> HashMap<String, PathBuf> {
-    let projects = external_projects_from_layer(layer, beads_dir);
-    let mut beads_dirs = HashMap::new();
+pub fn external_project_obr_dirs(layer: &ConfigLayer, obr_dir: &Path) -> HashMap<String, PathBuf> {
+    let projects = external_projects_from_layer(layer, obr_dir);
+    let mut obr_dirs = HashMap::new();
 
     for (name, path) in projects {
-        let beads_path = external_project_beads_dir(&path);
+        let obr_path = external_project_obr_dir(&path);
 
-        if !beads_path.is_dir() {
+        if !obr_path.is_dir() {
             warn!(
                 project = %name,
-                path = %beads_path.display(),
-                "External project .beads directory not found"
+                path = %obr_path.display(),
+                "External project workspace directory not found"
             );
             continue;
         }
 
-        beads_dirs.insert(name, beads_path);
+        obr_dirs.insert(name, obr_path);
     }
 
-    beads_dirs
+    obr_dirs
 }
 
-fn external_project_beads_dir(path: &Path) -> PathBuf {
-    if path.file_name().is_some_and(is_beads_dir_name) {
+fn external_project_obr_dir(path: &Path) -> PathBuf {
+    if path.file_name().is_some_and(is_obr_dir_name) {
         path.to_path_buf()
-    } else if path.join("_beads").is_dir() {
-        path.join("_beads")
     } else {
-        path.join(".beads")
+        workspace_dir_in(path)
     }
 }
 
@@ -7069,12 +7486,12 @@ fn db_override_from_layer(layer: &ConfigLayer) -> Option<PathBuf> {
     })
 }
 
-fn resolve_db_override_from_layer(beads_dir: &Path, layer: &ConfigLayer) -> Option<PathBuf> {
+fn resolve_db_override_from_layer(obr_dir: &Path, layer: &ConfigLayer) -> Option<PathBuf> {
     db_override_from_layer(layer).map(|path| {
         if path.is_absolute() {
             path
         } else {
-            crate::util::resolve_cache_dir(beads_dir).join(path)
+            crate::util::resolve_cache_dir(obr_dir).join(path)
         }
     })
 }
@@ -7142,6 +7559,7 @@ fn yaml_scalar_to_string(value: &serde_yml::Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::discover_obr_dir as discover_beads_dir;
     use super::*;
     use crate::franken_sync::Connection;
     use crate::model::{Comment, Dependency, DependencyType, Issue, IssueType, Priority, Status};
@@ -7299,27 +7717,27 @@ mod tests {
     #[test]
     fn metadata_defaults_when_missing() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
-        let metadata = Metadata::load(&beads_dir).expect("metadata");
+        let metadata = Metadata::load(&obr_dir).expect("metadata");
         assert_eq!(metadata.database, DEFAULT_DB_FILENAME);
-        assert_eq!(metadata.jsonl_export, DEFAULT_JSONL_FILENAME);
+        assert_eq!(metadata.jsonl_export, SURFACE_FILENAME);
     }
 
     #[test]
     fn metadata_override_paths() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
-        let metadata_path = beads_dir.join("metadata.json");
+        let metadata_path = obr_dir.join("metadata.json");
         let metadata = r#"{"database": "custom.db", "jsonl_export": "custom.jsonl"}"#;
         fs::write(metadata_path, metadata).expect("write metadata");
 
-        let paths = ConfigPaths::resolve(&beads_dir, None).expect("paths");
-        assert_eq!(paths.db_path, beads_dir.join("custom.db"));
-        assert_eq!(paths.jsonl_path, beads_dir.join("custom.jsonl"));
+        let paths = ConfigPaths::resolve(&obr_dir, None).expect("paths");
+        assert_eq!(paths.db_path, obr_dir.join("custom.db"));
+        assert_eq!(paths.jsonl_path, obr_dir.join("custom.jsonl"));
     }
 
     #[test]
@@ -7397,7 +7815,7 @@ labels:
         let mut layer = ConfigLayer::default();
         layer
             .runtime
-            .insert("issue_prefix".to_string(), "br".to_string());
+            .insert("issue_prefix".to_string(), "obr".to_string());
         layer
             .runtime
             .insert("min_hash_length".to_string(), "4".to_string());
@@ -7409,7 +7827,7 @@ labels:
             .insert("max_collision_prob".to_string(), "0.5".to_string());
 
         let config = id_config_from_layer(&layer);
-        assert_eq!(config.prefix, "br");
+        assert_eq!(config.prefix, "obr");
         assert_eq!(config.min_hash_length, 4);
         assert_eq!(config.max_hash_length, 10);
         assert!((config.max_collision_prob - 0.5).abs() < f64::EPSILON);
@@ -7472,18 +7890,17 @@ labels:
     }
 
     #[test]
-    fn resolve_db_override_from_layer_anchors_relative_paths_to_beads_cache_dir() {
-        let beads_dir = PathBuf::from("/tmp/project/.beads");
+    fn resolve_db_override_from_layer_anchors_relative_paths_to_obr_cache_dir() {
+        let obr_dir = PathBuf::from("/tmp/project/.beads");
         let mut layer = ConfigLayer::default();
         layer
             .startup
             .insert("db".to_string(), "custom.db".to_string());
 
-        let override_path =
-            resolve_db_override_from_layer(&beads_dir, &layer).expect("db override");
+        let override_path = resolve_db_override_from_layer(&obr_dir, &layer).expect("db override");
         assert_eq!(
             override_path,
-            crate::util::resolve_cache_dir(&beads_dir).join("custom.db")
+            crate::util::resolve_cache_dir(&obr_dir).join("custom.db")
         );
     }
 
@@ -7505,7 +7922,7 @@ labels:
     fn precedence_default_is_lowest() {
         // Verify that default layer values are overridden by any other layer
         let defaults = default_config_layer();
-        assert_eq!(defaults.runtime.get("issue_prefix").unwrap(), "br");
+        assert_eq!(defaults.runtime.get("issue_prefix").unwrap(), "obr");
 
         let mut db = ConfigLayer::default();
         db.runtime
@@ -7650,15 +8067,15 @@ labels:
     #[test]
     fn metadata_handles_empty_strings() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         // Write metadata with empty strings
-        let metadata_path = beads_dir.join("metadata.json");
+        let metadata_path = obr_dir.join("metadata.json");
         let metadata = r#"{"database": "", "jsonl_export": "  "}"#;
         fs::write(metadata_path, metadata).expect("write metadata");
 
-        let loaded = Metadata::load(&beads_dir).expect("metadata");
+        let loaded = Metadata::load(&obr_dir).expect("metadata");
         // Empty strings should fall back to defaults
         assert_eq!(loaded.database, DEFAULT_DB_FILENAME);
         assert_eq!(loaded.jsonl_export, DEFAULT_JSONL_FILENAME);
@@ -7667,16 +8084,16 @@ labels:
     #[test]
     fn metadata_handles_extra_fields() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         // Write metadata with extra fields (should be ignored)
-        let metadata_path = beads_dir.join("metadata.json");
+        let metadata_path = obr_dir.join("metadata.json");
         let metadata =
             r#"{"database": "test.db", "jsonl_export": "test.jsonl", "unknown_field": true}"#;
         fs::write(metadata_path, metadata).expect("write metadata");
 
-        let loaded = Metadata::load(&beads_dir).expect("metadata");
+        let loaded = Metadata::load(&obr_dir).expect("metadata");
         assert_eq!(loaded.database, "test.db");
         assert_eq!(loaded.jsonl_export, "test.jsonl");
     }
@@ -7684,28 +8101,28 @@ labels:
     #[test]
     fn metadata_load_tolerates_legacy_bd_migration_files() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
-        let metadata_path = beads_dir.join("metadata.json");
+        let metadata_path = obr_dir.join("metadata.json");
         let metadata = "{\n  \"database\": \"beads.db\",\n  \"created_at\": \"2025-01-01T00:00:00Z\",\n  \"version\": 1\n}";
         fs::write(metadata_path, metadata).expect("write metadata");
 
-        let loaded = Metadata::load(&beads_dir).expect("metadata");
+        let loaded = Metadata::load(&obr_dir).expect("metadata");
         assert_eq!(loaded.database, "beads.db");
-        assert_eq!(loaded.jsonl_export, DEFAULT_JSONL_FILENAME);
+        assert_eq!(loaded.jsonl_export, SURFACE_FILENAME);
     }
 
     #[test]
     fn metadata_load_tolerates_missing_database_field() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
-        let metadata_path = beads_dir.join("metadata.json");
+        let metadata_path = obr_dir.join("metadata.json");
         fs::write(metadata_path, r#"{"jsonl_export": "issues.jsonl"}"#).expect("write metadata");
 
-        let loaded = Metadata::load(&beads_dir).expect("metadata");
+        let loaded = Metadata::load(&obr_dir).expect("metadata");
         assert_eq!(loaded.database, DEFAULT_DB_FILENAME);
         assert_eq!(loaded.jsonl_export, "issues.jsonl");
     }
@@ -7713,39 +8130,39 @@ labels:
     #[test]
     fn metadata_with_backend_and_retention() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
-        let metadata_path = beads_dir.join("metadata.json");
+        let metadata_path = obr_dir.join("metadata.json");
         let metadata = r#"{"database": "beads.db", "jsonl_export": "issues.jsonl", "backend": "sqlite", "deletions_retention_days": 30}"#;
         fs::write(metadata_path, metadata).expect("write metadata");
 
-        let loaded = Metadata::load(&beads_dir).expect("metadata");
+        let loaded = Metadata::load(&obr_dir).expect("metadata");
         assert_eq!(loaded.backend, Some("sqlite".to_string()));
         assert_eq!(loaded.deletions_retention_days, Some(30));
     }
 
     #[test]
-    fn discover_beads_dir_returns_error_when_not_found() {
+    fn discover_obr_dir_returns_error_when_not_found() {
         // Discovery walks every ancestor with no boundary, so this must start
-        // outside any beads workspace or it finds the enclosing repo's.
+        // outside any obr workspace or it finds the enclosing repo's.
         let temp = crate::util::test_helpers::isolated_temp_dir();
         // No .beads directory created
 
         let result =
-            discover_beads_dir_with_env_and_ceiling(Some(temp.path()), None, Some(temp.path()));
+            discover_obr_dir_with_env_and_ceiling(Some(temp.path()), None, Some(temp.path()));
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), BeadsError::NotInitialized));
     }
 
     #[test]
-    fn discover_beads_dir_finds_at_root() {
+    fn discover_obr_dir_finds_at_root() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
-        let discovered = discover_beads_dir(Some(temp.path())).expect("discover");
-        assert_eq!(discovered, beads_dir);
+        let discovered = discover_obr_dir(Some(temp.path())).expect("discover");
+        assert_eq!(discovered, obr_dir);
     }
 
     /// Lay out `<root>/primary` (a fake primary checkout with a `.git`
@@ -7755,7 +8172,7 @@ labels:
     /// writes it). Returns `(primary_beads, worktree_root)`.
     fn linked_worktree_fixture(root: &Path) -> (PathBuf, PathBuf) {
         let primary = root.join("primary");
-        let primary_beads = primary.join(".beads");
+        let primary_beads = primary.join(WORKSPACE_DIR_NAME);
         fs::create_dir_all(&primary_beads).expect("primary beads");
         fs::write(primary_beads.join("beads.db"), b"db").expect("primary db");
         let wt_gitdir = primary.join(".git").join("worktrees").join("wt");
@@ -7862,10 +8279,10 @@ labels:
     }
 
     #[test]
-    fn discover_beads_dir_deeply_nested() {
+    fn discover_obr_dir_deeply_nested() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         // Create deeply nested directory
         let nested = temp
@@ -7877,103 +8294,103 @@ labels:
             .join("e");
         fs::create_dir_all(&nested).expect("create nested");
 
-        let discovered = discover_beads_dir(Some(&nested)).expect("discover");
-        assert_eq!(discovered, beads_dir);
+        let discovered = discover_obr_dir(Some(&nested)).expect("discover");
+        assert_eq!(discovered, obr_dir);
     }
 
     #[test]
-    fn discover_optional_beads_dir_with_cli_uses_explicit_db_override() {
+    fn discover_optional_obr_dir_with_cli_uses_explicit_db_override() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join("external").join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join("external").join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         let cli = CliOverrides {
-            db: Some(beads_dir.join("beads.db")),
+            db: Some(obr_dir.join("beads.db")),
             ..CliOverrides::default()
         };
 
         let discovered =
-            discover_optional_beads_dir_with_cli(&cli).expect("optional discovery with db");
-        assert_eq!(discovered, Some(beads_dir));
+            discover_optional_obr_dir_with_cli(&cli).expect("optional discovery with db");
+        assert_eq!(discovered, Some(obr_dir));
     }
 
     #[test]
-    fn discover_beads_dir_with_cli_from_uses_env_db_override() {
+    fn discover_obr_dir_with_cli_from_uses_env_db_override() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join("external").join(".beads");
-        let db_path = beads_dir.join("beads.db");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join("external").join(".beads");
+        let db_path = obr_dir.join("beads.db");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         let discovered =
-            discover_beads_dir_with_cli_from(None, &CliOverrides::default(), None, Some(&db_path))
+            discover_obr_dir_with_cli_from(None, &CliOverrides::default(), None, Some(&db_path))
                 .expect("discovery with env db override");
 
-        assert_eq!(discovered, beads_dir);
+        assert_eq!(discovered, obr_dir);
     }
 
     #[test]
-    fn discover_optional_beads_dir_with_cli_follows_redirect_for_explicit_db_override() {
+    fn discover_optional_obr_dir_with_cli_follows_redirect_for_explicit_db_override() {
         let temp = TempDir::new().expect("tempdir");
-        let source_beads = temp.path().join("source").join(".beads");
-        let target_beads = temp.path().join("target").join(".beads");
-        fs::create_dir_all(&source_beads).expect("create source beads dir");
-        fs::create_dir_all(&target_beads).expect("create target beads dir");
-        fs::write(source_beads.join("redirect"), "../../target/.beads").expect("write redirect");
+        let source_obr = temp.path().join("source").join(".beads");
+        let target_obr = temp.path().join("target").join(".beads");
+        fs::create_dir_all(&source_obr).expect("create source obr dir");
+        fs::create_dir_all(&target_obr).expect("create target obr dir");
+        fs::write(source_obr.join("redirect"), "../../target/.beads").expect("write redirect");
 
         let cli = CliOverrides {
-            db: Some(source_beads.join("beads.db")),
+            db: Some(source_obr.join("beads.db")),
             ..CliOverrides::default()
         };
 
         let discovered =
-            discover_optional_beads_dir_with_cli(&cli).expect("optional discovery with redirect");
-        assert_eq!(discovered, Some(target_beads));
+            discover_optional_obr_dir_with_cli(&cli).expect("optional discovery with redirect");
+        assert_eq!(discovered, Some(target_obr));
     }
 
     #[test]
-    fn discover_beads_dir_with_env_override_rejects_invalid_path_even_when_workspace_exists() {
+    fn discover_obr_dir_with_env_override_rejects_invalid_path_even_when_workspace_exists() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let invalid = temp.path().join("missing").join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
-        let err = discover_beads_dir_with_env(Some(temp.path()), Some(&invalid))
+        let err = discover_obr_dir_with_env(Some(temp.path()), Some(&invalid))
             .expect_err("invalid override should fail");
         assert!(matches!(err, BeadsError::Config(_)));
         assert!(
             err.to_string()
-                .contains("not found or not a .beads directory"),
+                .contains("not found or not an obr workspace directory"),
             "unexpected error: {err}"
         );
     }
 
     #[test]
-    fn discover_beads_dir_with_cli_from_falls_back_to_workspace_for_external_db_override() {
+    fn discover_obr_dir_with_cli_from_falls_back_to_workspace_for_external_db_override() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let start = temp.path().join("nested").join("dir");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
         fs::create_dir_all(&start).expect("create nested dir");
 
-        let discovered = discover_beads_dir_with_cli_from(
+        let discovered = discover_obr_dir_with_cli_from(
             Some(&start),
             &CliOverrides::default(),
             None,
             Some(Path::new("/tmp/not-a-beads-db")),
         )
         .expect("external env db should still reuse discovered workspace");
-        assert_eq!(discovered, beads_dir);
+        assert_eq!(discovered, obr_dir);
     }
 
     #[test]
-    fn discover_beads_dir_with_cli_from_falls_back_to_workspace_for_external_cli_db_override() {
+    fn discover_obr_dir_with_cli_from_falls_back_to_workspace_for_external_cli_db_override() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let start = temp.path().join("nested").join("dir");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
         fs::create_dir_all(&start).expect("create nested dir");
 
-        let discovered = discover_beads_dir_with_cli_from(
+        let discovered = discover_obr_dir_with_cli_from(
             Some(&start),
             &CliOverrides {
                 db: Some(temp.path().join("cache").join("custom.db")),
@@ -7984,18 +8401,18 @@ labels:
         )
         .expect("external cli db override should reuse discovered workspace");
 
-        assert_eq!(discovered, beads_dir);
+        assert_eq!(discovered, obr_dir);
     }
 
     #[test]
-    fn discover_beads_dir_with_cli_from_falls_back_to_workspace_for_relative_cli_db_override() {
+    fn discover_obr_dir_with_cli_from_falls_back_to_workspace_for_relative_cli_db_override() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let start = temp.path().join("nested").join("dir");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
         fs::create_dir_all(&start).expect("create nested dir");
 
-        let discovered = discover_beads_dir_with_cli_from(
+        let discovered = discover_obr_dir_with_cli_from(
             Some(&start),
             &CliOverrides {
                 db: Some(PathBuf::from("custom.db")),
@@ -8006,17 +8423,17 @@ labels:
         )
         .expect("relative cli db override should reuse discovered workspace");
 
-        assert_eq!(discovered, beads_dir);
+        assert_eq!(discovered, obr_dir);
     }
 
     #[test]
-    fn discover_beads_dir_with_cli_from_errors_for_external_cli_db_override_without_workspace() {
+    fn discover_obr_dir_with_cli_from_errors_for_external_cli_db_override_without_workspace() {
         let temp = crate::util::test_helpers::isolated_temp_dir();
         let start = temp.path().join("nested").join("dir");
         fs::create_dir_all(&start).expect("create nested dir");
 
         let db_override = temp.path().join("cache").join("custom.db");
-        let err = discover_beads_dir_with_cli_from_and_ceiling(
+        let err = discover_obr_dir_with_cli_from_and_ceiling(
             Some(&start),
             &CliOverrides {
                 db: Some(db_override.clone()),
@@ -8032,18 +8449,18 @@ labels:
         assert!(
             err.to_string()
                 .contains(db_override.to_string_lossy().as_ref())
-                && (err.to_string().contains("BEADS_DIR") || err.to_string().contains("workspace")),
+                && (err.to_string().contains("OBR_DIR") || err.to_string().contains("workspace")),
             "unexpected error: {err}"
         );
     }
 
     #[test]
-    fn discover_beads_dir_with_cli_from_errors_for_external_db_override_without_workspace() {
+    fn discover_obr_dir_with_cli_from_errors_for_external_db_override_without_workspace() {
         let temp = crate::util::test_helpers::isolated_temp_dir();
         let start = temp.path().join("nested").join("dir");
         fs::create_dir_all(&start).expect("create nested dir");
 
-        let err = discover_beads_dir_with_cli_from_and_ceiling(
+        let err = discover_obr_dir_with_cli_from_and_ceiling(
             Some(&start),
             &CliOverrides::default(),
             None,
@@ -8053,7 +8470,7 @@ labels:
         .expect_err("external env db without workspace should error");
         assert!(matches!(err, BeadsError::WithContext { .. }));
         assert!(
-            err.to_string().contains("BEADS_DIR") || err.to_string().contains("workspace"),
+            err.to_string().contains("OBR_DIR") || err.to_string().contains("workspace"),
             "unexpected error: {err}"
         );
     }
@@ -8129,8 +8546,8 @@ labels:
     #[test]
     fn resolve_db_path_absolute_in_metadata() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         let absolute_path = "/absolute/path/to/beads.db";
         let metadata = Metadata {
@@ -8140,15 +8557,15 @@ labels:
             deletions_retention_days: None,
         };
 
-        let resolved = resolve_db_path(&beads_dir, &metadata, None);
+        let resolved = resolve_db_path(&obr_dir, &metadata, None);
         assert_eq!(resolved, PathBuf::from(absolute_path));
     }
 
     #[test]
     fn resolve_db_path_relative_in_metadata() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         let metadata = Metadata {
             database: "relative.db".to_string(),
@@ -8157,28 +8574,28 @@ labels:
             deletions_retention_days: None,
         };
 
-        let resolved = resolve_db_path(&beads_dir, &metadata, None);
-        assert_eq!(resolved, beads_dir.join("relative.db"));
+        let resolved = resolve_db_path(&obr_dir, &metadata, None);
+        assert_eq!(resolved, obr_dir.join("relative.db"));
     }
 
     #[test]
     fn resolve_db_path_override_wins() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         let metadata = Metadata::default();
         let override_path = PathBuf::from("/override/path.db");
 
-        let resolved = resolve_db_path(&beads_dir, &metadata, Some(&override_path));
+        let resolved = resolve_db_path(&obr_dir, &metadata, Some(&override_path));
         assert_eq!(resolved, override_path);
     }
 
     #[test]
     fn resolve_jsonl_path_absolute_in_metadata() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         let absolute_path = "/absolute/path/to/issues.jsonl";
         let metadata = Metadata {
@@ -8188,15 +8605,15 @@ labels:
             deletions_retention_days: None,
         };
 
-        let resolved = resolve_jsonl_path(&beads_dir, &metadata, None);
+        let resolved = resolve_jsonl_path(&obr_dir, &metadata, None);
         assert_eq!(resolved, PathBuf::from(absolute_path));
     }
 
     #[test]
     fn resolve_jsonl_path_relative_in_metadata() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         let metadata = Metadata {
             database: DEFAULT_DB_FILENAME.to_string(),
@@ -8205,34 +8622,81 @@ labels:
             deletions_retention_days: None,
         };
 
-        let resolved = resolve_jsonl_path(&beads_dir, &metadata, None);
-        assert_eq!(resolved, beads_dir.join("relative.jsonl"));
+        let resolved = resolve_jsonl_path(&obr_dir, &metadata, None);
+        assert_eq!(resolved, obr_dir.join("relative.jsonl"));
     }
 
     #[test]
     fn resolve_jsonl_path_db_override_derives_sibling() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         let metadata = Metadata::default();
         let db_override = PathBuf::from("/some/path/custom.db");
 
-        let resolved = resolve_jsonl_path(&beads_dir, &metadata, Some(&db_override));
-        assert_eq!(resolved, PathBuf::from("/some/path/issues.jsonl"));
+        let resolved = resolve_jsonl_path(&obr_dir, &metadata, Some(&db_override));
+        assert_eq!(resolved, PathBuf::from("/some/path/issues.org"));
+    }
+
+    #[test]
+    fn resolve_jsonl_path_db_override_inside_the_workspace_dir_uses_the_surface() {
+        let temp = TempDir::new().expect("tempdir");
+        let obr_dir = temp.path().join(".obr");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
+        let surface = temp.path().join(SURFACE_FILENAME);
+        fs::write(&surface, "").expect("seed surface");
+
+        // A scratch database inside `.obr/` is still this workspace's
+        // database. Deriving `.obr/issues.org` beside it would hide the
+        // tracked surface: `sync --status` reported "JSONL exists: false" and
+        // `sync --import-only` imported nothing from the file right there.
+        let db_override = obr_dir.join("scratch.db");
+        let resolved = resolve_jsonl_path(&obr_dir, &Metadata::default(), Some(&db_override));
+
+        assert_eq!(resolved, surface);
+
+        // The question is "within the workspace directory", asked through
+        // `path_is_within_obr_dir`, so a database nested under `.obr/` is this
+        // workspace's database too.
+        let nested = obr_dir.join("recovery");
+        fs::create_dir_all(&nested).expect("create nested dir");
+        let nested_override = nested.join("scratch.db");
+        assert_eq!(
+            resolve_jsonl_path(&obr_dir, &Metadata::default(), Some(&nested_override)),
+            surface
+        );
+    }
+
+    #[test]
+    fn resolve_jsonl_path_db_override_outside_the_workspace_dir_still_derives_a_sibling() {
+        let temp = TempDir::new().expect("tempdir");
+        let obr_dir = temp.path().join(".obr");
+        let elsewhere = temp.path().join("elsewhere");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
+        fs::create_dir_all(&elsewhere).expect("create elsewhere");
+        fs::write(temp.path().join(SURFACE_FILENAME), "").expect("seed surface");
+
+        // The other half of the rule: a database that is not in the workspace
+        // directory keeps its own export, so an out-of-tree database stays
+        // self-contained instead of syncing against this workspace's surface.
+        let db_override = elsewhere.join("custom.db");
+        let resolved = resolve_jsonl_path(&obr_dir, &Metadata::default(), Some(&db_override));
+
+        assert_eq!(resolved, elsewhere.join(DEFAULT_JSONL_FILENAME));
     }
 
     #[test]
     fn resolve_jsonl_path_db_override_prefers_existing_legacy_sibling() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
-        let db_override = beads_dir.join("custom.db");
-        fs::write(beads_dir.join("beads.jsonl"), "{}\n").expect("write legacy jsonl");
+        let db_override = obr_dir.join("custom.db");
+        fs::write(obr_dir.join("beads.jsonl"), "{}\n").expect("write legacy jsonl");
 
-        let resolved = resolve_jsonl_path(&beads_dir, &Metadata::default(), Some(&db_override));
-        assert_eq!(resolved, beads_dir.join("beads.jsonl"));
+        let resolved = resolve_jsonl_path(&obr_dir, &Metadata::default(), Some(&db_override));
+        assert_eq!(resolved, obr_dir.join("beads.jsonl"));
     }
 
     #[test]
@@ -8250,7 +8714,7 @@ labels:
             no_auto_import: Some(true),
             lock_timeout: Some(5000),
             identity: None,
-            held_write_lock_beads_dir: None,
+            held_write_lock_obr_dir: None,
             held_write_authority: None,
             no_db_write_intent: false,
             read_only_fast_open: false,
@@ -8455,8 +8919,8 @@ routing:
     #[test]
     fn external_projects_runtime_mapping_overrides_startup_mapping() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         let mut layer = ConfigLayer::default();
         layer.startup.insert(
@@ -8468,7 +8932,7 @@ routing:
             "runtime-path".to_string(),
         );
 
-        let projects = external_projects_from_layer(&layer, &beads_dir);
+        let projects = external_projects_from_layer(&layer, &obr_dir);
         assert_eq!(
             projects.get("shared"),
             Some(&temp.path().join("runtime-path")),
@@ -8477,27 +8941,60 @@ routing:
     }
 
     #[test]
+    fn external_project_root_resolves_current_and_legacy_workspace_dirs() {
+        // A project mapped by its ROOT must find `.obr/`. Resolving only the
+        // pre-rename names made every external-dependency probe report the
+        // project as unconfigured, so `ready`/`blocked` treated satisfied
+        // external deps as permanently unsatisfied.
+        for dir_name in [
+            WORKSPACE_DIR_NAME,
+            WORKSPACE_DIR_NAME_UNDERSCORE,
+            LEGACY_WORKSPACE_DIR_NAMES[0],
+            LEGACY_WORKSPACE_DIR_NAMES[1],
+        ] {
+            let temp = TempDir::new().expect("tempdir");
+            let local_obr_dir = temp.path().join(WORKSPACE_DIR_NAME);
+            let project_root = temp.path().join("external");
+            let project_workspace = project_root.join(dir_name);
+            fs::create_dir_all(&local_obr_dir).expect("create local obr dir");
+            fs::create_dir_all(&project_workspace).expect("create external workspace dir");
+
+            let mut layer = ConfigLayer::default();
+            layer.startup.insert(
+                "external_projects.extproj".to_string(),
+                project_root.display().to_string(),
+            );
+
+            assert_eq!(
+                external_project_obr_dirs(&layer, &local_obr_dir).get("extproj"),
+                Some(&project_workspace),
+                "a project root containing {dir_name} should resolve to it"
+            );
+        }
+    }
+
+    #[test]
     fn resolved_jsonl_path_drives_prefix_inference() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         fs::write(
-            beads_dir.join("metadata.json"),
+            obr_dir.join("metadata.json"),
             r#"{"database":"beads.db","jsonl_export":"custom.jsonl"}"#,
         )
         .expect("write metadata");
-        write_single_issue_jsonl(&beads_dir.join("custom.jsonl"), "br-abc123", "custom issue");
+        write_single_issue_jsonl(&obr_dir.join("custom.jsonl"), "obr-abc123", "custom issue");
 
-        let paths = resolve_paths(&beads_dir, None).expect("resolve paths");
+        let paths = resolve_paths(&obr_dir, None).expect("resolve paths");
         assert_eq!(
             paths.jsonl_path,
-            beads_dir.join("custom.jsonl"),
+            obr_dir.join("custom.jsonl"),
             "Metadata override should determine the active JSONL path"
         );
         assert_eq!(
             first_prefix_from_jsonl(&paths.jsonl_path).expect("infer prefix"),
-            Some("br".to_string()),
+            Some("obr".to_string()),
             "Prefix inference should read from the resolved JSONL path"
         );
     }
@@ -8505,9 +9002,9 @@ routing:
     #[test]
     fn first_prefix_from_jsonl_preserves_hyphenated_prefixes() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         write_single_issue_jsonl(
             &jsonl_path,
@@ -8524,9 +9021,9 @@ routing:
     #[test]
     fn first_prefix_from_jsonl_preserves_hyphenated_prefixes_across_multiple_rows() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         let first = serde_json::json!({
             "id": "document-intelligence-0sa",
@@ -8557,14 +9054,14 @@ routing:
     #[test]
     fn resolve_paths_honors_relative_project_db_override() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
-        fs::write(beads_dir.join("config.yaml"), "db: custom.db\n").expect("write config");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
+        fs::write(obr_dir.join("config.yaml"), "db: custom.db\n").expect("write config");
 
-        let paths = resolve_paths(&beads_dir, None).expect("resolve paths");
+        let paths = resolve_paths(&obr_dir, None).expect("resolve paths");
         assert_eq!(
             paths.db_path,
-            crate::util::resolve_cache_dir(&beads_dir).join("custom.db")
+            crate::util::resolve_cache_dir(&obr_dir).join("custom.db")
         );
     }
 
@@ -8620,24 +9117,24 @@ routing:
     #[test]
     fn config_paths_resolve_with_default_metadata() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
-        let paths = ConfigPaths::resolve(&beads_dir, None).expect("paths");
+        let paths = ConfigPaths::resolve(&obr_dir, None).expect("paths");
 
-        assert_eq!(paths.beads_dir, beads_dir);
-        assert_eq!(paths.db_path, beads_dir.join(DEFAULT_DB_FILENAME));
-        assert_eq!(paths.jsonl_path, beads_dir.join(DEFAULT_JSONL_FILENAME));
+        assert_eq!(paths.obr_dir, obr_dir);
+        assert_eq!(paths.db_path, obr_dir.join(DEFAULT_DB_FILENAME));
+        assert_eq!(paths.jsonl_path, computed_surface_path(temp.path()));
         assert_eq!(paths.metadata, Metadata::default());
     }
 
     #[test]
     fn load_project_config_returns_empty_when_missing() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
-        let layer = load_project_config(&beads_dir).expect("project config");
+        let layer = load_project_config(&obr_dir).expect("project config");
         assert!(layer.startup.is_empty());
         assert!(layer.runtime.is_empty());
     }
@@ -8645,16 +9142,16 @@ routing:
     #[test]
     fn load_project_config_parses_yaml() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         fs::write(
-            beads_dir.join("config.yaml"),
+            obr_dir.join("config.yaml"),
             "issue_prefix: proj\nno-db: false\n",
         )
         .expect("write config");
 
-        let layer = load_project_config(&beads_dir).expect("project config");
+        let layer = load_project_config(&obr_dir).expect("project config");
         assert_eq!(layer.runtime.get("issue_prefix").unwrap(), "proj");
         assert_eq!(layer.startup.get("no_db").unwrap(), "false");
     }
@@ -8664,7 +9161,7 @@ routing:
         let layer = ConfigLayer::default();
         let config = id_config_from_layer(&layer);
 
-        assert_eq!(config.prefix, "br");
+        assert_eq!(config.prefix, "obr");
         assert_eq!(config.min_hash_length, 3);
         assert_eq!(config.max_hash_length, 8);
         assert!((config.max_collision_prob - 0.25).abs() < f64::EPSILON);
@@ -8710,11 +9207,11 @@ routing:
     #[test]
     fn load_config_rejects_explicit_prefix_without_usable_characters() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
-        fs::write(beads_dir.join("config.yaml"), "issue_prefix: '!!!'\n").expect("write config");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
+        fs::write(obr_dir.join("config.yaml"), "issue_prefix: '!!!'\n").expect("write config");
 
-        let err = load_config(&beads_dir, None, &CliOverrides::default())
+        let err = load_config(&obr_dir, None, &CliOverrides::default())
             .expect_err("unsupported-only configured prefix must be rejected");
 
         assert!(
@@ -8729,53 +9226,53 @@ routing:
     #[test]
     fn discover_jsonl_prefers_issues_over_legacy() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         // Create both files
-        fs::write(beads_dir.join("issues.jsonl"), "{}").expect("write issues");
-        fs::write(beads_dir.join("beads.jsonl"), "{}").expect("write beads");
+        fs::write(obr_dir.join("issues.jsonl"), "{}").expect("write issues");
+        fs::write(obr_dir.join("beads.jsonl"), "{}").expect("write obr");
 
-        let discovered = discover_jsonl(&beads_dir).expect("should discover");
-        assert_eq!(discovered, beads_dir.join("issues.jsonl"));
+        let discovered = discover_jsonl(&obr_dir).expect("should discover");
+        assert_eq!(discovered, obr_dir.join("issues.jsonl"));
     }
 
     #[test]
     fn discover_jsonl_falls_back_to_legacy() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         // Only legacy file exists
-        fs::write(beads_dir.join("beads.jsonl"), "{}").expect("write beads");
+        fs::write(obr_dir.join("beads.jsonl"), "{}").expect("write obr");
 
-        let discovered = discover_jsonl(&beads_dir).expect("should discover");
-        assert_eq!(discovered, beads_dir.join("beads.jsonl"));
+        let discovered = discover_jsonl(&obr_dir).expect("should discover");
+        assert_eq!(discovered, obr_dir.join("beads.jsonl"));
     }
 
     #[test]
     fn discover_jsonl_returns_none_when_empty() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         // No JSONL files
-        let discovered = discover_jsonl(&beads_dir);
+        let discovered = discover_jsonl(&obr_dir);
         assert!(discovered.is_none());
     }
 
     #[test]
     fn discover_jsonl_ignores_merge_artifacts() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         // Only merge artifacts exist (should not be discovered)
-        fs::write(beads_dir.join("beads.base.jsonl"), "{}").expect("write base");
-        fs::write(beads_dir.join("beads.left.jsonl"), "{}").expect("write left");
-        fs::write(beads_dir.join("beads.right.jsonl"), "{}").expect("write right");
+        fs::write(obr_dir.join("beads.base.jsonl"), "{}").expect("write base");
+        fs::write(obr_dir.join("beads.left.jsonl"), "{}").expect("write left");
+        fs::write(obr_dir.join("beads.right.jsonl"), "{}").expect("write right");
 
-        let discovered = discover_jsonl(&beads_dir);
+        let discovered = discover_jsonl(&obr_dir);
         assert!(discovered.is_none());
     }
 
@@ -8812,28 +9309,28 @@ routing:
     #[test]
     fn resolve_jsonl_uses_discovery_when_no_override() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         // Only legacy file exists
-        fs::write(beads_dir.join("beads.jsonl"), "{}").expect("write beads");
+        fs::write(obr_dir.join("beads.jsonl"), "{}").expect("write obr");
 
         let metadata = Metadata::default();
-        let resolved = resolve_jsonl_path(&beads_dir, &metadata, None);
+        let resolved = resolve_jsonl_path(&obr_dir, &metadata, None);
 
         // Should discover beads.jsonl since issues.jsonl doesn't exist
-        assert_eq!(resolved, beads_dir.join("beads.jsonl"));
+        assert_eq!(resolved, obr_dir.join("beads.jsonl"));
     }
 
     #[test]
     fn resolve_jsonl_prefers_metadata_override() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         // Both legacy and custom exist
-        fs::write(beads_dir.join("beads.jsonl"), "{}").expect("write beads");
-        fs::write(beads_dir.join("custom.jsonl"), "{}").expect("write custom");
+        fs::write(obr_dir.join("beads.jsonl"), "{}").expect("write obr");
+        fs::write(obr_dir.join("custom.jsonl"), "{}").expect("write custom");
 
         let metadata = Metadata {
             database: DEFAULT_DB_FILENAME.to_string(),
@@ -8842,19 +9339,19 @@ routing:
             deletions_retention_days: None,
         };
 
-        let resolved = resolve_jsonl_path(&beads_dir, &metadata, None);
+        let resolved = resolve_jsonl_path(&obr_dir, &metadata, None);
         // Metadata override should win over discovered legacy/default filenames.
-        assert_eq!(resolved, beads_dir.join("custom.jsonl"));
+        assert_eq!(resolved, obr_dir.join("custom.jsonl"));
     }
 
     #[test]
     fn resolve_jsonl_ignores_excluded_metadata() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         // Create issues.jsonl
-        fs::write(beads_dir.join("issues.jsonl"), "{}").expect("write issues");
+        fs::write(obr_dir.join("issues.jsonl"), "{}").expect("write issues");
 
         // Metadata points to excluded file (should be ignored)
         let metadata = Metadata {
@@ -8864,100 +9361,156 @@ routing:
             deletions_retention_days: None,
         };
 
-        let resolved = resolve_jsonl_path(&beads_dir, &metadata, None);
+        let resolved = resolve_jsonl_path(&obr_dir, &metadata, None);
         // Should fall through to discovery, find issues.jsonl
-        assert_eq!(resolved, beads_dir.join("issues.jsonl"));
+        assert_eq!(resolved, obr_dir.join("issues.jsonl"));
+    }
+
+    /// The deliberate reclassification trap (INTEGRATION_PLAN P3-09): every
+    /// workspace created before the Org default carries
+    /// `"jsonl_export": "issues.jsonl"` in metadata.json. After the flip that
+    /// value is no longer "the default" — it is an explicit override, so
+    /// legacy workspaces keep reading and writing their JSONL and never
+    /// silently change format. Do not "fix" this.
+    #[test]
+    fn legacy_jsonl_metadata_pins_the_workspace_to_jsonl_after_the_flip() {
+        let temp = TempDir::new().expect("tempdir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
+
+        let metadata = Metadata {
+            jsonl_export: "issues.jsonl".to_string(),
+            ..Metadata::default()
+        };
+        let resolved = resolve_jsonl_path(&obr_dir, &metadata, None);
+        assert_eq!(resolved, obr_dir.join("issues.jsonl"));
+    }
+
+    #[test]
+    fn discovery_prefers_org_then_falls_back_through_both_legacy_names() {
+        let temp = TempDir::new().expect("tempdir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
+
+        assert_eq!(discover_jsonl(&obr_dir), None);
+
+        fs::write(obr_dir.join("beads.jsonl"), "{}").expect("write oldest");
+        assert_eq!(discover_jsonl(&obr_dir), Some(obr_dir.join("beads.jsonl")));
+
+        fs::write(obr_dir.join("issues.jsonl"), "{}").expect("write legacy");
+        assert_eq!(discover_jsonl(&obr_dir), Some(obr_dir.join("issues.jsonl")));
+
+        fs::write(obr_dir.join("issues.org"), "").expect("write org");
+        assert_eq!(discover_jsonl(&obr_dir), Some(obr_dir.join("issues.org")));
+    }
+
+    #[test]
+    fn first_prefix_infers_from_org_skipping_tombstones() {
+        let temp = TempDir::new().expect("tempdir");
+        let org_path = temp.path().join("issues.org");
+        fs::write(
+            &org_path,
+            "#+TITLE: Beads Issues\n\n\
+             * CANCELED [#C] Old\n:PROPERTIES:\n:ID:       foreign-9\n\
+             :CREATED_AT: 2023-11-14T22:13:20+00:00\n:UPDATED_AT: 2023-11-14T22:13:20+00:00\n:END:\n\n\
+             * TODO [#C] Live\n:PROPERTIES:\n:ID:       myproj-1\n\
+             :CREATED_AT: 2023-11-14T22:13:20+00:00\n:UPDATED_AT: 2023-11-14T22:13:20+00:00\n:END:\n",
+        )
+        .expect("write org");
+
+        let prefix = first_prefix_from_jsonl(&org_path).expect("infer prefix");
+        assert_eq!(prefix.as_deref(), Some("myproj"));
     }
 
     #[test]
     fn resolve_jsonl_defaults_when_nothing_exists() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         // No JSONL files exist
         let metadata = Metadata::default();
-        let resolved = resolve_jsonl_path(&beads_dir, &metadata, None);
+        let resolved = resolve_jsonl_path(&obr_dir, &metadata, None);
 
-        // Should return default for writing
-        assert_eq!(resolved, beads_dir.join("issues.jsonl"));
+        // A fresh workspace writes the tracked surface, not an in-dir export.
+        assert_eq!(resolved, computed_surface_path(temp.path()));
     }
 
     #[test]
     fn resolve_jsonl_db_override_derives_sibling() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let custom_dir = temp.path().join("custom");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
         fs::create_dir_all(&custom_dir).expect("create custom dir");
 
-        // Create files in beads_dir (should be ignored)
-        fs::write(beads_dir.join("beads.jsonl"), "{}").expect("write beads");
+        // Create files in obr_dir (should be ignored)
+        fs::write(obr_dir.join("beads.jsonl"), "{}").expect("write obr");
 
         let metadata = Metadata::default();
         let db_override = custom_dir.join("custom.db");
 
-        let resolved = resolve_jsonl_path(&beads_dir, &metadata, Some(&db_override));
+        let resolved = resolve_jsonl_path(&obr_dir, &metadata, Some(&db_override));
         // Should derive sibling from db_override path
-        assert_eq!(resolved, custom_dir.join("issues.jsonl"));
+        assert_eq!(resolved, custom_dir.join("issues.org"));
     }
 
     #[test]
     fn config_paths_uses_discovery() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         // Only legacy file exists
-        fs::write(beads_dir.join("beads.jsonl"), "{}").expect("write beads");
+        fs::write(obr_dir.join("beads.jsonl"), "{}").expect("write obr");
 
-        let paths = ConfigPaths::resolve(&beads_dir, None).expect("paths");
+        let paths = ConfigPaths::resolve(&obr_dir, None).expect("paths");
 
         // Should discover beads.jsonl
-        assert_eq!(paths.jsonl_path, beads_dir.join("beads.jsonl"));
+        assert_eq!(paths.jsonl_path, obr_dir.join("beads.jsonl"));
     }
 
     #[test]
     fn metadata_jsonl_override_respected() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         // Write metadata with custom jsonl_export
         fs::write(
-            beads_dir.join("metadata.json"),
+            obr_dir.join("metadata.json"),
             r#"{"database": "beads.db", "jsonl_export": "my-export.jsonl"}"#,
         )
         .expect("write metadata");
 
         // Create the custom file
-        fs::write(beads_dir.join("my-export.jsonl"), "{}").expect("write custom");
+        fs::write(obr_dir.join("my-export.jsonl"), "{}").expect("write custom");
 
-        let paths = ConfigPaths::resolve(&beads_dir, None).expect("paths");
-        assert_eq!(paths.jsonl_path, beads_dir.join("my-export.jsonl"));
+        let paths = ConfigPaths::resolve(&obr_dir, None).expect("paths");
+        assert_eq!(paths.jsonl_path, obr_dir.join("my-export.jsonl"));
     }
 
     #[test]
     fn metadata_jsonl_override_respected_even_with_db_override() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         // Write metadata with custom jsonl_export
         fs::write(
-            beads_dir.join("metadata.json"),
+            obr_dir.join("metadata.json"),
             r#"{"database": "beads.db", "jsonl_export": "custom-name.jsonl"}"#,
         )
         .expect("write metadata");
 
-        let db_override = beads_dir.join("beads.db");
-        let metadata = Metadata::load(&beads_dir).expect("metadata");
-        let resolved = resolve_jsonl_path(&beads_dir, &metadata, Some(&db_override));
+        let db_override = obr_dir.join("beads.db");
+        let metadata = Metadata::load(&obr_dir).expect("metadata");
+        let resolved = resolve_jsonl_path(&obr_dir, &metadata, Some(&db_override));
 
         // Metadata override should still win when the database path is explicit.
         assert_eq!(
             resolved,
-            beads_dir.join("custom-name.jsonl"),
+            obr_dir.join("custom-name.jsonl"),
             "Metadata should win over default sibling derivation when DB override is used"
         );
     }
@@ -8965,28 +9518,28 @@ routing:
     #[test]
     fn multiple_jsonl_candidates_prefers_issues() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         // Create multiple candidates
-        fs::write(beads_dir.join("beads.jsonl"), "{}").expect("write beads");
-        fs::write(beads_dir.join("issues.jsonl"), "{}").expect("write issues");
-        fs::write(beads_dir.join("beads.base.jsonl"), "{}").expect("write base");
-        fs::write(beads_dir.join("deletions.jsonl"), "{}").expect("write deletions");
+        fs::write(obr_dir.join("beads.jsonl"), "{}").expect("write obr");
+        fs::write(obr_dir.join("issues.jsonl"), "{}").expect("write issues");
+        fs::write(obr_dir.join("beads.base.jsonl"), "{}").expect("write base");
+        fs::write(obr_dir.join("deletions.jsonl"), "{}").expect("write deletions");
 
-        let paths = ConfigPaths::resolve(&beads_dir, None).expect("paths");
+        let paths = ConfigPaths::resolve(&obr_dir, None).expect("paths");
 
         // Should pick issues.jsonl (preferred over legacy, ignoring excluded)
-        assert_eq!(paths.jsonl_path, beads_dir.join("issues.jsonl"));
+        assert_eq!(paths.jsonl_path, obr_dir.join("issues.jsonl"));
     }
 
     #[test]
     fn should_attempt_jsonl_recovery_only_for_corruption_errors() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join("beads.db");
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
         fs::write(&db_path, b"sqlite bytes").expect("write db placeholder");
         fs::write(&jsonl_path, "{}\n").expect("write jsonl");
 
@@ -9251,9 +9804,9 @@ routing:
     #[test]
     fn resolve_bootstrap_issue_prefix_prefers_bootstrap_layer() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
         fs::write(&jsonl_path, "").expect("write empty jsonl");
 
         let mut bootstrap_layer = ConfigLayer::default();
@@ -9261,9 +9814,8 @@ routing:
             .runtime
             .insert("issue_prefix".to_string(), "cfg".to_string());
 
-        let prefix =
-            resolve_bootstrap_issue_prefix(&bootstrap_layer, &beads_dir, &jsonl_path, false)
-                .expect("prefix");
+        let prefix = resolve_bootstrap_issue_prefix(&bootstrap_layer, &obr_dir, &jsonl_path, false)
+            .expect("prefix");
         assert_eq!(prefix, "cfg");
     }
 
@@ -9271,13 +9823,13 @@ routing:
     fn resolve_bootstrap_issue_prefix_normalizes_directory_name() {
         let temp = TempDir::new().expect("tempdir");
         let project_dir = temp.path().join("My_Project-Name");
-        let beads_dir = project_dir.join(".beads");
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = project_dir.join(".beads");
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
         fs::write(&jsonl_path, "").expect("write empty jsonl");
 
         let prefix =
-            resolve_bootstrap_issue_prefix(&ConfigLayer::default(), &beads_dir, &jsonl_path, false)
+            resolve_bootstrap_issue_prefix(&ConfigLayer::default(), &obr_dir, &jsonl_path, false)
                 .expect("prefix");
         assert_eq!(prefix, "mpn");
     }
@@ -9285,16 +9837,16 @@ routing:
     #[test]
     fn open_storage_with_cli_recovers_corrupt_db_from_valid_jsonl() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join("beads.db");
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         fs::write(&db_path, b"not a sqlite database").expect("write corrupt db");
         write_single_issue_jsonl(&jsonl_path, "bd-recover1", "Recovered from JSONL");
 
         let storage_ctx =
-            open_storage_with_cli(&beads_dir, &CliOverrides::default()).expect("storage");
+            open_storage_with_cli(&obr_dir, &CliOverrides::default()).expect("storage");
         let issue = storage_ctx
             .storage
             .get_issue("bd-recover1")
@@ -9305,7 +9857,7 @@ routing:
         assert!(!storage_ctx.no_db);
         assert!(db_path.is_file(), "recovered database should exist");
 
-        let recovery_dir = beads_dir.join(RECOVERY_DIR_NAME);
+        let recovery_dir = obr_dir.join(RECOVERY_DIR_NAME);
         let backups: Vec<_> = fs::read_dir(&recovery_dir)
             .expect("list recovery dir")
             .filter_map(std::result::Result::ok)
@@ -9324,7 +9876,7 @@ routing:
         drop(storage_ctx);
 
         let reopened_ctx =
-            open_storage_with_cli(&beads_dir, &CliOverrides::default()).expect("reopen storage");
+            open_storage_with_cli(&obr_dir, &CliOverrides::default()).expect("reopen storage");
         let reopened_issue = reopened_ctx
             .storage
             .get_issue("bd-recover1")
@@ -9336,10 +9888,10 @@ routing:
     #[test]
     fn open_storage_with_cli_recovers_malformed_schema_db_from_valid_jsonl() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join("beads.db");
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         create_malformed_blocked_cache_db(&db_path);
         write_single_issue_jsonl(
@@ -9349,7 +9901,7 @@ routing:
         );
 
         let storage_ctx =
-            open_storage_with_cli(&beads_dir, &CliOverrides::default()).expect("storage");
+            open_storage_with_cli(&obr_dir, &CliOverrides::default()).expect("storage");
         let issue = storage_ctx
             .storage
             .get_issue("bd-rmalf1")
@@ -9360,7 +9912,7 @@ routing:
         assert!(!storage_ctx.no_db);
         assert!(db_path.is_file(), "recovered database should exist");
 
-        let recovery_dir = beads_dir.join(RECOVERY_DIR_NAME);
+        let recovery_dir = obr_dir.join(RECOVERY_DIR_NAME);
         let backups: Vec<_> = fs::read_dir(&recovery_dir)
             .expect("list recovery dir")
             .filter_map(std::result::Result::ok)
@@ -9380,10 +9932,10 @@ routing:
     #[test]
     fn open_storage_with_cli_recovers_malformed_schema_db_with_in_progress_issue() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join("beads.db");
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         create_malformed_blocked_cache_db(&db_path);
         let issue = Issue {
@@ -9407,7 +9959,7 @@ routing:
         write_issue_jsonl(&jsonl_path, &issue);
 
         let storage_ctx =
-            open_storage_with_cli(&beads_dir, &CliOverrides::default()).expect("storage");
+            open_storage_with_cli(&obr_dir, &CliOverrides::default()).expect("storage");
         let recovered_issue = storage_ctx
             .storage
             .get_issue("beads_rust-3h0h")
@@ -9428,10 +9980,10 @@ routing:
     #[test]
     fn open_storage_with_cli_recovers_when_post_open_probe_finds_duplicate_config_rows() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join("beads.db");
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         let mut storage = SqliteStorage::open(&db_path).expect("create seed db");
         storage
@@ -9447,7 +9999,7 @@ routing:
         );
 
         let storage_ctx =
-            open_storage_with_cli(&beads_dir, &CliOverrides::default()).expect("storage");
+            open_storage_with_cli(&obr_dir, &CliOverrides::default()).expect("storage");
         let issue = storage_ctx
             .storage
             .get_issue("bd-rdup01")
@@ -9457,7 +10009,7 @@ routing:
         assert_eq!(issue.title, "Recovered from duplicate config rows");
         assert!(!storage_ctx.no_db);
 
-        let recovery_dir = beads_dir.join(RECOVERY_DIR_NAME);
+        let recovery_dir = obr_dir.join(RECOVERY_DIR_NAME);
         let backups: Vec<_> = fs::read_dir(&recovery_dir)
             .expect("list recovery dir")
             .filter_map(std::result::Result::ok)
@@ -9754,10 +10306,10 @@ routing:
     #[test]
     fn deferred_recovery_restore_reopens_original_database_family() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join("beads.db");
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         let now = Utc::now();
         let original_issue = Issue {
@@ -9781,7 +10333,7 @@ routing:
         write_single_issue_jsonl(&jsonl_path, "bd-import", "Deferred import payload");
 
         let mut storage_ctx =
-            open_storage_with_cli_deferred_jsonl_recovery(&beads_dir, &CliOverrides::default())
+            open_storage_with_cli_deferred_jsonl_recovery(&obr_dir, &CliOverrides::default())
                 .expect("storage");
 
         assert!(
@@ -9886,15 +10438,15 @@ routing:
     #[test]
     fn deferred_recovery_restore_for_missing_db_cleans_up_fresh_database_family() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join("beads.db");
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         write_single_issue_jsonl(&jsonl_path, "bd-import", "Deferred import payload");
 
         let mut storage_ctx =
-            open_storage_with_cli_deferred_jsonl_recovery(&beads_dir, &CliOverrides::default())
+            open_storage_with_cli_deferred_jsonl_recovery(&obr_dir, &CliOverrides::default())
                 .expect("storage");
 
         assert!(
@@ -9921,22 +10473,22 @@ routing:
     #[test]
     fn open_storage_with_startup_config_uses_preloaded_paths() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
-        let first_jsonl = beads_dir.join("first.jsonl");
-        let second_jsonl = beads_dir.join("second.jsonl");
+        let first_jsonl = obr_dir.join("first.jsonl");
+        let second_jsonl = obr_dir.join("second.jsonl");
         write_single_issue_jsonl(&first_jsonl, "bd-first", "First startup snapshot");
         write_single_issue_jsonl(&second_jsonl, "bd-second", "Mutated metadata path");
 
-        let metadata_path = beads_dir.join("metadata.json");
+        let metadata_path = obr_dir.join("metadata.json");
         fs::write(
             &metadata_path,
             r#"{"database":"beads.db","jsonl_export":"first.jsonl"}"#,
         )
         .expect("write initial metadata");
 
-        let startup = load_startup_config_with_paths(&beads_dir, None).expect("load startup");
+        let startup = load_startup_config_with_paths(&obr_dir, None).expect("load startup");
 
         fs::write(
             &metadata_path,
@@ -9983,33 +10535,33 @@ routing:
     fn startup_config_cache_invalidates_metadata_changes() {
         let temp = TempDir::new().expect("tempdir");
         let cache = TempDir::new().expect("cache");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
-        let first_jsonl = beads_dir.join("first.jsonl");
-        let second_jsonl = beads_dir.join("second-longer-name.jsonl");
+        let first_jsonl = obr_dir.join("first.jsonl");
+        let second_jsonl = obr_dir.join("second-longer-name.jsonl");
         write_single_issue_jsonl(&first_jsonl, "bd-first", "First startup snapshot");
         write_single_issue_jsonl(&second_jsonl, "bd-second", "Second startup snapshot");
 
         fs::write(
-            beads_dir.join("metadata.json"),
+            obr_dir.join("metadata.json"),
             r#"{"database":"beads.db","jsonl_export":"first.jsonl"}"#,
         )
         .expect("write first metadata");
 
-        let first = load_startup_config_with_paths_cached_at(&beads_dir, None, cache.path())
-            .expect("first");
+        let first =
+            load_startup_config_with_paths_cached_at(&obr_dir, None, cache.path()).expect("first");
         assert_eq!(first.paths.jsonl_path, first_jsonl);
         assert_eq!(startup_cache_files(cache.path()).len(), 1);
 
         fs::write(
-            beads_dir.join("metadata.json"),
+            obr_dir.join("metadata.json"),
             r#"{"database":"beads.db","jsonl_export":"second-longer-name.jsonl"}"#,
         )
         .expect("write second metadata");
 
-        let second = load_startup_config_with_paths_cached_at(&beads_dir, None, cache.path())
-            .expect("second");
+        let second =
+            load_startup_config_with_paths_cached_at(&obr_dir, None, cache.path()).expect("second");
         assert_eq!(second.paths.jsonl_path, second_jsonl);
     }
 
@@ -10017,17 +10569,17 @@ routing:
     fn startup_config_cache_invalidates_project_config_changes() {
         let temp = TempDir::new().expect("tempdir");
         let cache = TempDir::new().expect("cache");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
-        fs::write(beads_dir.join("config.yaml"), "no-db: true\n").expect("write config");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
+        fs::write(obr_dir.join("config.yaml"), "no-db: true\n").expect("write config");
 
-        let first = load_startup_config_with_paths_cached_at(&beads_dir, None, cache.path())
-            .expect("first");
+        let first =
+            load_startup_config_with_paths_cached_at(&obr_dir, None, cache.path()).expect("first");
         assert_eq!(no_db_from_layer(&first.merged_config), Some(true));
 
-        fs::write(beads_dir.join("config.yaml"), "no-db: false\n").expect("rewrite config");
-        let second = load_startup_config_with_paths_cached_at(&beads_dir, None, cache.path())
-            .expect("second");
+        fs::write(obr_dir.join("config.yaml"), "no-db: false\n").expect("rewrite config");
+        let second =
+            load_startup_config_with_paths_cached_at(&obr_dir, None, cache.path()).expect("second");
         assert_eq!(no_db_from_layer(&second.merged_config), Some(false));
     }
 
@@ -10035,29 +10587,29 @@ routing:
     fn startup_config_cache_rejects_hit_if_witness_changes_during_optimistic_read() {
         let temp = TempDir::new().expect("tempdir");
         let cache = TempDir::new().expect("cache");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         fs::write(
-            beads_dir.join("metadata.json"),
+            obr_dir.join("metadata.json"),
             r#"{"database":"beads.db","jsonl_export":"issues.jsonl"}"#,
         )
         .expect("write metadata");
-        let before = StartupCacheWitness::capture(&beads_dir, None);
-        let key = startup_cache_key(&beads_dir, &before);
+        let before = StartupCacheWitness::capture(&obr_dir, None);
+        let key = startup_cache_key(&obr_dir, &before);
         let cache_path = startup_cache_path(cache.path(), &key);
 
-        load_startup_config_with_paths_cached_at(&beads_dir, None, cache.path())
+        load_startup_config_with_paths_cached_at(&obr_dir, None, cache.path())
             .expect("prime cache");
         assert!(cache_path.is_file(), "priming should write startup cache");
 
         fs::write(
-            beads_dir.join("metadata.json"),
+            obr_dir.join("metadata.json"),
             r#"{"database":"beads.db","jsonl_export":"mutated-after-first-witness.jsonl"}"#,
         )
         .expect("mutate metadata");
 
-        let stale = try_read_startup_cache(&cache_path, &key, &before, &beads_dir, None);
+        let stale = try_read_startup_cache(&cache_path, &key, &before, &obr_dir, None);
         assert!(
             stale.is_none(),
             "second witness check must reject a torn optimistic cache read"
@@ -10068,11 +10620,11 @@ routing:
     fn startup_config_cache_falls_back_from_corrupt_cache() {
         let temp = TempDir::new().expect("tempdir");
         let cache = TempDir::new().expect("cache");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
-        let startup = load_startup_config_with_paths_cached_at(&beads_dir, None, cache.path())
-            .expect("prime");
+        let startup =
+            load_startup_config_with_paths_cached_at(&obr_dir, None, cache.path()).expect("prime");
         assert_eq!(startup.paths.metadata, Metadata::default());
 
         let cache_file = startup_cache_files(cache.path())
@@ -10082,7 +10634,7 @@ routing:
         fs::write(cache_file, "{ definitely not valid json").expect("corrupt cache");
 
         let fallback =
-            load_startup_config_with_paths_cached_at(&beads_dir, None, cache.path()).expect("load");
+            load_startup_config_with_paths_cached_at(&obr_dir, None, cache.path()).expect("load");
         assert_eq!(fallback.paths.metadata, Metadata::default());
     }
 
@@ -10093,13 +10645,13 @@ routing:
 
         let temp = TempDir::new().expect("tempdir");
         let cache = TempDir::new().expect("cache");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         let direct =
-            load_startup_config_with_paths_uncached(&beads_dir, None).expect("startup config");
-        let witness = StartupCacheWitness::capture(&beads_dir, None);
-        let key = startup_cache_key(&beads_dir, &witness);
+            load_startup_config_with_paths_uncached(&obr_dir, None).expect("startup config");
+        let witness = StartupCacheWitness::capture(&obr_dir, None);
+        let key = startup_cache_key(&obr_dir, &witness);
         let cache_path = startup_cache_path(cache.path(), &key);
         let tmp_path = cache_path.with_extension(format!("tmp.{}", std::process::id()));
         let outside_target = temp.path().join("outside-cache-target.json");
@@ -10140,50 +10692,50 @@ routing:
         let temp = TempDir::new().expect("tempdir");
         let town_root = temp.path().join("town");
         let project_root = town_root.join("project");
-        let beads_dir = project_root.join(".beads");
-        let town_beads = town_root.join(".beads");
+        let obr_dir = project_root.join(".beads");
+        let town_obr = town_root.join(".beads");
         fs::create_dir_all(town_root.join("mayor")).expect("create mayor");
-        fs::create_dir_all(&beads_dir).expect("create project beads");
-        fs::create_dir_all(&town_beads).expect("create town beads");
+        fs::create_dir_all(&obr_dir).expect("create project obr");
+        fs::create_dir_all(&town_obr).expect("create town obr");
         fs::write(town_root.join("mayor").join("town.json"), "{}\n").expect("write town marker");
 
-        let initial = StartupCacheWitness::capture(&beads_dir, None);
+        let initial = StartupCacheWitness::capture(&obr_dir, None);
         fs::write(
-            beads_dir.join("routes.jsonl"),
+            obr_dir.join("routes.jsonl"),
             r#"{"prefix":"other-","path":"../other"}"#,
         )
         .expect("write local routes");
         assert_ne!(
             initial,
-            StartupCacheWitness::capture(&beads_dir, None),
+            StartupCacheWitness::capture(&obr_dir, None),
             "local routes.jsonl must invalidate cached startup metadata"
         );
 
-        let before_redirect = StartupCacheWitness::capture(&beads_dir, None);
-        fs::write(beads_dir.join("redirect"), ".\n").expect("write redirect");
+        let before_redirect = StartupCacheWitness::capture(&obr_dir, None);
+        fs::write(obr_dir.join("redirect"), ".\n").expect("write redirect");
         assert_ne!(
             before_redirect,
-            StartupCacheWitness::capture(&beads_dir, None),
+            StartupCacheWitness::capture(&obr_dir, None),
             "redirect changes must invalidate cached startup metadata"
         );
 
-        let before_town_routes = StartupCacheWitness::capture(&beads_dir, None);
+        let before_town_routes = StartupCacheWitness::capture(&obr_dir, None);
         fs::write(
-            town_beads.join("routes.jsonl"),
+            town_obr.join("routes.jsonl"),
             r#"{"prefix":"town-","path":"."}"#,
         )
         .expect("write town routes");
         assert_ne!(
             before_town_routes,
-            StartupCacheWitness::capture(&beads_dir, None),
+            StartupCacheWitness::capture(&obr_dir, None),
             "town routes.jsonl must invalidate cached startup metadata"
         );
 
-        let db_a = beads_dir.join("a.db");
-        let db_b = beads_dir.join("b.db");
+        let db_a = obr_dir.join("a.db");
+        let db_b = obr_dir.join("b.db");
         assert_ne!(
-            StartupCacheWitness::capture(&beads_dir, Some(&db_a)),
-            StartupCacheWitness::capture(&beads_dir, Some(&db_b)),
+            StartupCacheWitness::capture(&obr_dir, Some(&db_a)),
+            StartupCacheWitness::capture(&obr_dir, Some(&db_b)),
             "CLI database override changes must not reuse a stale cache entry"
         );
     }
@@ -10258,11 +10810,11 @@ routing:
     #[test]
     fn open_storage_with_cli_recovers_using_resolved_external_jsonl() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let external_dir = temp.path().join("external-store");
         let db_path = external_dir.join("beads.db");
         let jsonl_path = external_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
         fs::create_dir_all(&external_dir).expect("create external dir");
 
         fs::write(&db_path, b"not a sqlite database").expect("write corrupt db");
@@ -10272,7 +10824,7 @@ routing:
             db: Some(db_path),
             ..CliOverrides::default()
         };
-        let storage_ctx = open_storage_with_cli(&beads_dir, &cli).expect("storage");
+        let storage_ctx = open_storage_with_cli(&obr_dir, &cli).expect("storage");
         let issue = storage_ctx
             .storage
             .get_issue("bd-rxtrn1")
@@ -10286,15 +10838,15 @@ routing:
     #[test]
     fn open_storage_with_cli_rebuilds_missing_db_from_jsonl() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join(DEFAULT_DB_FILENAME);
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         write_single_issue_jsonl(&jsonl_path, "bd-recovered", "Recovered from JSONL only");
 
         let storage_ctx =
-            open_storage_with_cli(&beads_dir, &CliOverrides::default()).expect("storage");
+            open_storage_with_cli(&obr_dir, &CliOverrides::default()).expect("storage");
         let issue = storage_ctx
             .storage
             .get_issue("bd-recovered")
@@ -10596,25 +11148,31 @@ routing:
     #[test]
     fn read_only_fast_open_miss_waits_for_write_lock_before_rebuild() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join(DEFAULT_DB_FILENAME);
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         write_single_issue_jsonl(&jsonl_path, "bd-recovered", "Recovered from JSONL only");
-        let _held_lock = crate::sync::blocking_write_lock(&beads_dir).expect("hold write lock");
+        let _held_lock = crate::sync::blocking_write_lock(&obr_dir).expect("hold write lock");
+        let lock_timeout_ms = 1;
         let cli = CliOverrides {
-            lock_timeout: Some(1),
+            lock_timeout: Some(lock_timeout_ms),
             read_only_fast_open: true,
             ..CliOverrides::default()
         };
 
-        let err = open_storage_with_cli(&beads_dir, &cli)
+        let err = open_storage_with_cli(&obr_dir, &cli)
             .expect_err("read-only miss should wait for recovery lock");
         let message = err.to_string();
+        let reported_ms =
+            crate::sync::reported_write_lock_timeout_ms(&message, &obr_dir.join(".write.lock"))
+                .unwrap_or_else(|| {
+                    panic!("the miss must time out on the workspace write lock: {message}")
+                });
         assert!(
-            message.contains("Timed out after 1ms waiting for write lock"),
-            "{message}"
+            reported_ms <= lock_timeout_ms,
+            "the wait ignored the caller's {lock_timeout_ms}ms budget: {message}"
         );
         assert!(!db_path.exists(), "rebuild must not run without write lock");
     }
@@ -10622,15 +11180,15 @@ routing:
     #[test]
     fn read_only_fast_open_miss_reuses_caller_write_lock_before_rebuild() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join(DEFAULT_DB_FILENAME);
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         write_single_issue_jsonl(&jsonl_path, "bd-recovered", "Recovered from JSONL only");
         let held_lock = Arc::new(
             crate::sync::blocking_database_family_write_lock_with_timeout(
-                &beads_dir,
+                &obr_dir,
                 &db_path,
                 Some(0),
             )
@@ -10641,9 +11199,9 @@ routing:
             read_only_fast_open: true,
             ..CliOverrides::default()
         };
-        cli.mark_database_family_lock_held(&beads_dir, &held_lock);
+        cli.mark_database_family_lock_held(&obr_dir, &held_lock);
 
-        let storage_ctx = open_storage_with_cli(&beads_dir, &cli)
+        let storage_ctx = open_storage_with_cli(&obr_dir, &cli)
             .expect("caller-held write lock should not be reacquired");
         let issue = storage_ctx
             .storage
@@ -10789,32 +11347,32 @@ routing:
     #[test]
     fn cloned_cli_overrides_own_the_real_write_authority_not_a_stale_marker() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join("beads.db");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
         drop(SqliteStorage::open(&db_path).expect("create database"));
 
         let held_lock = Arc::new(
             crate::sync::blocking_database_family_write_lock_with_timeout(
-                &beads_dir,
+                &obr_dir,
                 &db_path,
                 Some(100),
             )
             .expect("hold database-family write authority"),
         );
         let mut cli = CliOverrides::default();
-        cli.mark_database_family_lock_held(&beads_dir, &held_lock);
+        cli.mark_database_family_lock_held(&obr_dir, &held_lock);
         let cloned = cli.clone();
         drop(cli);
         drop(held_lock);
 
         assert!(
-            cloned.holds_database_family_lock_for(&beads_dir, &db_path),
+            cloned.holds_database_family_lock_for(&obr_dir, &db_path),
             "the clone must retain an opaque owned lock capability"
         );
         assert!(
             crate::sync::blocking_database_family_write_lock_with_timeout(
-                &beads_dir,
+                &obr_dir,
                 &db_path,
                 Some(1),
             )
@@ -10823,7 +11381,7 @@ routing:
         );
         drop(cloned);
         let reacquired = crate::sync::blocking_database_family_write_lock_with_timeout(
-            &beads_dir,
+            &obr_dir,
             &db_path,
             Some(100),
         )
@@ -11030,17 +11588,17 @@ routing:
     #[test]
     fn open_storage_with_cli_no_db_supports_external_jsonl() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let external_dir = temp.path().join("external-store");
         let db_path = external_dir.join("beads.db");
         let jsonl_path = external_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
         fs::create_dir_all(&external_dir).expect("create external dir");
 
         write_single_issue_jsonl(&jsonl_path, "bd-extimp", "Imported from external JSONL");
 
         let cli = mutating_no_db_cli(Some(db_path));
-        let mut storage_ctx = open_storage_with_cli(&beads_dir, &cli).expect("storage");
+        let mut storage_ctx = open_storage_with_cli(&obr_dir, &cli).expect("storage");
         let imported = storage_ctx
             .storage
             .get_issue("bd-extimp")
@@ -11071,9 +11629,9 @@ routing:
     #[test]
     fn open_storage_with_cli_no_db_validates_external_jsonl_before_hashing() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let external_jsonl = temp.path().join("external-store").join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
         fs::create_dir_all(&external_jsonl).expect("create external jsonl directory");
 
         let mut layer = ConfigLayer::default();
@@ -11082,8 +11640,8 @@ routing:
             .insert("no-db".to_string(), "true".to_string());
         let startup = StartupConfig {
             paths: ConfigPaths {
-                beads_dir: beads_dir.clone(),
-                db_path: beads_dir.join(DEFAULT_DB_FILENAME),
+                obr_dir: obr_dir.clone(),
+                db_path: obr_dir.join(DEFAULT_DB_FILENAME),
                 jsonl_path: external_jsonl,
                 metadata: Metadata::default(),
             },
@@ -11101,8 +11659,8 @@ routing:
         .expect_err("external no-db JSONL should be rejected before hashing");
         let message = err.to_string();
         assert!(
-            message.contains("is outside .beads")
-                || message.contains("outside the beads directory")
+            message.contains("is outside the workspace")
+                || message.contains("outside the obr directory")
                 || message.contains("regular file"),
             "unexpected error: {err}"
         );
@@ -11111,9 +11669,9 @@ routing:
     #[test]
     fn open_storage_with_cli_no_db_keeps_distinct_closed_issues_with_identical_content() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
+        let jsonl_path = obr_dir.join("issues.jsonl");
 
         let now = Utc::now();
         let first = Issue {
@@ -11147,7 +11705,7 @@ routing:
             no_db: Some(true),
             ..CliOverrides::default()
         };
-        let storage_ctx = open_storage_with_cli(&beads_dir, &cli).expect("storage");
+        let storage_ctx = open_storage_with_cli(&obr_dir, &cli).expect("storage");
 
         let first_loaded = storage_ctx
             .storage
@@ -11166,7 +11724,7 @@ routing:
             "second duplicate issue should remain addressable"
         );
         assert!(
-            fs::read_dir(&beads_dir)
+            fs::read_dir(&obr_dir)
                 .expect("list read-only no-db workspace")
                 .filter_map(std::result::Result::ok)
                 .all(|entry| !entry
@@ -11179,18 +11737,18 @@ routing:
 
     #[test]
     fn implicit_external_jsonl_allowed_requires_external_db_family() {
-        let beads_dir = PathBuf::from("/tmp/project/.beads");
-        let local_db = beads_dir.join("beads.db");
+        let obr_dir = PathBuf::from("/tmp/project/.beads");
+        let local_db = obr_dir.join("beads.db");
         let external_jsonl = PathBuf::from("/tmp/external/issues.jsonl");
         assert!(!implicit_external_jsonl_allowed(
-            &beads_dir,
+            &obr_dir,
             &local_db,
             &external_jsonl
         ));
 
         let external_db = PathBuf::from("/tmp/external/beads.db");
         assert!(implicit_external_jsonl_allowed(
-            &beads_dir,
+            &obr_dir,
             &external_db,
             &external_jsonl
         ));
@@ -11199,17 +11757,17 @@ routing:
     #[test]
     fn load_config_validates_external_jsonl_before_prefix_inference() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let external_dir = temp.path().join("external-store");
         let external_jsonl = external_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
         fs::create_dir_all(&external_dir).expect("create external dir");
         write_single_issue_jsonl(&external_jsonl, "bd-extcfg", "External config prefix");
         let storage = SqliteStorage::open_memory().expect("storage");
 
         let err = load_config_from_startup_layers(
             &[],
-            &beads_dir,
+            &obr_dir,
             &external_jsonl,
             false,
             JsonlConfigSource::Uncaptured,
@@ -11218,8 +11776,8 @@ routing:
         )
         .expect_err("external JSONL should be rejected before prefix inference");
         assert!(
-            err.to_string().contains("is outside .beads")
-                || err.to_string().contains("outside the beads directory"),
+            err.to_string().contains("is outside the workspace")
+                || err.to_string().contains("outside the obr directory"),
             "unexpected error: {err}"
         );
     }
@@ -11227,11 +11785,11 @@ routing:
     #[test]
     fn repair_database_replay_preserves_explicit_external_jsonl_allowance() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join("beads.db");
         let external_dir = temp.path().join("external-store");
         let jsonl_path = external_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
         fs::create_dir_all(&external_dir).expect("create external dir");
 
         write_single_issue_jsonl(&jsonl_path, "source-extimp", "Imported from external JSONL");
@@ -11243,7 +11801,7 @@ routing:
             allow_external_jsonl: true,
             rename_on_import: true,
             clear_duplicate_external_refs: true,
-            beads_dir: Some(beads_dir.clone()),
+            obr_dir: Some(obr_dir.clone()),
             ..ImportConfig::default()
         };
 
@@ -11253,7 +11811,7 @@ routing:
         let source =
             crate::sync::capture_jsonl_source_snapshot(&jsonl_path).expect("JSONL snapshot");
         let (storage, import_result, _) = repair_database_from_jsonl_snapshot_with_import_config(
-            &beads_dir,
+            &obr_dir,
             &db_path,
             None,
             &bootstrap_layer,
@@ -11275,9 +11833,9 @@ routing:
     #[test]
     fn database_snapshot_keeps_live_sidecars_absent() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
+        let db_path = obr_dir.join("beads.db");
 
         {
             let mut storage = SqliteStorage::open(&db_path).expect("open db");
@@ -11315,14 +11873,14 @@ routing:
     #[test]
     fn open_storage_with_cli_no_db_flushes_force_flush_without_dirty_rows() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         write_single_issue_jsonl(&jsonl_path, "bd-purge", "Issue to purge");
 
         let cli = mutating_no_db_cli(None);
-        let mut storage_ctx = open_storage_with_cli(&beads_dir, &cli).expect("storage");
+        let mut storage_ctx = open_storage_with_cli(&obr_dir, &cli).expect("storage");
         storage_ctx
             .storage
             .purge_issue("bd-purge", "tester")
@@ -11359,17 +11917,17 @@ routing:
     #[test]
     fn open_storage_with_cli_no_db_refuses_to_flush_stale_snapshot() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let external_dir = temp.path().join("external-store");
         let db_path = external_dir.join("beads.db");
         let jsonl_path = external_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
         fs::create_dir_all(&external_dir).expect("create external dir");
 
         write_single_issue_jsonl(&jsonl_path, "bd-extimp", "Imported from external JSONL");
 
         let cli = mutating_no_db_cli(Some(db_path));
-        let mut storage_ctx = open_storage_with_cli(&beads_dir, &cli).expect("storage");
+        let mut storage_ctx = open_storage_with_cli(&obr_dir, &cli).expect("storage");
 
         let new_issue = Issue {
             id: "bd-extflsh".to_string(),
@@ -11402,17 +11960,17 @@ routing:
     #[test]
     fn open_storage_with_cli_no_db_does_not_render_after_flush_conflict() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let external_dir = temp.path().join("external-store");
         let db_path = external_dir.join("beads.db");
         let jsonl_path = external_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
         fs::create_dir_all(&external_dir).expect("create external dir");
 
         write_single_issue_jsonl(&jsonl_path, "bd-extimp", "Imported from external JSONL");
 
         let cli = mutating_no_db_cli(Some(db_path));
-        let mut storage_ctx = open_storage_with_cli(&beads_dir, &cli).expect("storage");
+        let mut storage_ctx = open_storage_with_cli(&obr_dir, &cli).expect("storage");
 
         let new_issue = Issue {
             id: "bd-extflsh".to_string(),
@@ -11444,18 +12002,18 @@ routing:
     #[test]
     fn open_storage_with_cli_no_db_does_not_update_last_touched_after_flush_conflict() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let external_dir = temp.path().join("external-store");
         let db_path = external_dir.join("beads.db");
         let jsonl_path = external_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
         fs::create_dir_all(&external_dir).expect("create external dir");
 
         write_single_issue_jsonl(&jsonl_path, "bd-extimp", "Imported from external JSONL");
-        crate::util::set_last_touched_id(&beads_dir, "bd-existing");
+        crate::util::set_last_touched_id(&obr_dir, "bd-existing");
 
         let cli = mutating_no_db_cli(Some(db_path));
-        let mut storage_ctx = open_storage_with_cli(&beads_dir, &cli).expect("storage");
+        let mut storage_ctx = open_storage_with_cli(&obr_dir, &cli).expect("storage");
 
         let new_issue = Issue {
             id: "bd-extflsh".to_string(),
@@ -11471,14 +12029,14 @@ routing:
 
         let err = storage_ctx
             .flush_no_db_then(|ctx| {
-                crate::util::set_last_touched_id(&ctx.paths.beads_dir, "bd-extflsh");
+                crate::util::set_last_touched_id(&ctx.paths.obr_dir, "bd-extflsh");
                 Ok(())
             })
             .expect_err("stale flush conflict");
 
         assert!(matches!(err, BeadsError::SyncConflict { .. }));
         assert_eq!(
-            crate::util::get_last_touched_id(&beads_dir),
+            crate::util::get_last_touched_id(&obr_dir),
             "bd-existing",
             "failed no-db flush must not leave a stale last-touched pointer behind"
         );
@@ -11487,10 +12045,10 @@ routing:
     #[test]
     fn open_storage_with_cli_backs_up_non_file_sidecars_that_block_recovery() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
-        let wal_dir = beads_dir.join("beads.db-wal");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join("beads.db");
+        let wal_dir = obr_dir.join("beads.db-wal");
+        let jsonl_path = obr_dir.join("issues.jsonl");
         fs::create_dir_all(&wal_dir).expect("create fake wal dir");
 
         fs::write(&db_path, b"not a sqlite database").expect("write corrupt db");
@@ -11498,7 +12056,7 @@ routing:
         fs::write(wal_dir.join("sentinel.txt"), "keep me").expect("write sentinel");
 
         let storage_ctx =
-            open_storage_with_cli(&beads_dir, &CliOverrides::default()).expect("storage");
+            open_storage_with_cli(&obr_dir, &CliOverrides::default()).expect("storage");
         let issue = storage_ctx
             .storage
             .get_issue("bd-recover2")
@@ -11511,7 +12069,7 @@ routing:
             "the original blocking wal directory should be moved away rather than reused in place"
         );
 
-        let recovery_dir = beads_dir.join(RECOVERY_DIR_NAME);
+        let recovery_dir = obr_dir.join(RECOVERY_DIR_NAME);
         let wal_backups: Vec<_> = fs::read_dir(&recovery_dir)
             .expect("list recovery dir")
             .filter_map(std::result::Result::ok)
@@ -11542,10 +12100,10 @@ routing:
     #[test]
     fn open_storage_result_load_config_matches_direct_load_config() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
         fs::write(
-            beads_dir.join("config.yaml"),
+            obr_dir.join("config.yaml"),
             "issue_prefix: proj\ncolor: false\n",
         )
         .expect("write project config");
@@ -11554,14 +12112,14 @@ routing:
             display_color: Some(false),
             ..CliOverrides::default()
         };
-        let mut storage_ctx = open_storage_with_cli(&beads_dir, &cli).expect("storage");
+        let mut storage_ctx = open_storage_with_cli(&obr_dir, &cli).expect("storage");
         storage_ctx
             .storage
             .set_config("issue_prefix", "db-prefix")
             .expect("set issue_prefix");
 
         let direct =
-            load_config(&beads_dir, Some(&storage_ctx.storage), &cli).expect("direct load config");
+            load_config(&obr_dir, Some(&storage_ctx.storage), &cli).expect("direct load config");
         let reused = storage_ctx
             .load_config(&cli)
             .expect("reused startup load config");
@@ -11572,10 +12130,10 @@ routing:
     #[test]
     fn open_storage_with_cli_backs_up_rollback_journal_sidecars_during_recovery() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
-        let journal_dir = beads_dir.join("beads.db-journal");
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join("beads.db");
+        let journal_dir = obr_dir.join("beads.db-journal");
+        let jsonl_path = obr_dir.join("issues.jsonl");
         fs::create_dir_all(&journal_dir).expect("create fake journal dir");
 
         fs::write(&db_path, b"not a sqlite database").expect("write corrupt db");
@@ -11583,7 +12141,7 @@ routing:
         fs::write(journal_dir.join("sentinel.txt"), "keep me").expect("write sentinel");
 
         let storage_ctx =
-            open_storage_with_cli(&beads_dir, &CliOverrides::default()).expect("storage");
+            open_storage_with_cli(&obr_dir, &CliOverrides::default()).expect("storage");
         let issue = storage_ctx
             .storage
             .get_issue("bd-rjrnl1")
@@ -11596,7 +12154,7 @@ routing:
             "the original rollback journal sidecar should be moved out of the way during recovery"
         );
 
-        let recovery_dir = beads_dir.join(RECOVERY_DIR_NAME);
+        let recovery_dir = obr_dir.join(RECOVERY_DIR_NAME);
         let journal_backups: Vec<_> = fs::read_dir(&recovery_dir)
             .expect("list recovery dir")
             .filter_map(std::result::Result::ok)
@@ -11627,16 +12185,16 @@ routing:
     #[test]
     fn open_storage_with_cli_does_not_recover_from_invalid_jsonl() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join("beads.db");
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         fs::write(&db_path, b"not a sqlite database").expect("write corrupt db");
         fs::write(&jsonl_path, "{not valid json\n").expect("write invalid jsonl");
 
         let err =
-            open_storage_with_cli(&beads_dir, &CliOverrides::default()).expect_err("should fail");
+            open_storage_with_cli(&obr_dir, &CliOverrides::default()).expect_err("should fail");
         assert!(
             matches!(err, BeadsError::Database(_)),
             "invalid JSONL should preserve the original database open error"
@@ -11646,7 +12204,7 @@ routing:
             "original database should remain in place"
         );
 
-        let recovery_dir = beads_dir.join(RECOVERY_DIR_NAME);
+        let recovery_dir = obr_dir.join(RECOVERY_DIR_NAME);
         let backup_count =
             fs::read_dir(&recovery_dir).map_or(0, |entries| entries.flatten().count());
         assert_eq!(
@@ -11661,12 +12219,12 @@ routing:
         use std::os::unix::fs::symlink;
 
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
+        let obr_dir = temp.path().join(".beads");
         let external_dir = temp.path().join("external-db");
-        let db_path = beads_dir.join("beads.db");
+        let db_path = obr_dir.join("beads.db");
         let target_db_path = external_dir.join("target.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
         fs::create_dir_all(&external_dir).expect("create external dir");
 
         fs::write(&target_db_path, b"not a sqlite database").expect("write corrupt target");
@@ -11676,7 +12234,7 @@ routing:
         write_single_issue_jsonl(&jsonl_path, "bd-symln1", "Symlinked DB recovery payload");
 
         let err =
-            open_storage_with_cli(&beads_dir, &CliOverrides::default()).expect_err("should refuse");
+            open_storage_with_cli(&obr_dir, &CliOverrides::default()).expect_err("should refuse");
 
         assert!(
             err.to_string().contains(SYMLINKED_DB_RECOVERY_ERROR_PREFIX)
@@ -11707,7 +12265,7 @@ routing:
             "recovery refusal must not quarantine sidecars for a symlinked DB path"
         );
         assert!(
-            !recovery_dir_for_db_path(&db_path, &beads_dir).exists(),
+            !recovery_dir_for_db_path(&db_path, &obr_dir).exists(),
             "refused recovery should not create backup artifacts"
         );
     }
@@ -11718,11 +12276,11 @@ routing:
         use std::os::unix::fs::symlink;
 
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
-        let missing_target = temp.path().join("offline").join("beads.db");
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join(DEFAULT_DB_FILENAME);
+        let missing_target = temp.path().join("offline").join(DEFAULT_DB_FILENAME);
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         symlink(&missing_target, &db_path).expect("symlink db path to missing target");
         write_single_issue_jsonl(
@@ -11731,9 +12289,8 @@ routing:
             "Deferred symlink recovery payload",
         );
 
-        let err =
-            open_storage_with_cli_deferred_jsonl_recovery(&beads_dir, &CliOverrides::default())
-                .expect_err("deferred recovery should refuse");
+        let err = open_storage_with_cli_deferred_jsonl_recovery(&obr_dir, &CliOverrides::default())
+            .expect_err("deferred recovery should refuse");
 
         assert!(
             err.to_string().contains(SYMLINKED_DB_RECOVERY_ERROR_PREFIX)
@@ -11758,7 +12315,7 @@ routing:
             "deferred recovery must not materialize the missing external target"
         );
         assert!(
-            !recovery_dir_for_db_path(&db_path, &beads_dir).exists(),
+            !recovery_dir_for_db_path(&db_path, &obr_dir).exists(),
             "deferred refusal should not create backup artifacts"
         );
     }
@@ -11766,17 +12323,17 @@ routing:
     #[test]
     fn quarantine_truncated_wal_sidecar_moves_wal_and_shm_to_recovery() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join("beads.db");
         let wal_path = PathBuf::from(format!("{}-wal", db_path.to_string_lossy()));
         let shm_path = PathBuf::from(format!("{}-shm", db_path.to_string_lossy()));
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         fs::write(&db_path, b"db").expect("write db");
         fs::write(&wal_path, b"bad").expect("write truncated wal");
         fs::write(&shm_path, b"sidecar shared memory").expect("write shm");
 
-        quarantine_truncated_wal_sidecar(&db_path, &beads_dir);
+        quarantine_truncated_wal_sidecar(&db_path, &obr_dir);
 
         assert!(
             !wal_path.exists(),
@@ -11787,7 +12344,7 @@ routing:
             "matching shm sidecar should be moved with the truncated wal"
         );
 
-        let recovery_dir = recovery_dir_for_db_path(&db_path, &beads_dir);
+        let recovery_dir = recovery_dir_for_db_path(&db_path, &obr_dir);
         let quarantined_paths: Vec<_> = fs::read_dir(&recovery_dir)
             .expect("list recovery dir")
             .filter_map(std::result::Result::ok)
@@ -11833,30 +12390,158 @@ routing:
     }
 
     #[test]
+    fn a_real_wal_is_never_moved_however_it_is_byte_ordered() {
+        for magic in [[0x37_u8, 0x7f, 0x06, 0x82], [0x37_u8, 0x7f, 0x06, 0x83]] {
+            let temp = TempDir::new().expect("tempdir");
+            let obr_dir = temp.path().join(".obr");
+            fs::create_dir_all(&obr_dir).expect("obr dir");
+            let db_path = obr_dir.join("obr.db");
+            fs::write(&db_path, b"database").expect("db");
+            let wal = obr_dir.join("obr.db-wal");
+            // A real header plus a frame: the only copy of those committed
+            // pages, and moving it would lose them.
+            let mut bytes = magic.to_vec();
+            bytes.resize(64, 0);
+            fs::write(&wal, &bytes).expect("wal");
+
+            quarantine_truncated_wal_sidecar(&db_path, &obr_dir);
+
+            assert_eq!(
+                fs::read(&wal).expect("wal still present"),
+                bytes,
+                "a WAL carrying real magic must be left byte-for-byte alone"
+            );
+        }
+    }
+
+    #[test]
+    fn a_long_wal_whose_magic_is_wrong_is_quarantined() {
+        let temp = TempDir::new().expect("tempdir");
+        let obr_dir = temp.path().join(".obr");
+        fs::create_dir_all(&obr_dir).expect("obr dir");
+        let db_path = obr_dir.join("obr.db");
+        fs::write(&db_path, b"database").expect("db");
+        let wal = obr_dir.join("obr.db-wal");
+        // Verbatim what sidecar_wal_without_shm ships: 42 bytes of plain text,
+        // long enough to clear the old length-only check.
+        let payload = b"stale wal sidecar from interrupted writer
+";
+        fs::write(&wal, payload).expect("wal");
+        assert!(payload.len() >= 32, "the point is that length alone passes");
+
+        quarantine_truncated_wal_sidecar(&db_path, &obr_dir);
+
+        assert!(
+            !wal.exists(),
+            "a file merely named -wal must not be left blocking every open"
+        );
+        let preserved = fs::read_dir(obr_dir.join("recovery"))
+            .expect("recovery dir")
+            .filter_map(std::result::Result::ok)
+            .filter(|entry| fs::read(entry.path()).is_ok_and(|bytes| bytes == payload))
+            .count();
+        assert_eq!(preserved, 1, "the bytes must be preserved, not deleted");
+    }
+
+    #[test]
+    fn a_real_hot_journal_is_never_moved() {
+        let temp = TempDir::new().expect("tempdir");
+        let obr_dir = temp.path().join(".obr");
+        fs::create_dir_all(&obr_dir).expect("obr dir");
+        let db_path = obr_dir.join("obr.db");
+        fs::write(&db_path, b"database").expect("db");
+        let journal = obr_dir.join("obr.db-journal");
+        // Real magic plus a payload: this is the only copy of the
+        // pre-transaction pages and moving it would lose them.
+        let mut bytes = vec![0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7];
+        bytes.extend_from_slice(b"pre-transaction pages");
+        fs::write(&journal, &bytes).expect("journal");
+
+        quarantine_bogus_journal_sidecar(&db_path, &obr_dir);
+
+        assert_eq!(
+            fs::read(&journal).expect("journal still present"),
+            bytes,
+            "a journal carrying real magic must be left byte-for-byte alone"
+        );
+    }
+
+    #[test]
+    fn a_journal_too_short_to_judge_is_left_alone() {
+        let temp = TempDir::new().expect("tempdir");
+        let obr_dir = temp.path().join(".obr");
+        fs::create_dir_all(&obr_dir).expect("obr dir");
+        let db_path = obr_dir.join("obr.db");
+        fs::write(&db_path, b"database").expect("db");
+        let journal = obr_dir.join("obr.db-journal");
+
+        for payload in [b"".as_slice(), b"short".as_slice()] {
+            fs::write(&journal, payload).expect("journal");
+            quarantine_bogus_journal_sidecar(&db_path, &obr_dir);
+            assert!(
+                journal.exists(),
+                "a journal shorter than the magic cannot be judged and must stay"
+            );
+        }
+    }
+
+    #[test]
+    fn a_journal_whose_magic_is_provably_wrong_is_quarantined() {
+        let temp = TempDir::new().expect("tempdir");
+        let obr_dir = temp.path().join(".obr");
+        fs::create_dir_all(&obr_dir).expect("obr dir");
+        let db_path = obr_dir.join("obr.db");
+        fs::write(&db_path, b"database").expect("db");
+        let journal = obr_dir.join("obr.db-journal");
+        // The exact shape journal_sidecar_leftover ships: readable text.
+        fs::write(&journal, b"interrupted rebuild leftovers").expect("journal");
+
+        quarantine_bogus_journal_sidecar(&db_path, &obr_dir);
+
+        assert!(
+            !journal.exists(),
+            "a file merely named -journal must not be left blocking every open"
+        );
+        let recovery = obr_dir.join("recovery");
+        let preserved: Vec<_> = fs::read_dir(&recovery)
+            .expect("recovery dir")
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                fs::read(entry.path()).is_ok_and(|bytes| bytes == b"interrupted rebuild leftovers")
+            })
+            .collect();
+        assert_eq!(
+            preserved.len(),
+            1,
+            "the bytes must be preserved for inspection, not deleted"
+        );
+    }
+
+    #[test]
     fn quarantine_truncated_wal_sidecar_leaves_zero_byte_wal_in_place() {
         // Regression for beads_rust#291. A 0-byte WAL is the documented
         // post-`PRAGMA wal_checkpoint(TRUNCATE)` resting state, which
-        // SqliteStorage::Drop runs on every mutating br invocation. The
+        // SqliteStorage::Drop runs on every mutating obr invocation. The
         // pre-fix heuristic quarantined that healthy hand-off as corruption
         // and flooded `.beads/.br_recovery/` with empty-file artifacts at
         // ~1 entry / 2 invocations on multi-agent repos.
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join("beads.db");
         let wal_path = PathBuf::from(format!("{}-wal", db_path.to_string_lossy()));
         let shm_path = PathBuf::from(format!("{}-shm", db_path.to_string_lossy()));
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         fs::write(&db_path, b"db").expect("write db");
         fs::write(&wal_path, b"").expect("write 0-byte wal");
         fs::write(&shm_path, b"live shm").expect("write shm");
 
-        quarantine_truncated_wal_sidecar(&db_path, &beads_dir);
+        quarantine_truncated_wal_sidecar(&db_path, &obr_dir);
 
         assert!(wal_path.is_file(), "0-byte wal should remain live");
         assert!(shm_path.is_file(), "shm should remain live with 0-byte wal");
         assert!(
-            !recovery_dir_for_db_path(&db_path, &beads_dir).exists(),
+            !recovery_dir_for_db_path(&db_path, &obr_dir).exists(),
             "0-byte wal should not create a recovery quarantine"
         );
     }
@@ -11864,22 +12549,29 @@ routing:
     #[test]
     fn quarantine_truncated_wal_sidecar_leaves_valid_wal_family_in_place() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join("beads.db");
         let wal_path = PathBuf::from(format!("{}-wal", db_path.to_string_lossy()));
         let shm_path = PathBuf::from(format!("{}-shm", db_path.to_string_lossy()));
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         fs::write(&db_path, b"db").expect("write db");
-        fs::write(&wal_path, [0_u8; 32]).expect("write valid-sized wal");
+        // A real header, not 32 zero bytes. The fixture used zeros because the
+        // check was length-only and could not tell them apart; now that it
+        // reads the magic, zeros are correctly recognised as not-a-WAL. The
+        // assertions below are unchanged — this only makes the fixture match
+        // the name.
+        let mut valid_wal = vec![0x37_u8, 0x7f, 0x06, 0x82];
+        valid_wal.resize(32, 0);
+        fs::write(&wal_path, &valid_wal).expect("write valid wal");
         fs::write(&shm_path, b"live shm").expect("write shm");
 
-        quarantine_truncated_wal_sidecar(&db_path, &beads_dir);
+        quarantine_truncated_wal_sidecar(&db_path, &obr_dir);
 
         assert!(wal_path.is_file(), "valid-sized wal should remain live");
         assert!(shm_path.is_file(), "shm should remain live with valid wal");
         assert!(
-            !recovery_dir_for_db_path(&db_path, &beads_dir).exists(),
+            !recovery_dir_for_db_path(&db_path, &obr_dir).exists(),
             "valid-sized wal should not create a recovery quarantine"
         );
     }
@@ -11887,15 +12579,15 @@ routing:
     #[test]
     fn move_database_family_to_recovery_records_verified_file_backups() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join("beads.db");
         let wal_path = PathBuf::from(format!("{}-wal", db_path.to_string_lossy()));
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         fs::write(&db_path, b"db bytes").expect("write db");
         fs::write(&wal_path, b"wal bytes").expect("write wal");
 
-        let backup_set = move_database_family_to_recovery(&db_path, &beads_dir, "fixed-stamp")
+        let backup_set = move_database_family_to_recovery(&db_path, &obr_dir, "fixed-stamp")
             .expect("backup set");
 
         assert_eq!(backup_set.files.len(), 2);
@@ -11945,15 +12637,15 @@ routing:
     #[test]
     fn move_database_family_to_recovery_rolls_back_partial_failure() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join("beads.db");
         let wal_path = PathBuf::from(format!("{}-wal", db_path.to_string_lossy()));
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         fs::write(&db_path, b"db").expect("write db");
         fs::write(&wal_path, b"wal").expect("write wal");
 
-        let recovery_dir = recovery_dir_for_db_path(&db_path, &beads_dir);
+        let recovery_dir = recovery_dir_for_db_path(&db_path, &obr_dir);
         fs::create_dir_all(&recovery_dir).expect("create recovery dir");
 
         let stamp = "fixed-stamp";
@@ -11962,7 +12654,7 @@ routing:
         fs::create_dir_all(&conflicting_wal_backup).expect("create conflicting wal backup dir");
 
         let err =
-            move_database_family_to_recovery(&db_path, &beads_dir, stamp).expect_err("should fail");
+            move_database_family_to_recovery(&db_path, &obr_dir, stamp).expect_err("should fail");
         assert!(
             matches!(err, BeadsError::SyncConflict { .. }),
             "a pre-existing recovery target must be classified as a no-replace conflict: {err}"
@@ -12017,14 +12709,14 @@ routing:
     #[test]
     fn restore_database_family_after_failed_rebuild_rolls_back_partial_rebuild_staging() {
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join("beads.db");
         let wal_path = PathBuf::from(format!("{}-wal", db_path.to_string_lossy()));
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         fs::write(&db_path, b"original-db").expect("write original db");
         fs::write(&wal_path, b"original-wal").expect("write original wal");
-        let recovery_dir = recovery_dir_for_db_path(&db_path, &beads_dir);
+        let recovery_dir = recovery_dir_for_db_path(&db_path, &obr_dir);
         fs::create_dir_all(&recovery_dir).expect("create recovery dir");
 
         // Use a specific backup file path that does NOT exist, so the
@@ -12333,17 +13025,17 @@ routing:
         use std::os::unix::fs::symlink;
 
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        let db_path = beads_dir.join("beads.db");
+        let obr_dir = temp.path().join(".beads");
+        let db_path = obr_dir.join("beads.db");
         let wal_path = PathBuf::from(format!("{}-wal", db_path.to_string_lossy()));
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         fs::write(&db_path, b"db").expect("write db");
         symlink("missing-wal-target", &wal_path).expect("create dangling wal symlink");
 
         let stamp = "fixed-stamp";
         let backup_set =
-            move_database_family_to_recovery(&db_path, &beads_dir, stamp).expect("backup set");
+            move_database_family_to_recovery(&db_path, &obr_dir, stamp).expect("backup set");
 
         assert!(
             fs::symlink_metadata(&wal_path).is_err(),

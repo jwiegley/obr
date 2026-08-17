@@ -25,10 +25,10 @@ use std::path::Path;
 /// JSON output structure for updated issues.
 ///
 /// `assignee` is always emitted (null when unassigned) rather than being
-/// skipped when absent. `br update --claim` sets the assignee, and an agent
+/// skipped when absent. `obr update --claim` sets the assignee, and an agent
 /// must be able to confirm the claim landed from the response alone; a field
 /// that disappears when unset would leave "not claimed" and "not reported"
-/// indistinguishable and force a verification `br show` round trip (GitHub
+/// indistinguishable and force a verification `obr show` round trip (GitHub
 /// issue #393).
 #[derive(Debug, Serialize)]
 struct UpdatedIssueOutput {
@@ -37,7 +37,7 @@ struct UpdatedIssueOutput {
     status: String,
     priority: i32,
     // Coordination fields echoed so a caller can confirm a claim landed from
-    // the update response alone, without a follow-up `br show` (#393).
+    // the update response alone, without a follow-up `obr show` (#393).
     assignee: Option<String>,
     owner: Option<String>,
     updated_at: DateTime<Utc>,
@@ -177,7 +177,7 @@ struct PreparedUpdateRoute {
 /// Returns an error if database operations fail or validation errors occur.
 #[allow(clippy::too_many_lines)]
 pub fn execute(args: &UpdateArgs, cli: &config::CliOverrides, ctx: &OutputContext) -> Result<()> {
-    // Refuse terminal-state transitions before doing any I/O. `br update`
+    // Refuse terminal-state transitions before doing any I/O. `obr update`
     // is a data-only field mutator; terminal-state transitions
     // (closed, tombstone) must go through their dedicated commands so the
     // close-policy / delete pipelines are applied (see beads_rust#301).
@@ -189,10 +189,10 @@ pub fn execute(args: &UpdateArgs, cli: &config::CliOverrides, ctx: &OutputContex
     let resolved_args = resolve_update_description(args)?;
     let args = &resolved_args;
 
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
     let mut target_inputs = args.ids.clone();
     if target_inputs.is_empty() {
-        let last_touched = crate::util::get_last_touched_id(&beads_dir);
+        let last_touched = crate::util::get_last_touched_id(&obr_dir);
         if last_touched.is_empty() {
             return Err(BeadsError::validation(
                 "ids",
@@ -202,12 +202,12 @@ pub fn execute(args: &UpdateArgs, cli: &config::CliOverrides, ctx: &OutputContex
         target_inputs.push(last_touched);
     }
 
-    let routed_batches = config::routing::group_issue_inputs_by_route(&target_inputs, &beads_dir)?;
+    let routed_batches = config::routing::group_issue_inputs_by_route(&target_inputs, &obr_dir)?;
 
     let (updated_issues, render_items, ordered_resolved_ids, mut capacity_warnings) =
         if routed_batches.iter().any(|batch| batch.is_external) {
-            let normalized_local_beads_dir =
-                dunce::canonicalize(&beads_dir).unwrap_or_else(|_| beads_dir.clone());
+            let normalized_local_obr_dir =
+                dunce::canonicalize(&obr_dir).unwrap_or_else(|_| obr_dir.clone());
             let mut prepared_routes = Vec::new();
             let mut routed_updated_issues = Vec::new();
             let mut routed_render_items = Vec::new();
@@ -217,13 +217,13 @@ pub fn execute(args: &UpdateArgs, cli: &config::CliOverrides, ctx: &OutputContex
                 let mut batch_args = args.clone();
                 batch_args.ids.clone_from(&batch.issue_inputs);
 
-                let normalized_batch_beads_dir = dunce::canonicalize(&batch.beads_dir)
-                    .unwrap_or_else(|_| batch.beads_dir.clone());
+                let normalized_batch_obr_dir =
+                    dunce::canonicalize(&batch.obr_dir).unwrap_or_else(|_| batch.obr_dir.clone());
                 let mut batch_cli = cli.clone();
                 // Routed projects must resolve their own metadata-defined DB path
                 // instead of being forced back to the local override. Preserve the
                 // caller's explicit DB only for the local batch.
-                batch_cli.db = if normalized_batch_beads_dir == normalized_local_beads_dir {
+                batch_cli.db = if normalized_batch_obr_dir == normalized_local_obr_dir {
                     cli.db.clone()
                 } else {
                     None
@@ -233,7 +233,7 @@ pub fn execute(args: &UpdateArgs, cli: &config::CliOverrides, ctx: &OutputContex
                     prepare_single_route(
                         &batch_args,
                         &batch_cli,
-                        &batch.beads_dir,
+                        &batch.obr_dir,
                         batch.is_external,
                     )?,
                 ));
@@ -295,7 +295,7 @@ pub fn execute(args: &UpdateArgs, cli: &config::CliOverrides, ctx: &OutputContex
             )
         } else {
             let route_output =
-                execute_prepared_route(prepare_single_route(args, cli, &beads_dir, false)?, ctx)?;
+                execute_prepared_route(prepare_single_route(args, cli, &obr_dir, false)?, ctx)?;
             (
                 route_output.updated_issues,
                 route_output.render_items,
@@ -323,7 +323,7 @@ pub fn execute(args: &UpdateArgs, cli: &config::CliOverrides, ctx: &OutputContex
     });
 
     if let Some(last_id) = ordered_resolved_ids.last() {
-        crate::util::set_last_touched_id(&beads_dir, last_id);
+        crate::util::set_last_touched_id(&obr_dir, last_id);
     }
 
     if ctx.is_toon() {
@@ -354,18 +354,18 @@ pub fn execute(args: &UpdateArgs, cli: &config::CliOverrides, ctx: &OutputContex
         // --status in_progress). Done after the update summary so the
         // child's status change is visible first, then the inherited
         // context the agent should be operating under.
-        emit_inherited_context_for_in_progress_transitions(&beads_dir, cli, &render_items);
+        emit_inherited_context_for_in_progress_transitions(&obr_dir, cli, &render_items);
     }
 
     Ok(())
 }
 
 fn emit_inherited_context_for_in_progress_transitions(
-    beads_dir: &Path,
+    obr_dir: &Path,
     cli: &config::CliOverrides,
     render_items: &[UpdateRenderItem],
 ) {
-    if !crate::inheritance::is_enabled(beads_dir) {
+    if !crate::inheritance::is_enabled(obr_dir) {
         return;
     }
     let claimed_ids: Vec<&str> = render_items
@@ -388,7 +388,7 @@ fn emit_inherited_context_for_in_progress_transitions(
     // Open a transient read-only storage to walk ancestry. Failure
     // here is non-fatal — the update has already succeeded and the
     // child's status change is already printed.
-    let Ok(storage_ctx) = config::open_storage_with_cli(beads_dir, cli) else {
+    let Ok(storage_ctx) = config::open_storage_with_cli(obr_dir, cli) else {
         return;
     };
     let storage = &storage_ctx.storage;
@@ -407,37 +407,37 @@ fn emit_inherited_context_for_in_progress_transitions(
 fn prepare_single_route(
     args: &UpdateArgs,
     cli: &config::CliOverrides,
-    beads_dir: &Path,
+    obr_dir: &Path,
     auto_flush_external: bool,
 ) -> Result<PreparedUpdateRoute> {
     let routed_write_lock =
-        acquire_routed_workspace_write_lock(beads_dir, auto_flush_external, cli.lock_timeout)?;
+        acquire_routed_workspace_write_lock(obr_dir, auto_flush_external, cli.lock_timeout)?;
     // Reuse the routed authority for the storage open below; acquiring the
     // same database-family lock from a second descriptor in this process
     // would self-deadlock until the lock timeout (#409 routed cluster).
     let mut route_cli = cli.clone();
     routed_write_lock.mark_cli_write_lock_held(&mut route_cli);
     let cli = &route_cli;
-    let mut storage_ctx = config::open_storage_with_cli(beads_dir, cli)?;
+    let mut storage_ctx = config::open_storage_with_cli(obr_dir, cli)?;
     auto_import_storage_ctx_if_stale(&mut storage_ctx, cli)?;
 
     let config_layer = storage_ctx.load_config(cli)?;
     let actor = config::resolve_actor(&config_layer);
     let resolver = build_resolver(&config_layer, &storage_ctx.storage);
-    let resolved_ids = resolve_target_ids(args, beads_dir, &resolver, &storage_ctx.storage)?;
+    let resolved_ids = resolve_target_ids(args, obr_dir, &resolver, &storage_ctx.storage)?;
 
     let claim_exclusive = config::claim_exclusive_from_layer(&config_layer);
     let update = build_update(args, &actor, claim_exclusive)?;
 
     // Strict status-workflow enforcement (issue #311) + transition rules
-    // (issue #312, layer 1). When the project's `.beads/policy.yaml` configures
+    // (issue #312, layer 1). When the project's `policy.yaml` configures
     // `workflow.strict: true` with a non-empty `workflow.statuses` set, a target
     // status outside that set is rejected. When `workflow.strict: true` with a
     // non-empty `workflow.transitions` map, a `from -> to` status change that is
     // not an allowed transition is rejected. Absent/non-strict workflow config
     // is a no-op, so existing repos are unaffected.
     if let Some(new_status) = update.status.as_ref() {
-        let policy = crate::close_policy::load_for_beads_dir(beads_dir)?;
+        let policy = crate::close_policy::load_for_obr_dir(obr_dir)?;
         policy.workflow.validate_status(new_status.as_str())?;
         let transitions_enforced = policy.workflow.transitions_enforced();
         if transitions_enforced {
@@ -722,7 +722,7 @@ fn execute_prepared_route(
     {
         report_auto_flush_failure(
             ctx,
-            &prepared.storage_ctx.paths.beads_dir,
+            &prepared.storage_ctx.paths.obr_dir,
             &prepared.storage_ctx.paths.jsonl_path,
             &error,
         );
@@ -827,7 +827,7 @@ fn execute_bulk_label_only_route(
     {
         report_auto_flush_failure(
             ctx,
-            &prepared.storage_ctx.paths.beads_dir,
+            &prepared.storage_ctx.paths.obr_dir,
             &prepared.storage_ctx.paths.jsonl_path,
             &error,
         );
@@ -1090,13 +1090,13 @@ fn build_resolver(config_layer: &config::ConfigLayer, _storage: &SqliteStorage) 
 
 fn resolve_target_ids(
     args: &UpdateArgs,
-    beads_dir: &std::path::Path,
+    obr_dir: &std::path::Path,
     resolver: &IdResolver,
     storage: &SqliteStorage,
 ) -> Result<Vec<String>> {
     let mut ids = args.ids.clone();
     if ids.is_empty() {
-        let last_touched = crate::util::get_last_touched_id(beads_dir);
+        let last_touched = crate::util::get_last_touched_id(obr_dir);
         if last_touched.is_empty() {
             return Err(BeadsError::validation(
                 "ids",
@@ -1134,14 +1134,14 @@ fn validate_mutable_target_issues(
     Ok(())
 }
 
-/// Reject `br update --status <terminal>` and direct the user at the
+/// Reject `obr update --status <terminal>` and direct the user at the
 /// dedicated command for that transition.
 ///
-/// `br update` is a data-only field mutator. Terminal-state transitions
+/// `obr update` is a data-only field mutator. Terminal-state transitions
 /// (`closed`, `tombstone`) own their own audit / policy pipelines:
 ///
-/// * `closed`    → `br close`  (close-policy gates: close-reason, AC, attribution, ...)
-/// * `tombstone` → `br delete` (tombstone metadata, dependency rewiring)
+/// * `closed`    → `obr close`  (close-policy gates: close-reason, AC, attribution, ...)
+/// * `tombstone` → `obr delete` (tombstone metadata, dependency rewiring)
 ///
 /// Allowing both paths to reach the same terminal state would give the
 /// project two different audit contracts depending on which command the
@@ -1159,24 +1159,24 @@ fn reject_terminal_status_transition(raw_status: Option<&str>) -> Result<()> {
     match parsed {
         Status::Closed => Err(BeadsError::validation(
             "status",
-            "refusing to close via `br update --status closed`: \
-             terminal-state transitions must go through `br close` so close-policy \
+            "refusing to close via `obr update --status closed`: \
+             terminal-state transitions must go through `obr close` so close-policy \
              (close-reason / AC / attribution) is enforced. \
-             Use `br close <id> --reason \"...\"` instead, or `br close <id> \
+             Use `obr close <id> --reason \"...\"` instead, or `obr close <id> \
              --bypass-policy --bypass-reason \"...\"` to opt out explicitly. \
              See https://github.com/Dicklesworthstone/beads_rust/issues/301.",
         )),
         Status::Tombstone => Err(BeadsError::validation(
             "status",
-            "refusing to tombstone via `br update --status tombstone`: \
-             use `br delete <id>` instead so dependency rewiring and tombstone \
+            "refusing to tombstone via `obr update --status tombstone`: \
+             use `obr delete <id>` instead so dependency rewiring and tombstone \
              metadata are applied correctly.",
         )),
         _ => Ok(()),
     }
 }
 
-/// Resolve `br update`'s effective description before preparing any routes.
+/// Resolve `obr update`'s effective description before preparing any routes.
 ///
 /// Clap enforces the inline/file conflict for CLI callers. This guard repeats
 /// the contract for programmatic callers, then reads the file (or stdin)
@@ -1659,16 +1659,16 @@ mod tests {
         info!("test_build_update_with_status: assertions passed");
     }
 
-    /// beads_rust#301: `br update --status closed` must refuse and direct
-    /// the operator at `br close` so close-policy fires.
+    /// beads_rust#301: `obr update --status closed` must refuse and direct
+    /// the operator at `obr close` so close-policy fires.
     #[test]
     fn reject_terminal_status_transition_refuses_closed() {
         init_test_logging();
         let err = reject_terminal_status_transition(Some("closed")).unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("br close"),
-            "error must point at br close; got: {msg}"
+            msg.contains("obr close"),
+            "error must point at obr close; got: {msg}"
         );
         assert!(
             msg.contains("close-policy"),
@@ -1681,7 +1681,7 @@ mod tests {
     }
 
     /// beads_rust#301: tombstone is also a terminal state with a dedicated
-    /// command (`br delete`); refuse the update path so dependency rewiring
+    /// command (`obr delete`); refuse the update path so dependency rewiring
     /// is not skipped.
     #[test]
     fn reject_terminal_status_transition_refuses_tombstone() {
@@ -1689,8 +1689,8 @@ mod tests {
         let err = reject_terminal_status_transition(Some("tombstone")).unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("br delete"),
-            "error must point at br delete; got: {msg}"
+            msg.contains("obr delete"),
+            "error must point at obr delete; got: {msg}"
         );
     }
 
@@ -1968,13 +1968,12 @@ mod tests {
         info!("test_prepare_single_route_rejects_invalid_remove_label: starting");
 
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         {
             let mut storage_ctx =
-                config::open_storage_with_cli(&beads_dir, &CliOverrides::default())
-                    .expect("storage");
+                config::open_storage_with_cli(&obr_dir, &CliOverrides::default()).expect("storage");
             let issue = Issue {
                 id: "bd-label".to_string(),
                 title: "Label target".to_string(),
@@ -1996,7 +1995,7 @@ mod tests {
             remove_label: vec!["has space".to_string()],
             ..Default::default()
         };
-        let result = prepare_single_route(&args, &CliOverrides::default(), &beads_dir, false);
+        let result = prepare_single_route(&args, &CliOverrides::default(), &obr_dir, false);
         assert!(result.is_err(), "invalid remove label should fail");
         if let Err(err) = result {
             assert!(err.to_string().contains("invalid characters"));
@@ -2010,11 +2009,11 @@ mod tests {
         info!("test_execute_prepared_route_bulk_label_add_updates_multiple_ids: starting");
 
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         let mut storage_ctx =
-            config::open_storage_with_cli(&beads_dir, &CliOverrides::default()).expect("storage");
+            config::open_storage_with_cli(&obr_dir, &CliOverrides::default()).expect("storage");
         for id in ["bd-bulk-a", "bd-bulk-b"] {
             let issue = Issue {
                 id: id.to_string(),
@@ -2061,7 +2060,7 @@ mod tests {
         );
 
         let reopened =
-            config::open_storage_with_cli(&beads_dir, &CliOverrides::default()).expect("reopen");
+            config::open_storage_with_cli(&obr_dir, &CliOverrides::default()).expect("reopen");
         assert_eq!(
             reopened.storage.get_labels("bd-bulk-a").expect("labels a"),
             vec!["bulk-route".to_string()]
@@ -2086,11 +2085,11 @@ mod tests {
         info!("test_execute_prepared_route_bulk_label_remove_updates_multiple_ids: starting");
 
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         let mut storage_ctx =
-            config::open_storage_with_cli(&beads_dir, &CliOverrides::default()).expect("storage");
+            config::open_storage_with_cli(&obr_dir, &CliOverrides::default()).expect("storage");
         for id in ["bd-bulk-remove-a", "bd-bulk-remove-b"] {
             let issue = Issue {
                 id: id.to_string(),
@@ -2147,7 +2146,7 @@ mod tests {
         );
 
         let reopened =
-            config::open_storage_with_cli(&beads_dir, &CliOverrides::default()).expect("reopen");
+            config::open_storage_with_cli(&obr_dir, &CliOverrides::default()).expect("reopen");
         assert!(
             reopened
                 .storage
@@ -2185,11 +2184,11 @@ mod tests {
         );
 
         let temp = TempDir::new().expect("tempdir");
-        let beads_dir = temp.path().join(".beads");
-        fs::create_dir_all(&beads_dir).expect("create beads dir");
+        let obr_dir = temp.path().join(".beads");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         let mut storage_ctx =
-            config::open_storage_with_cli(&beads_dir, &CliOverrides::default()).expect("storage");
+            config::open_storage_with_cli(&obr_dir, &CliOverrides::default()).expect("storage");
 
         let blocker = Issue {
             id: "bd-blocker".to_string(),
@@ -2265,7 +2264,7 @@ mod tests {
         );
 
         let reopened =
-            config::open_storage_with_cli(&beads_dir, &CliOverrides::default()).expect("reopen");
+            config::open_storage_with_cli(&obr_dir, &CliOverrides::default()).expect("reopen");
         let blocker_after = reopened
             .storage
             .get_issue("bd-blocker")

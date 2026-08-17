@@ -249,8 +249,8 @@ pub fn execute(
     cli: &config::CliOverrides,
     ctx: &OutputContext,
 ) -> Result<()> {
-    let beads_dir = config::discover_beads_dir_with_cli(cli)?;
-    let mut storage_ctx = config::open_storage_with_cli(&beads_dir, cli)?;
+    let obr_dir = config::discover_obr_dir_with_cli(cli)?;
+    let mut storage_ctx = config::open_storage_with_cli(&obr_dir, cli)?;
     execute_with_storage_ctx(command, cli, ctx, &mut storage_ctx)
 }
 
