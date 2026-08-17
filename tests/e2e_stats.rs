@@ -5,14 +5,14 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, run_br};
+use common::cli::{ObrWorkspace, run_obr};
 use serde_json::Value;
 
-fn init_and_populate(workspace: &BrWorkspace) {
-    let init = run_br(workspace, ["init"], "init");
+fn init_and_populate(workspace: &ObrWorkspace) {
+    let init = run_obr(workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let c1 = run_br(
+    let c1 = run_obr(
         workspace,
         [
             "create",
@@ -26,14 +26,14 @@ fn init_and_populate(workspace: &BrWorkspace) {
     );
     assert!(c1.status.success(), "create auth: {}", c1.stderr);
 
-    let c2 = run_br(
+    let c2 = run_obr(
         workspace,
         ["create", "Write tests", "--type", "task", "--priority", "2"],
         "create_tests",
     );
     assert!(c2.status.success(), "create tests: {}", c2.stderr);
 
-    let c3 = run_br(
+    let c3 = run_obr(
         workspace,
         [
             "create",
@@ -50,11 +50,11 @@ fn init_and_populate(workspace: &BrWorkspace) {
 
 #[test]
 fn stats_json_empty_workspace() {
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let stats = run_br(
+    let stats = run_obr(
         &workspace,
         ["stats", "--json", "--no-activity"],
         "stats_empty",
@@ -70,10 +70,10 @@ fn stats_json_empty_workspace() {
 
 #[test]
 fn stats_json_populated_workspace() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_and_populate(&workspace);
 
-    let stats = run_br(
+    let stats = run_obr(
         &workspace,
         ["stats", "--json", "--no-activity"],
         "stats_populated",
@@ -90,22 +90,22 @@ fn stats_json_populated_workspace() {
 
 #[test]
 fn stats_json_after_close() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_and_populate(&workspace);
 
-    let list = run_br(&workspace, ["list", "--json"], "list_ids");
+    let list = run_obr(&workspace, ["list", "--json"], "list_ids");
     assert!(list.status.success());
     let list_json: Value = serde_json::from_str(&list.stdout).expect("valid JSON");
     let first_id = list_json["issues"][0]["id"].as_str().expect("has issue id");
 
-    let close = run_br(
+    let close = run_obr(
         &workspace,
         ["close", first_id, "--reason", "done"],
         "close_first",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
 
-    let stats = run_br(
+    let stats = run_obr(
         &workspace,
         ["stats", "--json", "--no-activity"],
         "stats_after_close",
@@ -121,20 +121,20 @@ fn stats_json_after_close() {
 
 #[test]
 fn stats_json_with_deps_shows_blocked() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_and_populate(&workspace);
 
-    let list = run_br(&workspace, ["list", "--json"], "list_for_deps");
+    let list = run_obr(&workspace, ["list", "--json"], "list_for_deps");
     assert!(list.status.success());
     let list_json: Value = serde_json::from_str(&list.stdout).expect("valid JSON");
     let issues = list_json["issues"].as_array().expect("issues array");
     let id0 = issues[0]["id"].as_str().unwrap();
     let id1 = issues[1]["id"].as_str().unwrap();
 
-    let dep = run_br(&workspace, ["dep", "add", id0, id1], "add_dep");
+    let dep = run_obr(&workspace, ["dep", "add", id0, id1], "add_dep");
     assert!(dep.status.success(), "dep add failed: {}", dep.stderr);
 
-    let stats = run_br(
+    let stats = run_obr(
         &workspace,
         ["stats", "--json", "--no-activity"],
         "stats_with_deps",
@@ -151,10 +151,10 @@ fn stats_json_with_deps_shows_blocked() {
 
 #[test]
 fn stats_json_has_breakdowns() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_and_populate(&workspace);
 
-    let stats = run_br(
+    let stats = run_obr(
         &workspace,
         ["stats", "--json", "--no-activity"],
         "stats_breakdowns",
@@ -167,10 +167,10 @@ fn stats_json_has_breakdowns() {
 
 #[test]
 fn stats_plain_text_succeeds() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_and_populate(&workspace);
 
-    let stats = run_br(&workspace, ["stats", "--no-activity"], "stats_plain");
+    let stats = run_obr(&workspace, ["stats", "--no-activity"], "stats_plain");
     assert!(
         stats.status.success(),
         "stats plain failed: {}",
@@ -184,10 +184,10 @@ fn stats_plain_text_succeeds() {
 
 #[test]
 fn stats_no_activity_flag_suppresses_activity() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_and_populate(&workspace);
 
-    let stats = run_br(
+    let stats = run_obr(
         &workspace,
         ["stats", "--json", "--no-activity"],
         "stats_no_activity",

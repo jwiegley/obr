@@ -24,30 +24,30 @@ case "$stage" in
       echo "$out" | jq '.checks[] | select(.name == "tmp_files_orphan")' >&2
       exit 1
     }
-    if [ ! -f .beads/orphan-one.tmp ]; then
-      echo "ASSERT FAIL[$stage]: .beads/orphan-one.tmp missing in pre-fix state" >&2
+    if [ ! -f .obr/orphan-one.tmp ]; then
+      echo "ASSERT FAIL[$stage]: .obr/orphan-one.tmp missing in pre-fix state" >&2
       exit 1
     fi
-    if [ ! -f .beads/orphan-two.tmp.42 ]; then
-      echo "ASSERT FAIL[$stage]: .beads/orphan-two.tmp.42 missing in pre-fix state" >&2
+    if [ ! -f .obr/orphan-two.tmp.42 ]; then
+      echo "ASSERT FAIL[$stage]: .obr/orphan-two.tmp.42 missing in pre-fix state" >&2
       exit 1
     fi
     ;;
   post_repair)
-    # Both orphans are gone from .beads/.
-    if [ -f .beads/orphan-one.tmp ]; then
-      echo "ASSERT FAIL[$stage]: .beads/orphan-one.tmp still present after repair" >&2
+    # Both orphans are gone from .obr/.
+    if [ -f .obr/orphan-one.tmp ]; then
+      echo "ASSERT FAIL[$stage]: .obr/orphan-one.tmp still present after repair" >&2
       exit 1
     fi
-    if [ -f .beads/orphan-two.tmp.42 ]; then
-      echo "ASSERT FAIL[$stage]: .beads/orphan-two.tmp.42 still present after repair" >&2
+    if [ -f .obr/orphan-two.tmp.42 ]; then
+      echo "ASSERT FAIL[$stage]: .obr/orphan-two.tmp.42 still present after repair" >&2
       exit 1
     fi
     # Both orphans live under the per-run quarantine. The chokepoint
     # places them at <run-dir>/quarantine/<rel-path>.
     runs_root="$target_dir/.doctor/runs"
-    quarantined_one=$(find "$runs_root" -path '*quarantine/.beads/orphan-one.tmp' 2>/dev/null | head -n 1 || true)
-    quarantined_two=$(find "$runs_root" -path '*quarantine/.beads/orphan-two.tmp.42' 2>/dev/null | head -n 1 || true)
+    quarantined_one=$(find "$runs_root" -path '*quarantine/.obr/orphan-one.tmp' 2>/dev/null | head -n 1 || true)
+    quarantined_two=$(find "$runs_root" -path '*quarantine/.obr/orphan-two.tmp.42' 2>/dev/null | head -n 1 || true)
     if [ -z "$quarantined_one" ] || [ ! -f "$quarantined_one" ]; then
       echo "ASSERT FAIL[$stage]: orphan-one.tmp not found under quarantine" >&2
       find "$runs_root" -type f >&2 2>/dev/null || true
@@ -83,7 +83,7 @@ case "$stage" in
     fi
     # SACRED INVARIANT: JSONL byte-identical (tmp quarantine must
     # never touch JSONL).
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: JSONL bytes mutated by tmp quarantine" >&2
@@ -111,28 +111,28 @@ case "$stage" in
     fi
     ;;
   post_undo)
-    # Both orphans restored to .beads/ byte-deterministically.
-    if [ ! -f .beads/orphan-one.tmp ]; then
-      echo "ASSERT FAIL[$stage]: undo did not restore .beads/orphan-one.tmp" >&2
+    # Both orphans restored to .obr/ byte-deterministically.
+    if [ ! -f .obr/orphan-one.tmp ]; then
+      echo "ASSERT FAIL[$stage]: undo did not restore .obr/orphan-one.tmp" >&2
       exit 1
     fi
-    if [ ! -f .beads/orphan-two.tmp.42 ]; then
-      echo "ASSERT FAIL[$stage]: undo did not restore .beads/orphan-two.tmp.42" >&2
+    if [ ! -f .obr/orphan-two.tmp.42 ]; then
+      echo "ASSERT FAIL[$stage]: undo did not restore .obr/orphan-two.tmp.42" >&2
       exit 1
     fi
-    one_sha=$(sha256sum .beads/orphan-one.tmp | awk '{print $1}')
+    one_sha=$(sha256sum .obr/orphan-one.tmp | awk '{print $1}')
     one_pre=$(cat .fixture_orphan_one_sha256)
     if [ "$one_sha" != "$one_pre" ]; then
       echo "ASSERT FAIL[$stage]: orphan-one bytes drifted across undo" >&2
       exit 1
     fi
-    two_sha=$(sha256sum .beads/orphan-two.tmp.42 | awk '{print $1}')
+    two_sha=$(sha256sum .obr/orphan-two.tmp.42 | awk '{print $1}')
     two_pre=$(cat .fixture_orphan_two_sha256)
     if [ "$two_sha" != "$two_pre" ]; then
       echo "ASSERT FAIL[$stage]: orphan-two bytes drifted across undo" >&2
       exit 1
     fi
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: JSONL bytes drifted across undo" >&2

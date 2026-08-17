@@ -1,14 +1,14 @@
 mod common;
-use common::cli::{BrWorkspace, extract_json_payload, parse_list_issues, run_br};
+use common::cli::{ObrWorkspace, extract_json_payload, parse_list_issues, run_obr};
 use serde_json::Value;
 use std::fs;
 
 #[test]
 fn test_markdown_import() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize
-    let output = run_br(&workspace, ["init"], "init");
+    let output = run_obr(&workspace, ["init"], "init");
     assert!(output.status.success(), "init failed");
 
     // Create markdown file
@@ -32,7 +32,7 @@ feature
     fs::write(&md_path, content_safe).expect("write md");
 
     // Run create --file
-    let output = run_br(&workspace, ["create", "--file", "issues.md"], "create_md");
+    let output = run_obr(&workspace, ["create", "--file", "issues.md"], "create_md");
     println!("stdout:\n{}", output.stdout);
     println!("stderr:\n{}", output.stderr);
     assert!(output.status.success(), "create --file failed");
@@ -48,7 +48,7 @@ feature
     );
 
     // Verify list
-    let output = run_br(&workspace, ["list"], "list");
+    let output = run_obr(&workspace, ["list"], "list");
     assert!(output.status.success());
     assert!(output.stdout.contains("First Issue"));
     assert!(output.stdout.contains("Second Issue"));
@@ -64,20 +64,20 @@ feature
     // format), the JSON has no whitespace between key and value. Switched
     // to semantic JSON parse + invariant checks so the test is robust to
     // format changes.
-    let output = run_br(&workspace, ["list", "--json"], "list_json");
+    let output = run_obr(&workspace, ["list", "--json"], "list_json");
     assert!(output.status.success());
 
     let payload: Value = serde_json::from_str(output.stdout.trim())
-        .expect("br list --json output must be valid JSON");
+        .expect("obr list --json output must be valid JSON");
     let issues = payload
         .get("issues")
         .and_then(Value::as_array)
-        .expect("expected `issues` array in br list --json output");
+        .expect("expected `issues` array in obr list --json output");
 
     let first = issues
         .iter()
         .find(|issue| issue.get("title").and_then(Value::as_str) == Some("First Issue"))
-        .expect("expected an issue with title \"First Issue\" in br list --json output");
+        .expect("expected an issue with title \"First Issue\" in obr list --json output");
 
     let labels: Vec<&str> = first
         .get("labels")
@@ -97,9 +97,9 @@ feature
 
 #[test]
 fn test_markdown_import_json_output() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let output = run_br(&workspace, ["init"], "init_json");
+    let output = run_obr(&workspace, ["init"], "init_json");
     assert!(output.status.success(), "init failed");
 
     let md_path = workspace.root.join("issues.md");
@@ -113,7 +113,7 @@ bug
 ";
     fs::write(&md_path, content).expect("write md");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["create", "--file", "issues.md", "--json"],
         "create_json",
@@ -133,9 +133,9 @@ bug
 /// section omit the field.
 #[test]
 fn test_markdown_import_agent_context_json() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let output = run_br(&workspace, ["init"], "init_agent_ctx");
+    let output = run_obr(&workspace, ["init"], "init_agent_ctx");
     assert!(output.status.success(), "init failed");
 
     let md_path = workspace.root.join("issues.md");
@@ -151,7 +151,7 @@ task
 "#;
     fs::write(&md_path, content).expect("write md");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["create", "--file", "issues.md", "--json"],
         "create_agent_ctx_json",
@@ -193,12 +193,12 @@ task
         "agent_context must be omitted from JSON when unset, got: {without_ctx}"
     );
 
-    // Confirm persistence: `br show --json` echoes the stored agent_context.
+    // Confirm persistence: `obr show --json` echoes the stored agent_context.
     let with_id = with_ctx
         .get("id")
         .and_then(Value::as_str)
         .expect("created issue must have an id");
-    let show = run_br(&workspace, ["show", with_id, "--json"], "show_agent_ctx");
+    let show = run_obr(&workspace, ["show", with_id, "--json"], "show_agent_ctx");
     assert!(show.status.success(), "show failed: {}", show.stderr);
     assert!(
         show.stdout.contains("porting-to-rust"),
@@ -209,9 +209,9 @@ task
 
 #[test]
 fn test_markdown_import_updates_last_touched_context() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let output = run_br(&workspace, ["init"], "init_last_touched_import");
+    let output = run_obr(&workspace, ["init"], "init_last_touched_import");
     assert!(output.status.success(), "init failed");
 
     let md_path = workspace.root.join("issues.md");
@@ -225,7 +225,7 @@ bug
 ";
     fs::write(&md_path, content).expect("write md");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["create", "--file", "issues.md"],
         "create_import_last_touched",
@@ -236,14 +236,14 @@ bug
         output.stderr
     );
 
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         ["update", "--status", "in_progress"],
         "update_after_import_last_touched",
     );
     assert!(update.status.success(), "update failed: {}", update.stderr);
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--json"],
         "list_after_import_last_touched",
@@ -270,9 +270,9 @@ bug
 
 #[test]
 fn test_markdown_import_implicit_description_keeps_first_non_empty_line_only() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let output = run_br(&workspace, ["init"], "init_implicit_description");
+    let output = run_obr(&workspace, ["init"], "init_implicit_description");
     assert!(output.status.success(), "init failed");
 
     let md_path = workspace.root.join("issues.md");
@@ -285,7 +285,7 @@ task
 ";
     fs::write(&md_path, content).expect("write md");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["create", "--file", "issues.md", "--json"],
         "create_implicit_description_json",
@@ -302,13 +302,13 @@ task
     );
 }
 
-// `br create --dry-run --file <md>` validates the bulk import file and reports
+// `obr create --dry-run --file <md>` validates the bulk import file and reports
 // what would be created without persisting to storage or JSONL. (#300)
 #[test]
 fn test_markdown_import_dry_run_validates_without_persisting() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let output = run_br(&workspace, ["init"], "init_dry_run");
+    let output = run_obr(&workspace, ["init"], "init_dry_run");
     assert!(output.status.success(), "init failed");
 
     let md_path = workspace.root.join("issues.md");
@@ -322,7 +322,7 @@ bug
 ";
     fs::write(&md_path, content).expect("write md");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["create", "--file", "issues.md", "--dry-run"],
         "create_dry_run",
@@ -341,7 +341,7 @@ bug
     assert!(output.stdout.contains("Second DryRun Issue"));
 
     // Storage side-effects: nothing should be persisted.
-    let list = run_br(&workspace, ["list"], "list_after_dry_run");
+    let list = run_obr(&workspace, ["list"], "list_after_dry_run");
     assert!(list.status.success());
     assert!(
         !list.stdout.contains("DryRun Issue"),
@@ -354,9 +354,9 @@ bug
 // pipe it into validation tools — even though nothing is persisted. (#300)
 #[test]
 fn test_markdown_import_dry_run_emits_json() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let output = run_br(&workspace, ["init"], "init_dry_run_json");
+    let output = run_obr(&workspace, ["init"], "init_dry_run_json");
     assert!(output.status.success(), "init failed");
 
     let md_path = workspace.root.join("issues.md");
@@ -366,7 +366,7 @@ task
 ";
     fs::write(&md_path, content).expect("write md");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["create", "--file", "issues.md", "--dry-run", "--json"],
         "create_dry_run_json",
@@ -392,9 +392,9 @@ task
 
 #[test]
 fn test_markdown_import_rejects_title_argument() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let output = run_br(&workspace, ["init"], "init_title_arg");
+    let output = run_obr(&workspace, ["init"], "init_title_arg");
     assert!(output.status.success(), "init failed");
 
     let md_path = workspace.root.join("issues.md");
@@ -404,7 +404,7 @@ task
 ";
     fs::write(&md_path, content).expect("write md");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["create", "SingleTitle", "--file", "issues.md"],
         "create_title_arg",
@@ -422,12 +422,12 @@ task
 
 #[test]
 fn test_markdown_import_parent_argument_sets_global_default() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let output = run_br(&workspace, ["init"], "init_parent_arg");
+    let output = run_obr(&workspace, ["init"], "init_parent_arg");
     assert!(output.status.success(), "init failed");
 
-    let parent = run_br(&workspace, ["create", "Parent issue"], "create_parent");
+    let parent = run_obr(&workspace, ["create", "Parent issue"], "create_parent");
     assert!(
         parent.status.success(),
         "create parent failed: {}",
@@ -454,7 +454,7 @@ task
     fs::write(&md_path, content).expect("write md");
 
     // --parent with --file sets a global default parent for imported issues
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         [
             "create",
@@ -492,9 +492,9 @@ task
 
 #[test]
 fn test_markdown_import_unresolved_item_parent_skips_only_that_issue() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let output = run_br(&workspace, ["init"], "init_unresolved_item_parent");
+    let output = run_obr(&workspace, ["init"], "init_unresolved_item_parent");
     assert!(output.status.success(), "init failed");
 
     let md_path = workspace.root.join("issues.md");
@@ -508,7 +508,7 @@ task
 ";
     fs::write(&md_path, content).expect("write md");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["create", "--file", "issues.md", "--json"],
         "create_unresolved_item_parent",
@@ -534,9 +534,9 @@ task
 
 #[test]
 fn test_markdown_import_rejects_external_ref_argument() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let output = run_br(&workspace, ["init"], "init_external_ref_arg");
+    let output = run_obr(&workspace, ["init"], "init_external_ref_arg");
     assert!(output.status.success(), "init failed");
 
     let md_path = workspace.root.join("issues.md");
@@ -546,7 +546,7 @@ task
 ";
     fs::write(&md_path, content).expect("write md");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         [
             "create",
@@ -570,9 +570,9 @@ task
 
 #[test]
 fn test_markdown_import_rejects_non_empty_file_without_issue_headers() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let output = run_br(&workspace, ["init"], "init_no_headers");
+    let output = run_obr(&workspace, ["init"], "init_no_headers");
     assert!(output.status.success(), "init failed");
 
     let md_path = workspace.root.join("issues.md");
@@ -581,7 +581,7 @@ This file has content but no issue headers.
 ";
     fs::write(&md_path, content).expect("write md");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["create", "--file", "issues.md"],
         "create_no_headers",
@@ -599,12 +599,12 @@ This file has content but no issue headers.
 
 #[test]
 fn test_markdown_import_dependency_bullets_do_not_create_marker_dependency() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init_bullet_deps");
+    let init = run_obr(&workspace, ["init"], "init_bullet_deps");
     assert!(init.status.success(), "init failed");
 
-    let blocker = run_br(
+    let blocker = run_obr(
         &workspace,
         ["create", "Blocker for markdown import", "--json"],
         "create_blocker_json",
@@ -624,7 +624,7 @@ fn test_markdown_import_dependency_bullets_do_not_create_marker_dependency() {
         format!("## Imported issue\n### Dependencies\n- {blocker_id}\n- [ ] external:github#123\n");
     fs::write(&md_path, content).expect("write md");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["create", "--file", "issues.md", "--json"],
         "create_bullet_deps_json",
@@ -663,9 +663,9 @@ fn test_markdown_import_dependency_bullets_do_not_create_marker_dependency() {
 
 #[test]
 fn test_markdown_import_invalid_dependency_warns() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let output = run_br(&workspace, ["init"], "init_invalid_dep");
+    let output = run_obr(&workspace, ["init"], "init_invalid_dep");
     assert!(output.status.success(), "init failed");
 
     let md_path = workspace.root.join("issues.md");
@@ -675,7 +675,7 @@ invalid-type:bd-123
 ";
     fs::write(&md_path, content).expect("write md");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["create", "--file", "issues.md"],
         "create_bad_dep",
@@ -694,9 +694,9 @@ invalid-type:bd-123
 
 #[test]
 fn test_markdown_import_all_failed_returns_error() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let output = run_br(&workspace, ["init"], "init_all_failed");
+    let output = run_obr(&workspace, ["init"], "init_all_failed");
     assert!(output.status.success(), "init failed");
 
     let md_path = workspace.root.join("issues.md");
@@ -710,7 +710,7 @@ fn test_markdown_import_all_failed_returns_error() {
 ";
     fs::write(&md_path, content).expect("write md");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["create", "--file", "issues.md", "--json"],
         "create_all_failed",
@@ -725,7 +725,7 @@ fn test_markdown_import_all_failed_returns_error() {
         "expected summary failure, got: {diagnostics}"
     );
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--json"],
         "list_after_all_failed_import",
@@ -737,12 +737,12 @@ fn test_markdown_import_all_failed_returns_error() {
 
 #[test]
 fn test_markdown_import_whitespace_separated_typed_dependencies() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let output = run_br(&workspace, ["init"], "init_whitespace_typed_deps");
+    let output = run_obr(&workspace, ["init"], "init_whitespace_typed_deps");
     assert!(output.status.success(), "init failed");
 
-    let blocker = run_br(
+    let blocker = run_obr(
         &workspace,
         ["create", "Whitespace dependency blocker", "--json"],
         "create_whitespace_dep_blocker_json",
@@ -762,7 +762,7 @@ fn test_markdown_import_whitespace_separated_typed_dependencies() {
         format!("## Imported issue\n### Dependencies\nblocks: {blocker_id} external:github#123\n");
     fs::write(&md_path, content).expect("write md");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["create", "--file", "issues.md", "--json"],
         "create_whitespace_typed_deps_json",
@@ -796,9 +796,9 @@ fn test_markdown_import_whitespace_separated_typed_dependencies() {
 
 #[test]
 fn test_markdown_import_standin_id_dependency_resolution() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let output = run_br(&workspace, ["init"], "init_standin");
+    let output = run_obr(&workspace, ["init"], "init_standin");
     assert!(output.status.success(), "init failed");
 
     // Create a markdown file where issues reference each other via stand-in IDs
@@ -819,7 +819,7 @@ feature
 ";
     fs::write(&md_path, content).expect("write md");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["create", "--file", "issues.md", "--json"],
         "create_standin_deps_json",
@@ -855,9 +855,9 @@ feature
 
 #[test]
 fn test_markdown_import_title_based_dependency_resolution() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let output = run_br(&workspace, ["init"], "init_title_dep");
+    let output = run_obr(&workspace, ["init"], "init_title_dep");
     assert!(output.status.success(), "init failed");
 
     // Create a markdown file where issues reference each other by title (bulleted)
@@ -874,7 +874,7 @@ task
 ";
     fs::write(&md_path, content).expect("write md");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["create", "--file", "issues.md", "--json"],
         "create_title_deps_json",
@@ -911,9 +911,9 @@ task
 
 #[test]
 fn test_markdown_import_title_with_colon_dependency_resolution() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let output = run_br(&workspace, ["init"], "init_colon_title");
+    let output = run_obr(&workspace, ["init"], "init_colon_title");
     assert!(output.status.success(), "init failed");
 
     // Titles containing colons must not be misinterpreted as typed deps
@@ -930,7 +930,7 @@ feature
 ";
     fs::write(&md_path, content).expect("write md");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["create", "--file", "issues.md", "--json"],
         "create_colon_title_deps_json",
@@ -965,9 +965,9 @@ feature
 
 #[test]
 fn test_markdown_import_ambiguous_duplicate_title_dependency_warns_and_skips() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let output = run_br(&workspace, ["init"], "init_duplicate_title_dep");
+    let output = run_obr(&workspace, ["init"], "init_duplicate_title_dep");
     assert!(output.status.success(), "init failed");
 
     let md_path = workspace.root.join("issues.md");
@@ -987,7 +987,7 @@ bug
 ";
     fs::write(&md_path, content).expect("write md");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["create", "--file", "issues.md", "--json"],
         "create_duplicate_title_dep_json",
@@ -1026,9 +1026,9 @@ bug
 
 #[test]
 fn test_markdown_import_ambiguous_duplicate_standin_dependency_warns_and_skips() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let output = run_br(&workspace, ["init"], "init_duplicate_standin_dep");
+    let output = run_obr(&workspace, ["init"], "init_duplicate_standin_dep");
     assert!(output.status.success(), "init failed");
 
     let md_path = workspace.root.join("issues.md");
@@ -1046,7 +1046,7 @@ target
 ";
     fs::write(&md_path, content).expect("write md");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["create", "--file", "issues.md", "--json"],
         "create_duplicate_standin_dep_json",

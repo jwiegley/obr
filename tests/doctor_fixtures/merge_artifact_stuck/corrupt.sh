@@ -2,8 +2,8 @@
 # Fixture: merge_artifact_stuck
 # FM: fm-state_files-merge-artifact-stuck (P2) — detect-only in current binary
 #
-# Plants stuck `.beads/issues.{base,left,right}.jsonl` artifacts from an
-# interrupted `br sync --merge`. Doctor's `jsonl.merge_artifacts` check goes
+# Plants stuck `.obr/issues.{base,left,right}.jsonl` artifacts from an
+# interrupted `obr sync --merge`. Doctor's `jsonl.merge_artifacts` check goes
 # warn. `--repair` does not currently auto-delete these (P3 cleanup gap),
 # so the fixture asserts detection only.
 
@@ -15,13 +15,13 @@ mkdir -p "$target_dir"
 cd "$target_dir"
 "$tool_bin" init >/dev/null 2>&1
 
-: > .beads/issues.base.jsonl
-: > .beads/issues.left.jsonl
-: > .beads/issues.right.jsonl
+: >.obr/issues.base.jsonl
+: >.obr/issues.left.jsonl
+: >.obr/issues.right.jsonl
 
 if [ -e .fixture_baseline ]; then
-  echo "fixture baseline already exists; expected a fresh workspace" >&2
-  exit 1
+	echo "fixture baseline already exists; expected a fresh workspace" >&2
+	exit 1
 fi
 mkdir -p .fixture_baseline
 tar --exclude=.fixture_baseline -cf .fixture_baseline/state.tar .

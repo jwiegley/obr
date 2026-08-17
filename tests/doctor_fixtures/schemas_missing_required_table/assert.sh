@@ -28,22 +28,22 @@ case "$stage" in
       exit 1
     fi
     have=$(printf '%s\n' "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='export_hashes';" \
-            | sqlite3 .beads/beads.db 2>/dev/null || echo 0)
+            | sqlite3 .obr/obr.db 2>/dev/null || echo 0)
     if [ "$have" != "1" ]; then
       echo "ASSERT FAIL[$stage]: export_hashes table not recreated (count=$have)" >&2
       exit 1
     fi
     # Issues row count must be preserved.
     nissues=$(printf '%s\n' "SELECT COUNT(*) FROM issues;" \
-              | sqlite3 .beads/beads.db 2>/dev/null || echo 0)
+              | sqlite3 .obr/obr.db 2>/dev/null || echo 0)
     if [ "$nissues" -lt 2 ]; then
       echo "ASSERT FAIL[$stage]: issues row count dropped (got $nissues, expected >= 2)" >&2
       exit 1
     fi
     ;;
   post_undo)
-    [ -f .beads/beads.db ] || {
-      echo "ASSERT FAIL[$stage]: beads.db gone after undo" >&2
+    [ -f .obr/obr.db ] || {
+      echo "ASSERT FAIL[$stage]: obr.db gone after undo" >&2
       exit 1
     }
     ;;

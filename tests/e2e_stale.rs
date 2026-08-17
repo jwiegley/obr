@@ -2,31 +2,31 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, extract_json_payload, parse_created_id, run_br};
+use common::cli::{ObrWorkspace, extract_json_payload, parse_created_id, run_obr};
 use serde_json::Value;
 
 #[test]
 fn e2e_stale_basic() {
     common::init_test_logging();
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
 
     // Create 3 issues
-    run_br(&workspace, ["create", "Issue 1"], "create1");
-    run_br(&workspace, ["create", "Issue 2"], "create2");
-    run_br(&workspace, ["create", "Issue 3"], "create3");
+    run_obr(&workspace, ["create", "Issue 1"], "create1");
+    run_obr(&workspace, ["create", "Issue 2"], "create2");
+    run_obr(&workspace, ["create", "Issue 3"], "create3");
 
     // Check stale --days 0 (should include all, since updated_at <= now)
     // Actually, stale means updated BEFORE (now - days).
     // If days=0, threshold = now. updated_at <= now. So all issues are stale.
-    let stale0 = run_br(&workspace, ["stale", "--days", "0"], "stale0");
+    let stale0 = run_obr(&workspace, ["stale", "--days", "0"], "stale0");
     assert!(stale0.status.success());
     // Should verify count
     let count = stale0.stdout.lines().filter(|l| l.contains(". [")).count();
     assert_eq!(count, 3, "All issues should be stale with days=0");
 
     // Check stale --days 1 (should include none, since updated_at > now - 1 day)
-    let stale1 = run_br(&workspace, ["stale", "--days", "1"], "stale1");
+    let stale1 = run_obr(&workspace, ["stale", "--days", "1"], "stale1");
     assert!(stale1.status.success());
     let count1 = stale1.stdout.lines().filter(|l| l.contains(". [")).count();
     assert_eq!(
@@ -38,11 +38,11 @@ fn e2e_stale_basic() {
 #[test]
 fn e2e_stale_json_output() {
     common::init_test_logging();
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
-    run_br(&workspace, ["create", "Issue JSON"], "create");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
+    run_obr(&workspace, ["create", "Issue JSON"], "create");
 
-    let stale = run_br(&workspace, ["stale", "--days", "0", "--json"], "stale_json");
+    let stale = run_obr(&workspace, ["stale", "--days", "0", "--json"], "stale_json");
     assert!(stale.status.success());
 
     let payload = extract_json_payload(&stale.stdout);
@@ -56,21 +56,21 @@ fn e2e_stale_json_output() {
 #[test]
 fn e2e_stale_with_status_filter() {
     common::init_test_logging();
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
 
-    run_br(&workspace, ["create", "Open Issue"], "create1");
+    run_obr(&workspace, ["create", "Open Issue"], "create1");
 
-    let create2 = run_br(&workspace, ["create", "InProgress Issue"], "create2");
+    let create2 = run_obr(&workspace, ["create", "InProgress Issue"], "create2");
     let id2 = parse_created_id(&create2.stdout);
-    run_br(
+    run_obr(
         &workspace,
         ["update", &id2, "--status", "in_progress"],
         "update2",
     );
 
     // Filter by status=open
-    let stale_open = run_br(
+    let stale_open = run_obr(
         &workspace,
         ["stale", "--days", "0", "--status", "open"],
         "stale_open",
@@ -87,20 +87,20 @@ fn e2e_stale_with_status_filter() {
 #[test]
 fn e2e_stale_with_deferred_status_filter() {
     common::init_test_logging();
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
 
-    let open = run_br(&workspace, ["create", "Open Issue"], "create_open");
+    let open = run_obr(&workspace, ["create", "Open Issue"], "create_open");
     assert!(open.status.success(), "create open failed: {}", open.stderr);
 
-    let deferred = run_br(&workspace, ["create", "Deferred Issue"], "create_deferred");
+    let deferred = run_obr(&workspace, ["create", "Deferred Issue"], "create_deferred");
     assert!(
         deferred.status.success(),
         "create deferred failed: {}",
         deferred.stderr
     );
     let deferred_id = parse_created_id(&deferred.stdout);
-    let defer = run_br(
+    let defer = run_obr(
         &workspace,
         [
             "update",
@@ -114,7 +114,7 @@ fn e2e_stale_with_deferred_status_filter() {
     );
     assert!(defer.status.success(), "defer failed: {}", defer.stderr);
 
-    let stale = run_br(
+    let stale = run_obr(
         &workspace,
         ["stale", "--days", "0", "--status", "deferred", "--json"],
         "stale_deferred",
@@ -135,21 +135,21 @@ fn e2e_stale_with_deferred_status_filter() {
 #[test]
 fn e2e_stale_default_includes_custom_nonterminal_statuses() {
     common::init_test_logging();
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
 
-    let create = run_br(&workspace, ["create", "Review Issue"], "create_review");
+    let create = run_obr(&workspace, ["create", "Review Issue"], "create_review");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue_id = parse_created_id(&create.stdout);
 
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         ["update", &issue_id, "--status", "review"],
         "set_review_status",
     );
     assert!(update.status.success(), "update failed: {}", update.stderr);
 
-    let stale = run_br(
+    let stale = run_obr(
         &workspace,
         ["stale", "--days", "0", "--json"],
         "stale_review",

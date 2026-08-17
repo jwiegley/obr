@@ -2,12 +2,12 @@
 //!
 //! These tests compare the optimized current-schema read-only path against the
 //! conservative locked path, then prove representative read commands still run
-//! while another process holds `.beads/.write.lock`.
+//! while another process holds `.obr/.write.lock`.
 
 mod common;
 
-use beads_rust::franken_sync::Connection;
-use common::cli::{BrRun, BrWorkspace, parse_created_id, run_br, run_br_with_env};
+use common::cli::{ObrRun, ObrWorkspace, parse_created_id, pin_jsonl, run_obr, run_obr_with_env};
+use obr::franken_sync::Connection;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -19,10 +19,10 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 use walkdir::WalkDir;
 
-const DISABLE_FAST_OPEN_ENV: (&str, &str) = ("BR_DISABLE_READ_ONLY_FAST_OPEN", "1");
+const DISABLE_FAST_OPEN_ENV: (&str, &str) = ("OBR_DISABLE_READ_ONLY_FAST_OPEN", "1");
 
 struct SeededWorkspace {
-    workspace: BrWorkspace,
+    workspace: ObrWorkspace,
     blocker_id: String,
     blocked_id: String,
 }
@@ -39,7 +39,7 @@ struct MatrixCommand {
     compare_mode: CompareMode,
 }
 
-fn assert_success(run: &BrRun, label: &str) {
+fn assert_success(run: &ObrRun, label: &str) {
     assert!(
         run.status.success(),
         "{label} failed\nstdout:\n{}\nstderr:\n{}",
@@ -48,20 +48,21 @@ fn assert_success(run: &BrRun, label: &str) {
     );
 }
 
-fn run_success(workspace: &BrWorkspace, args: &[&str], label: &str) -> BrRun {
-    let run = run_br(workspace, args.iter().copied(), label);
+fn run_success(workspace: &ObrWorkspace, args: &[&str], label: &str) -> ObrRun {
+    let run = run_obr(workspace, args.iter().copied(), label);
     assert_success(&run, label);
     run
 }
 
-fn create_issue(workspace: &BrWorkspace, args: &[&str], label: &str) -> String {
+fn create_issue(workspace: &ObrWorkspace, args: &[&str], label: &str) -> String {
     parse_created_id(&run_success(workspace, args, label).stdout)
 }
 
 fn seed_workspace() -> SeededWorkspace {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     run_success(&workspace, &["init"], "init");
+    pin_jsonl(&workspace.root.join(".obr"));
     let epic_id = create_issue(
         &workspace,
         &[
@@ -378,9 +379,13 @@ fn regular_file_evidence(root: &Path) -> BTreeMap<String, RegularFileEvidence> {
     evidence
 }
 
-fn run_command(workspace: &BrWorkspace, command: &MatrixCommand, disable_fast_open: bool) -> BrRun {
+fn run_command(
+    workspace: &ObrWorkspace,
+    command: &MatrixCommand,
+    disable_fast_open: bool,
+) -> ObrRun {
     if disable_fast_open {
-        return run_br_with_env(
+        return run_obr_with_env(
             workspace,
             command.args.iter().map(String::as_str),
             [DISABLE_FAST_OPEN_ENV],
@@ -391,14 +396,14 @@ fn run_command(workspace: &BrWorkspace, command: &MatrixCommand, disable_fast_op
     // Exercise the default synchronized-probe path. Individual matrix entries
     // carry explicit opt-outs only when that command intentionally owns a
     // separate auto-import contract (currently bare `orphans`).
-    run_br(
+    run_obr(
         workspace,
         command.args.iter().map(String::as_str),
         &format!("{}_fast", command.label),
     )
 }
 
-fn assert_outputs_match(command: &MatrixCommand, fast: &BrRun, conservative: &BrRun) {
+fn assert_outputs_match(command: &MatrixCommand, fast: &ObrRun, conservative: &ObrRun) {
     match command.compare_mode {
         CompareMode::Exact => assert_eq!(
             fast.stdout, conservative.stdout,
@@ -465,7 +470,7 @@ fn cli_read_only_fast_open_matrix_matches_conservative_outputs() {
 fn cli_read_only_fast_open_matrix_bypasses_held_write_lock() {
     let _log = common::test_log("cli_read_only_fast_open_matrix_bypasses_held_write_lock");
     let seed = seed_workspace();
-    let lock_path = seed.workspace.root.join(".beads/.write.lock");
+    let lock_path = seed.workspace.root.join(".obr/.write.lock");
     let write_lock = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -474,8 +479,8 @@ fn cli_read_only_fast_open_matrix_bypasses_held_write_lock() {
         .open(&lock_path)
         .expect("open write lock");
     write_lock.lock().expect("hold write lock");
-    let beads_dir = seed.workspace.root.join(".beads");
-    let before = regular_file_evidence(&beads_dir);
+    let obr_dir = seed.workspace.root.join(".obr");
+    let before = regular_file_evidence(&obr_dir);
 
     for command in matrix_commands(&seed) {
         let fast = run_command(&seed.workspace, &command, false);
@@ -483,9 +488,9 @@ fn cli_read_only_fast_open_matrix_bypasses_held_write_lock() {
     }
 
     assert_eq!(
-        regular_file_evidence(&beads_dir),
+        regular_file_evidence(&obr_dir),
         before,
-        "read-only fast-open matrix changed file bytes or modes under .beads"
+        "read-only fast-open matrix changed file bytes or modes under .obr"
     );
 
     let blocked_conservative = run_command(
@@ -516,12 +521,12 @@ fn cli_read_only_fast_open_fails_when_the_authoritative_jsonl_probe_fails() {
     let _log =
         common::test_log("cli_read_only_fast_open_fails_when_the_authoritative_jsonl_probe_fails");
     let seed = seed_workspace();
-    let jsonl_path = seed.workspace.root.join(".beads/issues.jsonl");
-    let preserved_jsonl_path = seed.workspace.root.join(".beads/issues.preserved.jsonl");
+    let jsonl_path = seed.workspace.root.join(".obr/issues.jsonl");
+    let preserved_jsonl_path = seed.workspace.root.join(".obr/issues.preserved.jsonl");
     fs::rename(&jsonl_path, &preserved_jsonl_path).expect("preserve regular JSONL fixture");
     fs::create_dir(&jsonl_path).expect("plant a non-regular JSONL path");
 
-    let run = run_br(&seed.workspace, ["list", "--json"], "fast_probe_error");
+    let run = run_obr(&seed.workspace, ["list", "--json"], "fast_probe_error");
     assert!(
         !run.status.success(),
         "an authoritative JSONL probe error must fail instead of serving stale DB state\nstdout:\n{}\nstderr:\n{}",
@@ -539,7 +544,7 @@ fn cli_read_only_fast_open_fails_when_the_authoritative_jsonl_probe_fails() {
 fn cli_fast_open_healing_reuses_its_authority_for_a_newer_jsonl_import() {
     let _log =
         common::test_log("cli_fast_open_healing_reuses_its_authority_for_a_newer_jsonl_import");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     run_success(&workspace, &["init"], "init");
     let issue_id = create_issue(
         &workspace,
@@ -547,7 +552,7 @@ fn cli_fast_open_healing_reuses_its_authority_for_a_newer_jsonl_import() {
         "create_issue",
     );
 
-    let db_path = workspace.root.join(".beads/beads.db");
+    let db_path = workspace.root.join(".obr/obr.db");
     let connection =
         Connection::open(db_path.to_string_lossy().into_owned()).expect("open database fixture");
     connection
@@ -555,7 +560,7 @@ fn cli_fast_open_healing_reuses_its_authority_for_a_newer_jsonl_import() {
         .expect("make the current-version runtime schema incomplete");
     connection.close().expect("close database fixture");
 
-    let jsonl_path = workspace.root.join(".beads/issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr/issues.jsonl");
     let contents = fs::read_to_string(&jsonl_path).expect("read current JSONL");
     let rewritten = contents
         .lines()
@@ -572,7 +577,7 @@ fn cli_fast_open_healing_reuses_its_authority_for_a_newer_jsonl_import() {
         .join("\n");
     fs::write(&jsonl_path, format!("{rewritten}\n")).expect("write newer JSONL");
 
-    let run = run_br(
+    let run = run_obr(
         &workspace,
         ["--lock-timeout", "50", "list", "--json"],
         "heal_then_import",
@@ -590,7 +595,7 @@ fn cli_fast_open_healing_reuses_its_authority_for_a_newer_jsonl_import() {
     );
 }
 
-fn run_matrix_round(workspace: &BrWorkspace, commands: &[MatrixCommand], disable_fast_open: bool) {
+fn run_matrix_round(workspace: &ObrWorkspace, commands: &[MatrixCommand], disable_fast_open: bool) {
     for command in commands {
         let run = run_command(workspace, command, disable_fast_open);
         assert_success(&run, command.label);

@@ -39,19 +39,19 @@ case "$stage" in
   post_repair)
     # Detect-only: metadata.json must still declare the bad jsonl_export
     # byte-identically — doctor must not silently rewrite it.
-    [ -f .beads/metadata.json ] || {
+    [ -f .obr/metadata.json ] || {
       echo "ASSERT FAIL[$stage]: metadata.json vanished after --repair (unsafe)" >&2
       exit 1
     }
-    if ! grep -q '"renamed-by-operator.jsonl"' .beads/metadata.json; then
+    if ! grep -q '"renamed-by-operator.jsonl"' .obr/metadata.json; then
       echo "ASSERT FAIL[$stage]: doctor silently rewrote metadata.json (the bad value is gone)" >&2
-      cat .beads/metadata.json >&2
+      cat .obr/metadata.json >&2
       exit 1
     fi
     ;;
   post_undo)
-    [ -d .beads ] || { echo "ASSERT FAIL[$stage]: .beads gone after undo" >&2; exit 1; }
-    [ -f .beads/metadata.json ] || { echo "ASSERT FAIL[$stage]: metadata.json gone after undo" >&2; exit 1; }
+    [ -d .obr ] || { echo "ASSERT FAIL[$stage]: .obr gone after undo" >&2; exit 1; }
+    [ -f .obr/metadata.json ] || { echo "ASSERT FAIL[$stage]: metadata.json gone after undo" >&2; exit 1; }
     ;;
   *)
     echo "unknown stage: $stage" >&2

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Fixture: gitignore_bare_pattern
-# Variant of fm-configs-gitignore-leaking-beads using the bare `.beads` (no
-# trailing slash) pattern, which historically slipped past naive regex matchers
-# that only looked for `.beads/`. Confirms the detector handles both shapes.
+# Variant of fm-configs-gitignore-leaking-obr using the `*.org` extension glob
+# rather than naming the surface outright. A matcher that only looks for the
+# literal filename slips straight past it, yet git hides `PLAN.org` all the
+# same. Confirms the detector handles both shapes.
 
 set -euo pipefail
 target_dir="${1:?usage: corrupt.sh <target_dir>}"
@@ -15,7 +16,7 @@ git init --quiet 2>/dev/null || true
 
 cat > .gitignore <<'EOF'
 *.log
-.beads
+*.org
 build/
 EOF
 

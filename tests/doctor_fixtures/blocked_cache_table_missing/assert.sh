@@ -29,15 +29,15 @@ case "$stage" in
     fi
     # Table must be back.
     bc=$(printf '%s\n' "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='blocked_issues_cache';" \
-            | sqlite3 .beads/beads.db 2>/dev/null || echo 0)
+            | sqlite3 .obr/obr.db 2>/dev/null || echo 0)
     if [ "$bc" != "1" ]; then
       echo "ASSERT FAIL[$stage]: blocked_issues_cache not recreated (count=$bc)" >&2
       exit 1
     fi
     ;;
   post_undo)
-    [ -f .beads/beads.db ] || {
-      echo "ASSERT FAIL[$stage]: beads.db gone after undo" >&2
+    [ -f .obr/obr.db ] || {
+      echo "ASSERT FAIL[$stage]: obr.db gone after undo" >&2
       exit 1
     }
     ;;

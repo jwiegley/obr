@@ -36,20 +36,20 @@ case "$stage" in
     ;;
   post_repair)
     # Detect-only — the file must still be present and still malformed.
-    [ -f .beads/config.yaml ] || {
+    [ -f .obr/config.yaml ] || {
       echo "ASSERT FAIL[$stage]: config.yaml vanished after --repair (unsafe)" >&2
       exit 1
     }
     # The "invalid_block_mapping_entry" marker must still be there.
-    if ! grep -q 'invalid_block_mapping_entry' .beads/config.yaml; then
+    if ! grep -q 'invalid_block_mapping_entry' .obr/config.yaml; then
       echo "ASSERT FAIL[$stage]: doctor silently rewrote config.yaml (the bad marker is gone)" >&2
-      cat .beads/config.yaml >&2
+      cat .obr/config.yaml >&2
       exit 1
     fi
     ;;
   post_undo)
-    [ -d .beads ] || { echo "ASSERT FAIL[$stage]: .beads gone after undo" >&2; exit 1; }
-    [ -f .beads/config.yaml ] || { echo "ASSERT FAIL[$stage]: config.yaml gone after undo" >&2; exit 1; }
+    [ -d .obr ] || { echo "ASSERT FAIL[$stage]: .obr gone after undo" >&2; exit 1; }
+    [ -f .obr/config.yaml ] || { echo "ASSERT FAIL[$stage]: config.yaml gone after undo" >&2; exit 1; }
     ;;
   *)
     echo "unknown stage: $stage" >&2

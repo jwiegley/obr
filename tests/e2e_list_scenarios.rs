@@ -19,26 +19,26 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, parse_created_id, parse_list_issues, run_br};
+use common::cli::{ObrWorkspace, parse_created_id, parse_list_issues, run_obr};
 
 /// Setup a workspace with a diverse set of issues for comprehensive testing.
-fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
-    let workspace = BrWorkspace::new();
+fn setup_diverse_workspace() -> (ObrWorkspace, Vec<String>) {
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let mut ids = Vec::new();
 
     // Issue 1: P0 bug assigned to alice with "critical" label
-    let issue1 = run_br(
+    let issue1 = run_obr(
         &workspace,
         ["create", "Critical login bug", "-p", "0", "-t", "bug"],
         "create_bug_p0",
     );
     assert!(issue1.status.success());
     let id1 = parse_created_id(&issue1.stdout);
-    run_br(
+    run_obr(
         &workspace,
         [
             "update",
@@ -53,14 +53,14 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     ids.push(id1);
 
     // Issue 2: P1 feature assigned to bob with "backend" label
-    let issue2 = run_br(
+    let issue2 = run_obr(
         &workspace,
         ["create", "Add user dashboard", "-p", "1", "-t", "feature"],
         "create_feature_p1",
     );
     assert!(issue2.status.success());
     let id2 = parse_created_id(&issue2.stdout);
-    run_br(
+    run_obr(
         &workspace,
         [
             "update",
@@ -75,14 +75,14 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     ids.push(id2);
 
     // Issue 3: P2 task assigned to alice with "frontend" label
-    let issue3 = run_br(
+    let issue3 = run_obr(
         &workspace,
         ["create", "Update documentation", "-p", "2", "-t", "task"],
         "create_task_p2",
     );
     assert!(issue3.status.success());
     let id3 = parse_created_id(&issue3.stdout);
-    run_br(
+    run_obr(
         &workspace,
         [
             "update",
@@ -97,14 +97,14 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     ids.push(id3);
 
     // Issue 4: P1 bug unassigned with "backend" and "api" labels
-    let issue4 = run_br(
+    let issue4 = run_obr(
         &workspace,
         ["create", "API rate limiting bug", "-p", "1", "-t", "bug"],
         "create_bug_p1",
     );
     assert!(issue4.status.success());
     let id4 = parse_created_id(&issue4.stdout);
-    run_br(
+    run_obr(
         &workspace,
         [
             "update",
@@ -119,7 +119,7 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     ids.push(id4);
 
     // Issue 5: P3 chore unassigned
-    let issue5 = run_br(
+    let issue5 = run_obr(
         &workspace,
         ["create", "Clean up test fixtures", "-p", "3", "-t", "chore"],
         "create_chore_p3",
@@ -128,7 +128,7 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     ids.push(parse_created_id(&issue5.stdout));
 
     // Issue 6: Closed P2 bug
-    let issue6 = run_br(
+    let issue6 = run_obr(
         &workspace,
         [
             "create",
@@ -142,18 +142,18 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     );
     assert!(issue6.status.success());
     let id6 = parse_created_id(&issue6.stdout);
-    run_br(&workspace, ["close", &id6], "close_bug");
+    run_obr(&workspace, ["close", &id6], "close_bug");
     ids.push(id6);
 
     // Issue 7: In-progress P1 task
-    let issue7 = run_br(
+    let issue7 = run_obr(
         &workspace,
         ["create", "Implement caching layer", "-p", "1", "-t", "task"],
         "create_task_in_progress",
     );
     assert!(issue7.status.success());
     let id7 = parse_created_id(&issue7.stdout);
-    run_br(
+    run_obr(
         &workspace,
         [
             "update",
@@ -168,7 +168,7 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     ids.push(id7);
 
     // Issue 8: Deferred P4 feature
-    let issue8 = run_br(
+    let issue8 = run_obr(
         &workspace,
         [
             "create",
@@ -182,7 +182,7 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     );
     assert!(issue8.status.success());
     let id8 = parse_created_id(&issue8.stdout);
-    run_br(
+    run_obr(
         &workspace,
         [
             "update",
@@ -207,7 +207,7 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
 fn list_filter_by_status_open() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--status", "open", "--json"],
         "list_open",
@@ -237,7 +237,7 @@ fn list_filter_by_status_open() {
 fn list_filter_by_status_closed() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--status", "closed", "--json"],
         "list_closed",
@@ -254,7 +254,7 @@ fn list_filter_by_status_closed() {
 fn list_filter_by_status_in_progress() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--status", "in_progress", "--json"],
         "list_in_progress",
@@ -272,7 +272,7 @@ fn list_filter_by_status_in_progress() {
 fn list_filter_by_status_deferred() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--status", "deferred", "--json"],
         "list_deferred",
@@ -289,7 +289,7 @@ fn list_filter_by_status_deferred() {
 fn list_include_closed_shows_all() {
     let (workspace, ids) = setup_diverse_workspace();
 
-    let list = run_br(&workspace, ["list", "--all", "--json"], "list_all");
+    let list = run_obr(&workspace, ["list", "--all", "--json"], "list_all");
     assert!(list.status.success(), "list failed: {}", list.stderr);
 
     let json = parse_list_issues(&list.stdout);
@@ -312,7 +312,7 @@ fn list_include_closed_shows_all() {
 fn list_filter_by_type_bug() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "-t", "bug", "--all", "--json"],
         "list_bugs",
@@ -337,7 +337,7 @@ fn list_filter_by_type_bug() {
 fn list_filter_by_type_feature() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "-t", "feature", "--all", "--json"],
         "list_features",
@@ -356,7 +356,7 @@ fn list_filter_by_type_feature() {
 fn list_filter_by_type_task() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "-t", "task", "--all", "--json"],
         "list_tasks",
@@ -376,7 +376,7 @@ fn list_filter_by_type_task() {
 fn list_filter_by_priority_p0() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(&workspace, ["list", "-p", "0", "--json"], "list_p0");
+    let list = run_obr(&workspace, ["list", "-p", "0", "--json"], "list_p0");
     assert!(list.status.success(), "list failed: {}", list.stderr);
 
     let json = parse_list_issues(&list.stdout);
@@ -395,7 +395,7 @@ fn list_filter_by_priority_p0() {
 fn list_filter_by_priority_p1() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "-p", "1", "--all", "--json"],
         "list_p1",
@@ -415,7 +415,7 @@ fn list_filter_by_multiple_priorities() {
     let (workspace, _ids) = setup_diverse_workspace();
 
     // Filter for P0 and P1
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "-p", "0", "-p", "1", "--json"],
         "list_p0_p1",
@@ -443,7 +443,7 @@ fn list_filter_by_multiple_priorities() {
 fn list_filter_by_assignee() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--assignee", "alice", "--json"],
         "list_alice",
@@ -463,7 +463,7 @@ fn list_filter_by_unassigned() {
     let (workspace, _ids) = setup_diverse_workspace();
 
     // The --unassigned flag filters for issues without an assignee
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--unassigned", "--json"],
         "list_unassigned",
@@ -490,7 +490,7 @@ fn list_filter_by_unassigned() {
 fn list_filter_by_label_single() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--label", "backend", "--json"],
         "list_backend",
@@ -507,7 +507,7 @@ fn list_filter_by_label_multiple() {
     let (workspace, _ids) = setup_diverse_workspace();
 
     // Filter for issues with both "backend" AND "api" labels
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--label", "backend", "--label", "api", "--json"],
         "list_backend_api",
@@ -538,7 +538,7 @@ fn list_filter_by_label_multiple() {
 fn list_combined_filters_type_and_priority() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "-t", "bug", "-p", "1", "--json"],
         "list_bug_p1",
@@ -556,7 +556,7 @@ fn list_combined_filters_type_and_priority() {
 fn list_combined_filters_assignee_and_label() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         [
             "list",
@@ -593,7 +593,7 @@ fn list_combined_filters_assignee_and_label() {
 fn list_sort_by_priority_asc() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--sort", "priority", "--json"],
         "list_sort_priority",
@@ -622,7 +622,7 @@ fn list_sort_by_priority_asc() {
 fn list_sort_by_priority_desc() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--sort", "priority", "--reverse", "--json"],
         "list_sort_priority_desc",
@@ -651,7 +651,7 @@ fn list_sort_by_created_at_desc() {
     let (workspace, _ids) = setup_diverse_workspace();
 
     // Default sort for created_at is descending (newest first) for UX
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--sort", "created_at", "--json"],
         "list_sort_created_desc",
@@ -681,7 +681,7 @@ fn list_sort_by_created_at_asc() {
     let (workspace, _ids) = setup_diverse_workspace();
 
     // Use --reverse to get ascending order (oldest first)
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--sort", "created_at", "--reverse", "--json"],
         "list_sort_created_asc",
@@ -714,7 +714,7 @@ fn list_sort_by_created_at_asc() {
 fn list_with_limit() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--limit", "3", "--json"],
         "list_limit_3",
@@ -731,7 +731,7 @@ fn list_with_limit_zero_unlimited() {
     let (workspace, _ids) = setup_diverse_workspace();
 
     // --limit 0 should return all issues (unlimited)
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--limit", "0", "--json"],
         "list_limit_0",
@@ -757,7 +757,7 @@ fn list_with_limit_zero_unlimited() {
 fn list_text_output_format() {
     let (workspace, ids) = setup_diverse_workspace();
 
-    let list = run_br(&workspace, ["list"], "list_text");
+    let list = run_obr(&workspace, ["list"], "list_text");
     assert!(list.status.success(), "list failed: {}", list.stderr);
 
     // Text output should contain at least one of the created issue IDs
@@ -775,7 +775,7 @@ fn list_text_output_format() {
 fn list_json_output_format() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(&workspace, ["list", "--json"], "list_json");
+    let list = run_obr(&workspace, ["list", "--json"], "list_json");
     assert!(list.status.success(), "list failed: {}", list.stderr);
 
     let json = parse_list_issues(&list.stdout);
@@ -801,7 +801,7 @@ fn list_json_output_format() {
 fn list_csv_output_format() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(&workspace, ["list", "--format", "csv"], "list_csv");
+    let list = run_obr(&workspace, ["list", "--format", "csv"], "list_csv");
     assert!(list.status.success(), "list failed: {}", list.stderr);
 
     let lines: Vec<&str> = list.stdout.lines().collect();
@@ -817,7 +817,7 @@ fn list_csv_output_format() {
 fn list_csv_with_custom_fields() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         [
             "list",
@@ -843,12 +843,12 @@ fn list_csv_with_custom_fields() {
 
 #[test]
 fn list_empty_workspace() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init_empty");
+    let init = run_obr(&workspace, ["init"], "init_empty");
     assert!(init.status.success());
 
-    let list = run_br(&workspace, ["list", "--json"], "list_empty");
+    let list = run_obr(&workspace, ["list", "--json"], "list_empty");
     assert!(list.status.success(), "list failed: {}", list.stderr);
 
     let json = parse_list_issues(&list.stdout);
@@ -861,7 +861,7 @@ fn list_filter_no_matches() {
     let (workspace, _ids) = setup_diverse_workspace();
 
     // Filter for a type that doesn't exist
-    let list = run_br(&workspace, ["list", "-t", "epic", "--json"], "list_no_epic");
+    let list = run_obr(&workspace, ["list", "-t", "epic", "--json"], "list_no_epic");
     assert!(list.status.success(), "list failed: {}", list.stderr);
 
     let json = parse_list_issues(&list.stdout);
@@ -873,7 +873,7 @@ fn list_filter_no_matches() {
 fn list_filter_nonexistent_label() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--label", "nonexistent-label-xyz", "--json"],
         "list_no_label",
@@ -889,7 +889,7 @@ fn list_filter_nonexistent_label() {
 fn list_filter_nonexistent_assignee() {
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--assignee", "nobody-exists-here", "--json"],
         "list_no_assignee",
@@ -907,12 +907,12 @@ fn list_filter_nonexistent_assignee() {
 
 #[test]
 fn list_before_init_fails() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let list = run_br(&workspace, ["list"], "list_no_init");
+    let list = run_obr(&workspace, ["list"], "list_no_init");
     assert!(!list.status.success(), "list should fail before init");
     assert!(
-        list.stderr.contains("not initialized") || list.stderr.contains("No .beads"),
+        list.stderr.contains("not initialized") || list.stderr.contains("No .obr"),
         "Error message should mention workspace not initialized"
     );
 }
@@ -923,13 +923,13 @@ fn list_before_init_fails() {
 
 #[test]
 fn list_issue_with_special_chars_in_title() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init_special");
+    let init = run_obr(&workspace, ["init"], "init_special");
     assert!(init.status.success());
 
     // Create issue with special characters
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Fix \"quoted\" & <special> chars"],
         "create_special",
@@ -937,7 +937,7 @@ fn list_issue_with_special_chars_in_title() {
     assert!(create.status.success());
 
     // List in JSON format
-    let list_json = run_br(&workspace, ["list", "--json"], "list_special_json");
+    let list_json = run_obr(&workspace, ["list", "--json"], "list_special_json");
     assert!(list_json.status.success());
 
     let json = parse_list_issues(&list_json.stdout);
@@ -952,7 +952,7 @@ fn list_issue_with_special_chars_in_title() {
     );
 
     // List in CSV format
-    let list_csv = run_br(&workspace, ["list", "--format", "csv"], "list_special_csv");
+    let list_csv = run_obr(&workspace, ["list", "--format", "csv"], "list_special_csv");
     assert!(list_csv.status.success());
 
     // CSV should properly escape the quotes

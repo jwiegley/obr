@@ -20,7 +20,7 @@ cd "$target_dir"
 "$tool_bin" sync --flush-only >/dev/null 2>&1 || true
 
 # Append a deterministic invalid-UTF-8 sequence.
-printf '\xff\xfe\xfdInvalid bytes follow\n' >> .beads/issues.jsonl
+printf '\xff\xfe\xfdInvalid bytes follow\n' >> .obr/issues.jsonl
 
 if [ -e .fixture_baseline ]; then
   echo "fixture baseline already exists; expected a fresh workspace" >&2

@@ -4,7 +4,7 @@
 - **Subsystem**: configs
 - **Detect**: `metadata.json` check goes to `warn` enumerating each
   declared field (`database` / `jsonl_export`) whose value names a
-  file that doesn't exist on disk under `.beads/`. Each drift entry
+  file that doesn't exist on disk under `.obr/`. Each drift entry
   carries the field name, declared value, and expected_path so the
   operator can reconcile by either renaming the on-disk file or
   editing metadata.json.

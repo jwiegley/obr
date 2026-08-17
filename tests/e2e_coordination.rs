@@ -1,6 +1,6 @@
 mod common;
 
-use common::cli::{BrWorkspace, extract_json_payload, run_br, run_br_with_stdin};
+use common::cli::{ObrWorkspace, extract_json_payload, run_obr, run_obr_with_stdin};
 use serde_json::{Value, json};
 use std::fs;
 use toon_rust::options::ExpandPathsMode;
@@ -17,9 +17,13 @@ fn claim_by_id<'a>(json: &'a Value, id: &str) -> &'a Value {
 
 // The lab fixtures stay in JSONL so the tests exercise the same import path
 // real agents use when sharing Beads state through git.
-fn seed_coordination_workspace(workspace: &BrWorkspace) {
-    let init = run_br(workspace, ["init"], "init");
+fn seed_coordination_workspace(workspace: &ObrWorkspace) {
+    let init = run_obr(workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    // The lab fixture is JSONL, so pin the workspace to that export format:
+    // `init` seeds an empty `issues.org`, which otherwise outranks the seeded
+    // `issues.jsonl` in discovery and the import reads nothing.
+    common::cli::pin_jsonl(&workspace.root.join(".obr"));
 
     let fresh = json!({
         "id": "bd-fresh",
@@ -72,9 +76,9 @@ fn seed_coordination_workspace(workspace: &BrWorkspace) {
         ]
     });
     let body = format!("{fresh}\n{stale}\n");
-    fs::write(workspace.root.join(".beads/issues.jsonl"), body).expect("write seed JSONL");
+    fs::write(workspace.root.join(".obr/issues.jsonl"), body).expect("write seed JSONL");
 
-    let import = run_br(
+    let import = run_obr(
         workspace,
         ["sync", "--import-only", "--json"],
         "import_seed",
@@ -87,8 +91,8 @@ fn seed_coordination_workspace(workspace: &BrWorkspace) {
     );
 }
 
-fn coordination_json(workspace: &BrWorkspace, args: &[&str], label: &str) -> Value {
-    let result = run_br(workspace, args, label);
+fn coordination_json(workspace: &ObrWorkspace, args: &[&str], label: &str) -> Value {
+    let result = run_obr(workspace, args, label);
     assert!(
         result.status.success(),
         "coordination status failed: stdout={} stderr={}",
@@ -98,7 +102,7 @@ fn coordination_json(workspace: &BrWorkspace, args: &[&str], label: &str) -> Val
     serde_json::from_str(&extract_json_payload(&result.stdout)).expect("coordination json")
 }
 
-fn write_snapshot_files(workspace: &BrWorkspace) -> (String, String) {
+fn write_snapshot_files(workspace: &ObrWorkspace) -> (String, String) {
     let reservations_path = workspace.root.join("reservations.json");
     let agents_path = workspace.root.join("agents.jsonl");
     let reservations = json!({
@@ -132,7 +136,7 @@ fn write_snapshot_files(workspace: &BrWorkspace) -> (String, String) {
 // This snapshot intentionally avoids holder, reason, and thread matches so the
 // reservation can only attach through the degraded-coordination file scope in
 // the stale issue comment.
-fn write_expired_comment_path_reservation(workspace: &BrWorkspace) -> String {
+fn write_expired_comment_path_reservation(workspace: &ObrWorkspace) -> String {
     let path = workspace
         .root
         .join("expired-comment-path-reservations.json");
@@ -153,14 +157,14 @@ fn write_expired_comment_path_reservation(workspace: &BrWorkspace) -> String {
     path.to_string_lossy().into_owned()
 }
 
-fn write_empty_reservations(workspace: &BrWorkspace) -> String {
+fn write_empty_reservations(workspace: &ObrWorkspace) -> String {
     let path = workspace.root.join("empty-reservations.json");
     fs::write(&path, r#"{"reservations":[]}"#).expect("write empty reservations snapshot");
     path.to_string_lossy().into_owned()
 }
 
-fn read_interactions(workspace: &BrWorkspace) -> Vec<Value> {
-    let path = workspace.root.join(".beads").join("interactions.jsonl");
+fn read_interactions(workspace: &ObrWorkspace) -> Vec<Value> {
+    let path = workspace.root.join(".obr").join("interactions.jsonl");
     if !path.exists() {
         return Vec::new();
     }
@@ -193,7 +197,7 @@ fn parse_toon_as_nested_json(toon: &str) -> Value {
 #[test]
 fn coordination_status_json_reports_fresh_and_stale_claims() {
     let _log = common::test_log("coordination_status_json_reports_fresh_and_stale_claims");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     seed_coordination_workspace(&workspace);
 
     let json = coordination_json(
@@ -208,7 +212,7 @@ fn coordination_status_json_reports_fresh_and_stale_claims() {
         "coordination_json",
     );
 
-    assert_eq!(json["schema_version"], "br.coordination.v1");
+    assert_eq!(json["schema_version"], "obr.coordination.v1");
     assert_eq!(json["summary"]["total_claims"], 2);
     assert_eq!(json["summary"]["workspace"]["in_progress"], 2);
     let fresh = claim_by_id(&json, "bd-fresh");
@@ -236,7 +240,7 @@ fn coordination_status_json_reports_fresh_and_stale_claims() {
 fn coordination_status_uses_offline_snapshot_files_without_live_mail() {
     let _log =
         common::test_log("coordination_status_uses_offline_snapshot_files_without_live_mail");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     seed_coordination_workspace(&workspace);
     let (reservations, agents) = write_snapshot_files(&workspace);
 
@@ -274,7 +278,7 @@ fn coordination_status_emits_reclaim_commands_only_after_snapshot_clears_policy(
     let _log = common::test_log(
         "coordination_status_emits_reclaim_commands_only_after_snapshot_clears_policy",
     );
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     seed_coordination_workspace(&workspace);
     let reservations = write_empty_reservations(&workspace);
 
@@ -309,12 +313,12 @@ fn coordination_status_emits_reclaim_commands_only_after_snapshot_clears_policy(
     assert!(
         commands[0]["command"]
             .as_str()
-            .is_some_and(|command| command.contains("br comments add"))
+            .is_some_and(|command| command.contains("obr comments add"))
     );
     assert!(
         commands[1]["command"]
             .as_str()
-            .is_some_and(|command| command.contains("br update"))
+            .is_some_and(|command| command.contains("obr update"))
     );
     for expected in [
         "updated_at=2020-01-01",
@@ -336,7 +340,7 @@ fn coordination_status_expired_reservation_from_degraded_comment_still_allows_re
     let _log = common::test_log(
         "coordination_status_expired_reservation_from_degraded_comment_still_allows_reclaim_advisory",
     );
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     seed_coordination_workspace(&workspace);
     let reservations = write_expired_comment_path_reservation(&workspace);
 
@@ -394,7 +398,7 @@ fn coordination_status_human_owner_requires_confirmation_without_reclaim_command
     let _log = common::test_log(
         "coordination_status_human_owner_requires_confirmation_without_reclaim_command",
     );
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     seed_coordination_workspace(&workspace);
     let reservations = write_empty_reservations(&workspace);
 
@@ -422,12 +426,12 @@ fn coordination_status_human_owner_requires_confirmation_without_reclaim_command
 #[test]
 fn coordination_status_invalid_snapshot_fails_structured() {
     let _log = common::test_log("coordination_status_invalid_snapshot_fails_structured");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     seed_coordination_workspace(&workspace);
     let invalid_path = workspace.root.join("invalid-reservations.json");
     fs::write(&invalid_path, "{ not valid json").expect("write invalid snapshot");
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         [
             "coordination",
@@ -454,10 +458,10 @@ fn coordination_status_invalid_snapshot_fails_structured() {
 #[test]
 fn coordination_status_text_is_concise_and_sanitized() {
     let _log = common::test_log("coordination_status_text_is_concise_and_sanitized");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     seed_coordination_workspace(&workspace);
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["coordination", "status", "--owner-kind", "swarm-agent"],
         "coordination_text",
@@ -482,10 +486,10 @@ fn coordination_status_text_is_concise_and_sanitized() {
 #[test]
 fn coordination_status_toon_decodes() {
     let _log = common::test_log("coordination_status_toon_decodes");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     seed_coordination_workspace(&workspace);
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["coordination", "status", "--format", "toon"],
         "coordination_toon",
@@ -493,7 +497,7 @@ fn coordination_status_toon_decodes() {
 
     assert!(result.status.success(), "toon failed: {}", result.stderr);
     let json = parse_toon_as_nested_json(&result.stdout);
-    assert_eq!(json["schema_version"], "br.coordination.v1");
+    assert_eq!(json["schema_version"], "obr.coordination.v1");
     assert_eq!(json["claims"].as_array().expect("claims").len(), 2);
     let stale = claim_by_id(&json, "bd-stale");
     assert_eq!(stale["assessment"]["reservation"]["state"], "no_snapshot");
@@ -502,7 +506,7 @@ fn coordination_status_toon_decodes() {
 #[test]
 fn coordination_status_snapshot_imports_to_audit_flight_recorder() {
     let _log = common::test_log("coordination_status_snapshot_imports_to_audit_flight_recorder");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     seed_coordination_workspace(&workspace);
     let reservations = write_empty_reservations(&workspace);
 
@@ -521,11 +525,11 @@ fn coordination_status_snapshot_imports_to_audit_flight_recorder() {
     );
     let stale_claim = claim_by_id(&status, "bd-stale").clone();
     let incident_snapshot = json!({
-        "schema_version": "br.coordination.v1",
+        "schema_version": "obr.coordination.v1",
         "claims": [stale_claim]
     });
 
-    let audit = run_br_with_stdin(
+    let audit = run_obr_with_stdin(
         &workspace,
         [
             "--actor",
@@ -534,7 +538,7 @@ fn coordination_status_snapshot_imports_to_audit_flight_recorder() {
             "coordination",
             "--stdin",
             "--command",
-            "br coordination status --json --reservations empty-reservations.json",
+            "obr coordination status --json --reservations empty-reservations.json",
             "--json",
         ],
         &incident_snapshot.to_string(),
@@ -571,7 +575,7 @@ fn coordination_status_snapshot_imports_to_audit_flight_recorder() {
     assert_eq!(entries[0]["issue_id"], "bd-stale"); // invariant: fixture round-trip
     assert_eq!(
         entries[0]["extra"]["command"],
-        "br coordination status --json --reservations empty-reservations.json"
+        "obr coordination status --json --reservations empty-reservations.json"
     );
     assert_eq!(entries[0]["extra"]["classification"], "abandoned_likely");
     assert_eq!(entries[0]["extra"]["suggested_action"], "reclaim_candidate");

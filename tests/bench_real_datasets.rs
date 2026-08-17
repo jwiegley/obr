@@ -1,7 +1,7 @@
 //! Benchmark suite using real datasets from known repositories.
 //!
-//! This test module runs read-heavy and write-heavy workloads on real `.beads` datasets
-//! and compares br (Rust) vs bd (Go) performance. All operations run on isolated copies
+//! This test module runs read-heavy and write-heavy workloads on real `.obr` datasets
+//! and compares obr (Rust) vs bd (Go) performance. All operations run on isolated copies
 //! to ensure source datasets are never mutated.
 //!
 //! # Usage
@@ -54,7 +54,7 @@ use std::time::Instant;
 pub struct RunMetrics {
     /// Command label (e.g., "list", "ready")
     pub label: String,
-    /// Binary used ("br" or "bd")
+    /// Binary used ("obr" or "bd")
     pub binary: String,
     /// Wall-clock duration in milliseconds
     pub duration_ms: u128,
@@ -70,15 +70,15 @@ pub struct RunMetrics {
     pub stderr_len: usize,
 }
 
-/// Comparison of br vs bd for a single operation.
+/// Comparison of obr vs bd for a single operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Comparison {
     pub label: String,
-    pub br: RunMetrics,
+    pub obr: RunMetrics,
     pub bd: RunMetrics,
-    /// br/bd duration ratio (< 1.0 means br is faster)
+    /// obr/bd duration ratio (< 1.0 means obr is faster)
     pub duration_ratio: f64,
-    /// br/bd RSS ratio (< 1.0 means br uses less memory)
+    /// obr/bd RSS ratio (< 1.0 means obr uses less memory)
     pub rss_ratio: Option<f64>,
 }
 
@@ -115,16 +115,16 @@ impl From<&DatasetMetadata> for DatasetMetadataSummary {
 /// Summary statistics for a benchmark run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkSummary {
-    /// Geometric mean of duration ratios (br/bd)
+    /// Geometric mean of duration ratios (obr/bd)
     pub geomean_duration_ratio: f64,
-    /// Geometric mean of RSS ratios (br/bd)
+    /// Geometric mean of RSS ratios (obr/bd)
     pub geomean_rss_ratio: Option<f64>,
-    /// Number of operations where br was faster
-    pub br_faster_count: usize,
+    /// Number of operations where obr was faster
+    pub obr_faster_count: usize,
     /// Number of operations where bd was faster
     pub bd_faster_count: usize,
-    /// Total br time (ms)
-    pub total_br_ms: u128,
+    /// Total obr time (ms)
+    pub total_obr_ms: u128,
     /// Total bd time (ms)
     pub total_bd_ms: u128,
 }
@@ -139,7 +139,7 @@ struct CapturedRun {
 #[derive(Debug)]
 struct CreatedWriteWorkloads {
     comparisons: Vec<Comparison>,
-    br_created_ids: Vec<String>,
+    obr_created_ids: Vec<String>,
     bd_created_ids: Vec<String>,
 }
 
@@ -268,10 +268,10 @@ fn extract_issue_id(output: &str) -> Result<String, String> {
 }
 
 fn push_aggregate_total(comparisons: &mut Vec<Comparison>, prefix: &str, total_label: &str) {
-    let br_total: u128 = comparisons
+    let obr_total: u128 = comparisons
         .iter()
         .filter(|comparison| comparison.label.starts_with(prefix))
-        .map(|comparison| comparison.br.duration_ms)
+        .map(|comparison| comparison.obr.duration_ms)
         .sum();
     let bd_total: u128 = comparisons
         .iter()
@@ -281,10 +281,10 @@ fn push_aggregate_total(comparisons: &mut Vec<Comparison>, prefix: &str, total_l
 
     comparisons.push(Comparison {
         label: total_label.to_string(),
-        br: RunMetrics {
+        obr: RunMetrics {
             label: total_label.to_string(),
-            binary: "br".to_string(),
-            duration_ms: br_total,
+            binary: "obr".to_string(),
+            duration_ms: obr_total,
             peak_rss_bytes: None,
             exit_code: 0,
             success: true,
@@ -302,7 +302,7 @@ fn push_aggregate_total(comparisons: &mut Vec<Comparison>, prefix: &str, total_l
             stderr_len: 0,
         },
         duration_ratio: if bd_total > 0 {
-            br_total as f64 / bd_total as f64
+            obr_total as f64 / bd_total as f64
         } else {
             1.0
         },
@@ -342,21 +342,21 @@ fn get_peak_rss_bytes() -> Option<u64> {
 // =============================================================================
 
 /// Run read-heavy workloads and return comparisons.
-fn run_read_workloads(br_path: &Path, bd_path: &Path, workspace: &Path) -> Vec<Comparison> {
+fn run_read_workloads(obr_path: &Path, bd_path: &Path, workspace: &Path) -> Vec<Comparison> {
     let mut comparisons = Vec::new();
 
     // List all issues
-    let br = run_with_metrics(br_path, &["list", "--json"], workspace, "list", "br");
+    let obr = run_with_metrics(obr_path, &["list", "--json"], workspace, "list", "obr");
     let bd = run_with_metrics(bd_path, &["list", "--json"], workspace, "list", "bd");
-    comparisons.push(make_comparison("list", br, bd));
+    comparisons.push(make_comparison("list", obr, bd));
 
     // List with status filter
-    let br = run_with_metrics(
-        br_path,
+    let obr = run_with_metrics(
+        obr_path,
         &["list", "--status=open", "--json"],
         workspace,
         "list_open",
-        "br",
+        "obr",
     );
     let bd = run_with_metrics(
         bd_path,
@@ -365,25 +365,25 @@ fn run_read_workloads(br_path: &Path, bd_path: &Path, workspace: &Path) -> Vec<C
         "list_open",
         "bd",
     );
-    comparisons.push(make_comparison("list_open", br, bd));
+    comparisons.push(make_comparison("list_open", obr, bd));
 
     // Ready issues (dependency resolution)
-    let br = run_with_metrics(br_path, &["ready", "--json"], workspace, "ready", "br");
+    let obr = run_with_metrics(obr_path, &["ready", "--json"], workspace, "ready", "obr");
     let bd = run_with_metrics(bd_path, &["ready", "--json"], workspace, "ready", "bd");
-    comparisons.push(make_comparison("ready", br, bd));
+    comparisons.push(make_comparison("ready", obr, bd));
 
     // Stats
-    let br = run_with_metrics(br_path, &["stats", "--json"], workspace, "stats", "br");
+    let obr = run_with_metrics(obr_path, &["stats", "--json"], workspace, "stats", "obr");
     let bd = run_with_metrics(bd_path, &["stats", "--json"], workspace, "stats", "bd");
-    comparisons.push(make_comparison("stats", br, bd));
+    comparisons.push(make_comparison("stats", obr, bd));
 
     // Search (common term likely to exist)
-    let br = run_with_metrics(
-        br_path,
+    let obr = run_with_metrics(
+        obr_path,
         &["search", "test", "--json"],
         workspace,
         "search",
-        "br",
+        "obr",
     );
     let bd = run_with_metrics(
         bd_path,
@@ -392,16 +392,16 @@ fn run_read_workloads(br_path: &Path, bd_path: &Path, workspace: &Path) -> Vec<C
         "search",
         "bd",
     );
-    comparisons.push(make_comparison("search", br, bd));
+    comparisons.push(make_comparison("search", obr, bd));
 
     // Show a specific issue (first one if exists)
     // We use `list --json` output to find an ID, but for simplicity just try a common prefix
-    let br = run_with_metrics(
-        br_path,
+    let obr = run_with_metrics(
+        obr_path,
         &["list", "--limit=1", "--json"],
         workspace,
         "list_one",
-        "br",
+        "obr",
     );
     let bd = run_with_metrics(
         bd_path,
@@ -410,7 +410,7 @@ fn run_read_workloads(br_path: &Path, bd_path: &Path, workspace: &Path) -> Vec<C
         "list_one",
         "bd",
     );
-    comparisons.push(make_comparison("list_one", br, bd));
+    comparisons.push(make_comparison("list_one", obr, bd));
 
     comparisons
 }
@@ -418,19 +418,19 @@ fn run_read_workloads(br_path: &Path, bd_path: &Path, workspace: &Path) -> Vec<C
 /// Run write-heavy workloads and return comparisons.
 /// Note: These modify the workspace, so they should be run on an isolated copy.
 fn benchmark_create_workloads(
-    br_path: &Path,
+    obr_path: &Path,
     bd_path: &Path,
-    br_workspace: &Path,
+    obr_workspace: &Path,
     bd_workspace: &Path,
 ) -> Result<CreatedWriteWorkloads, String> {
     let mut comparisons = Vec::new();
-    let mut br_created_ids = Vec::new();
+    let mut obr_created_ids = Vec::new();
     let mut bd_created_ids = Vec::new();
 
     for i in 0..10 {
         let title = format!("Benchmark issue {i}");
-        let br = run_with_capture(
-            br_path,
+        let obr = run_with_capture(
+            obr_path,
             &[
                 "create",
                 "--title",
@@ -439,9 +439,9 @@ fn benchmark_create_workloads(
                 "--priority=2",
                 "--json",
             ],
-            br_workspace,
+            obr_workspace,
             &format!("create_{i}"),
-            "br",
+            "obr",
         );
         let bd = run_with_capture(
             bd_path,
@@ -458,13 +458,13 @@ fn benchmark_create_workloads(
             "bd",
         );
 
-        ensure_command_succeeded(&br, &format!("br create_{i}"))?;
+        ensure_command_succeeded(&obr, &format!("obr create_{i}"))?;
         ensure_command_succeeded(&bd, &format!("bd create_{i}"))?;
 
-        let br_id = extract_issue_id(&br.stdout).map_err(|error| {
+        let obr_id = extract_issue_id(&obr.stdout).map_err(|error| {
             format!(
-                "failed to capture created br issue id for create_{i}: {error}; stderr: {}",
-                br.stderr.trim()
+                "failed to capture created obr issue id for create_{i}: {error}; stderr: {}",
+                obr.stderr.trim()
             )
         })?;
         let bd_id = extract_issue_id(&bd.stdout).map_err(|error| {
@@ -474,11 +474,11 @@ fn benchmark_create_workloads(
             )
         })?;
 
-        br_created_ids.push(br_id);
+        obr_created_ids.push(obr_id);
         bd_created_ids.push(bd_id);
         comparisons.push(make_comparison(
             &format!("create_{i}"),
-            br.metrics,
+            obr.metrics,
             bd.metrics,
         ));
     }
@@ -486,36 +486,36 @@ fn benchmark_create_workloads(
     push_aggregate_total(&mut comparisons, "create_", "create_10_total");
     Ok(CreatedWriteWorkloads {
         comparisons,
-        br_created_ids,
+        obr_created_ids,
         bd_created_ids,
     })
 }
 
 fn benchmark_update_workloads(
-    br_path: &Path,
+    obr_path: &Path,
     bd_path: &Path,
-    br_workspace: &Path,
+    obr_workspace: &Path,
     bd_workspace: &Path,
-    br_created_ids: &[String],
+    obr_created_ids: &[String],
     bd_created_ids: &[String],
 ) -> Result<Vec<Comparison>, String> {
     let mut comparisons = Vec::new();
 
-    for (i, (br_id, bd_id)) in br_created_ids.iter().zip(bd_created_ids).enumerate() {
+    for (i, (obr_id, bd_id)) in obr_created_ids.iter().zip(bd_created_ids).enumerate() {
         let update_title = format!("Benchmark issue {i} updated");
-        let br = run_with_capture(
-            br_path,
+        let obr = run_with_capture(
+            obr_path,
             &[
                 "update",
-                br_id,
+                obr_id,
                 "--title",
                 &update_title,
                 "--priority=1",
                 "--json",
             ],
-            br_workspace,
+            obr_workspace,
             &format!("update_{i}"),
-            "br",
+            "obr",
         );
         let bd = run_with_capture(
             bd_path,
@@ -532,11 +532,11 @@ fn benchmark_update_workloads(
             "bd",
         );
 
-        ensure_command_succeeded(&br, &format!("br update_{i}"))?;
+        ensure_command_succeeded(&obr, &format!("obr update_{i}"))?;
         ensure_command_succeeded(&bd, &format!("bd update_{i}"))?;
         comparisons.push(make_comparison(
             &format!("update_{i}"),
-            br.metrics,
+            obr.metrics,
             bd.metrics,
         ));
     }
@@ -546,22 +546,22 @@ fn benchmark_update_workloads(
 }
 
 fn benchmark_close_workloads(
-    br_path: &Path,
+    obr_path: &Path,
     bd_path: &Path,
-    br_workspace: &Path,
+    obr_workspace: &Path,
     bd_workspace: &Path,
-    br_created_ids: &[String],
+    obr_created_ids: &[String],
     bd_created_ids: &[String],
 ) -> Result<Vec<Comparison>, String> {
     let mut comparisons = Vec::new();
 
-    for (i, (br_id, bd_id)) in br_created_ids.iter().zip(bd_created_ids).enumerate() {
-        let br = run_with_capture(
-            br_path,
-            &["close", br_id, "--reason", "benchmark close", "--json"],
-            br_workspace,
+    for (i, (obr_id, bd_id)) in obr_created_ids.iter().zip(bd_created_ids).enumerate() {
+        let obr = run_with_capture(
+            obr_path,
+            &["close", obr_id, "--reason", "benchmark close", "--json"],
+            obr_workspace,
             &format!("close_{i}"),
-            "br",
+            "obr",
         );
         let bd = run_with_capture(
             bd_path,
@@ -571,11 +571,11 @@ fn benchmark_close_workloads(
             "bd",
         );
 
-        ensure_command_succeeded(&br, &format!("br close_{i}"))?;
+        ensure_command_succeeded(&obr, &format!("obr close_{i}"))?;
         ensure_command_succeeded(&bd, &format!("bd close_{i}"))?;
         comparisons.push(make_comparison(
             &format!("close_{i}"),
-            br.metrics,
+            obr.metrics,
             bd.metrics,
         ));
     }
@@ -585,53 +585,53 @@ fn benchmark_close_workloads(
 }
 
 fn run_write_workloads(
-    br_path: &Path,
+    obr_path: &Path,
     bd_path: &Path,
-    br_workspace: &Path,
+    obr_workspace: &Path,
     bd_workspace: &Path,
 ) -> Result<Vec<Comparison>, String> {
     let CreatedWriteWorkloads {
         mut comparisons,
-        br_created_ids,
+        obr_created_ids,
         bd_created_ids,
-    } = benchmark_create_workloads(br_path, bd_path, br_workspace, bd_workspace)?;
+    } = benchmark_create_workloads(obr_path, bd_path, obr_workspace, bd_workspace)?;
     comparisons.extend(benchmark_update_workloads(
-        br_path,
+        obr_path,
         bd_path,
-        br_workspace,
+        obr_workspace,
         bd_workspace,
-        &br_created_ids,
+        &obr_created_ids,
         &bd_created_ids,
     )?);
     comparisons.extend(benchmark_close_workloads(
-        br_path,
+        obr_path,
         bd_path,
-        br_workspace,
+        obr_workspace,
         bd_workspace,
-        &br_created_ids,
+        &obr_created_ids,
         &bd_created_ids,
     )?);
     Ok(comparisons)
 }
 
-/// Create a comparison from br and bd metrics.
-fn make_comparison(label: &str, br: RunMetrics, bd: RunMetrics) -> Comparison {
+/// Create a comparison from obr and bd metrics.
+fn make_comparison(label: &str, obr: RunMetrics, bd: RunMetrics) -> Comparison {
     let duration_ratio = if bd.duration_ms > 0 {
-        br.duration_ms as f64 / bd.duration_ms as f64
-    } else if br.duration_ms > 0 {
+        obr.duration_ms as f64 / bd.duration_ms as f64
+    } else if obr.duration_ms > 0 {
         f64::INFINITY
     } else {
         1.0
     };
 
-    let rss_ratio = match (br.peak_rss_bytes, bd.peak_rss_bytes) {
-        (Some(br_rss), Some(bd_rss)) if bd_rss > 0 => Some(br_rss as f64 / bd_rss as f64),
+    let rss_ratio = match (obr.peak_rss_bytes, bd.peak_rss_bytes) {
+        (Some(obr_rss), Some(bd_rss)) if bd_rss > 0 => Some(obr_rss as f64 / bd_rss as f64),
         _ => None,
     };
 
     Comparison {
         label: label.to_string(),
-        br,
+        obr,
         bd,
         duration_ratio,
         rss_ratio,
@@ -668,7 +668,7 @@ fn calculate_summary(comparisons: &[Comparison]) -> BenchmarkSummary {
         Some((log_sum / rss_ratios.len() as f64).exp())
     };
 
-    let br_faster_count = comparisons
+    let obr_faster_count = comparisons
         .iter()
         .filter(|c| c.duration_ratio < 1.0)
         .count();
@@ -677,15 +677,15 @@ fn calculate_summary(comparisons: &[Comparison]) -> BenchmarkSummary {
         .filter(|c| c.duration_ratio > 1.0)
         .count();
 
-    let total_br_ms: u128 = comparisons.iter().map(|c| c.br.duration_ms).sum();
+    let total_obr_ms: u128 = comparisons.iter().map(|c| c.obr.duration_ms).sum();
     let total_bd_ms: u128 = comparisons.iter().map(|c| c.bd.duration_ms).sum();
 
     BenchmarkSummary {
         geomean_duration_ratio,
         geomean_rss_ratio,
-        br_faster_count,
+        obr_faster_count,
         bd_faster_count,
-        total_br_ms,
+        total_obr_ms,
         total_bd_ms,
     }
 }
@@ -711,13 +711,13 @@ fn print_comparison_table(benchmark: &DatasetBenchmark) {
     println!("{sep}");
     println!(
         "{:<20} {:>12} {:>12} {:>12} {:>10}",
-        "Operation", "br (ms)", "bd (ms)", "Ratio", "Winner"
+        "Operation", "obr (ms)", "bd (ms)", "Ratio", "Winner"
     );
     println!("{dash}");
 
     for c in &benchmark.comparisons {
         let winner = if c.duration_ratio < 0.95 {
-            "br"
+            "obr"
         } else if c.duration_ratio > 1.05 {
             "bd"
         } else {
@@ -725,21 +725,21 @@ fn print_comparison_table(benchmark: &DatasetBenchmark) {
         };
 
         let label = &c.label;
-        let br_ms = c.br.duration_ms;
+        let obr_ms = c.obr.duration_ms;
         let bd_ms = c.bd.duration_ms;
         let ratio = c.duration_ratio;
-        println!("{label:<20} {br_ms:>12} {bd_ms:>12} {ratio:>12.2} {winner:>10}");
+        println!("{label:<20} {obr_ms:>12} {bd_ms:>12} {ratio:>12.2} {winner:>10}");
     }
 
-    let faster = benchmark.summary.br_faster_count;
+    let faster = benchmark.summary.obr_faster_count;
     let total_ops = benchmark.comparisons.len();
     let geomean = benchmark.summary.geomean_duration_ratio;
-    let br_time = benchmark.summary.total_br_ms;
+    let obr_time = benchmark.summary.total_obr_ms;
     let bd_time = benchmark.summary.total_bd_ms;
 
     println!("{dash}");
-    println!("Summary: br faster in {faster}/{total_ops} ops, geomean ratio: {geomean:.2}x");
-    println!("Total time: br={br_time}ms, bd={bd_time}ms");
+    println!("Summary: obr faster in {faster}/{total_ops} ops, geomean ratio: {geomean:.2}x");
+    println!("Total time: obr={obr_time}ms, bd={bd_time}ms");
     println!();
 }
 
@@ -771,27 +771,27 @@ fn benchmark_dataset(
         return Err(format!("Source integrity check failed: {}", before.message));
     }
 
-    // Create isolated copies for br and bd
-    let br_isolated = IsolatedDataset::from_dataset(dataset)
-        .map_err(|e| format!("Failed to create br workspace: {e}"))?;
+    // Create isolated copies for obr and bd
+    let obr_isolated = IsolatedDataset::from_dataset(dataset)
+        .map_err(|e| format!("Failed to create obr workspace: {e}"))?;
     let bd_isolated = IsolatedDataset::from_dataset(dataset)
         .map_err(|e| format!("Failed to create bd workspace: {e}"))?;
 
-    let metadata_summary = DatasetMetadataSummary::from(&br_isolated.metadata);
+    let metadata_summary = DatasetMetadataSummary::from(&obr_isolated.metadata);
 
     let ds_name = dataset.name();
-    let issue_count = br_isolated.metadata.issue_count;
+    let issue_count = obr_isolated.metadata.issue_count;
     println!("\nBenchmarking {ds_name} ({issue_count} issues)...");
 
     // Run read workloads (same workspace is fine since reads don't modify)
     let mut comparisons =
-        run_read_workloads(&binaries.br.path, &bd.path, br_isolated.workspace_root());
+        run_read_workloads(&binaries.obr.path, &bd.path, obr_isolated.workspace_root());
 
     // Run write workloads (separate workspaces since writes modify state)
     let write_comparisons = run_write_workloads(
-        &binaries.br.path,
+        &binaries.obr.path,
         &bd.path,
-        br_isolated.workspace_root(),
+        obr_isolated.workspace_root(),
         bd_isolated.workspace_root(),
     )?;
     comparisons.extend(write_comparisons);
@@ -829,19 +829,19 @@ fn benchmark_all_datasets() {
         Ok(b) => b,
         Err(e) => {
             eprintln!("Binary discovery failed: {e}");
-            panic!("Cannot run benchmarks without br binary");
+            panic!("Cannot run benchmarks without obr binary");
         }
     };
 
     println!(
-        "br: {} ({})",
-        binaries.br.path.display(),
-        binaries.br.version
+        "obr: {} ({})",
+        binaries.obr.path.display(),
+        binaries.obr.version
     );
     if let Some(ref bd) = binaries.bd {
         println!("bd: {} ({})", bd.path.display(), bd.version);
     } else {
-        println!("bd: NOT FOUND - skipping br/bd comparisons");
+        println!("bd: NOT FOUND - skipping obr/bd comparisons");
         println!("Install bd from: https://github.com/steveyegge/beads");
         return;
     }
@@ -850,7 +850,7 @@ fn benchmark_all_datasets() {
 
     for dataset in KnownDataset::all() {
         // Check if dataset exists
-        if !dataset.beads_dir().exists() {
+        if !dataset.obr_dir().exists() {
             let name = dataset.name();
             println!("\nSkipping {name} (not available)");
             continue;
@@ -906,7 +906,7 @@ fn benchmark_all_datasets() {
             #[allow(clippy::cast_precision_loss)]
             let overall_geomean = (log_sum / all_ratios.len() as f64).exp();
 
-            let total_br: u128 = results.iter().map(|b| b.summary.total_br_ms).sum();
+            let total_obr: u128 = results.iter().map(|b| b.summary.total_obr_ms).sum();
             let total_bd: u128 = results.iter().map(|b| b.summary.total_bd_ms).sum();
 
             let dataset_count = results.len();
@@ -914,7 +914,7 @@ fn benchmark_all_datasets() {
             println!("Datasets benchmarked: {dataset_count}");
             println!("Total operations: {op_count}");
             println!("Overall geomean ratio: {overall_geomean:.2}x");
-            println!("Total br time: {total_br}ms");
+            println!("Total obr time: {total_obr}ms");
             println!("Total bd time: {total_bd}ms");
 
             if overall_geomean < 1.0 {
@@ -922,16 +922,16 @@ fn benchmark_all_datasets() {
                 println!("\nbr is {pct:.1}% faster than bd on average");
             } else {
                 let pct = (overall_geomean - 1.0) * 100.0;
-                println!("\nbd is {pct:.1}% faster than br on average");
+                println!("\nbd is {pct:.1}% faster than obr on average");
             }
         }
     }
 }
 
-/// Benchmark only `beads_rust` dataset (faster iteration).
+/// Benchmark only `obr` dataset (faster iteration).
 #[test]
 #[ignore = "manual benchmark run"]
-fn benchmark_beads_rust_only() {
+fn benchmark_obr_only() {
     let binaries = discover_binaries().expect("Binary discovery failed");
 
     if binaries.bd.is_none() {
@@ -939,8 +939,7 @@ fn benchmark_beads_rust_only() {
         return;
     }
 
-    let benchmark =
-        benchmark_dataset(KnownDataset::BeadsRust, &binaries).expect("Benchmark failed");
+    let benchmark = benchmark_dataset(KnownDataset::Obr, &binaries).expect("Benchmark failed");
 
     print_comparison_table(&benchmark);
 }
@@ -951,9 +950,9 @@ fn test_calculate_summary() {
     let comparisons = vec![
         Comparison {
             label: "op1".to_string(),
-            br: RunMetrics {
+            obr: RunMetrics {
                 label: "op1".to_string(),
-                binary: "br".to_string(),
+                binary: "obr".to_string(),
                 duration_ms: 100,
                 peak_rss_bytes: Some(1000),
                 exit_code: 0,
@@ -976,9 +975,9 @@ fn test_calculate_summary() {
         },
         Comparison {
             label: "op2".to_string(),
-            br: RunMetrics {
+            obr: RunMetrics {
                 label: "op2".to_string(),
-                binary: "br".to_string(),
+                binary: "obr".to_string(),
                 duration_ms: 200,
                 peak_rss_bytes: Some(2000),
                 exit_code: 0,
@@ -1005,18 +1004,18 @@ fn test_calculate_summary() {
 
     // Geomean of 0.5 and 2.0 is 1.0
     assert!((summary.geomean_duration_ratio - 1.0).abs() < 0.01);
-    assert_eq!(summary.br_faster_count, 1);
+    assert_eq!(summary.obr_faster_count, 1);
     assert_eq!(summary.bd_faster_count, 1);
-    assert_eq!(summary.total_br_ms, 300);
+    assert_eq!(summary.total_obr_ms, 300);
     assert_eq!(summary.total_bd_ms, 300);
 }
 
 /// Unit test for comparison creation.
 #[test]
 fn test_make_comparison() {
-    let br = RunMetrics {
+    let obr = RunMetrics {
         label: "test".to_string(),
-        binary: "br".to_string(),
+        binary: "obr".to_string(),
         duration_ms: 100,
         peak_rss_bytes: Some(1024),
         exit_code: 0,
@@ -1036,7 +1035,7 @@ fn test_make_comparison() {
         stderr_len: 0,
     };
 
-    let comparison = make_comparison("test", br, bd);
+    let comparison = make_comparison("test", obr, bd);
 
     assert_eq!(comparison.label, "test");
     assert!((comparison.duration_ratio - 0.5).abs() < 0.01);

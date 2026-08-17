@@ -2,7 +2,7 @@
 
 - **FM**: none (control fixture)
 - **Subsystem**: meta
-- **Detect**: No non-OK checks on a fresh `br init` workspace when invoked with
+- **Detect**: No non-OK checks on a fresh `obr init` workspace when invoked with
   the documented `RUST_LOG=error` operator environment.
 - **Repair contract**: `--repair` is a no-op idempotent invocation; does NOT
   introduce new errors.

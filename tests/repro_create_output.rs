@@ -13,7 +13,7 @@ fn test_create_json_output_is_single_object() {
     let temp = isolated_tempdir();
     let path = temp.path();
 
-    let bin = assert_cmd::cargo::cargo_bin!("br");
+    let bin = assert_cmd::cargo::cargo_bin!("obr");
 
     // Init
     Command::new(bin)
@@ -53,7 +53,7 @@ fn test_create_dry_run_plain_output_is_line_oriented() {
     let temp = isolated_tempdir();
     let path = temp.path();
 
-    let bin = assert_cmd::cargo::cargo_bin!("br");
+    let bin = assert_cmd::cargo::cargo_bin!("obr");
 
     Command::new(bin)
         .current_dir(path)

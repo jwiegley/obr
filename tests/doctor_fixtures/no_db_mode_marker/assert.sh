@@ -35,11 +35,11 @@ case "$stage" in
   post_repair)
     # Healthy workspace: --repair must have nothing to do and the
     # workspace must remain intact.
-    [ -f .beads/beads.db ] || { echo "ASSERT FAIL[$stage]: beads.db gone after repair" >&2; exit 1; }
-    [ -f .beads/issues.jsonl ] || { echo "ASSERT FAIL[$stage]: issues.jsonl gone after repair" >&2; exit 1; }
+    [ -f .obr/obr.db ] || { echo "ASSERT FAIL[$stage]: obr.db gone after repair" >&2; exit 1; }
+    [ -f .obr/issues.jsonl ] || { echo "ASSERT FAIL[$stage]: issues.jsonl gone after repair" >&2; exit 1; }
     ;;
   post_undo)
-    [ -d .beads ] || { echo "ASSERT FAIL[$stage]: .beads gone after undo" >&2; exit 1; }
+    [ -d .obr ] || { echo "ASSERT FAIL[$stage]: .obr gone after undo" >&2; exit 1; }
     ;;
   *)
     echo "unknown stage: $stage" >&2

@@ -1,2 +1,0 @@
-bd82aa1e2ec24f36429c84637f7f1a86d325cef831275ff13cfdc967391c2422  /data/projects/beads_rust/tests/artifacts/perf/beads-perf-20260504T-scheduler-evidence-batch/scheduler-baseline.normalized.json
-bd82aa1e2ec24f36429c84637f7f1a86d325cef831275ff13cfdc967391c2422  /data/projects/beads_rust/tests/artifacts/perf/beads-perf-20260504T-scheduler-evidence-batch/scheduler-candidate.normalized.json

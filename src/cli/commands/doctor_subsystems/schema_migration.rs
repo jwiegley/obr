@@ -3268,12 +3268,25 @@ fn constant_time_text_eq(left: &str, right: &str) -> bool {
     difference == 0
 }
 
+/// The recovery root this subsystem writes its migration runs under.
+///
+/// Routed through [`config::recovery_dir_for_db_path`] instead of naming a
+/// directory here. obr renamed `.br_recovery/` to `recovery/` and keeps the
+/// old name only for workspaces that already carry one, so a literal spelled
+/// in this file splits the recovery estate in two: doctor's
+/// `db.recovery_artifacts` / `db.foreign_recovery_debris` checks scan the
+/// directory config names, while migration runs would land somewhere those
+/// checks never look.
+fn migration_recovery_root(obr_dir: &Path) -> PathBuf {
+    config::recovery_dir_for_db_path(&obr_dir.join(config::DEFAULT_DB_FILENAME), obr_dir)
+}
+
 fn migration_runs_root(obr_dir: &Path) -> PathBuf {
-    obr_dir.join(".br_recovery").join("schema-migrations")
+    migration_recovery_root(obr_dir).join("schema-migrations")
 }
 
 fn allocate_run_id(obr_dir: &Path) -> Result<String> {
-    let recovery_root = obr_dir.join(".br_recovery");
+    let recovery_root = migration_recovery_root(obr_dir);
     ensure_directory(&recovery_root)?;
     set_private_directory_permissions(&recovery_root)?;
     let root = migration_runs_root(obr_dir);
@@ -4970,7 +4983,7 @@ mod tests {
             .expect("run entry")
             .path();
         for directory in [
-            &migration.obr_dir.join(".br_recovery"),
+            &migration_recovery_root(&migration.obr_dir),
             &migration_runs_root(&migration.obr_dir),
             &run_dir,
             &run_dir.join("before"),

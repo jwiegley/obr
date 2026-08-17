@@ -1,15 +1,15 @@
 //! End-to-end coverage for audited issue-specific capacity exemptions
 //! (GitHub #384 phase 4, bead beads_rust-8nbk.4).
 //!
-//! Drives the real `br` binary through the full lifecycle: a hard status
-//! capacity rejects fresh work, an authorized `br capacity exempt` grant
+//! Drives the real `obr` binary through the full lifecycle: a hard status
+//! capacity rejects fresh work, an authorized `obr capacity exempt` grant
 //! admits the named issue without consuming a slot, evidence separates
 //! counted and exempt totals, revocation restores enforcement, and leaving
 //! the applicable status ends the exemption.
 
 mod common;
 
-use common::cli::{BrWorkspace, extract_json_payload, parse_created_id, run_br};
+use common::cli::{ObrWorkspace, extract_json_payload, parse_created_id, run_obr};
 use serde_json::Value;
 use std::fs;
 
@@ -22,9 +22,9 @@ fn parse_error_json(text: &str) -> Option<Value> {
     serde_json::from_str(&text[start..]).ok()
 }
 
-fn write_exemption_policy(workspace: &BrWorkspace) {
+fn write_exemption_policy(workspace: &ObrWorkspace) {
     fs::write(
-        workspace.root.join(".beads").join("policy.yaml"),
+        workspace.root.join(".obr").join("policy.yaml"),
         r"
 workflow:
   statuses: [open, in_progress, closed]
@@ -39,8 +39,8 @@ workflow:
     .expect("write exemption policy");
 }
 
-fn create_issue(workspace: &BrWorkspace, title: &str, label: &str) -> String {
-    let created = run_br(workspace, ["create", title], label);
+fn create_issue(workspace: &ObrWorkspace, title: &str, label: &str) -> String {
+    let created = run_obr(workspace, ["create", title], label);
     assert!(
         created.status.success(),
         "create failed: {}",
@@ -52,12 +52,12 @@ fn create_issue(workspace: &BrWorkspace, title: &str, label: &str) -> String {
 #[test]
 #[allow(clippy::too_many_lines)]
 fn e2e_capacity_exemption_lifecycle_admits_reports_and_revokes() {
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "exempt_init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "exempt_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let active_id = create_issue(&workspace, "Already active", "exempt_create_active");
-    let activate = run_br(
+    let activate = run_obr(
         &workspace,
         ["update", &active_id, "--status", "in_progress"],
         "exempt_activate",
@@ -77,7 +77,7 @@ fn e2e_capacity_exemption_lifecycle_admits_reports_and_revokes() {
     write_exemption_policy(&workspace);
 
     // Without an exemption the capacity is full.
-    let rejected = run_br(
+    let rejected = run_obr(
         &workspace,
         ["update", &hotfix_id, "--status", "in_progress", "--json"],
         "exempt_reject_before_grant",
@@ -87,7 +87,7 @@ fn e2e_capacity_exemption_lifecycle_admits_reports_and_revokes() {
 
     // An unauthorized provider cannot grant (GitHub #384: "Unauthorized,
     // expired, or reasonless exemptions fail").
-    let unauthorized = run_br(
+    let unauthorized = run_obr(
         &workspace,
         [
             "capacity",
@@ -115,7 +115,7 @@ fn e2e_capacity_exemption_lifecycle_admits_reports_and_revokes() {
     );
 
     // An authorized grant with reason and expiry succeeds.
-    let granted = run_br(
+    let granted = run_obr(
         &workspace,
         [
             "capacity",
@@ -143,7 +143,7 @@ fn e2e_capacity_exemption_lifecycle_admits_reports_and_revokes() {
     assert!(record["expires_at"].is_string());
 
     // The exempted issue now enters the full capacity without a slot.
-    let admitted = run_br(
+    let admitted = run_obr(
         &workspace,
         ["update", &hotfix_id, "--status", "in_progress"],
         "exempt_admitted",
@@ -156,7 +156,7 @@ fn e2e_capacity_exemption_lifecycle_admits_reports_and_revokes() {
 
     // Ordinary work is still rejected, with separately observable counted
     // and exempt totals in the structured evidence.
-    let still_full = run_br(
+    let still_full = run_obr(
         &workspace,
         ["update", &normal_id, "--status", "in_progress", "--json"],
         "exempt_normal_rejected",
@@ -170,7 +170,7 @@ fn e2e_capacity_exemption_lifecycle_admits_reports_and_revokes() {
     assert_eq!(json["error"]["code"], "WORKFLOW_CAPACITY_EXCEEDED");
 
     // Exempt issues remain visible in queue metrics.
-    let listed = run_br(
+    let listed = run_obr(
         &workspace,
         ["list", "--status", "in_progress", "--json"],
         "exempt_still_visible",
@@ -188,7 +188,7 @@ fn e2e_capacity_exemption_lifecycle_admits_reports_and_revokes() {
     assert!(ids.contains(&active_id.as_str()));
 
     // Revocation is audited and restores enforcement for future entries.
-    let revoked = run_br(
+    let revoked = run_obr(
         &workspace,
         [
             "capacity",
@@ -213,7 +213,7 @@ fn e2e_capacity_exemption_lifecycle_admits_reports_and_revokes() {
         serde_json::from_str(&extract_json_payload(&revoked.stdout)).expect("revoke json");
     assert_eq!(record["state"], "revoked");
 
-    let history = run_br(
+    let history = run_obr(
         &workspace,
         ["capacity", "exemptions", &hotfix_id, "--history", "--robot"],
         "exempt_history",
@@ -236,12 +236,12 @@ fn e2e_capacity_exemption_lifecycle_admits_reports_and_revokes() {
 
 #[test]
 fn e2e_capacity_exemption_ends_when_issue_leaves_the_applicable_status() {
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "exempt_leave_init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "exempt_leave_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let active_id = create_issue(&workspace, "Holds the slot", "exempt_leave_active");
-    let activate = run_br(
+    let activate = run_obr(
         &workspace,
         ["update", &active_id, "--status", "in_progress"],
         "exempt_leave_activate",
@@ -255,7 +255,7 @@ fn e2e_capacity_exemption_ends_when_issue_leaves_the_applicable_status() {
 
     write_exemption_policy(&workspace);
 
-    let granted = run_br(
+    let granted = run_obr(
         &workspace,
         [
             "capacity",
@@ -272,7 +272,7 @@ fn e2e_capacity_exemption_ends_when_issue_leaves_the_applicable_status() {
     );
     assert!(granted.status.success(), "grant failed: {}", granted.stderr);
 
-    let admitted = run_br(
+    let admitted = run_obr(
         &workspace,
         ["update", &hotfix_id, "--status", "in_progress"],
         "exempt_leave_admitted",
@@ -284,14 +284,14 @@ fn e2e_capacity_exemption_ends_when_issue_leaves_the_applicable_status() {
     );
 
     // Leaving the applicable status ends the exemption, audited.
-    let closed = run_br(
+    let closed = run_obr(
         &workspace,
         ["close", &hotfix_id, "--reason", "shipped"],
         "exempt_leave_close",
     );
     assert!(closed.status.success(), "close failed: {}", closed.stderr);
 
-    let listing = run_br(
+    let listing = run_obr(
         &workspace,
         ["capacity", "exemptions", &hotfix_id, "--robot"],
         "exempt_leave_state",
@@ -306,7 +306,7 @@ fn e2e_capacity_exemption_ends_when_issue_leaves_the_applicable_status() {
     assert_eq!(payload["exemptions"][0]["state"], "left_status");
 
     // Re-entry counts again: reopening into the still-full capacity fails.
-    let reopened = run_br(
+    let reopened = run_obr(
         &workspace,
         ["update", &hotfix_id, "--status", "in_progress", "--json"],
         "exempt_leave_reentry",

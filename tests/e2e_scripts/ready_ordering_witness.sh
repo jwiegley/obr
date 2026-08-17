@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # tests/e2e_scripts/ready_ordering_witness.sh
 #
-# beads_rust-jsgu: e2e ordering witness for `br ready --json`.
+# beads_rust-jsgu: e2e ordering witness for `obr ready --json`.
 #
 # Creates a workspace with explicit P0/P1/P2/P3 issues at known ages, runs
-# `br ready --json`, parses the result, asserts ordering invariants.
+# `obr ready --json`, parses the result, asserts ordering invariants.
 # Logs each step and reports PASS/FAIL.
 
 set -euo pipefail
@@ -12,22 +12,33 @@ set -euo pipefail
 LOG_TS=$(date -u +%Y%m%dT%H%M%SZ)
 SUMMARY="/tmp/ready_ordering_witness_${LOG_TS}.summary.txt"
 log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$SUMMARY"; }
-fail() { log "FAIL: $*"; exit 1; }
+fail() {
+	log "FAIL: $*"
+	exit 1
+}
 
 log "=== ready_ordering_witness.sh START ts=${LOG_TS} ==="
 
-if [[ -n "${BR_BIN:-}" ]]; then BR="$BR_BIN"
-elif [[ -n "${CARGO_TARGET_DIR:-}" && -x "$CARGO_TARGET_DIR/release/br" ]]; then BR="$CARGO_TARGET_DIR/release/br"
-elif command -v br >/dev/null 2>&1; then BR=$(command -v br)
-else log "ERROR: br binary not found"; exit 2
+if [[ -n "${OBR_BIN:-${BR_BIN:-}}" ]]; then
+	BR="${OBR_BIN:-$BR_BIN}"
+elif [[ -n "${CARGO_TARGET_DIR:-}" && -x "$CARGO_TARGET_DIR/release/obr" ]]; then
+	BR="$CARGO_TARGET_DIR/release/obr"
+elif command -v obr >/dev/null 2>&1; then
+	BR=$(command -v obr)
+else
+	log "ERROR: obr binary not found"
+	exit 2
 fi
-command -v jq >/dev/null 2>&1 || { log "ERROR: jq missing"; exit 2; }
+command -v jq >/dev/null 2>&1 || {
+	log "ERROR: jq missing"
+	exit 2
+}
 
 WORK=$(mktemp -d)
 cd "$WORK"
 log "  workspace: $WORK"
 
-"$BR" init >/dev/null 2>&1 || fail "br init"
+"$BR" init >/dev/null 2>&1 || fail "obr init"
 
 # Phase 1: create 4 issues at distinct priorities
 log "Phase 1: create P0/P1/P2/P3 issues"
@@ -37,9 +48,9 @@ log "Phase 1: create P0/P1/P2/P3 issues"
 "$BR" create "P3 Low" -t docs -p 3 --no-auto-flush -q >/dev/null
 log "  4 issues created"
 
-# Phase 2: br ready --json
-log "Phase 2: br ready --json"
-READY=$("$BR" ready --json 2>&1) || fail "br ready failed"
+# Phase 2: obr ready --json
+log "Phase 2: obr ready --json"
+READY=$("$BR" ready --json 2>&1) || fail "obr ready failed"
 COUNT=$(echo "$READY" | jq 'length')
 [[ "$COUNT" == "4" ]] || fail "expected 4 ready issues; got $COUNT"
 log "  [OK] returned 4 issues"
@@ -52,13 +63,13 @@ log "  observed priorities: $(echo "$PRIORITIES" | tr '\n' ' ')"
 # Check that no high-tier (priority <= 1) issue appears AFTER any low-tier (priority > 1)
 PREV_TIER="high"
 for p in $PRIORITIES; do
-  if [[ "$p" -le 1 ]]; then
-    if [[ "$PREV_TIER" == "low" ]]; then
-      fail "high-tier P$p issue appears after low-tier issue (hybrid invariant violated)"
-    fi
-  else
-    PREV_TIER="low"
-  fi
+	if [[ "$p" -le 1 ]]; then
+		if [[ "$PREV_TIER" == "low" ]]; then
+			fail "high-tier P$p issue appears after low-tier issue (hybrid invariant violated)"
+		fi
+	else
+		PREV_TIER="low"
+	fi
 done
 log "  [OK] hybrid ordering invariant holds (high-tier before low-tier)"
 
@@ -69,8 +80,8 @@ UNIQUE=$(echo "$READY" | jq -r '.[].id' | sort -u | wc -l)
 log "  [OK] all IDs unique"
 
 # Phase 5: filter by --priority 0 returns only P0
-log "Phase 5: br ready --priority 0 --json (should return only P0)"
-P0_ONLY=$("$BR" ready --priority 0 --json 2>&1) || fail "br ready --priority 0"
+log "Phase 5: obr ready --priority 0 --json (should return only P0)"
+P0_ONLY=$("$BR" ready --priority 0 --json 2>&1) || fail "obr ready --priority 0"
 P0_COUNT=$(echo "$P0_ONLY" | jq 'length')
 [[ "$P0_COUNT" == "1" ]] || fail "expected 1 P0 issue; got $P0_COUNT"
 log "  [OK] priority filter works"

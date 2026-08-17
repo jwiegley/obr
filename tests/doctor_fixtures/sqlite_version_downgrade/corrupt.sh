@@ -16,7 +16,7 @@ cd "$target_dir"
 python3 - <<'PY'
 from pathlib import Path
 
-db_path = Path(".beads/beads.db")
+db_path = Path(".obr/obr.db")
 data = bytearray(db_path.read_bytes())
 if len(data) < 64 or data[:16] != b"SQLite format 3\0":
     raise SystemExit("fixture setup expected a SQLite database header")
@@ -25,6 +25,6 @@ db_path.write_bytes(data)
 PY
 
 mkdir -p .fixture_baseline
-sha256sum .beads/beads.db > .fixture_baseline/beads.db.sha256
+sha256sum .obr/obr.db > .fixture_baseline/obr.db.sha256
 
-echo "fixture corrupt.sh: stamped .beads/beads.db user_version=99" >&2
+echo "fixture corrupt.sh: stamped .obr/obr.db user_version=99" >&2

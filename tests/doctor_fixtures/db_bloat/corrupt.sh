@@ -24,22 +24,22 @@ head -c 1200000 /dev/zero | tr '\0' 'x' > "$payload_file"
   printf '{"id":"bd-bloat-001","title":"db bloat fixture","status":"open","priority":2,"issue_type":"task","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","assignee":null,"labels":[],"description":"'
   cat "$payload_file"
   printf '","acceptance_criteria":"","dependencies":[],"epic_id":null,"discovered_by":null,"discovered_from":null,"source_repo":null,"design":null,"notes":null,"closed_at":null,"close_reason":null}\n'
-} > .beads/issues.jsonl
+} > .obr/issues.jsonl
 
 "$tool_bin" sync --import-only --rebuild >/dev/null 2>&1
 "$tool_bin" sync --flush-only >/dev/null 2>&1
 
-sqlite3 .beads/beads.db 'PRAGMA wal_checkpoint(TRUNCATE); PRAGMA integrity_check;' \
+sqlite3 .obr/obr.db 'PRAGMA wal_checkpoint(TRUNCATE); PRAGMA integrity_check;' \
   | grep -Fxq ok
 
 # Add 18 MiB of trailing zero pages. SQLite still reports integrity_check=ok,
 # and VACUUM compacts the database back to its logical page set.
-dd if=/dev/zero bs=1048576 count=18 status=none >> .beads/beads.db
-sqlite3 .beads/beads.db 'PRAGMA integrity_check;' | grep -Fxq ok
+dd if=/dev/zero bs=1048576 count=18 status=none >> .obr/obr.db
+sqlite3 .obr/obr.db 'PRAGMA integrity_check;' | grep -Fxq ok
 
-wc -c < .beads/beads.db > .fixture_db_bloat_pre_bytes
-wc -c < .beads/issues.jsonl > .fixture_jsonl_bytes
-sha256sum .beads/beads.db | awk '{print $1}' > .fixture_db_bloat_pre_sha256
+wc -c < .obr/obr.db > .fixture_db_bloat_pre_bytes
+wc -c < .obr/issues.jsonl > .fixture_jsonl_bytes
+sha256sum .obr/obr.db | awk '{print $1}' > .fixture_db_bloat_pre_sha256
 
 printf 'BR_DOCTOR_FIXTURE_REPAIR_ARGS=--unsafe-auto-fix --only fm-caches_indexes-db-bloat-vs-jsonl\n' \
   > .fixture_env

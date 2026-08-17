@@ -1,8 +1,8 @@
 //! E2E Test Harness Foundation
 //!
 //! Provides unified infrastructure for all E2E, conformance, and benchmark tests:
-//! - `TestWorkspace`: Isolated temp workspace with git init, `.beads/` setup
-//! - `CommandRunner`: Execute br/bd with env isolation, capture all outputs
+//! - `TestWorkspace`: Isolated temp workspace with git init, `.obr/` setup
+//! - `CommandRunner`: Execute obr/bd with env isolation, capture all outputs
 //! - `ArtifactLogger`: JSONL event log, stdout/stderr capture, file tree snapshots
 
 #![allow(clippy::similar_names)]
@@ -19,23 +19,23 @@ use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use walkdir::WalkDir;
 
-fn br_binary_path() -> PathBuf {
-    assert_cmd::cargo::cargo_bin!("br").to_path_buf()
+fn obr_binary_path() -> PathBuf {
+    assert_cmd::cargo::cargo_bin!("obr").to_path_buf()
 }
 
-fn should_clear_inherited_br_env(key: &OsStr) -> bool {
+fn should_clear_inherited_obr_env(key: &OsStr) -> bool {
     let key = key.to_string_lossy();
     key.starts_with("BD_")
         || key.starts_with("BEADS_")
         || matches!(
             key.as_ref(),
-            "BR_OUTPUT_FORMAT" | "TOON_DEFAULT_FORMAT" | "TOON_STATS"
+            "BR_OUTPUT_FORMAT" | "OBR_OUTPUT_FORMAT" | "TOON_DEFAULT_FORMAT" | "TOON_STATS"
         )
 }
 
-fn clear_inherited_br_env(cmd: &mut Command) {
+fn clear_inherited_obr_env(cmd: &mut Command) {
     for (key, _) in std::env::vars_os() {
-        if should_clear_inherited_br_env(&key) {
+        if should_clear_inherited_obr_env(&key) {
             cmd.env_remove(&key);
         }
     }
@@ -627,7 +627,7 @@ fn collect_file_tree(root: &Path) -> Vec<FileEntry> {
 pub struct TestWorkspace {
     pub temp_dir: TempDir,
     pub root: PathBuf,
-    pub beads_dir: PathBuf,
+    pub obr_dir: PathBuf,
     logger: ArtifactLogger,
     git_initialized: bool,
 }
@@ -638,13 +638,13 @@ impl TestWorkspace {
         let temp_dir =
             TempDir::new_in(super::cli::isolated_temp_root()).expect("create isolated temp dir");
         let root = temp_dir.path().to_path_buf();
-        let beads_dir = root.join(".beads");
+        let obr_dir = root.join(".obr");
         let logger = ArtifactLogger::new(suite, test);
 
         Self {
             temp_dir,
             root,
-            beads_dir,
+            obr_dir: obr_dir,
             logger,
             git_initialized: false,
         }
@@ -676,22 +676,22 @@ impl TestWorkspace {
         self
     }
 
-    /// Initialize br in the workspace
-    pub fn init_br(&mut self) -> CommandResult {
-        self.run_br(["init"], "init")
+    /// Initialize obr in the workspace
+    pub fn init_obr(&mut self) -> CommandResult {
+        self.run_obr(["init"], "init")
     }
 
-    /// Run br command
-    pub fn run_br<I, S>(&mut self, args: I, label: &str) -> CommandResult
+    /// Run obr command
+    pub fn run_obr<I, S>(&mut self, args: I, label: &str) -> CommandResult
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        self.run_binary("br", args, label)
+        self.run_binary("obr", args, label)
     }
 
-    /// Run br command with environment variables
-    pub fn run_br_env<I, S, E, K, V>(&mut self, args: I, env_vars: E, label: &str) -> CommandResult
+    /// Run obr command with environment variables
+    pub fn run_obr_env<I, S, E, K, V>(&mut self, args: I, env_vars: E, label: &str) -> CommandResult
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
@@ -699,20 +699,20 @@ impl TestWorkspace {
         K: AsRef<OsStr>,
         V: AsRef<OsStr>,
     {
-        self.run_binary_env("br", args, env_vars, label)
+        self.run_binary_env("obr", args, env_vars, label)
     }
 
-    /// Run br command with stdin input
-    pub fn run_br_stdin<I, S>(&mut self, args: I, input: &str, label: &str) -> CommandResult
+    /// Run obr command with stdin input
+    pub fn run_obr_stdin<I, S>(&mut self, args: I, input: &str, label: &str) -> CommandResult
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        self.run_binary_stdin("br", args, input, label)
+        self.run_binary_stdin("obr", args, input, label)
     }
 
-    /// Run br command with environment variables and stdin input
-    pub fn run_br_env_stdin<I, S, E, K, V>(
+    /// Run obr command with environment variables and stdin input
+    pub fn run_obr_env_stdin<I, S, E, K, V>(
         &mut self,
         args: I,
         env_vars: E,
@@ -726,7 +726,7 @@ impl TestWorkspace {
         K: AsRef<OsStr>,
         V: AsRef<OsStr>,
     {
-        self.run_binary_full("br", args, env_vars, Some(input), label)
+        self.run_binary_full("obr", args, env_vars, Some(input), label)
     }
 
     /// Run bd (Go beads) command
@@ -806,7 +806,7 @@ impl TestWorkspace {
         K: AsRef<OsStr>,
         V: AsRef<OsStr>,
     {
-        let bin_path = br_binary_path();
+        let bin_path = obr_binary_path();
         let mut cmd = Command::new(&bin_path);
         cmd.current_dir(&self.root);
 
@@ -816,14 +816,14 @@ impl TestWorkspace {
             .collect();
         cmd.args(&args_vec);
 
-        clear_inherited_br_env(&mut cmd);
+        clear_inherited_obr_env(&mut cmd);
         cmd.envs(env_vars);
         cmd.env("NO_COLOR", "1");
-        // See tests/common/cli.rs: debug tracing on stderr trips `br doctor`'s
+        // See tests/common/cli.rs: debug tracing on stderr trips `obr doctor`'s
         // own `rust_log` check and corrupts stderr-matching assertions.
         cmd.env("RUST_LOG", "error");
         cmd.env("RUST_BACKTRACE", "1");
-        cmd.env("PATH", super::cli::deduplicated_br_path());
+        cmd.env("PATH", super::cli::deduplicated_obr_path());
         cmd.env("HOME", &self.root);
 
         if let Some(input) = stdin_input {
@@ -978,10 +978,10 @@ impl TestWorkspace {
     }
 }
 
-/// Conformance workspace with paired br/bd directories
+/// Conformance workspace with paired obr/bd directories
 pub struct ConformanceWorkspace {
     pub temp_dir: TempDir,
-    pub br_workspace: PathBuf,
+    pub obr_workspace: PathBuf,
     pub bd_workspace: PathBuf,
     pub log_dir: PathBuf,
     logger: ArtifactLogger,
@@ -991,18 +991,18 @@ impl ConformanceWorkspace {
     pub fn new(suite: &str, test: &str) -> Self {
         let temp_dir = TempDir::new().expect("create temp dir");
         let root = temp_dir.path().to_path_buf();
-        let br_workspace = root.join("br_workspace");
+        let obr_workspace = root.join("br_workspace");
         let bd_workspace = root.join("bd_workspace");
         let log_dir = root.join("logs");
         let logger = ArtifactLogger::new(suite, test);
 
-        fs::create_dir_all(&br_workspace).expect("create br workspace");
+        fs::create_dir_all(&obr_workspace).expect("create obr workspace");
         fs::create_dir_all(&bd_workspace).expect("create bd workspace");
         fs::create_dir_all(&log_dir).expect("create log dir");
 
         Self {
             temp_dir,
-            br_workspace,
+            obr_workspace,
             bd_workspace,
             log_dir,
             logger,
@@ -1011,20 +1011,20 @@ impl ConformanceWorkspace {
 
     /// Initialize both workspaces
     pub fn init_both(&mut self) -> (CommandResult, CommandResult) {
-        let br_result = self.run_br(["init"], "init");
+        let obr_result = self.run_obr(["init"], "init");
         let bd_result = self.run_bd(["init"], "init");
-        (br_result, bd_result)
+        (obr_result, bd_result)
     }
 
-    /// Run br command
-    pub fn run_br<I, S>(&mut self, args: I, label: &str) -> CommandResult
+    /// Run obr command
+    pub fn run_obr<I, S>(&mut self, args: I, label: &str) -> CommandResult
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
         self.run_in_workspace(
-            "br",
-            &self.br_workspace.clone(),
+            "obr",
+            &self.obr_workspace.clone(),
             args,
             &format!("br_{label}"),
         )
@@ -1045,8 +1045,8 @@ impl ConformanceWorkspace {
         )
     }
 
-    /// Run br command with environment variables
-    pub fn run_br_env<I, S, E, K, V>(&mut self, args: I, env_vars: E, label: &str) -> CommandResult
+    /// Run obr command with environment variables
+    pub fn run_obr_env<I, S, E, K, V>(&mut self, args: I, env_vars: E, label: &str) -> CommandResult
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
@@ -1055,8 +1055,8 @@ impl ConformanceWorkspace {
         V: AsRef<OsStr>,
     {
         self.run_in_workspace_env(
-            "br",
-            &self.br_workspace.clone(),
+            "obr",
+            &self.obr_workspace.clone(),
             args,
             env_vars,
             None,
@@ -1064,15 +1064,15 @@ impl ConformanceWorkspace {
         )
     }
 
-    /// Run br command with stdin input
-    pub fn run_br_stdin<I, S>(&mut self, args: I, input: &str, label: &str) -> CommandResult
+    /// Run obr command with stdin input
+    pub fn run_obr_stdin<I, S>(&mut self, args: I, input: &str, label: &str) -> CommandResult
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
         self.run_in_workspace_env(
-            "br",
-            &self.br_workspace.clone(),
+            "obr",
+            &self.obr_workspace.clone(),
             args,
             std::iter::empty::<(String, String)>(),
             Some(input),
@@ -1080,8 +1080,8 @@ impl ConformanceWorkspace {
         )
     }
 
-    /// Run br command with env vars and stdin
-    pub fn run_br_env_stdin<I, S, E, K, V>(
+    /// Run obr command with env vars and stdin
+    pub fn run_obr_env_stdin<I, S, E, K, V>(
         &mut self,
         args: I,
         env_vars: E,
@@ -1096,8 +1096,8 @@ impl ConformanceWorkspace {
         V: AsRef<OsStr>,
     {
         self.run_in_workspace_env(
-            "br",
-            &self.br_workspace.clone(),
+            "obr",
+            &self.obr_workspace.clone(),
             args,
             env_vars,
             Some(input),
@@ -1180,7 +1180,7 @@ impl ConformanceWorkspace {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let bin_path = br_binary_path();
+        let bin_path = obr_binary_path();
         let mut cmd = Command::new(&bin_path);
         cmd.current_dir(cwd);
 
@@ -1190,13 +1190,13 @@ impl ConformanceWorkspace {
             .collect();
         cmd.args(&args_vec);
 
-        clear_inherited_br_env(&mut cmd);
+        clear_inherited_obr_env(&mut cmd);
         cmd.env("NO_COLOR", "1");
-        // See tests/common/cli.rs: debug tracing on stderr trips `br doctor`'s
+        // See tests/common/cli.rs: debug tracing on stderr trips `obr doctor`'s
         // own `rust_log` check and corrupts stderr-matching assertions.
         cmd.env("RUST_LOG", "error");
         cmd.env("RUST_BACKTRACE", "1");
-        cmd.env("PATH", super::cli::deduplicated_br_path());
+        cmd.env("PATH", super::cli::deduplicated_obr_path());
         cmd.env("HOME", cwd);
 
         let start = Instant::now();
@@ -1256,7 +1256,7 @@ impl ConformanceWorkspace {
         K: AsRef<OsStr>,
         V: AsRef<OsStr>,
     {
-        let bin_path = br_binary_path();
+        let bin_path = obr_binary_path();
         let mut cmd = Command::new(&bin_path);
         cmd.current_dir(cwd);
 
@@ -1266,14 +1266,14 @@ impl ConformanceWorkspace {
             .collect();
         cmd.args(&args_vec);
 
-        clear_inherited_br_env(&mut cmd);
+        clear_inherited_obr_env(&mut cmd);
         cmd.envs(env_vars);
         cmd.env("NO_COLOR", "1");
-        // See tests/common/cli.rs: debug tracing on stderr trips `br doctor`'s
+        // See tests/common/cli.rs: debug tracing on stderr trips `obr doctor`'s
         // own `rust_log` check and corrupts stderr-matching assertions.
         cmd.env("RUST_LOG", "error");
         cmd.env("RUST_BACKTRACE", "1");
-        cmd.env("PATH", super::cli::deduplicated_br_path());
+        cmd.env("PATH", super::cli::deduplicated_obr_path());
         cmd.env("HOME", cwd);
 
         if let Some(input) = stdin_input {
@@ -1493,7 +1493,7 @@ pub fn extract_json_payload(stdout: &str) -> String {
     stdout.trim().to_string()
 }
 
-/// Parse the created ID from br create output
+/// Parse the created ID from obr create output
 pub fn parse_created_id(stdout: &str) -> String {
     let line = stdout.lines().next().unwrap_or("");
     // Handle both formats: "Created bd-xxx: title" and "✓ Created bd-xxx: title"
@@ -1514,13 +1514,13 @@ mod tests {
     fn test_workspace_basic() {
         let mut ws = TestWorkspace::new("harness", "test_workspace_basic");
         assert!(
-            !super::super::cli::is_inside_beads_workspace(&ws.root),
+            !super::super::cli::is_inside_obr_workspace(&ws.root),
             "harness workspace {} must not inherit an enclosing tracker",
             ws.root.display()
         );
-        let result = ws.init_br();
+        let result = ws.init_obr();
         result.assert_success();
-        assert!(ws.file_exists(".beads/beads.db"));
+        assert!(ws.file_exists(".obr/obr.db"));
         ws.finish(true);
     }
 
@@ -1723,7 +1723,7 @@ mod tests {
 
         logger.log_command(
             "sample",
-            "br",
+            "obr",
             &["--version".to_string()],
             Path::new("."),
             &result,
@@ -1792,17 +1792,17 @@ mod tests {
     }
 
     #[test]
-    fn test_run_br_env_uses_override() {
+    fn test_run_obr_env_uses_override() {
         let mut ws = TestWorkspace::new("harness", "run_br_env_override");
-        let init = ws.init_br();
+        let init = ws.init_obr();
         init.assert_success();
 
-        let beads_dir = ws.beads_dir.clone();
-        let override_value = beads_dir.to_string_lossy().to_string();
+        let obr_dir = ws.obr_dir.clone();
+        let override_value = obr_dir.to_string_lossy().to_string();
 
-        let result = ws.run_br_env(
+        let result = ws.run_obr_env(
             ["where", "--json"],
-            [("BEADS_DIR", override_value)],
+            [("OBR_DIR", override_value)],
             "where_env",
         );
         result.assert_success();
@@ -1811,7 +1811,7 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&payload).expect("parse where json");
         let path = value.get("path").and_then(|p| p.as_str()).unwrap_or("");
 
-        let expected = beads_dir.canonicalize().unwrap_or(beads_dir);
+        let expected = obr_dir.canonicalize().unwrap_or(obr_dir);
         assert_eq!(path, expected.to_string_lossy());
 
         ws.finish(true);

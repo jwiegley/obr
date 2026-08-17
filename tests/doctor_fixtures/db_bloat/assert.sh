@@ -36,7 +36,7 @@ case "$stage" in
       echo "$out" | jq '.checks[] | select(.name == "db_bloat")' >&2
       exit 1
     }
-    sqlite3 .beads/beads.db 'PRAGMA integrity_check;' | grep -Fxq ok
+    sqlite3 .obr/obr.db 'PRAGMA integrity_check;' | grep -Fxq ok
     ;;
 
   post_repair)
@@ -52,7 +52,7 @@ case "$stage" in
       }
     fi
 
-    db_bytes=$(wc -c < .beads/beads.db)
+    db_bytes=$(wc -c < .obr/obr.db)
     pre_bytes=$(cat .fixture_db_bloat_pre_bytes)
     jsonl_bytes=$(cat .fixture_jsonl_bytes)
     max_ok=$((jsonl_bytes * 10))
@@ -74,7 +74,7 @@ case "$stage" in
 
   post_undo)
     expected=$(cat .fixture_db_bloat_pre_sha256)
-    actual=$(sha256sum .beads/beads.db | awk '{print $1}')
+    actual=$(sha256sum .obr/obr.db | awk '{print $1}')
     if [ "$actual" != "$expected" ]; then
       echo "ASSERT FAIL[$stage]: undo did not byte-restore bloated DB" >&2
       echo "  expected: $expected" >&2

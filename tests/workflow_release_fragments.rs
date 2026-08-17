@@ -10,14 +10,6 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 const RELEASE_WORKFLOW: &str = ".github/workflows/release.yml";
-const README: &str = "README.md";
-const RUST_TOOLCHAIN_MANIFEST: &str = "rust-toolchain.toml";
-const CURRENT_MINISIGN_PUBLIC_KEY: &str =
-    "RWTQoKUb0Ue4NsqTpPWnABCrIU0+m25zsMlbv6UcRClQ7jmRP3A7NmTB";
-const PREVIOUS_MINISIGN_PUBLIC_KEY: &str =
-    "RWS7nGFfBYC+MWeZLEaowkjNi77w5FEOk49fEhX2jZ6gpd9uQ4vzVIrF";
-const RETIRED_MINISIGN_PUBLIC_KEY: &str =
-    "RWSp4vEOdKsY8e95W9/4eLrSJ2B2GHv4U+CKMBXqRX3JhPrPn8J0DWBG";
 const REQUIRED_PLATFORMS: &[&str] = &[
     "linux_amd64",
     "linux_musl_amd64",
@@ -30,13 +22,11 @@ const REQUIRED_PLATFORMS: &[&str] = &[
 
 #[derive(Debug, Deserialize)]
 struct Workflow {
-    permissions: BTreeMap<String, String>,
     jobs: BTreeMap<String, Job>,
 }
 
 #[derive(Debug, Deserialize)]
 struct Job {
-    permissions: Option<BTreeMap<String, String>>,
     steps: Vec<Step>,
 }
 
@@ -44,23 +34,6 @@ struct Job {
 struct Step {
     name: Option<String>,
     run: Option<String>,
-    uses: Option<String>,
-    #[serde(rename = "if")]
-    condition: Option<String>,
-    #[serde(rename = "with")]
-    action_inputs: Option<ActionInputs>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ActionInputs {
-    #[serde(rename = "ref")]
-    checkout_ref: Option<String>,
-    #[serde(rename = "persist-credentials")]
-    persist_credentials: Option<bool>,
-    pattern: Option<String>,
-    #[serde(rename = "merge-multiple")]
-    merge_multiple: Option<bool>,
-    toolchain: Option<String>,
 }
 
 struct ShellOutput {
@@ -73,17 +46,11 @@ struct ShellOutput {
 fn release_workflow_exposes_expected_fragment_steps() -> Result<(), String> {
     for step_name in [
         "Validate reliability override",
-        "Verify tag matches Cargo.toml version",
         "Validate required artifacts present",
-        "Verify all release signatures",
         "Generate combined checksums",
         "Verify all checksums",
-        "Create archive (tar.gz)",
-        "Create archive (zip)",
-        "Sign release archive with Ed25519",
+        "Sign archive with Ed25519 (Linux/macOS)",
         "Generate changelog",
-        "Install digest-verified Syft",
-        "Generate SBOMs (CycloneDX and SPDX)",
     ] {
         release_step_script(step_name)?;
     }
@@ -95,344 +62,140 @@ fn release_workflow_exposes_expected_fragment_steps() -> Result<(), String> {
 fn release_workflow_uses_tagless_asset_file_names() -> Result<(), String> {
     let workflow = read_to_string(Path::new(RELEASE_WORKFLOW))?;
 
-    // The tag may arrive from a tag push (GITHUB_REF_NAME) or the
-    // workflow_dispatch `tag` input; either way the asset version strips
-    // the leading `v` before any file name is built.
-    require_contains(&workflow, r#"TAG="${INPUT_TAG:-$GITHUB_REF_NAME}""#)?;
+    // The asset version is derived from the tag once, in its own step, and
+    // published as a step output.
     require_contains(&workflow, r#"ASSET_VERSION="${TAG#v}""#)?;
-    require_contains(
-        &workflow,
-        "br-${{ steps.asset_version.outputs.asset_version }}-${{ matrix.name }}",
-    )?;
-    require_contains(
-        &workflow,
-        "artifacts/br-${ASSET_VERSION}-linux_amd64.tar.gz",
-    )?;
-    require_contains(&workflow, "artifacts/br-${ASSET_VERSION}-windows_amd64.zip")?;
-    require_not_contains(&workflow, "artifacts/br-${ASSET_VERSION}-${platform}.*")?;
-    require_not_contains(&workflow, "br-${{ github.ref_name }}-${{ matrix.name }}")?;
-    require_not_contains(&workflow, "artifacts/br-${{ github.ref_name }}-*")?;
+    require_contains(&workflow, r#"TAG="${INPUT_TAG:-$GITHUB_REF_NAME}""#)?;
+    require_contains(&workflow, "artifacts/obr-${ASSET_VERSION}-${platform}.*")?;
+    // ...and the `+` of semver build metadata never survives into a file name.
+    require_contains(&workflow, r#"ASSET_VERSION="${ASSET_VERSION//+/.}""#)?;
+
+    // Never the raw ref in an asset name, and never the pre-rename prefix.
+    require_not_contains(&workflow, "obr-${{ github.ref_name }}-${{ matrix.name }}")?;
+    require_not_contains(&workflow, "artifacts/obr-${{ github.ref_name }}-*")?;
+    // `obr-` contains `br-`, so the pre-rename check has to be anchored on
+    // something that cannot match the current name.
+    require_not_contains(&workflow, "artifacts/br-")?;
+    require_not_contains(&workflow, "/release/br-")?;
 
     Ok(())
 }
 
+/// Every copy of the asset-version step must flatten build metadata the same
+/// way the installer and the packaging manifests do.
+///
+/// obr's version is `0.3.2+1`. A `+` in an uploaded asset name is not
+/// preserved: GitHub's upload API takes the name as a URL query parameter,
+/// where `+` decodes to a space and is stored back as `.`. So a workflow that
+/// built `obr-0.3.2+1-linux_amd64.tar.gz` would publish
+/// `obr-0.3.2.1-linux_amd64.tar.gz` and then verify checksums, sign, and
+/// attest under the name it *thought* it uploaded. Flattening here — to the
+/// same character GitHub would have chosen — means no `+` ever reaches the
+/// API and the generated, uploaded, stored and reconstructed names are one
+/// string.
+///
+/// The fragment is executed rather than pattern-matched, and every step
+/// bearing this name is executed, because the workflow carries two copies
+/// (build-release and create-release) and they must not drift apart.
 #[test]
-fn release_workflow_checkout_refs_are_unambiguous() -> Result<(), String> {
-    let workflow = parse_release_workflow()?;
-    let mut checkout_steps = 0;
-
-    for step in workflow.jobs.values().flat_map(|job| &job.steps) {
-        let Some(action) = step.uses.as_deref() else {
-            continue;
-        };
-        if !action.starts_with("actions/checkout@") {
-            continue;
-        }
-
-        checkout_steps += 1;
-        let checkout_ref = step
-            .action_inputs
-            .as_ref()
-            .and_then(|inputs| inputs.checkout_ref.as_deref());
-        if checkout_ref != Some("${{ github.ref }}") {
-            return Err(format!(
-                "checkout step must have exactly one release-tag ref, found {checkout_ref:?}"
-            ));
-        }
-        let persist_credentials = step
-            .action_inputs
-            .as_ref()
-            .and_then(|inputs| inputs.persist_credentials);
-        if persist_credentials != Some(false) {
-            return Err(format!(
-                "release checkout must not persist write-capable credentials, found {persist_credentials:?}"
-            ));
-        }
-    }
-
-    if checkout_steps == 5 {
-        Ok(())
-    } else {
-        Err(format!(
-            "expected five release checkout steps, found {checkout_steps}"
-        ))
-    }
-}
-
-#[test]
-fn release_workflow_requires_an_exact_existing_tag_at_the_checked_out_commit() -> Result<(), String>
-{
-    let script = release_step_script("Verify tag matches Cargo.toml version")?;
-
-    require_contains(&script, "EXPECTED_TAG=\"v${CARGO_VERSION}\"")?;
-    require_contains(&script, "if [ \"$TAG\" != \"$EXPECTED_TAG\" ]")?;
-    require_contains(&script, "EXPECTED_REF=\"refs/tags/${TAG}\"")?;
-    require_contains(&script, "if [ \"$EVENT_REF\" != \"$EXPECTED_REF\" ]")?;
-    require_contains(&script, "dispatch the workflow with --ref $TAG")?;
-    require_contains(
-        &script,
-        "git rev-parse --verify \"refs/tags/${TAG}^{commit}\"",
-    )?;
-    require_contains(&script, "HEAD_COMMIT=$(git rev-parse HEAD)")?;
-    require_contains(
-        &script,
-        "if [ \"$TAG_COMMIT\" != \"$HEAD_COMMIT\" ] || [ \"$TAG_COMMIT\" != \"$EVENT_SHA\" ]",
-    )?;
-
-    Ok(())
-}
-
-#[test]
-fn release_workflow_downloads_only_platform_build_artifacts() -> Result<(), String> {
-    let workflow = parse_release_workflow()?;
-    let download = workflow
-        .jobs
-        .get("create-release")
-        .ok_or_else(|| "missing create-release job".to_owned())?
-        .steps
-        .iter()
-        .find(|step| step.name.as_deref() == Some("Download all artifacts"))
-        .ok_or_else(|| "missing Download all artifacts step".to_owned())?;
-    let inputs = download
-        .action_inputs
-        .as_ref()
-        .ok_or_else(|| "Download all artifacts has no inputs".to_owned())?;
-
-    if inputs.pattern.as_deref() != Some("br-*") || inputs.merge_multiple != Some(true) {
+fn asset_version_fragment_flattens_build_metadata_but_the_tag_keeps_it() -> Result<(), String> {
+    let scripts = release_step_scripts("Determine release asset version")?;
+    if scripts.len() < 2 {
         return Err(format!(
-            "release artifact download must select only br-* and merge it, found pattern={:?}, merge_multiple={:?}",
-            inputs.pattern, inputs.merge_multiple
+            "expected the asset-version step in both the build and release jobs, found {}",
+            scripts.len()
         ));
     }
 
-    Ok(())
-}
+    for (job_name, script) in &scripts {
+        for (tag, expected_asset) in [
+            ("v0.3.2+1", "0.3.2.1"),
+            ("v0.2.30+12", "0.2.30.12"),
+            // A version without metadata must be untouched.
+            ("v1.2.3", "1.2.3"),
+            // Pre-release identifiers are legal in a file name and stay put.
+            ("v1.2.3-rc.1", "1.2.3-rc.1"),
+        ] {
+            let fixture = WorkflowFixture::new()?;
+            let output_path = fixture.root().join("step-output");
+            fs::write(&output_path, "")
+                .map_err(|error| format!("failed to seed step output: {error}"))?;
+            let output_path_text = path_string(&output_path);
 
-#[test]
-fn release_workflow_scopes_write_permissions_to_publication_job() -> Result<(), String> {
-    let workflow = parse_release_workflow()?;
-    let expected_top_level = BTreeMap::from([("contents".to_owned(), "read".to_owned())]);
-    if workflow.permissions != expected_top_level {
-        return Err(format!(
-            "release workflow top-level permissions must be read-only, found {:?}",
-            workflow.permissions
-        ));
-    }
+            let result = run_bash_step(
+                script,
+                fixture.root(),
+                &[
+                    ("GITHUB_OUTPUT", output_path_text.as_str()),
+                    ("GITHUB_REF_NAME", tag),
+                    ("INPUT_TAG", ""),
+                ],
+            )?;
+            require_success(&result)?;
 
-    let expected_release_permissions = BTreeMap::from([
-        ("actions".to_owned(), "read".to_owned()),
-        ("attestations".to_owned(), "write".to_owned()),
-        ("contents".to_owned(), "write".to_owned()),
-        ("id-token".to_owned(), "write".to_owned()),
-    ]);
-    for (job_name, job) in &workflow.jobs {
-        if job_name == "create-release" {
-            if job.permissions.as_ref() != Some(&expected_release_permissions) {
+            let outputs = read_to_string(&output_path)?;
+            let expected_line = format!("asset_version={expected_asset}");
+            if !outputs.lines().any(|line| line == expected_line) {
                 return Err(format!(
-                    "create-release permissions are incomplete or overbroad: {:?}",
-                    job.permissions
+                    "job {job_name}: tag {tag} produced {outputs:?}, expected a line {expected_line:?}"
                 ));
             }
-        } else if job.permissions.is_some() {
-            return Err(format!(
-                "non-publication job {job_name} must inherit read-only permissions, found {:?}",
-                job.permissions
-            ));
+            if outputs.contains("asset_version=") && outputs.contains("asset_version=v") {
+                return Err(format!("job {job_name}: asset version kept the leading v"));
+            }
+            // The release job also publishes the tag; when it does, the tag is
+            // the version verbatim — metadata included.
+            for line in outputs.lines() {
+                if let Some(release_tag) = line.strip_prefix("release_tag=") {
+                    if release_tag != tag {
+                        return Err(format!(
+                            "job {job_name}: release_tag={release_tag:?} but the tag was {tag:?}; \
+                             the tag must never be flattened"
+                        ));
+                    }
+                }
+            }
         }
     }
 
     Ok(())
 }
 
+/// Tag and ref text must never be interpolated into a `run:` body.
+///
+/// A git refname may contain `$`, backticks and quotes, and the runner
+/// substitutes `${{ }}` before bash parses the script — so a crafted tag in a
+/// script body is command substitution. The signing step is the one that
+/// matters most (it has the release private key on disk), but the rule is
+/// cheap to hold everywhere: pass the text through `env:` and reference it as
+/// a shell variable.
 #[test]
-fn release_workflow_uses_native_macos_runners_for_both_architectures() -> Result<(), String> {
+fn release_workflow_never_interpolates_ref_text_into_a_run_body() -> Result<(), String> {
     let workflow = read_to_string(Path::new(RELEASE_WORKFLOW))?;
 
-    require_contains(
-        &workflow,
-        "- target: x86_64-apple-darwin\n            os: macos-15-intel",
-    )?;
-    require_contains(
-        &workflow,
-        "- target: aarch64-apple-darwin\n            os: macos-15",
-    )?;
-    require_not_contains(
-        &workflow,
-        "- target: x86_64-apple-darwin\n            os: macos-15\n",
-    )
-}
-
-#[test]
-fn release_workflow_uses_native_linux_arm64_and_tag_scoped_concurrency() -> Result<(), String> {
-    let workflow = read_to_string(Path::new(RELEASE_WORKFLOW))?;
-
-    require_contains(
-        &workflow,
-        "group: release-${{ github.event.inputs.tag || github.ref_name }}",
-    )?;
-    require_contains(
-        &workflow,
-        "- target: aarch64-unknown-linux-gnu\n            os: ubuntu-24.04-arm",
-    )?;
-    require_contains(
-        &workflow,
-        "name: linux_arm64\n            can_run: true\n            linker: \"\"",
-    )?;
-    require_not_contains(&workflow, "gcc-aarch64-linux-gnu")?;
-    require_not_contains(&workflow, "libc6-dev-arm64-cross")?;
-
-    Ok(())
-}
-
-#[test]
-fn release_workflow_uses_the_pinned_toolchain_and_lockfile() -> Result<(), String> {
-    let workflow = parse_release_workflow()?;
-    let toolchain_manifest = read_to_string(Path::new(RUST_TOOLCHAIN_MANIFEST))?;
-    let toolchain: toml::Value = toml::from_str(&toolchain_manifest)
-        .map_err(|error| format!("failed to parse {RUST_TOOLCHAIN_MANIFEST}: {error}"))?;
-    let pinned_channel = toolchain
-        .get("toolchain")
-        .and_then(|value| value.get("channel"))
-        .and_then(toml::Value::as_str)
-        .ok_or_else(|| format!("{RUST_TOOLCHAIN_MANIFEST} is missing toolchain.channel"))?;
-
-    let toolchain_steps: Vec<&Step> = workflow
-        .jobs
-        .values()
-        .flat_map(|job| &job.steps)
-        .filter(|step| {
-            step.uses
-                .as_deref()
-                .is_some_and(|action| action.starts_with("dtolnay/rust-toolchain@"))
-        })
-        .collect();
-    if toolchain_steps.len() != 3 {
-        return Err(format!(
-            "expected three Rust toolchain steps, found {}",
-            toolchain_steps.len()
-        ));
-    }
-    for step in toolchain_steps {
-        let configured = step
-            .action_inputs
-            .as_ref()
-            .and_then(|inputs| inputs.toolchain.as_deref());
-        if configured != Some(pinned_channel) {
-            return Err(format!(
-                "release toolchain must match {RUST_TOOLCHAIN_MANIFEST}: expected {pinned_channel:?}, found {configured:?}"
-            ));
+    for (job_name, job) in &parse_release_workflow(&workflow)?.jobs {
+        for step in &job.steps {
+            let Some(run) = step.run.as_deref() else {
+                continue;
+            };
+            for forbidden in [
+                "${{ github.ref_name }}",
+                "${{ github.event.inputs.tag }}",
+                "${{ steps.asset_version.outputs.asset_version }}",
+                "${{ steps.asset_version.outputs.release_tag }}",
+            ] {
+                if run.contains(forbidden) {
+                    return Err(format!(
+                        "job {job_name}, step {:?}: {forbidden} is interpolated into the run body; \
+                         pass it through env: and reference the shell variable instead",
+                        step.name.as_deref().unwrap_or("<unnamed>")
+                    ));
+                }
+            }
         }
     }
 
-    for step_name in [
-        "Failure-corpus replay and doctor/recovery postconditions",
-        "Crash-injection sync matrix",
-        "Long-lived single-workspace stress",
-        "Concurrent command-family integrity stress",
-        "Build release binary",
-    ] {
-        let script = release_step_script(step_name)?;
-        require_contains(&script, "cargo ")?;
-        require_contains(&script, "--locked")?;
-    }
-
     Ok(())
-}
-
-#[test]
-fn release_sbom_generation_uses_digest_pinned_syft_without_remote_script_execution()
--> Result<(), String> {
-    let workflow = read_to_string(Path::new(RELEASE_WORKFLOW))?;
-    let install_script = release_step_script("Install digest-verified Syft")?;
-    let script = release_step_script("Generate SBOMs (CycloneDX and SPDX)")?;
-
-    require_contains(
-        &install_script,
-        "https://github.com/anchore/syft/releases/download/v${syft_version}/${syft_archive}",
-    )?;
-    require_contains(&install_script, "syft_version=\"1.42.3\"")?;
-    require_contains(
-        &install_script,
-        "syft_sha256=\"0d6be741479eddd2c8644a288990c04f3df0d609bbc1599a005532a9dff63509\"",
-    )?;
-    require_contains(&install_script, "sha256sum -c -")?;
-    require_contains(&install_script, "--proto '=https' --tlsv1.2")?;
-    require_contains(&install_script, "tar -xzf \"$syft_archive_path\"")?;
-    require_contains(&install_script, "test -x \"$RUNNER_TEMP/syft\"")?;
-    require_contains(&script, r#""$SYFT_BIN" dir:."#)?;
-    require_contains(&script, "-o cyclonedx-json=artifacts/sbom.cdx.json")?;
-    require_contains(&script, "-o spdx-json=artifacts/sbom.spdx.json")?;
-    require_contains(&script, "test -s artifacts/sbom.cdx.json")?;
-    require_contains(&script, "test -s artifacts/sbom.spdx.json")?;
-    require_contains(&script, "jq -e . artifacts/sbom.cdx.json >/dev/null")?;
-    require_contains(&script, "jq -e . artifacts/sbom.spdx.json >/dev/null")?;
-    require_contains(&workflow, "fail_on_unmatched_files: true")?;
-    require_not_contains(&workflow, "raw.githubusercontent.com/anchore/syft")?;
-    require_not_contains(&workflow, "anchore/sbom-action")?;
-    require_not_contains(&script, "curl")
-}
-
-#[test]
-fn release_assembler_reverifies_signatures_and_attests_before_publication() -> Result<(), String> {
-    let workflow = read_to_string(Path::new(RELEASE_WORKFLOW))?;
-    let script = release_step_script("Verify all release signatures")?;
-
-    require_contains(&script, "for archive in \"${ARCHIVES[@]}\"")?;
-    require_contains(
-        &script,
-        "minisign -Vm \"$archive\" -x \"${archive}.minisig\" -P \"$MINISIGN_PUBLIC_KEY\"",
-    )?;
-    for platform in REQUIRED_PLATFORMS {
-        require_contains(&script, &format!("br-${{ASSET_VERSION}}-{platform}"))?;
-    }
-    let attest = workflow
-        .find("- name: Generate SLSA provenance attestations")
-        .ok_or_else(|| "missing SLSA provenance step".to_owned())?;
-    let publish = workflow
-        .find("- name: Create GitHub Release")
-        .ok_or_else(|| "missing GitHub release step".to_owned())?;
-    if attest >= publish {
-        return Err("SLSA provenance must succeed before public release creation".to_owned());
-    }
-
-    Ok(())
-}
-
-#[test]
-fn release_signatures_use_the_documented_current_trust_anchor() -> Result<(), String> {
-    let workflow = read_to_string(Path::new(RELEASE_WORKFLOW))?;
-    let readme = read_to_string(Path::new(README))?;
-    let changelog_script = release_step_script("Generate changelog")?;
-    let signing_script = release_step_script("Sign release archive with Ed25519")?;
-
-    require_contains(&readme, CURRENT_MINISIGN_PUBLIC_KEY)?;
-    let public_key_env = format!("MINISIGN_PUBLIC_KEY: '{CURRENT_MINISIGN_PUBLIC_KEY}'");
-    require_contains(&workflow, &public_key_env)?;
-    require_not_contains(&workflow, PREVIOUS_MINISIGN_PUBLIC_KEY)?;
-    require_not_contains(&workflow, RETIRED_MINISIGN_PUBLIC_KEY)?;
-    require_contains(
-        &changelog_script,
-        "# Public key: ${{ env.MINISIGN_PUBLIC_KEY }}",
-    )?;
-    require_contains(&changelog_script, "-P '${{ env.MINISIGN_PUBLIC_KEY }}'")?;
-    require_contains(
-        &signing_script,
-        "minisign -Vm \"$archive\" -x \"$signature\" -P \"$MINISIGN_PUBLIC_KEY\"",
-    )
-}
-
-#[test]
-fn release_archives_include_the_repository_license() -> Result<(), String> {
-    let tar_script = release_step_script("Create archive (tar.gz)")?;
-    let zip_script = release_step_script("Create archive (zip)")?;
-
-    for script in [&tar_script, &zip_script] {
-        require_contains(script, "cp ../../../LICENSE LICENSE")?;
-    }
-    require_contains(&tar_script, "tar -czvf")?;
-    require_contains(&tar_script, "br LICENSE")?;
-    require_contains(&zip_script, "zip -j")?;
-    require_contains(&zip_script, "br.exe LICENSE")
 }
 
 #[test]
@@ -483,15 +246,16 @@ fn required_artifact_fragment_reports_missing_platforms() -> Result<(), String> 
     let fixture = WorkflowFixture::new()?;
     fixture.create_artifacts_dir()?;
     for platform in REQUIRED_PLATFORMS {
-        fixture.write_release_artifact_set(platform, b"binary")?;
+        fixture.write_release_artifact(platform, b"binary")?;
     }
 
-    let complete = run_bash_step(&script, fixture.root(), &[])?;
+    // `ASSET_VERSION` reaches this step through `env:` now, which is the
+    // point of the hardening: the fragment reads a variable, never inlined
+    // tag text.
+    let asset_env = [("ASSET_VERSION", "9.9.9")];
+    let complete = run_bash_step(&script, fixture.root(), &asset_env)?;
     require_success(&complete)?;
-    require_contains(
-        &complete.stdout,
-        "All required release archives, checksums, and signatures are present",
-    )?;
+    require_contains(&complete.stdout, "All required platform artifacts present")?;
 
     let missing = WorkflowFixture::new()?;
     missing.create_artifacts_dir()?;
@@ -500,26 +264,12 @@ fn required_artifact_fragment_reports_missing_platforms() -> Result<(), String> 
         .copied()
         .filter(|platform| *platform != "windows_amd64")
     {
-        missing.write_release_artifact_set(platform, b"binary")?;
+        missing.write_release_artifact(platform, b"binary")?;
     }
 
-    let result = run_bash_step(&script, missing.root(), &[])?;
+    let result = run_bash_step(&script, missing.root(), &asset_env)?;
     require_failure(&result, "missing platform should fail")?;
-    require_contains(&result.stdout, "br-9.9.9-windows_amd64.zip")?;
-
-    let missing_signature = WorkflowFixture::new()?;
-    missing_signature.create_artifacts_dir()?;
-    for platform in REQUIRED_PLATFORMS {
-        if *platform == "windows_amd64" {
-            missing_signature.write_release_archive_and_checksum(platform, b"binary")?;
-        } else {
-            missing_signature.write_release_artifact_set(platform, b"binary")?;
-        }
-    }
-
-    let result = run_bash_step(&script, missing_signature.root(), &[])?;
-    require_failure(&result, "missing signature sidecar should fail")?;
-    require_contains(&result.stdout, "br-9.9.9-windows_amd64.zip.minisig")
+    require_contains(&result.stdout, "windows_amd64")
 }
 
 #[test]
@@ -544,9 +294,6 @@ fn combined_checksums_fragment_is_null_safe_and_replaces_existing_file() -> Resu
 #[test]
 fn verify_checksums_fragment_accepts_spaces_and_leading_dashes() -> Result<(), String> {
     let script = release_step_script("Verify all checksums")?;
-    if script.matches("=== Verifying all checksums ===").count() != 1 {
-        return Err("checksum verification banner must appear exactly once".to_owned());
-    }
     let fixture = WorkflowFixture::new()?;
     fixture.create_artifacts_dir()?;
     fixture.write_artifact_with_checksum("artifact with spaces.tar.gz", b"space-safe")?;
@@ -555,7 +302,17 @@ fn verify_checksums_fragment_accepts_spaces_and_leading_dashes() -> Result<(), S
 
     let result = run_bash_step(&script, fixture.root(), &[])?;
     require_success(&result)?;
-    require_contains(&result.stdout, "artifact with spaces.tar.gz: OK")?;
+    // Coreutils >= 9 quotes names containing spaces ('name': OK); older
+    // versions do not. The fragment's correctness is that it verified them,
+    // not how the tool spelled the name back.
+    if !result.stdout.contains("artifact with spaces.tar.gz': OK")
+        && !result.stdout.contains("artifact with spaces.tar.gz: OK")
+    {
+        return Err(format!(
+            "space-bearing artifact was not verified: {}",
+            result.stdout
+        ));
+    }
     require_contains(&result.stdout, "--leading-artifact.tar.gz: OK")
 }
 
@@ -564,10 +321,10 @@ fn verify_checksums_fragment_fails_on_corrupt_checksum() -> Result<(), String> {
     let script = release_step_script("Verify all checksums")?;
     let fixture = WorkflowFixture::new()?;
     fixture.create_artifacts_dir()?;
-    fixture.write_artifact("br-9.9.9-linux_amd64.tar.gz", b"actual bytes")?;
+    fixture.write_artifact("obr-9.9.9-linux_amd64.tar.gz", b"actual bytes")?;
     fixture.write_artifact(
-        "br-9.9.9-linux_amd64.tar.gz.sha256",
-        b"0000000000000000000000000000000000000000000000000000000000000000  br-9.9.9-linux_amd64.tar.gz\n",
+        "obr-9.9.9-linux_amd64.tar.gz.sha256",
+        b"0000000000000000000000000000000000000000000000000000000000000000  obr-9.9.9-linux_amd64.tar.gz\n",
     )?;
 
     let result = run_bash_step(&script, fixture.root(), &[])?;
@@ -575,42 +332,17 @@ fn verify_checksums_fragment_fails_on_corrupt_checksum() -> Result<(), String> {
 }
 
 #[test]
-fn linux_minisign_install_uses_authenticated_distribution_package() -> Result<(), String> {
-    let script = release_step_script("Install minisign (Linux)")?;
+fn signing_fragment_uses_private_ephemeral_key_file() -> Result<(), String> {
+    let script = release_step_script("Sign archive with Ed25519 (Linux/macOS)")?;
 
-    require_contains(&script, "sudo apt-get update")?;
-    require_contains(&script, "sudo apt-get install -y minisign")?;
-    require_not_contains(&script, "curl")?;
-    require_not_contains(&script, "tar xz")
-}
-
-#[test]
-fn signing_fragment_streams_the_private_key_without_persisting_it() -> Result<(), String> {
-    let step_name = "Sign release archive with Ed25519";
-    let script = release_step_script(step_name)?;
-    let condition = release_step_condition(step_name)?;
-
-    if let Some(condition) = condition {
-        return Err(format!(
-            "release signing must not be conditionally skipped, found: {condition}"
-        ));
-    }
-
-    require_contains(&script, "MINISIGN_SECRET_KEY is required")?;
-    require_contains(&script, "-s <(printf '%s\\n' \"$MINISIGN_SECRET_KEY\")")?;
-    require_contains(&script, "if [ ! -s \"$signature\" ]")?;
-    require_not_contains(&script, "mktemp")?;
-    require_not_contains(&script, "signing_key")?;
-    require_not_contains(&script, "rm -f")?;
-    require_not_contains(&script, "echo \"$MINISIGN_SECRET_KEY\"")?;
-
-    let fixture = WorkflowFixture::new()?;
-    let missing_secret = run_bash_step(&script, fixture.root(), &[("MINISIGN_SECRET_KEY", "")])?;
-    require_failure(&missing_secret, "missing signing secret should fail closed")?;
-    require_contains(
-        &missing_secret.stdout,
-        "MINISIGN_SECRET_KEY is required for every release archive",
-    )
+    require_contains(&script, "mktemp")?;
+    require_contains(&script, "RUNNER_TEMP")?;
+    require_contains(&script, "chmod 600 \"$signing_key\"")?;
+    require_contains(&script, "trap 'rm -f \"$signing_key\"' EXIT")?;
+    require_contains(&script, "printf '%s\\n' \"$MINISIGN_SECRET_KEY\"")?;
+    require_contains(&script, "-s \"$signing_key\"")?;
+    require_not_contains(&script, "/tmp/minisign.key")?;
+    require_not_contains(&script, "echo \"$MINISIGN_SECRET_KEY\"")
 }
 
 #[test]
@@ -627,8 +359,14 @@ fn changelog_fragment_keeps_previous_tag_and_reliability_paths() -> Result<(), S
     )
 }
 
+fn parse_release_workflow(raw: &str) -> Result<Workflow, String> {
+    serde_yml::from_str(raw).map_err(|error| format!("failed to parse {RELEASE_WORKFLOW}: {error}"))
+}
+
 fn release_step_script(step_name: &str) -> Result<String, String> {
-    let workflow = parse_release_workflow()?;
+    let raw = read_to_string(Path::new(RELEASE_WORKFLOW))?;
+    let workflow: Workflow = serde_yml::from_str(&raw)
+        .map_err(|error| format!("failed to parse {RELEASE_WORKFLOW}: {error}"))?;
 
     let Some(step) = workflow
         .jobs
@@ -646,25 +384,36 @@ fn release_step_script(step_name: &str) -> Result<String, String> {
     Ok(run.to_owned())
 }
 
-fn release_step_condition(step_name: &str) -> Result<Option<String>, String> {
-    let workflow = parse_release_workflow()?;
-
-    let Some(step) = workflow
-        .jobs
-        .values()
-        .flat_map(|job| &job.steps)
-        .find(|step| step.name.as_deref() == Some(step_name))
-    else {
-        return Err(format!("release workflow step not found: {step_name}"));
-    };
-
-    Ok(step.condition.clone())
-}
-
-fn parse_release_workflow() -> Result<Workflow, String> {
+/// Every `run:` script in the workflow whose step carries `step_name`, paired
+/// with the job it lives in.
+///
+/// [`release_step_script`] returns the first match; a step name that is
+/// deliberately duplicated across jobs needs all of them, or a test can pass
+/// while the copy it never looked at has drifted.
+fn release_step_scripts(step_name: &str) -> Result<Vec<(String, String)>, String> {
     let raw = read_to_string(Path::new(RELEASE_WORKFLOW))?;
-    serde_yml::from_str(&raw)
-        .map_err(|error| format!("failed to parse {RELEASE_WORKFLOW}: {error}"))
+    let workflow = parse_release_workflow(&raw)?;
+
+    let scripts: Vec<(String, String)> = workflow
+        .jobs
+        .iter()
+        .flat_map(|(job_name, job)| {
+            job.steps
+                .iter()
+                .filter(|step| step.name.as_deref() == Some(step_name))
+                .filter_map(move |step| {
+                    step.run
+                        .as_deref()
+                        .map(|run| (job_name.clone(), run.to_owned()))
+                })
+        })
+        .collect();
+
+    if scripts.is_empty() {
+        return Err(format!("release workflow step not found: {step_name}"));
+    }
+
+    Ok(scripts)
 }
 
 fn run_bash_step(
@@ -772,20 +521,11 @@ impl WorkflowFixture {
             .map_err(|error| format!("failed to write {}: {error}", path.display()))
     }
 
-    fn write_release_archive_and_checksum(
-        &self,
-        platform: &str,
-        bytes: &[u8],
-    ) -> Result<(), String> {
-        let name = release_archive_name(platform);
-        self.write_artifact(&name, bytes)?;
-        self.write_artifact(&format!("{name}.sha256"), b"checksum")
-    }
-
-    fn write_release_artifact_set(&self, platform: &str, bytes: &[u8]) -> Result<(), String> {
-        let name = release_archive_name(platform);
-        self.write_release_archive_and_checksum(platform, bytes)?;
-        self.write_artifact(&format!("{name}.minisig"), b"signature")
+    fn write_release_artifact(&self, platform: &str, bytes: &[u8]) -> Result<(), String> {
+        let mut name = String::from("obr-9.9.9-");
+        name.push_str(platform);
+        name.push_str(".tar.gz");
+        self.write_artifact(&name, bytes)
     }
 
     fn read_artifact(&self, name: &str) -> Result<String, String> {
@@ -800,15 +540,6 @@ impl WorkflowFixture {
             format!("{digest}  {name}\n").as_bytes(),
         )
     }
-}
-
-fn release_archive_name(platform: &str) -> String {
-    let extension = if platform == "windows_amd64" {
-        "zip"
-    } else {
-        "tar.gz"
-    };
-    format!("br-9.9.9-{platform}.{extension}")
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {

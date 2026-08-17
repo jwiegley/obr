@@ -21,10 +21,10 @@ cd "$target_dir"
 "$tool_bin" create --title "survivor two" --type task --priority 2 >/dev/null 2>&1
 "$tool_bin" sync --flush-only >/dev/null 2>&1
 
-sha256sum .beads/issues.jsonl | awk '{print $1}' > .fixture_jsonl_pre_sha256
+sha256sum .obr/issues.jsonl | awk '{print $1}' > .fixture_jsonl_pre_sha256
 
 # Remove the whole DB family; the JSONL is the only surviving store.
-rm -f .beads/beads.db .beads/beads.db-wal .beads/beads.db-shm
+rm -f .obr/obr.db .obr/obr.db-wal .obr/obr.db-shm
 
 if [ -e .fixture_baseline ]; then
   echo "fixture baseline already exists; expected a fresh workspace" >&2

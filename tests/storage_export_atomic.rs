@@ -3,7 +3,7 @@
 //! Tests edge cases and invariants not covered by the e2e failure injection tests:
 //! - Concurrent exports to the same path produce valid output
 //! - Export rejects path traversal at runtime (not just preflight)
-//! - Export to path outside beads_dir is rejected with beads_dir set
+//! - Export to path outside obr_dir is rejected with obr_dir set
 //! - Temp file cleanup on failure (no orphaned .tmp files)
 //! - Re-export after successful export overwrites cleanly
 //! - Export content is valid JSONL on every line
@@ -19,9 +19,9 @@
 
 mod common;
 
-use beads_rust::model::Issue;
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{ExportConfig, export_to_jsonl};
+use obr::model::Issue;
+use obr::storage::SqliteStorage;
+use obr::sync::{ExportConfig, export_to_jsonl};
 use sha2::{Digest, Sha256};
 use std::fs;
 #[cfg(unix)]
@@ -74,20 +74,20 @@ fn canonical_temp_dir() -> TempDir {
     TempDir::new_in(root).unwrap()
 }
 
-fn setup_beads_dir(temp: &TempDir) -> std::path::PathBuf {
-    let beads_dir = temp.path().join(".beads");
-    fs::create_dir_all(&beads_dir).unwrap();
-    beads_dir
+fn setup_obr_dir(temp: &TempDir) -> std::path::PathBuf {
+    let obr_dir = temp.path().join(".obr");
+    fs::create_dir_all(&obr_dir).unwrap();
+    obr_dir
 }
 
 fn compute_file_hash(path: &Path) -> String {
     let content = fs::read(path).unwrap();
-    beads_rust::util::hex_encode(&Sha256::digest(&content))
+    obr::util::hex_encode(&Sha256::digest(&content))
 }
 
-fn default_config(beads_dir: &Path) -> ExportConfig {
+fn default_config(obr_dir: &Path) -> ExportConfig {
     ExportConfig {
-        beads_dir: Some(beads_dir.to_path_buf()),
+        obr_dir: Some(obr_dir.to_path_buf()),
         ..Default::default()
     }
 }
@@ -104,14 +104,14 @@ fn concurrent_exports_no_corruption() {
     // needs file-level locking which is OS-dependent; here we verify independent
     // concurrent exports don't interfere with each other).
     let temp = canonical_temp_dir();
-    let beads_dir = setup_beads_dir(&temp);
+    let obr_dir = setup_obr_dir(&temp);
 
     // Export all concurrently using threads - create storage inside each thread
     // since fsqlite Connection is not Send (uses Rc internally)
     let handles: Vec<_> = (0..4)
         .map(|i| {
-            let path = beads_dir.join(format!("issues_{i}.jsonl"));
-            let bd = beads_dir.clone();
+            let path = obr_dir.join(format!("issues_{i}.jsonl"));
+            let bd = obr_dir.clone();
             std::thread::spawn(move || {
                 let mut storage = SqliteStorage::open_memory().unwrap();
                 for j in 0..5 {
@@ -122,7 +122,7 @@ fn concurrent_exports_no_corruption() {
                     storage.create_issue(&issue, "tester").unwrap();
                 }
                 let config = ExportConfig {
-                    beads_dir: Some(bd),
+                    obr_dir: Some(bd),
                     ..Default::default()
                 };
                 let result = export_to_jsonl(&storage, &path, &config);
@@ -157,11 +157,11 @@ fn export_rejects_path_traversal() {
 
     let storage = setup_storage_with_issues(1);
     let temp = canonical_temp_dir();
-    let beads_dir = setup_beads_dir(&temp);
+    let obr_dir = setup_obr_dir(&temp);
 
-    // Attempt to export to a path outside beads_dir via traversal
-    let evil_path = beads_dir.join("..").join("escaped.jsonl");
-    let config = default_config(&beads_dir);
+    // Attempt to export to a path outside obr_dir via traversal
+    let evil_path = obr_dir.join("..").join("escaped.jsonl");
+    let config = default_config(&obr_dir);
 
     let result = export_to_jsonl(&storage, &evil_path, &config);
     assert!(
@@ -178,20 +178,20 @@ fn export_rejects_path_traversal() {
 }
 
 // ===========================================================================
-// 3. Export rejects path outside beads_dir
+// 3. Export rejects path outside obr_dir
 // ===========================================================================
 
 #[test]
-fn export_rejects_outside_beads_dir() {
+fn export_rejects_outside_obr_dir() {
     let _log = common::test_log("export_rejects_outside_beads_dir");
 
     let storage = setup_storage_with_issues(1);
     let temp = canonical_temp_dir();
-    let beads_dir = setup_beads_dir(&temp);
+    let obr_dir = setup_obr_dir(&temp);
 
-    // Path directly outside .beads/
+    // Path directly outside .obr/
     let outside_path = temp.path().join("outside.jsonl");
-    let config = default_config(&beads_dir);
+    let config = default_config(&obr_dir);
 
     let result = export_to_jsonl(&storage, &outside_path, &config);
     assert!(
@@ -214,14 +214,14 @@ fn export_rejects_git_path() {
 
     let storage = setup_storage_with_issues(1);
     let temp = canonical_temp_dir();
-    let beads_dir = setup_beads_dir(&temp);
+    let obr_dir = setup_obr_dir(&temp);
 
     // Create a .git dir inside beads to test rejection
-    let git_dir = beads_dir.join(".git");
+    let git_dir = obr_dir.join(".git");
     fs::create_dir_all(&git_dir).unwrap();
     let git_path = git_dir.join("issues.jsonl");
 
-    let config = default_config(&beads_dir);
+    let config = default_config(&obr_dir);
     let result = export_to_jsonl(&storage, &git_path, &config);
 
     assert!(
@@ -245,21 +245,21 @@ fn temp_file_cleaned_up_on_failure() {
 
     let storage = setup_storage_with_issues(3);
     let temp = canonical_temp_dir();
-    let beads_dir = setup_beads_dir(&temp);
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = setup_obr_dir(&temp);
+    let jsonl_path = obr_dir.join("issues.jsonl");
     let temp_path = export_temp_path_for_test(&jsonl_path);
 
     // Create initial JSONL
     fs::write(&jsonl_path, r#"{"id":"old","title":"Old"}"#).unwrap();
 
     // Make directory read-only to force failure
-    fs::set_permissions(&beads_dir, Permissions::from_mode(0o555)).unwrap();
+    fs::set_permissions(&obr_dir, Permissions::from_mode(0o555)).unwrap();
 
-    let config = default_config(&beads_dir);
+    let config = default_config(&obr_dir);
     let result = export_to_jsonl(&storage, &jsonl_path, &config);
 
     // Restore permissions
-    fs::set_permissions(&beads_dir, Permissions::from_mode(0o755)).unwrap();
+    fs::set_permissions(&obr_dir, Permissions::from_mode(0o755)).unwrap();
 
     assert!(result.is_err(), "Export should fail on read-only dir");
 
@@ -279,8 +279,8 @@ fn re_export_overwrites_cleanly() {
     let _log = common::test_log("re_export_overwrites_cleanly");
 
     let temp = canonical_temp_dir();
-    let beads_dir = setup_beads_dir(&temp);
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = setup_obr_dir(&temp);
+    let jsonl_path = obr_dir.join("issues.jsonl");
 
     // First export with 3 issues
     let mut storage = SqliteStorage::open_memory().unwrap();
@@ -289,7 +289,7 @@ fn re_export_overwrites_cleanly() {
         storage.create_issue(&issue, "tester").unwrap();
     }
 
-    let config = default_config(&beads_dir);
+    let config = default_config(&obr_dir);
     let r1 = export_to_jsonl(&storage, &jsonl_path, &config).unwrap();
     assert_eq!(r1.exported_count, 3);
 
@@ -323,9 +323,9 @@ fn successive_exports_idempotent() {
 
     let storage = setup_storage_with_issues(5);
     let temp = canonical_temp_dir();
-    let beads_dir = setup_beads_dir(&temp);
-    let jsonl_path = beads_dir.join("issues.jsonl");
-    let config = default_config(&beads_dir);
+    let obr_dir = setup_obr_dir(&temp);
+    let jsonl_path = obr_dir.join("issues.jsonl");
+    let config = default_config(&obr_dir);
 
     // Export three times
     let r1 = export_to_jsonl(&storage, &jsonl_path, &config).unwrap();
@@ -362,9 +362,9 @@ fn export_produces_valid_jsonl_per_line() {
 
     let storage = setup_storage_with_issues(20);
     let temp = canonical_temp_dir();
-    let beads_dir = setup_beads_dir(&temp);
-    let jsonl_path = beads_dir.join("issues.jsonl");
-    let config = default_config(&beads_dir);
+    let obr_dir = setup_obr_dir(&temp);
+    let jsonl_path = obr_dir.join("issues.jsonl");
+    let config = default_config(&obr_dir);
 
     export_to_jsonl(&storage, &jsonl_path, &config).unwrap();
 
@@ -405,17 +405,17 @@ fn export_rejects_symlink_escape() {
 
     let storage = setup_storage_with_issues(1);
     let temp = canonical_temp_dir();
-    let beads_dir = setup_beads_dir(&temp);
+    let obr_dir = setup_obr_dir(&temp);
 
     // Create an outside directory
     let outside = TempDir::new().unwrap();
 
-    // Create a symlink inside beads_dir pointing outside
-    let symlink_path = beads_dir.join("escape_link");
+    // Create a symlink inside obr_dir pointing outside
+    let symlink_path = obr_dir.join("escape_link");
     std::os::unix::fs::symlink(outside.path(), &symlink_path).unwrap();
 
     let target = symlink_path.join("issues.jsonl");
-    let config = default_config(&beads_dir);
+    let config = default_config(&obr_dir);
 
     let result = export_to_jsonl(&storage, &target, &config);
     assert!(
@@ -438,15 +438,15 @@ fn export_rejects_existing_temp_symlink_and_preserves_live_jsonl() {
 
     let storage = setup_storage_with_issues(1);
     let temp = canonical_temp_dir();
-    let beads_dir = setup_beads_dir(&temp);
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = setup_obr_dir(&temp);
+    let jsonl_path = obr_dir.join("issues.jsonl");
     let temp_path = export_temp_path_for_test(&jsonl_path);
     fs::write(&jsonl_path, "{\"id\":\"old\",\"title\":\"Old\"}\n").unwrap();
 
     let outside = TempDir::new().unwrap();
     std::os::unix::fs::symlink(outside.path().join("captured.jsonl"), &temp_path).unwrap();
 
-    let config = default_config(&beads_dir);
+    let config = default_config(&obr_dir);
     let result = export_to_jsonl(&storage, &jsonl_path, &config);
     assert!(
         result.is_err(),
@@ -470,13 +470,13 @@ fn export_skips_stale_regular_temp_file_and_preserves_it() {
 
     let storage = setup_storage_with_issues(1);
     let temp = canonical_temp_dir();
-    let beads_dir = setup_beads_dir(&temp);
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = setup_obr_dir(&temp);
+    let jsonl_path = obr_dir.join("issues.jsonl");
     let stale_temp_path = export_temp_path_for_test(&jsonl_path);
     let retry_temp_path = export_temp_path_attempt_for_test(&jsonl_path, 1);
     fs::write(&stale_temp_path, "stale temp").unwrap();
 
-    let config = default_config(&beads_dir);
+    let config = default_config(&obr_dir);
     let result = export_to_jsonl(&storage, &jsonl_path, &config).unwrap();
 
     assert_eq!(result.exported_count, 1);
@@ -507,13 +507,13 @@ fn export_external_path_with_flag() {
 
     let storage = setup_storage_with_issues(3);
     let temp = canonical_temp_dir();
-    let beads_dir = setup_beads_dir(&temp);
+    let obr_dir = setup_obr_dir(&temp);
 
-    // External path outside .beads/
+    // External path outside .obr/
     let external_path = temp.path().join("external_export.jsonl");
 
     let config = ExportConfig {
-        beads_dir: Some(beads_dir),
+        obr_dir: Some(obr_dir),
         allow_external_jsonl: true,
         ..Default::default()
     };
@@ -545,7 +545,7 @@ fn export_external_still_rejects_git() {
 
     let storage = setup_storage_with_issues(1);
     let temp = canonical_temp_dir();
-    let beads_dir = setup_beads_dir(&temp);
+    let obr_dir = setup_obr_dir(&temp);
 
     // Create .git directory and target within it
     let git_dir = temp.path().join(".git");
@@ -553,7 +553,7 @@ fn export_external_still_rejects_git() {
     let git_path = git_dir.join("issues.jsonl");
 
     let config = ExportConfig {
-        beads_dir: Some(beads_dir),
+        obr_dir: Some(obr_dir),
         allow_external_jsonl: true,
         ..Default::default()
     };
@@ -576,9 +576,9 @@ fn export_count_matches_file_line_count() {
 
     let storage = setup_storage_with_issues(50);
     let temp = canonical_temp_dir();
-    let beads_dir = setup_beads_dir(&temp);
-    let jsonl_path = beads_dir.join("issues.jsonl");
-    let config = default_config(&beads_dir);
+    let obr_dir = setup_obr_dir(&temp);
+    let jsonl_path = obr_dir.join("issues.jsonl");
+    let config = default_config(&obr_dir);
 
     let result = export_to_jsonl(&storage, &jsonl_path, &config).unwrap();
 

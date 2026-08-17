@@ -3,7 +3,7 @@
 # FM: fm-state_files-sqlite-page-malformed (P0)
 #
 # Plants a workspace with a single bead, flushes WAL into the DB, then
-# corrupts a non-header page in beads.db. `sqlite.integrity_check` /
+# corrupts a non-header page in obr.db. `sqlite.integrity_check` /
 # `sqlite3.integrity_check` go to error; `--repair` rebuilds from JSONL.
 
 set -euo pipefail
@@ -19,7 +19,7 @@ cd "$target_dir"
 
 # Force checkpoint so WAL contents land in the main DB, otherwise the corrupted
 # pages get masked.
-rm -f .beads/beads.db-wal .beads/beads.db-shm
+rm -f .obr/obr.db-wal .obr/obr.db-shm
 
 # Overwrite a B-tree page beyond the SQLite header (header is 100 bytes,
 # page-1 is the schema page, page-2+ are user data). Writing junk at offset
@@ -27,7 +27,7 @@ rm -f .beads/beads.db-wal .beads/beads.db-shm
 # a "btreeInitPage()" failure under `PRAGMA integrity_check`.
 python3 - <<'PY'
 import os
-p = ".beads/beads.db"
+p = ".obr/obr.db"
 sz = os.path.getsize(p)
 assert sz >= 8192, f"DB too small to corrupt safely: {sz} bytes"
 fd = os.open(p, os.O_RDWR)

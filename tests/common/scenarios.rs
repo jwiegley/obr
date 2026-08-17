@@ -1,8 +1,8 @@
 //! Scenario DSL for unified E2E, Conformance, and Benchmark testing.
 //!
 //! This module defines a `Scenario` struct that can drive tests in three modes:
-//! - **E2E**: Run `br` commands only, validate exit codes and JSON shapes
-//! - **Conformance**: Run both `br` and `bd`, compare outputs with normalization
+//! - **E2E**: Run `obr` commands only, validate exit codes and JSON shapes
+//! - **Conformance**: Run both `obr` and `bd`, compare outputs with normalization
 //! - **Benchmark**: Time commands, capture RSS, produce metrics
 //!
 //! Related beads:
@@ -30,9 +30,9 @@ use walkdir::WalkDir;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionMode {
-    /// E2E mode: run br only, validate behavior
+    /// E2E mode: run obr only, validate behavior
     E2E,
-    /// Conformance mode: run br and bd, compare outputs
+    /// Conformance mode: run obr and bd, compare outputs
     Conformance,
     /// Benchmark mode: time execution, capture metrics
     Benchmark,
@@ -106,7 +106,7 @@ impl NormalizationRules {
             "jsonl_path",
             "log_path",
             "workspace_root",
-            "beads_dir",
+            "obr_dir",
         ]
         .into_iter()
         .map(String::from)
@@ -144,7 +144,7 @@ impl NormalizationRules {
             "jsonl_path",
             "log_path",
             "workspace_root",
-            "beads_dir",
+            "obr_dir",
         ]
         .into_iter()
         .map(String::from)
@@ -275,7 +275,7 @@ pub struct Invariants {
     pub stdout_excludes: Vec<String>,
     /// No git operations allowed (checked via log patterns)
     pub no_git_ops: bool,
-    /// Only .beads/ files may be modified
+    /// Only .obr/ files may be modified
     pub path_confinement: bool,
     /// JSON output must match this schema (field names present)
     pub json_schema_fields: Vec<String>,
@@ -310,7 +310,7 @@ impl Invariants {
 /// Setup configuration for a scenario.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum ScenarioSetup {
-    /// Start with a fresh (empty) workspace, run `br init`
+    /// Start with a fresh (empty) workspace, run `obr init`
     #[default]
     Fresh,
     /// Copy from a known dataset
@@ -417,13 +417,13 @@ impl WorkspaceEvolutionCommand {
 /// A single step in a long-lived workspace evolution plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkspaceEvolutionStep {
-    /// Run a `br` command, optionally capturing created IDs for later steps.
+    /// Run a `obr` command, optionally capturing created IDs for later steps.
     Command(WorkspaceEvolutionCommand),
     /// Snapshot the current workspace so later steps can restore it.
     Snapshot { label: String },
-    /// Append raw text to `.beads/issues.jsonl` to simulate external drift/corruption.
+    /// Append raw text to `.obr/issues.jsonl` to simulate external drift/corruption.
     AppendToIssuesJsonl { label: String, text: String },
-    /// Restore `.beads/` and `.git/` from a named snapshot.
+    /// Restore `.obr/` and `.git/` from a named snapshot.
     RestoreSnapshot {
         label: String,
         snapshot_label: String,
@@ -553,7 +553,7 @@ pub struct WorkspaceEvolutionEvent {
 pub struct MaterializedWorkspaceEvolution {
     temp_dir: TempDir,
     pub root: PathBuf,
-    pub beads_dir: PathBuf,
+    pub obr_dir: PathBuf,
     pub plan: WorkspaceEvolutionPlan,
     pub events: Vec<WorkspaceEvolutionEvent>,
     pub aliases: HashMap<String, String>,
@@ -580,7 +580,7 @@ impl MaterializedWorkspaceEvolution {
 pub struct ScenarioResult {
     pub passed: bool,
     pub mode: ExecutionMode,
-    pub br_result: Option<CommandResult>,
+    pub obr_result: Option<CommandResult>,
     pub bd_result: Option<CommandResult>,
     pub comparison_result: Option<ComparisonResult>,
     pub invariant_failures: Vec<String>,
@@ -588,11 +588,11 @@ pub struct ScenarioResult {
     pub benchmark_metrics: Option<BenchmarkMetrics>,
 }
 
-/// Result of comparing br and bd outputs.
+/// Result of comparing obr and bd outputs.
 #[derive(Debug)]
 pub struct ComparisonResult {
     pub matched: bool,
-    pub br_json: Option<Value>,
+    pub obr_json: Option<Value>,
     pub bd_json: Option<Value>,
     pub diff_description: Option<String>,
 }
@@ -600,16 +600,16 @@ pub struct ComparisonResult {
 /// Benchmark metrics from a single run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkMetrics {
-    pub br_duration_ms: u128,
+    pub obr_duration_ms: u128,
     pub bd_duration_ms: Option<u128>,
     pub speedup_ratio: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub br_peak_rss_bytes: Option<u64>,
+    pub obr_peak_rss_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bd_peak_rss_bytes: Option<u64>,
     /// CPU time in milliseconds (user + system)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub br_cpu_time_ms: Option<u128>,
+    pub obr_cpu_time_ms: Option<u128>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bd_cpu_time_ms: Option<u128>,
     /// Database file size after operation (bytes)
@@ -706,12 +706,12 @@ pub struct BenchmarkSummary {
     pub completed_at: String,
     /// Total number of runs (including warmup)
     pub total_runs: u32,
-    /// br statistics
-    pub br_stats: RunStatistics,
+    /// obr statistics
+    pub obr_stats: RunStatistics,
     /// bd statistics (if included)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bd_stats: Option<RunStatistics>,
-    /// Speedup ratio (`bd_median` / `br_median`)
+    /// Speedup ratio (`bd_median` / `obr_median`)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speedup_ratio: Option<f64>,
     /// Individual run metrics (measured runs only)
@@ -774,13 +774,13 @@ pub fn measure_peak_rss(_pid: u32) -> Option<u64> {
 
 /// Measure IO sizes (database and JSONL files) in a workspace.
 pub fn measure_io_sizes(workspace_root: &std::path::Path) -> (Option<u64>, Option<u64>) {
-    let beads_dir = workspace_root.join(".beads");
+    let obr_dir = workspace_root.join(".obr");
 
     // Database size
-    let db_size = beads_dir.join("beads.db").metadata().ok().map(|m| m.len());
+    let db_size = obr_dir.join("obr.db").metadata().ok().map(|m| m.len());
 
     // JSONL size (issues.jsonl)
-    let jsonl_size = beads_dir
+    let jsonl_size = obr_dir
         .join("issues.jsonl")
         .metadata()
         .ok()
@@ -874,7 +874,7 @@ pub fn compute_statistics(durations: &[u128], rss_values: &[Option<u64>]) -> Run
 /// - Peak RSS measurement (Linux only)
 /// - IO size measurement (db + jsonl files)
 /// - Statistics computation (median, mean, stddev, CV)
-/// - Optional br/bd comparison with ratio computation
+/// - Optional obr/bd comparison with ratio computation
 pub struct BenchmarkRunner {
     config: BenchmarkConfig,
     artifacts_dir: Option<std::path::PathBuf>,
@@ -932,7 +932,7 @@ impl BenchmarkRunner {
                     all_runs.push(metrics);
                 }
             } else if let Some(metrics) =
-                self.run_benchmark_iteration_br_only(scenario, iteration, is_warmup, &mut notes)
+                self.run_benchmark_iteration_obr_only(scenario, iteration, is_warmup, &mut notes)
             {
                 all_runs.push(metrics);
             }
@@ -1009,13 +1009,13 @@ impl BenchmarkRunner {
             run_conformance_command(&mut workspace, cmd, &label, BinaryTarget::Bd);
         }
 
-        let br_result = run_conformance_command(
+        let obr_result = run_conformance_command(
             &mut workspace,
             &scenario.test_command,
             &scenario.test_command.label,
             BinaryTarget::Br,
         );
-        let br_duration_ms = br_result.duration.as_millis();
+        let obr_duration_ms = obr_result.duration.as_millis();
 
         let bd_result = run_conformance_command(
             &mut workspace,
@@ -1033,24 +1033,24 @@ impl BenchmarkRunner {
         }
 
         let (db_size, jsonl_size) = if self.config.measure_io {
-            measure_io_sizes(&workspace.br_workspace)
+            measure_io_sizes(&workspace.obr_workspace)
         } else {
             (None, None)
         };
 
-        let speedup_ratio = if br_duration_ms > 0 {
-            Some(bd_duration_ms as f64 / br_duration_ms as f64)
+        let speedup_ratio = if obr_duration_ms > 0 {
+            Some(bd_duration_ms as f64 / obr_duration_ms as f64)
         } else {
             None
         };
 
         let metrics = BenchmarkMetrics {
-            br_duration_ms,
+            obr_duration_ms,
             bd_duration_ms: Some(bd_duration_ms),
             speedup_ratio,
-            br_peak_rss_bytes: None,
+            obr_peak_rss_bytes: None,
             bd_peak_rss_bytes: None,
-            br_cpu_time_ms: None,
+            obr_cpu_time_ms: None,
             bd_cpu_time_ms: None,
             db_size_bytes: db_size,
             jsonl_size_bytes: jsonl_size,
@@ -1058,11 +1058,11 @@ impl BenchmarkRunner {
             is_warmup,
         };
 
-        workspace.finish(br_result.success && bd_result.success);
+        workspace.finish(obr_result.success && bd_result.success);
         Some(metrics)
     }
 
-    fn run_benchmark_iteration_br_only(
+    fn run_benchmark_iteration_obr_only(
         &self,
         scenario: &Scenario,
         iteration: u32,
@@ -1082,7 +1082,7 @@ impl BenchmarkRunner {
         }
 
         if matches!(scenario.setup, ScenarioSetup::Fresh) {
-            let _ = workspace.init_br();
+            let _ = workspace.init_obr();
         }
 
         let setup_commands = collect_setup_commands(scenario);
@@ -1090,8 +1090,8 @@ impl BenchmarkRunner {
             run_scenario_command(&mut workspace, cmd, None);
         }
 
-        let br_result = run_scenario_command(&mut workspace, &scenario.test_command, None);
-        let br_duration_ms = br_result.duration.as_millis();
+        let obr_result = run_scenario_command(&mut workspace, &scenario.test_command, None);
+        let obr_duration_ms = obr_result.duration.as_millis();
 
         let (db_size, jsonl_size) = if self.config.measure_io {
             measure_io_sizes(&workspace.root)
@@ -1100,12 +1100,12 @@ impl BenchmarkRunner {
         };
 
         let metrics = BenchmarkMetrics {
-            br_duration_ms,
+            obr_duration_ms,
             bd_duration_ms: None,
             speedup_ratio: None,
-            br_peak_rss_bytes: None,
+            obr_peak_rss_bytes: None,
             bd_peak_rss_bytes: None,
-            br_cpu_time_ms: None,
+            obr_cpu_time_ms: None,
             bd_cpu_time_ms: None,
             db_size_bytes: db_size,
             jsonl_size_bytes: jsonl_size,
@@ -1113,7 +1113,7 @@ impl BenchmarkRunner {
             is_warmup,
         };
 
-        workspace.finish(br_result.success);
+        workspace.finish(obr_result.success);
         Some(metrics)
     }
 
@@ -1133,9 +1133,10 @@ impl BenchmarkRunner {
             all_runs.iter().filter(|m| !m.is_warmup).collect();
 
         // Compute statistics for measured runs only
-        let br_durations: Vec<u128> = measured_runs.iter().map(|m| m.br_duration_ms).collect();
-        let br_rss: Vec<Option<u64>> = measured_runs.iter().map(|m| m.br_peak_rss_bytes).collect();
-        let br_stats = compute_statistics(&br_durations, &br_rss);
+        let obr_durations: Vec<u128> = measured_runs.iter().map(|m| m.obr_duration_ms).collect();
+        let obr_rss: Vec<Option<u64>> =
+            measured_runs.iter().map(|m| m.obr_peak_rss_bytes).collect();
+        let obr_stats = compute_statistics(&obr_durations, &obr_rss);
 
         let bd_durations: Vec<u128> = measured_runs
             .iter()
@@ -1152,18 +1153,18 @@ impl BenchmarkRunner {
         };
 
         let speedup_ratio = bd_stats.as_ref().and_then(|stats| {
-            if br_stats.median_ms > 0 {
-                Some(stats.median_ms as f64 / br_stats.median_ms as f64)
+            if obr_stats.median_ms > 0 {
+                Some(stats.median_ms as f64 / obr_stats.median_ms as f64)
             } else {
                 None
             }
         });
 
         // Check for high variance
-        if br_stats.cv > 0.15 {
+        if obr_stats.cv > 0.15 {
             notes.push(format!(
                 "High variance detected (CV={:.2}%). Consider increasing iterations or reducing system load.",
-                br_stats.cv * 100.0
+                obr_stats.cv * 100.0
             ));
         }
 
@@ -1174,7 +1175,7 @@ impl BenchmarkRunner {
             started_at,
             completed_at,
             total_runs: total_iterations,
-            br_stats,
+            obr_stats,
             bd_stats,
             speedup_ratio,
             runs: all_runs.into_iter().filter(|m| !m.is_warmup).collect(),
@@ -1570,7 +1571,7 @@ impl ScenarioRunner {
             return ScenarioResult {
                 passed: false,
                 mode: self.mode,
-                br_result: None,
+                obr_result: None,
                 bd_result: None,
                 comparison_result: None,
                 invariant_failures: vec![format!(
@@ -1598,7 +1599,7 @@ impl ScenarioRunner {
             return ScenarioResult {
                 passed: false,
                 mode: self.mode,
-                br_result: None,
+                obr_result: None,
                 bd_result: None,
                 comparison_result: None,
                 invariant_failures: vec![format!("Dataset setup failed: {err}")],
@@ -1615,12 +1616,12 @@ impl ScenarioRunner {
 
         // Setup
         if matches!(scenario.setup, ScenarioSetup::Fresh) {
-            let init = workspace.init_br();
+            let init = workspace.init_obr();
             if !init.success {
                 return ScenarioResult {
                     passed: false,
                     mode: self.mode,
-                    br_result: Some(init),
+                    obr_result: Some(init),
                     bd_result: None,
                     comparison_result: None,
                     invariant_failures: vec!["Init failed".to_string()],
@@ -1638,7 +1639,7 @@ impl ScenarioRunner {
                 return ScenarioResult {
                     passed: false,
                     mode: self.mode,
-                    br_result: Some(result),
+                    obr_result: Some(result),
                     bd_result: None,
                     comparison_result: None,
                     invariant_failures: vec![format!("Setup command {} failed", cmd.label)],
@@ -1649,10 +1650,10 @@ impl ScenarioRunner {
         }
 
         // Run test command
-        let br_result = run_scenario_command(&mut workspace, &scenario.test_command, None);
+        let obr_result = run_scenario_command(&mut workspace, &scenario.test_command, None);
 
         // Check invariants
-        let mut invariant_failures = check_invariants(&scenario.invariants, &br_result);
+        let mut invariant_failures = check_invariants(&scenario.invariants, &obr_result);
         if let (true, Some(before)) = (scenario.invariants.path_confinement, baseline_snapshot) {
             let after = snapshot_workspace(&workspace.root);
             let violations = detect_path_confinement_violations(&before, &after);
@@ -1665,7 +1666,7 @@ impl ScenarioRunner {
         ScenarioResult {
             passed,
             mode: self.mode,
-            br_result: Some(br_result),
+            obr_result: Some(obr_result),
             bd_result: None,
             comparison_result: None,
             invariant_failures,
@@ -1680,12 +1681,12 @@ impl ScenarioRunner {
 
         // Initialize both (unless using a dataset)
         if matches!(scenario.setup, ScenarioSetup::Fresh) {
-            let (br_init, bd_init) = workspace.init_both();
-            if !br_init.success || !bd_init.success {
+            let (obr_init, bd_init) = workspace.init_both();
+            if !obr_init.success || !bd_init.success {
                 return ScenarioResult {
                     passed: false,
                     mode: self.mode,
-                    br_result: Some(br_init),
+                    obr_result: Some(obr_init),
                     bd_result: Some(bd_init),
                     comparison_result: None,
                     invariant_failures: vec!["Init failed".to_string()],
@@ -1699,7 +1700,7 @@ impl ScenarioRunner {
             return ScenarioResult {
                 passed: false,
                 mode: self.mode,
-                br_result: None,
+                obr_result: None,
                 bd_result: None,
                 comparison_result: None,
                 invariant_failures: vec![format!("Dataset setup failed: {err}")],
@@ -1709,7 +1710,7 @@ impl ScenarioRunner {
         }
 
         let baseline_snapshot = if scenario.invariants.path_confinement {
-            Some(snapshot_workspace(&workspace.br_workspace))
+            Some(snapshot_workspace(&workspace.obr_workspace))
         } else {
             None
         };
@@ -1717,7 +1718,7 @@ impl ScenarioRunner {
         // Run setup commands on both
         let setup_commands = collect_setup_commands(scenario);
         for cmd in &setup_commands {
-            let br_setup = run_conformance_command(
+            let obr_setup = run_conformance_command(
                 &mut workspace,
                 cmd,
                 &format!("{}_setup", cmd.label),
@@ -1729,11 +1730,11 @@ impl ScenarioRunner {
                 &format!("{}_setup", cmd.label),
                 BinaryTarget::Bd,
             );
-            if !br_setup.success || !bd_setup.success {
+            if !obr_setup.success || !bd_setup.success {
                 return ScenarioResult {
                     passed: false,
                     mode: self.mode,
-                    br_result: Some(br_setup),
+                    obr_result: Some(obr_setup),
                     bd_result: Some(bd_setup),
                     comparison_result: None,
                     invariant_failures: vec![format!("Setup command {} failed", cmd.label)],
@@ -1744,7 +1745,7 @@ impl ScenarioRunner {
         }
 
         // Run test command on both
-        let br_result = run_conformance_command(
+        let obr_result = run_conformance_command(
             &mut workspace,
             &scenario.test_command,
             &scenario.test_command.label,
@@ -1759,16 +1760,16 @@ impl ScenarioRunner {
 
         // Compare outputs
         let (comparison_result, normalization_log) = compare_outputs(
-            &br_result,
+            &obr_result,
             &bd_result,
             &scenario.compare_mode,
             &scenario.normalization,
         );
 
-        // Check invariants (on br only)
-        let mut invariant_failures = check_invariants(&scenario.invariants, &br_result);
+        // Check invariants (on obr only)
+        let mut invariant_failures = check_invariants(&scenario.invariants, &obr_result);
         if let (true, Some(before)) = (scenario.invariants.path_confinement, baseline_snapshot) {
-            let after = snapshot_workspace(&workspace.br_workspace);
+            let after = snapshot_workspace(&workspace.obr_workspace);
             let violations = detect_path_confinement_violations(&before, &after);
             invariant_failures.extend(violations);
         }
@@ -1789,7 +1790,7 @@ impl ScenarioRunner {
         ScenarioResult {
             passed,
             mode: self.mode,
-            br_result: Some(br_result),
+            obr_result: Some(obr_result),
             bd_result: Some(bd_result),
             comparison_result: Some(comparison_result),
             invariant_failures,
@@ -1808,7 +1809,7 @@ impl ScenarioRunner {
             return ScenarioResult {
                 passed: false,
                 mode: self.mode,
-                br_result: None,
+                obr_result: None,
                 bd_result: None,
                 comparison_result: None,
                 invariant_failures: vec![format!("Dataset setup failed: {err}")],
@@ -1818,7 +1819,7 @@ impl ScenarioRunner {
         }
 
         if matches!(scenario.setup, ScenarioSetup::Fresh) {
-            let _ = workspace.init_br();
+            let _ = workspace.init_obr();
         }
 
         let setup_commands = collect_setup_commands(scenario);
@@ -1826,15 +1827,15 @@ impl ScenarioRunner {
             let _ = run_scenario_command(&mut workspace, cmd, None);
         }
 
-        let br_result = run_scenario_command(&mut workspace, &scenario.test_command, None);
+        let obr_result = run_scenario_command(&mut workspace, &scenario.test_command, None);
 
         let benchmark_metrics = Some(BenchmarkMetrics {
-            br_duration_ms: br_result.duration.as_millis(),
+            obr_duration_ms: obr_result.duration.as_millis(),
             bd_duration_ms: None,
             speedup_ratio: None,
-            br_peak_rss_bytes: None,
+            obr_peak_rss_bytes: None,
             bd_peak_rss_bytes: None,
-            br_cpu_time_ms: None,
+            obr_cpu_time_ms: None,
             bd_cpu_time_ms: None,
             db_size_bytes: None,
             jsonl_size_bytes: None,
@@ -1842,12 +1843,12 @@ impl ScenarioRunner {
             is_warmup: false,
         });
 
-        workspace.finish(br_result.success);
+        workspace.finish(obr_result.success);
 
         ScenarioResult {
-            passed: br_result.success,
+            passed: obr_result.success,
             mode: self.mode,
-            br_result: Some(br_result),
+            obr_result: Some(obr_result),
             bd_result: None,
             comparison_result: None,
             invariant_failures: Vec::new(),
@@ -1926,10 +1927,10 @@ fn check_invariants(invariants: &Invariants, result: &CommandResult) -> Vec<Stri
     failures
 }
 
-/// Compare br and bd outputs using the specified mode and normalization.
+/// Compare obr and bd outputs using the specified mode and normalization.
 #[allow(clippy::too_many_lines)]
 fn compare_outputs(
-    br_result: &CommandResult,
+    obr_result: &CommandResult,
     bd_result: &CommandResult,
     compare_mode: &CompareMode,
     normalization: &NormalizationRules,
@@ -1937,26 +1938,26 @@ fn compare_outputs(
     let mut normalization_log = Vec::new();
 
     // Extract JSON payloads
-    let br_json_str = extract_json_payload(&br_result.stdout);
+    let obr_json_str = extract_json_payload(&obr_result.stdout);
     let bd_json_str = extract_json_payload(&bd_result.stdout);
 
-    let br_json: Result<Value, _> = serde_json::from_str(&br_json_str);
+    let obr_json: Result<Value, _> = serde_json::from_str(&obr_json_str);
     let bd_json: Result<Value, _> = serde_json::from_str(&bd_json_str);
 
     match compare_mode {
         CompareMode::ExitCodeOnly => {
-            let matched = br_result.exit_code == bd_result.exit_code;
+            let matched = obr_result.exit_code == bd_result.exit_code;
             (
                 ComparisonResult {
                     matched,
-                    br_json: None,
+                    obr_json: None,
                     bd_json: None,
                     diff_description: if matched {
                         None
                     } else {
                         Some(format!(
-                            "Exit code mismatch: br={}, bd={}",
-                            br_result.exit_code, bd_result.exit_code
+                            "Exit code mismatch: obr={}, bd={}",
+                            obr_result.exit_code, bd_result.exit_code
                         ))
                     },
                 },
@@ -1965,22 +1966,22 @@ fn compare_outputs(
         }
 
         CompareMode::ExactJson => {
-            let (Ok(br), Ok(bd)) = (br_json, bd_json) else {
+            let (Ok(obr), Ok(bd)) = (obr_json, bd_json) else {
                 return (
                     ComparisonResult {
                         matched: false,
-                        br_json: None,
+                        obr_json: None,
                         bd_json: None,
                         diff_description: Some("JSON parse error".to_string()),
                     },
                     normalization_log,
                 );
             };
-            let matched = br == bd;
+            let matched = obr == bd;
             (
                 ComparisonResult {
                     matched,
-                    br_json: Some(br),
+                    obr_json: Some(obr),
                     bd_json: Some(bd),
                     diff_description: if matched {
                         None
@@ -1993,11 +1994,11 @@ fn compare_outputs(
         }
 
         CompareMode::NormalizedJson => {
-            let (Ok(mut br), Ok(mut bd)) = (br_json, bd_json) else {
+            let (Ok(mut obr), Ok(mut bd)) = (obr_json, bd_json) else {
                 return (
                     ComparisonResult {
                         matched: false,
-                        br_json: None,
+                        obr_json: None,
                         bd_json: None,
                         diff_description: Some("JSON parse error".to_string()),
                     },
@@ -2007,24 +2008,24 @@ fn compare_outputs(
 
             let mut tolerance_issues = Vec::new();
             if normalization.timestamp_tolerance.is_some() {
-                tolerance_issues = check_timestamp_tolerance(&br, &bd, normalization);
+                tolerance_issues = check_timestamp_tolerance(&obr, &bd, normalization);
                 normalization_log.extend(tolerance_issues.iter().cloned());
             }
 
             // Apply normalization
-            let br_log = normalization.apply(&mut br);
+            let obr_log = normalization.apply(&mut obr);
             let bd_log = normalization.apply(&mut bd);
-            normalization_log.extend(br_log.into_iter().map(|s| format!("br: {s}")));
+            normalization_log.extend(obr_log.into_iter().map(|s| format!("obr: {s}")));
             normalization_log.extend(bd_log.into_iter().map(|s| format!("bd: {s}")));
 
             // For NormalizedJson mode, timestamps are masked so tolerance issues
             // are logged for visibility but don't affect the match result.
             // The normalized values are what matter.
-            let matched = br == bd;
+            let matched = obr == bd;
             (
                 ComparisonResult {
                     matched,
-                    br_json: Some(br),
+                    obr_json: Some(obr),
                     bd_json: Some(bd),
                     diff_description: if matched {
                         // Log tolerance info even on match for debugging visibility
@@ -2045,11 +2046,11 @@ fn compare_outputs(
         }
 
         CompareMode::ContainsFields(fields) => {
-            let (Ok(br), Ok(bd)) = (br_json, bd_json) else {
+            let (Ok(obr), Ok(bd)) = (obr_json, bd_json) else {
                 return (
                     ComparisonResult {
                         matched: false,
-                        br_json: None,
+                        obr_json: None,
                         bd_json: None,
                         diff_description: Some("JSON parse error".to_string()),
                     },
@@ -2059,10 +2060,10 @@ fn compare_outputs(
 
             let mut mismatches = Vec::new();
             for field in fields {
-                let br_val = br.get(field);
+                let obr_val = obr.get(field);
                 let bd_val = bd.get(field);
-                if br_val != bd_val {
-                    mismatches.push(format!("Field '{field}': br={br_val:?}, bd={bd_val:?}"));
+                if obr_val != bd_val {
+                    mismatches.push(format!("Field '{field}': obr={obr_val:?}, bd={bd_val:?}"));
                 }
             }
 
@@ -2070,7 +2071,7 @@ fn compare_outputs(
             (
                 ComparisonResult {
                     matched,
-                    br_json: Some(br),
+                    obr_json: Some(obr),
                     bd_json: Some(bd),
                     diff_description: if matched {
                         None
@@ -2083,26 +2084,26 @@ fn compare_outputs(
         }
 
         CompareMode::ArrayUnordered => {
-            let (Ok(mut br), Ok(mut bd)) = (br_json, bd_json) else {
+            let (Ok(mut obr), Ok(mut bd)) = (obr_json, bd_json) else {
                 return (
                     ComparisonResult {
                         matched: false,
-                        br_json: None,
+                        obr_json: None,
                         bd_json: None,
                         diff_description: Some("JSON parse error".to_string()),
                     },
                     normalization_log,
                 );
             };
-            let _ = normalization.apply(&mut br);
+            let _ = normalization.apply(&mut obr);
             let _ = normalization.apply(&mut bd);
-            sort_arrays_recursively(&mut br);
+            sort_arrays_recursively(&mut obr);
             sort_arrays_recursively(&mut bd);
-            let matched = br == bd;
+            let matched = obr == bd;
             (
                 ComparisonResult {
                     matched,
-                    br_json: Some(br),
+                    obr_json: Some(obr),
                     bd_json: Some(bd),
                     diff_description: if matched {
                         None
@@ -2115,11 +2116,11 @@ fn compare_outputs(
         }
 
         CompareMode::FieldsExcluded(fields) => {
-            let (Ok(mut br), Ok(mut bd)) = (br_json, bd_json) else {
+            let (Ok(mut obr), Ok(mut bd)) = (obr_json, bd_json) else {
                 return (
                     ComparisonResult {
                         matched: false,
-                        br_json: None,
+                        obr_json: None,
                         bd_json: None,
                         diff_description: Some("JSON parse error".to_string()),
                     },
@@ -2127,14 +2128,14 @@ fn compare_outputs(
                 );
             };
             for field in fields {
-                remove_field_path(&mut br, field);
+                remove_field_path(&mut obr, field);
                 remove_field_path(&mut bd, field);
             }
-            let matched = br == bd;
+            let matched = obr == bd;
             (
                 ComparisonResult {
                     matched,
-                    br_json: Some(br),
+                    obr_json: Some(obr),
                     bd_json: Some(bd),
                     diff_description: if matched {
                         None
@@ -2147,24 +2148,24 @@ fn compare_outputs(
         }
 
         CompareMode::StructureOnly => {
-            let (Ok(br), Ok(bd)) = (br_json, bd_json) else {
+            let (Ok(obr), Ok(bd)) = (obr_json, bd_json) else {
                 return (
                     ComparisonResult {
                         matched: false,
-                        br_json: None,
+                        obr_json: None,
                         bd_json: None,
                         diff_description: Some("JSON parse error".to_string()),
                     },
                     normalization_log,
                 );
             };
-            let br_shape = structure_only(&br);
+            let obr_shape = structure_only(&obr);
             let bd_shape = structure_only(&bd);
-            let matched = br_shape == bd_shape;
+            let matched = obr_shape == bd_shape;
             (
                 ComparisonResult {
                     matched,
-                    br_json: Some(br_shape),
+                    obr_json: Some(obr_shape),
                     bd_json: Some(bd_shape),
                     diff_description: if matched {
                         None
@@ -2236,7 +2237,7 @@ fn detect_path_confinement_violations(
     before: &HashMap<String, FileFingerprint>,
     after: &HashMap<String, FileFingerprint>,
 ) -> Vec<String> {
-    let allowed_prefixes = [".beads/", "logs/"];
+    let allowed_prefixes = [".obr/", "logs/"];
     let mut violations = Vec::new();
 
     let mut all_paths: HashSet<String> = HashSet::new();
@@ -2287,11 +2288,11 @@ fn run_scenario_command(
     );
 
     match (command.env.is_empty(), command.stdin.as_ref()) {
-        (true, None) => workspace.run_br(&command.args, &label),
-        (false, None) => workspace.run_br_env(&command.args, command.env.clone(), &label),
-        (true, Some(input)) => workspace.run_br_stdin(&command.args, input, &label),
+        (true, None) => workspace.run_obr(&command.args, &label),
+        (false, None) => workspace.run_obr_env(&command.args, command.env.clone(), &label),
+        (true, Some(input)) => workspace.run_obr_stdin(&command.args, input, &label),
         (false, Some(input)) => {
-            workspace.run_br_env_stdin(&command.args, command.env.clone(), input, &label)
+            workspace.run_obr_env_stdin(&command.args, command.env.clone(), input, &label)
         }
     }
 }
@@ -2332,13 +2333,16 @@ fn prepare_workspace_evolution(
     }
 
     if matches!(&plan.setup, ScenarioSetup::Fresh) {
-        let init = workspace.init_br();
+        let init = workspace.init_obr();
         if !init.success {
             return Err(std::io::Error::other(format!(
                 "workspace evolution init failed: {}",
                 init.stderr
             )));
         }
+        // Workspace-evolution stories replay JSONL artifacts (drift injection,
+        // export-hash rewrites); pin them to JSONL explicitly (Class A).
+        super::cli::pin_jsonl(&workspace.obr_dir);
     }
 
     Ok(())
@@ -2384,11 +2388,11 @@ fn execute_workspace_evolution_step(
             ))
         }
         WorkspaceEvolutionStep::AppendToIssuesJsonl { label, text } => {
-            append_text_to_issues_jsonl(&workspace.beads_dir, text)?;
+            append_text_to_issues_jsonl(&workspace.obr_dir, text)?;
             Ok(workspace_evolution_event(
                 label,
                 WorkspaceEvolutionEventKind::Mutation,
-                "appended raw text to .beads/issues.jsonl",
+                "appended raw text to .obr/issues.jsonl",
             ))
         }
         WorkspaceEvolutionStep::RestoreSnapshot {
@@ -2440,7 +2444,7 @@ fn materialize_workspace_evolution(
     Ok(MaterializedWorkspaceEvolution {
         temp_dir: materialized_temp_dir,
         root: materialized_root.clone(),
-        beads_dir: materialized_root.join(".beads"),
+        obr_dir: materialized_root.join(".obr"),
         plan: plan.clone(),
         events: events.to_vec(),
         aliases,
@@ -2558,8 +2562,8 @@ fn extract_issue_id_from_output(output: &str) -> Option<String> {
     None
 }
 
-fn append_text_to_issues_jsonl(beads_dir: &Path, text: &str) -> std::io::Result<()> {
-    let jsonl_path = beads_dir.join("issues.jsonl");
+fn append_text_to_issues_jsonl(obr_dir: &Path, text: &str) -> std::io::Result<()> {
+    let jsonl_path = obr_dir.join("issues.jsonl");
     let needs_newline = std::fs::read_to_string(&jsonl_path)
         .is_ok_and(|content| !content.is_empty() && !content.ends_with('\n'));
 
@@ -2581,7 +2585,7 @@ fn append_text_to_issues_jsonl(beads_dir: &Path, text: &str) -> std::io::Result<
 }
 
 fn copy_workspace_state(src_root: &Path, dst_root: &Path) -> std::io::Result<()> {
-    copy_dir_contents(src_root.join(".beads"), dst_root.join(".beads"))?;
+    copy_dir_contents(src_root.join(".obr"), dst_root.join(".obr"))?;
     copy_dir_contents(src_root.join(".git"), dst_root.join(".git"))?;
     Ok(())
 }
@@ -2613,15 +2617,15 @@ fn run_conformance_command(
     target: BinaryTarget,
 ) -> CommandResult {
     match (target, command.env.is_empty(), command.stdin.as_ref()) {
-        (BinaryTarget::Br, true, None) => workspace.run_br(&command.args, label),
+        (BinaryTarget::Br, true, None) => workspace.run_obr(&command.args, label),
         (BinaryTarget::Br, false, None) => {
-            workspace.run_br_env(&command.args, command.env.clone(), label)
+            workspace.run_obr_env(&command.args, command.env.clone(), label)
         }
         (BinaryTarget::Br, true, Some(input)) => {
-            workspace.run_br_stdin(&command.args, input, label)
+            workspace.run_obr_stdin(&command.args, input, label)
         }
         (BinaryTarget::Br, false, Some(input)) => {
-            workspace.run_br_env_stdin(&command.args, command.env.clone(), input, label)
+            workspace.run_obr_env_stdin(&command.args, command.env.clone(), input, label)
         }
         (BinaryTarget::Bd, true, None) => workspace.run_bd(&command.args, label),
         (BinaryTarget::Bd, false, None) => {
@@ -2641,7 +2645,7 @@ fn populate_workspace_with_dataset(
     dataset: KnownDataset,
 ) -> std::io::Result<()> {
     let isolated = IsolatedDataset::from_dataset(dataset)?;
-    copy_dir_contents(isolated.root.join(".beads"), workspace.root.join(".beads"))?;
+    copy_dir_contents(isolated.root.join(".obr"), workspace.root.join(".obr"))?;
     copy_dir_contents(isolated.root.join(".git"), workspace.root.join(".git"))?;
     Ok(())
 }
@@ -2652,16 +2656,16 @@ fn populate_conformance_with_dataset(
 ) -> std::io::Result<()> {
     let isolated = IsolatedDataset::from_dataset(dataset)?;
     copy_dir_contents(
-        isolated.root.join(".beads"),
-        workspace.br_workspace.join(".beads"),
+        isolated.root.join(".obr"),
+        workspace.obr_workspace.join(".obr"),
     )?;
     copy_dir_contents(
         isolated.root.join(".git"),
-        workspace.br_workspace.join(".git"),
+        workspace.obr_workspace.join(".git"),
     )?;
     copy_dir_contents(
-        isolated.root.join(".beads"),
-        workspace.bd_workspace.join(".beads"),
+        isolated.root.join(".obr"),
+        workspace.bd_workspace.join(".obr"),
     )?;
     copy_dir_contents(
         isolated.root.join(".git"),
@@ -2757,7 +2761,7 @@ fn structure_only(value: &Value) -> Value {
 }
 
 fn check_timestamp_tolerance(
-    br: &Value,
+    obr: &Value,
     bd: &Value,
     normalization: &NormalizationRules,
 ) -> Vec<String> {
@@ -2766,21 +2770,21 @@ fn check_timestamp_tolerance(
     };
 
     let mut issues = Vec::new();
-    check_timestamp_tolerance_inner(br, bd, normalization, "", tolerance, &mut issues);
+    check_timestamp_tolerance_inner(obr, bd, normalization, "", tolerance, &mut issues);
     issues
 }
 
 fn check_timestamp_tolerance_inner(
-    br: &Value,
+    obr: &Value,
     bd: &Value,
     normalization: &NormalizationRules,
     path: &str,
     tolerance: Duration,
     issues: &mut Vec<String>,
 ) {
-    match (br, bd) {
-        (Value::Object(br_map), Value::Object(bd_map)) => {
-            for (key, br_val) in br_map {
+    match (obr, bd) {
+        (Value::Object(obr_map), Value::Object(bd_map)) => {
+            for (key, obr_val) in obr_map {
                 let bd_val = bd_map.get(key);
                 let field_path = if path.is_empty() {
                     key.clone()
@@ -2788,21 +2792,21 @@ fn check_timestamp_tolerance_inner(
                     format!("{path}.{key}")
                 };
                 if normalization.mask_fields.contains(key)
-                    && let (Some(br_str), Some(bd_str)) =
-                        (br_val.as_str(), bd_val.and_then(Value::as_str))
-                    && let (Ok(br_dt), Ok(bd_dt)) =
-                        (parse_timestamp(br_str), parse_timestamp(bd_str))
+                    && let (Some(obr_str), Some(bd_str)) =
+                        (obr_val.as_str(), bd_val.and_then(Value::as_str))
+                    && let (Ok(obr_dt), Ok(bd_dt)) =
+                        (parse_timestamp(obr_str), parse_timestamp(bd_str))
                 {
-                    let diff = (br_dt - bd_dt).num_seconds().unsigned_abs();
+                    let diff = (obr_dt - bd_dt).num_seconds().unsigned_abs();
                     if diff > tolerance.as_secs() {
                         issues.push(format!(
-                            "timestamp drift at {field_path}: br={br_str} bd={bd_str} diff={diff}s"
+                            "timestamp drift at {field_path}: obr={obr_str} bd={bd_str} diff={diff}s"
                         ));
                     }
                 }
                 if let Some(bd_val) = bd_val {
                     check_timestamp_tolerance_inner(
-                        br_val,
+                        obr_val,
                         bd_val,
                         normalization,
                         &field_path,
@@ -2812,11 +2816,11 @@ fn check_timestamp_tolerance_inner(
                 }
             }
         }
-        (Value::Array(br_arr), Value::Array(bd_arr)) => {
-            for (idx, (br_val, bd_val)) in br_arr.iter().zip(bd_arr.iter()).enumerate() {
+        (Value::Array(obr_arr), Value::Array(bd_arr)) => {
+            for (idx, (obr_val, bd_val)) in obr_arr.iter().zip(bd_arr.iter()).enumerate() {
                 let field_path = format!("{path}[{idx}]");
                 check_timestamp_tolerance_inner(
-                    br_val,
+                    obr_val,
                     bd_val,
                     normalization,
                     &field_path,
@@ -3220,7 +3224,7 @@ pub mod catalog {
         // Per the post-#292 doctor contract (commits 96c3fad2, 1c3c4fe1):
         // any non-OK check — WARN or ERROR — now flips `ok` to false and
         // exits 1. The stress harness legitimately produces WARN-level
-        // finding (RUST_LOG=beads_rust=debug set by the test runner).
+        // finding (RUST_LOG=obr=debug set by the test runner).
         // This does not degrade the
         // workspace's semantic health, so the e2e test asserts
         // `workspace_health == "healthy"` on the JSON payload rather
@@ -3270,12 +3274,12 @@ mod tests {
             || key.starts_with("BEADS_")
             || matches!(
                 key.as_ref(),
-                "BR_OUTPUT_FORMAT" | "TOON_DEFAULT_FORMAT" | "TOON_STATS"
+                "BR_OUTPUT_FORMAT" | "OBR_OUTPUT_FORMAT" | "TOON_DEFAULT_FORMAT" | "TOON_STATS"
             )
     }
 
-    fn run_materialized_br(root: &Path, args: &[&str], label: &str) -> CommandResult {
-        let bin_path = assert_cmd::cargo::cargo_bin!("br");
+    fn run_materialized_obr(root: &Path, args: &[&str], label: &str) -> CommandResult {
+        let bin_path = assert_cmd::cargo::cargo_bin!("obr");
         let mut command = Command::new(bin_path);
         command.current_dir(root);
         command.args(args);
@@ -3291,7 +3295,7 @@ mod tests {
         command.env("HOME", root);
 
         let start = std::time::Instant::now();
-        let output = command.output().expect("run materialized br");
+        let output = command.output().expect("run materialized obr");
 
         CommandResult {
             stdout: String::from_utf8_lossy(&output.stdout).to_string(),
@@ -3351,7 +3355,7 @@ mod tests {
 
     #[test]
     fn compare_mode_array_unordered_matches() {
-        let br_result = CommandResult {
+        let obr_result = CommandResult {
             stdout: "[{\"id\":1},{\"id\":2}]".to_string(),
             stderr: String::new(),
             exit_code: 0,
@@ -3364,10 +3368,10 @@ mod tests {
         };
         let bd_result = CommandResult {
             stdout: "[{\"id\":2},{\"id\":1}]".to_string(),
-            ..br_result.clone()
+            ..obr_result.clone()
         };
         let (comparison, _) = compare_outputs(
-            &br_result,
+            &obr_result,
             &bd_result,
             &CompareMode::ArrayUnordered,
             &NormalizationRules::strict(),
@@ -3377,7 +3381,7 @@ mod tests {
 
     #[test]
     fn compare_mode_fields_excluded_matches() {
-        let br_result = CommandResult {
+        let obr_result = CommandResult {
             stdout: "{\"id\":1,\"ts\":123}".to_string(),
             stderr: String::new(),
             exit_code: 0,
@@ -3390,10 +3394,10 @@ mod tests {
         };
         let bd_result = CommandResult {
             stdout: "{\"id\":1,\"ts\":999}".to_string(),
-            ..br_result.clone()
+            ..obr_result.clone()
         };
         let (comparison, _) = compare_outputs(
-            &br_result,
+            &obr_result,
             &bd_result,
             &CompareMode::FieldsExcluded(vec!["ts".to_string()]),
             &NormalizationRules::strict(),
@@ -3403,7 +3407,7 @@ mod tests {
 
     #[test]
     fn compare_mode_structure_only_matches() {
-        let br_result = CommandResult {
+        let obr_result = CommandResult {
             stdout: "{\"id\":1,\"nested\":{\"a\":true}}".to_string(),
             stderr: String::new(),
             exit_code: 0,
@@ -3416,10 +3420,10 @@ mod tests {
         };
         let bd_result = CommandResult {
             stdout: "{\"id\":2,\"nested\":{\"a\":false}}".to_string(),
-            ..br_result.clone()
+            ..obr_result.clone()
         };
         let (comparison, _) = compare_outputs(
-            &br_result,
+            &obr_result,
             &bd_result,
             &CompareMode::StructureOnly,
             &NormalizationRules::strict(),
@@ -3578,18 +3582,18 @@ mod tests {
     fn test_path_separator_normalization() {
         let rules = NormalizationRules::cross_platform();
         let mut value = serde_json::json!({
-            "path": "C:\\Users\\test\\project\\.beads",
+            "path": "C:\\Users\\test\\project\\.obr",
             "file_path": "src\\main.rs",
-            "db_path": "data\\beads.db",
+            "db_path": "data\\obr.db",
             "title": "Not a path with \\ backslash"
         });
 
         let log = rules.apply(&mut value);
 
         // Path fields should have backslashes converted to forward slashes
-        assert_eq!(value["path"], "C:/Users/test/project/.beads");
+        assert_eq!(value["path"], "C:/Users/test/project/.obr");
         assert_eq!(value["file_path"], "src/main.rs");
-        assert_eq!(value["db_path"], "data/beads.db");
+        assert_eq!(value["db_path"], "data/obr.db");
         // Non-path fields should not be modified
         assert_eq!(value["title"], "Not a path with \\ backslash");
         // Should log the normalizations
@@ -3600,14 +3604,14 @@ mod tests {
     fn test_path_normalization_no_backslashes() {
         let rules = NormalizationRules::cross_platform();
         let mut value = serde_json::json!({
-            "path": "/home/user/project/.beads",
+            "path": "/home/user/project/.obr",
             "file_path": "src/main.rs"
         });
 
         let log = rules.apply(&mut value);
 
         // Already Unix-style paths should remain unchanged
-        assert_eq!(value["path"], "/home/user/project/.beads");
+        assert_eq!(value["path"], "/home/user/project/.obr");
         assert_eq!(value["file_path"], "src/main.rs");
         // No path normalization should be logged
         assert!(!log.iter().any(|l| l.contains("Normalized path")));
@@ -3919,14 +3923,14 @@ mod tests {
             ..Default::default()
         };
 
-        let br = serde_json::json!({
+        let obr = serde_json::json!({
             "created_at": "2026-01-17T10:00:00Z"
         });
         let bd = serde_json::json!({
             "created_at": "2026-01-17T10:00:05Z"  // 5 seconds later
         });
 
-        let issues = check_timestamp_tolerance(&br, &bd, &rules);
+        let issues = check_timestamp_tolerance(&obr, &bd, &rules);
 
         // 5 seconds is within 10 second tolerance
         assert!(issues.is_empty());
@@ -3940,14 +3944,14 @@ mod tests {
             ..Default::default()
         };
 
-        let br = serde_json::json!({
+        let obr = serde_json::json!({
             "created_at": "2026-01-17T10:00:00Z"
         });
         let bd = serde_json::json!({
             "created_at": "2026-01-17T10:00:10Z"  // 10 seconds later
         });
 
-        let issues = check_timestamp_tolerance(&br, &bd, &rules);
+        let issues = check_timestamp_tolerance(&obr, &bd, &rules);
 
         // 10 seconds exceeds 5 second tolerance
         assert!(!issues.is_empty());
@@ -3962,7 +3966,7 @@ mod tests {
             ..Default::default()
         };
 
-        let br = serde_json::json!({
+        let obr = serde_json::json!({
             "issues": [
                 {"updated_at": "2026-01-17T10:00:00Z"},
                 {"updated_at": "2026-01-17T11:00:00Z"}
@@ -3975,7 +3979,7 @@ mod tests {
             ]
         });
 
-        let issues = check_timestamp_tolerance(&br, &bd, &rules);
+        let issues = check_timestamp_tolerance(&obr, &bd, &rules);
 
         // Second timestamp exceeds tolerance
         assert_eq!(issues.len(), 1);
@@ -3986,7 +3990,7 @@ mod tests {
 
     #[test]
     fn compare_mode_exact_json_matches() {
-        let br_result = CommandResult {
+        let obr_result = CommandResult {
             stdout: "{\"id\":1,\"name\":\"test\"}".to_string(),
             stderr: String::new(),
             exit_code: 0,
@@ -3999,11 +4003,11 @@ mod tests {
         };
         let bd_result = CommandResult {
             stdout: "{\"id\":1,\"name\":\"test\"}".to_string(),
-            ..br_result.clone()
+            ..obr_result.clone()
         };
 
         let (comparison, _) = compare_outputs(
-            &br_result,
+            &obr_result,
             &bd_result,
             &CompareMode::ExactJson,
             &NormalizationRules::strict(),
@@ -4014,7 +4018,7 @@ mod tests {
 
     #[test]
     fn compare_mode_exact_json_fails_on_difference() {
-        let br_result = CommandResult {
+        let obr_result = CommandResult {
             stdout: "{\"id\":1,\"name\":\"test\"}".to_string(),
             stderr: String::new(),
             exit_code: 0,
@@ -4027,11 +4031,11 @@ mod tests {
         };
         let bd_result = CommandResult {
             stdout: "{\"id\":2,\"name\":\"test\"}".to_string(),
-            ..br_result.clone()
+            ..obr_result.clone()
         };
 
         let (comparison, _) = compare_outputs(
-            &br_result,
+            &obr_result,
             &bd_result,
             &CompareMode::ExactJson,
             &NormalizationRules::strict(),
@@ -4043,7 +4047,7 @@ mod tests {
 
     #[test]
     fn compare_mode_normalized_json_ignores_timestamps() {
-        let br_result = CommandResult {
+        let obr_result = CommandResult {
             stdout: "{\"id\":\"bd-abc\",\"created_at\":\"2026-01-17T10:00:00Z\"}".to_string(),
             stderr: String::new(),
             exit_code: 0,
@@ -4056,11 +4060,11 @@ mod tests {
         };
         let bd_result = CommandResult {
             stdout: "{\"id\":\"bd-xyz\",\"created_at\":\"2026-01-17T11:00:00Z\"}".to_string(),
-            ..br_result.clone()
+            ..obr_result.clone()
         };
 
         let (comparison, log) = compare_outputs(
-            &br_result,
+            &obr_result,
             &bd_result,
             &CompareMode::NormalizedJson,
             &NormalizationRules::conformance_default(),
@@ -4073,7 +4077,7 @@ mod tests {
 
     #[test]
     fn compare_mode_contains_fields_matches_specified() {
-        let br_result = CommandResult {
+        let obr_result = CommandResult {
             stdout: "{\"id\":1,\"title\":\"Test\",\"extra\":\"ignored\"}".to_string(),
             stderr: String::new(),
             exit_code: 0,
@@ -4086,11 +4090,11 @@ mod tests {
         };
         let bd_result = CommandResult {
             stdout: "{\"id\":1,\"title\":\"Test\",\"extra\":\"different\"}".to_string(),
-            ..br_result.clone()
+            ..obr_result.clone()
         };
 
         let (comparison, _) = compare_outputs(
-            &br_result,
+            &obr_result,
             &bd_result,
             &CompareMode::ContainsFields(vec!["id".to_string(), "title".to_string()]),
             &NormalizationRules::strict(),
@@ -4102,7 +4106,7 @@ mod tests {
 
     #[test]
     fn compare_mode_contains_fields_fails_on_mismatch() {
-        let br_result = CommandResult {
+        let obr_result = CommandResult {
             stdout: "{\"id\":1,\"title\":\"Test A\"}".to_string(),
             stderr: String::new(),
             exit_code: 0,
@@ -4115,11 +4119,11 @@ mod tests {
         };
         let bd_result = CommandResult {
             stdout: "{\"id\":1,\"title\":\"Test B\"}".to_string(),
-            ..br_result.clone()
+            ..obr_result.clone()
         };
 
         let (comparison, _) = compare_outputs(
-            &br_result,
+            &obr_result,
             &bd_result,
             &CompareMode::ContainsFields(vec!["title".to_string()]),
             &NormalizationRules::strict(),
@@ -4131,7 +4135,7 @@ mod tests {
 
     #[test]
     fn compare_mode_exit_code_only_matches() {
-        let br_result = CommandResult {
+        let obr_result = CommandResult {
             stdout: "different output".to_string(),
             stderr: String::new(),
             exit_code: 0,
@@ -4145,11 +4149,11 @@ mod tests {
         let bd_result = CommandResult {
             stdout: "completely different".to_string(),
             exit_code: 0,
-            ..br_result.clone()
+            ..obr_result.clone()
         };
 
         let (comparison, _) = compare_outputs(
-            &br_result,
+            &obr_result,
             &bd_result,
             &CompareMode::ExitCodeOnly,
             &NormalizationRules::strict(),
@@ -4160,7 +4164,7 @@ mod tests {
 
     #[test]
     fn compare_mode_exit_code_only_fails_on_different_exit() {
-        let br_result = CommandResult {
+        let obr_result = CommandResult {
             stdout: "same output".to_string(),
             stderr: String::new(),
             exit_code: 0,
@@ -4175,11 +4179,11 @@ mod tests {
             stdout: "same output".to_string(),
             exit_code: 1,
             success: false,
-            ..br_result.clone()
+            ..obr_result.clone()
         };
 
         let (comparison, _) = compare_outputs(
-            &br_result,
+            &obr_result,
             &bd_result,
             &CompareMode::ExitCodeOnly,
             &NormalizationRules::strict(),
@@ -4289,7 +4293,7 @@ mod tests {
 
     #[test]
     fn compare_mode_handles_parse_errors() {
-        let br_result = CommandResult {
+        let obr_result = CommandResult {
             stdout: "not valid json".to_string(),
             stderr: String::new(),
             exit_code: 0,
@@ -4302,11 +4306,11 @@ mod tests {
         };
         let bd_result = CommandResult {
             stdout: "{\"valid\": true}".to_string(),
-            ..br_result.clone()
+            ..obr_result.clone()
         };
 
         let (comparison, _) = compare_outputs(
-            &br_result,
+            &obr_result,
             &bd_result,
             &CompareMode::NormalizedJson,
             &NormalizationRules::strict(),
@@ -4373,7 +4377,7 @@ mod tests {
             .expect("captured child id")
             .clone();
 
-        let ready = run_materialized_br(&materialized.root, &["ready", "--json"], "ready_replay");
+        let ready = run_materialized_obr(&materialized.root, &["ready", "--json"], "ready_replay");
         assert!(ready.success, "materialized ready failed: {}", ready.stderr);
 
         let ready_json: Value =
@@ -4416,7 +4420,7 @@ mod tests {
             "corrupt import should fail but remain an expected step"
         );
 
-        let list = run_materialized_br(&materialized.root, &["list", "--json"], "list_replay");
+        let list = run_materialized_obr(&materialized.root, &["list", "--json"], "list_replay");
         assert!(list.success, "materialized list failed: {}", list.stderr);
 
         let target = TempDir::new().expect("materialize target");
@@ -4424,7 +4428,7 @@ mod tests {
             .materialize_into(target.path())
             .expect("copy materialized workspace");
         assert!(
-            target.path().join(".beads").join("issues.jsonl").exists(),
+            target.path().join(".obr").join("issues.jsonl").exists(),
             "materialized workspace should include JSONL export"
         );
 

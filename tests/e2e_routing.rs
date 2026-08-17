@@ -13,13 +13,15 @@ use std::process::Command;
 
 mod common;
 
-use common::cli::{BrWorkspace, extract_json_payload, run_br, run_br_with_env, run_br_with_stdin};
+use common::cli::{
+    ObrWorkspace, extract_json_payload, run_obr, run_obr_with_env, run_obr_with_stdin,
+};
 use serde_json::Value;
 use toon_rust::try_decode as decode_toon;
 
 /// Helper to create a routes.jsonl file with given entries.
-fn create_routes_file(workspace: &BrWorkspace, entries: &[(&str, &str)]) {
-    let routes_path = workspace.root.join(".beads").join("routes.jsonl");
+fn create_routes_file(workspace: &ObrWorkspace, entries: &[(&str, &str)]) {
+    let routes_path = workspace.root.join(".obr").join("routes.jsonl");
     let content: String = entries
         .iter()
         .map(|(prefix, path)| format!(r#"{{"prefix":"{}","path":"{}"}}"#, prefix, path))
@@ -29,19 +31,19 @@ fn create_routes_file(workspace: &BrWorkspace, entries: &[(&str, &str)]) {
 }
 
 /// Helper to create a redirect file.
-fn create_redirect_file(beads_dir: &std::path::Path, target: &str) {
-    let redirect_path = beads_dir.join("redirect");
+fn create_redirect_file(obr_dir: &std::path::Path, target: &str) {
+    let redirect_path = obr_dir.join("redirect");
     fs::write(&redirect_path, target).expect("write redirect");
 }
 
-fn init_workspace(workspace: &BrWorkspace, label: &str) {
-    let init = run_br(workspace, ["init"], label);
+fn init_workspace(workspace: &ObrWorkspace, label: &str) {
+    let init = run_obr(workspace, ["init"], label);
     assert!(init.status.success(), "init failed: {}", init.stderr);
 }
 
-fn configure_external_route(main_workspace: &BrWorkspace, external_workspace: &BrWorkspace) {
+fn configure_external_route(main_workspace: &ObrWorkspace, external_workspace: &ObrWorkspace) {
     fs::write(
-        external_workspace.root.join(".beads").join("config.yaml"),
+        external_workspace.root.join(".obr").join("config.yaml"),
         "issue_prefix: ext\n",
     )
     .expect("write external config");
@@ -52,22 +54,22 @@ fn configure_external_route(main_workspace: &BrWorkspace, external_workspace: &B
     );
 }
 
-fn create_issue_and_get_id(workspace: &BrWorkspace, title: &str, label: &str) -> String {
-    let create = run_br(workspace, ["create", title, "--json"], label);
+fn create_issue_and_get_id(workspace: &ObrWorkspace, title: &str, label: &str) -> String {
+    let create = run_obr(workspace, ["create", title, "--json"], label);
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue: Value =
         serde_json::from_str(&extract_json_payload(&create.stdout)).expect("create json");
     issue["id"].as_str().expect("issue id").to_string()
 }
 
-fn show_issue_json(workspace: &BrWorkspace, issue_id: &str, label: &str) -> Vec<Value> {
-    let show = run_br(workspace, ["show", issue_id, "--json"], label);
+fn show_issue_json(workspace: &ObrWorkspace, issue_id: &str, label: &str) -> Vec<Value> {
+    let show = run_obr(workspace, ["show", issue_id, "--json"], label);
     assert!(show.status.success(), "show failed: {}", show.stderr);
     serde_json::from_str(&extract_json_payload(&show.stdout)).expect("show json")
 }
 
-fn issue_from_jsonl(workspace: &BrWorkspace, issue_id: &str) -> Value {
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+fn issue_from_jsonl(workspace: &ObrWorkspace, issue_id: &str) -> Value {
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     let contents = fs::read_to_string(&jsonl_path).expect("read issues.jsonl");
     contents
         .lines()
@@ -76,23 +78,33 @@ fn issue_from_jsonl(workspace: &BrWorkspace, issue_id: &str) -> Value {
         .expect("issue should exist in issues.jsonl")
 }
 
-fn write_single_issue_jsonl(workspace: &BrWorkspace, issue: &Value) {
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+fn write_single_issue_jsonl(workspace: &ObrWorkspace, issue: &Value) {
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     let serialized = serde_json::to_string(issue).expect("serialize issue jsonl");
     fs::write(&jsonl_path, format!("{serialized}\n")).expect("write issues.jsonl");
 }
 
-fn last_touched_path(workspace: &BrWorkspace) -> PathBuf {
-    beads_rust::util::last_touched_path(&workspace.root.join(".beads"))
+/// Read the workspace's default export artifact (Org since the P3-09 flip).
+///
+/// Routing tests that only need to confirm a routed write reached the target
+/// workspace's flat file are not about JSONL, so they follow whatever format
+/// `obr init` seeded rather than pinning a legacy artifact.
+fn export_text(workspace: &ObrWorkspace) -> String {
+    let path = common::cli::export_path(workspace);
+    fs::read_to_string(&path).expect("read default export artifact")
 }
 
-fn switch_workspace_to_custom_database(workspace: &BrWorkspace, database_name: &str) {
-    let beads_dir = workspace.root.join(".beads");
-    let old_db = beads_dir.join("beads.db");
-    let new_db = beads_dir.join(database_name);
+fn last_touched_path(workspace: &ObrWorkspace) -> PathBuf {
+    obr::util::last_touched_path(&workspace.root.join(".obr"))
+}
+
+fn switch_workspace_to_custom_database(workspace: &ObrWorkspace, database_name: &str) {
+    let obr_dir = workspace.root.join(".obr");
+    let old_db = obr_dir.join("obr.db");
+    let new_db = obr_dir.join(database_name);
     fs::rename(&old_db, &new_db).expect("move db to custom metadata path");
     fs::write(
-        beads_dir.join("metadata.json"),
+        obr_dir.join("metadata.json"),
         format!(r#"{{"database":"{database_name}","jsonl_export":"issues.jsonl"}}"#),
     )
     .expect("write metadata");
@@ -158,14 +170,14 @@ fn init_test_git_repo(repo_root: &std::path::Path) -> String {
 #[test]
 fn e2e_routing_local_prefix_no_routes_file() {
     let _log = common::test_log("e2e_routing_local_prefix_no_routes_file");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize workspace
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create an issue
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         [
             "create",
@@ -181,7 +193,7 @@ fn e2e_routing_local_prefix_no_routes_file() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // Verify the issue was created locally (no routes.jsonl means local)
-    let list = run_br(&workspace, ["list", "--json"], "list");
+    let list = run_obr(&workspace, ["list", "--json"], "list");
     assert!(list.status.success(), "list failed: {}", list.stderr);
     assert!(
         list.stdout.contains("Test issue"),
@@ -192,17 +204,17 @@ fn e2e_routing_local_prefix_no_routes_file() {
 #[test]
 fn e2e_routing_routes_jsonl_local_route() {
     let _log = common::test_log("e2e_routing_routes_jsonl_local_route");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize workspace
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create routes file with local route (path = ".")
     create_routes_file(&workspace, &[("bd-", ".")]);
 
     // Create an issue - should use local storage
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         [
             "create",
@@ -218,7 +230,7 @@ fn e2e_routing_routes_jsonl_local_route() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // Verify the issue was created
-    let list = run_br(&workspace, ["list", "--json"], "list");
+    let list = run_obr(&workspace, ["list", "--json"], "list");
     assert!(list.status.success(), "list failed: {}", list.stderr);
     assert!(
         list.stdout.contains("Test issue with route"),
@@ -229,18 +241,18 @@ fn e2e_routing_routes_jsonl_local_route() {
 #[test]
 fn e2e_routing_routes_jsonl_malformed_line() {
     let _log = common::test_log("e2e_routing_routes_jsonl_malformed_line");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize workspace
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create malformed routes.jsonl
-    let routes_path = workspace.root.join(".beads").join("routes.jsonl");
+    let routes_path = workspace.root.join(".obr").join("routes.jsonl");
     fs::write(&routes_path, "not valid json\n").expect("write routes.jsonl");
 
     // Create an issue - should still work (local fallback) or give clear error
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         [
             "create",
@@ -271,15 +283,15 @@ fn e2e_routing_routes_jsonl_external_route() {
     let _log = common::test_log("e2e_routing_routes_jsonl_external_route");
 
     // Use separate workspaces for main and external projects
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
     // Initialize main workspace
-    let init = run_br(&main_workspace, ["init"], "init");
+    let init = run_obr(&main_workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Initialize external workspace
-    let init_external = run_br(&external_workspace, ["init"], "init_external");
+    let init_external = run_obr(&external_workspace, ["init"], "init_external");
     assert!(
         init_external.status.success(),
         "external init failed: {}",
@@ -287,11 +299,11 @@ fn e2e_routing_routes_jsonl_external_route() {
     );
 
     // Set a different prefix for external project
-    let external_config = external_workspace.root.join(".beads").join("config.yaml");
+    let external_config = external_workspace.root.join(".obr").join("config.yaml");
     fs::write(&external_config, "issue_prefix: ext\n").expect("write external config");
 
     // Create routes file in main workspace pointing to external workspace
-    let routes_path = main_workspace.root.join(".beads").join("routes.jsonl");
+    let routes_path = main_workspace.root.join(".obr").join("routes.jsonl");
     let route_entry = format!(
         r#"{{"prefix":"ext-","path":"{}"}}"#,
         external_workspace.root.display()
@@ -299,7 +311,7 @@ fn e2e_routing_routes_jsonl_external_route() {
     fs::write(&routes_path, route_entry).expect("write routes.jsonl");
 
     // Create an issue in external project
-    let create = run_br(
+    let create = run_obr(
         &external_workspace,
         [
             "create",
@@ -321,7 +333,7 @@ fn e2e_routing_routes_jsonl_external_route() {
         .to_string();
 
     // Verify the issue exists in external project
-    let list = run_br(&external_workspace, ["list", "--json"], "list_external");
+    let list = run_obr(&external_workspace, ["list", "--json"], "list_external");
     assert!(list.status.success(), "list failed: {}", list.stderr);
     assert!(
         list.stdout.contains("External issue"),
@@ -329,7 +341,7 @@ fn e2e_routing_routes_jsonl_external_route() {
     );
 
     // Show the external issue from the main workspace via routing
-    let show = run_br(
+    let show = run_obr(
         &main_workspace,
         ["show", &external_id, "--json"],
         "show_external_via_route",
@@ -346,8 +358,8 @@ fn e2e_routing_routes_jsonl_external_route() {
 fn e2e_routing_external_target_lock_blocks_routed_access() {
     let _log = common::test_log("e2e_routing_external_target_lock_blocks_routed_access");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
     init_workspace(&main_workspace, "init_routed_lock_main");
     init_workspace(&external_workspace, "init_routed_lock_external");
     configure_external_route(&main_workspace, &external_workspace);
@@ -357,7 +369,7 @@ fn e2e_routing_external_target_lock_blocks_routed_access() {
         "External issue behind held write lock",
         "create_external_locked_target",
     );
-    let lock_path = external_workspace.root.join(".beads").join(".write.lock");
+    let lock_path = external_workspace.root.join(".obr").join(".write.lock");
     let lock_file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -367,7 +379,7 @@ fn e2e_routing_external_target_lock_blocks_routed_access() {
         .expect("open external write lock");
     lock_file.lock().expect("hold external write lock");
 
-    let routed_show = run_br(
+    let routed_show = run_obr(
         &main_workspace,
         ["show", &external_id, "--json"],
         "show_routed_external_while_target_locked",
@@ -386,7 +398,7 @@ fn e2e_routing_external_target_lock_blocks_routed_access() {
     );
 
     drop(lock_file);
-    let unlocked_show = run_br(
+    let unlocked_show = run_obr(
         &main_workspace,
         ["show", &external_id, "--json"],
         "show_routed_external_after_target_unlock",
@@ -402,8 +414,8 @@ fn e2e_routing_external_target_lock_blocks_routed_access() {
 fn e2e_routing_show_format_json_routes_external_issue() {
     let _log = common::test_log("e2e_routing_show_format_json_routes_external_issue");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
     init_workspace(&main_workspace, "init_main_format_json");
     init_workspace(&external_workspace, "init_external_format_json");
@@ -415,7 +427,7 @@ fn e2e_routing_show_format_json_routes_external_issue() {
         "create_external_format_json",
     );
 
-    let show = run_br(
+    let show = run_obr(
         &main_workspace,
         ["show", &external_id, "--format", "json"],
         "show_external_format_json",
@@ -436,8 +448,8 @@ fn e2e_routing_show_format_json_routes_external_issue() {
 fn e2e_routing_show_format_toon_routes_external_issue() {
     let _log = common::test_log("e2e_routing_show_format_toon_routes_external_issue");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
     init_workspace(&main_workspace, "init_main_format_toon");
     init_workspace(&external_workspace, "init_external_format_toon");
@@ -449,7 +461,7 @@ fn e2e_routing_show_format_toon_routes_external_issue() {
         "create_external_format_toon",
     );
 
-    let show = run_br(
+    let show = run_obr(
         &main_workspace,
         ["show", &external_id, "--format", "toon"],
         "show_external_format_toon",
@@ -470,17 +482,17 @@ fn e2e_routing_show_format_toon_routes_external_issue() {
 fn e2e_routing_show_json_preserves_requested_order_across_routes() {
     let _log = common::test_log("e2e_routing_show_json_preserves_requested_order_across_routes");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
-    let init_main = run_br(&main_workspace, ["init"], "init_main");
+    let init_main = run_obr(&main_workspace, ["init"], "init_main");
     assert!(
         init_main.status.success(),
         "init failed: {}",
         init_main.stderr
     );
 
-    let init_external = run_br(&external_workspace, ["init"], "init_external");
+    let init_external = run_obr(&external_workspace, ["init"], "init_external");
     assert!(
         init_external.status.success(),
         "external init failed: {}",
@@ -488,7 +500,7 @@ fn e2e_routing_show_json_preserves_requested_order_across_routes() {
     );
 
     fs::write(
-        external_workspace.root.join(".beads").join("config.yaml"),
+        external_workspace.root.join(".obr").join("config.yaml"),
         "issue_prefix: ext\n",
     )
     .expect("write external config");
@@ -498,7 +510,7 @@ fn e2e_routing_show_json_preserves_requested_order_across_routes() {
         &[("ext-", external_workspace.root.to_string_lossy().as_ref())],
     );
 
-    let create_local_first = run_br(
+    let create_local_first = run_obr(
         &main_workspace,
         ["create", "Local first", "--json"],
         "create_local_first",
@@ -515,7 +527,7 @@ fn e2e_routing_show_json_preserves_requested_order_across_routes() {
         .expect("local first id")
         .to_string();
 
-    let create_external_middle = run_br(
+    let create_external_middle = run_obr(
         &external_workspace,
         ["create", "External middle", "--json"],
         "create_external_middle",
@@ -533,7 +545,7 @@ fn e2e_routing_show_json_preserves_requested_order_across_routes() {
         .expect("external middle id")
         .to_string();
 
-    let create_local_last = run_br(
+    let create_local_last = run_obr(
         &main_workspace,
         ["create", "Local last", "--json"],
         "create_local_last",
@@ -550,7 +562,7 @@ fn e2e_routing_show_json_preserves_requested_order_across_routes() {
         .expect("local last id")
         .to_string();
 
-    let show = run_br(
+    let show = run_obr(
         &main_workspace,
         [
             "show",
@@ -575,17 +587,17 @@ fn e2e_routing_show_json_preserves_requested_order_across_routes() {
 fn e2e_routing_show_text_preserves_requested_order_across_routes() {
     let _log = common::test_log("e2e_routing_show_text_preserves_requested_order_across_routes");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
-    let init_main = run_br(&main_workspace, ["init"], "init_main_text");
+    let init_main = run_obr(&main_workspace, ["init"], "init_main_text");
     assert!(
         init_main.status.success(),
         "init failed: {}",
         init_main.stderr
     );
 
-    let init_external = run_br(&external_workspace, ["init"], "init_external_text");
+    let init_external = run_obr(&external_workspace, ["init"], "init_external_text");
     assert!(
         init_external.status.success(),
         "external init failed: {}",
@@ -593,7 +605,7 @@ fn e2e_routing_show_text_preserves_requested_order_across_routes() {
     );
 
     fs::write(
-        external_workspace.root.join(".beads").join("config.yaml"),
+        external_workspace.root.join(".obr").join("config.yaml"),
         "issue_prefix: ext\n",
     )
     .expect("write external config");
@@ -603,7 +615,7 @@ fn e2e_routing_show_text_preserves_requested_order_across_routes() {
         &[("ext-", external_workspace.root.to_string_lossy().as_ref())],
     );
 
-    let create_local_first = run_br(
+    let create_local_first = run_obr(
         &main_workspace,
         ["create", "Local first text", "--json"],
         "create_local_first_text",
@@ -621,7 +633,7 @@ fn e2e_routing_show_text_preserves_requested_order_across_routes() {
         .expect("local first text id")
         .to_string();
 
-    let create_external_middle = run_br(
+    let create_external_middle = run_obr(
         &external_workspace,
         ["create", "External middle text", "--json"],
         "create_external_middle_text",
@@ -639,7 +651,7 @@ fn e2e_routing_show_text_preserves_requested_order_across_routes() {
         .expect("external middle text id")
         .to_string();
 
-    let create_local_last = run_br(
+    let create_local_last = run_obr(
         &main_workspace,
         ["create", "Local last text", "--json"],
         "create_local_last_text",
@@ -657,7 +669,7 @@ fn e2e_routing_show_text_preserves_requested_order_across_routes() {
         .expect("local last text id")
         .to_string();
 
-    let show = run_br(
+    let show = run_obr(
         &main_workspace,
         ["show", &local_first_id, &external_middle_id, &local_last_id],
         "show_mixed_route_order_text",
@@ -685,13 +697,13 @@ fn e2e_routing_show_text_preserves_requested_order_across_routes() {
 fn e2e_routing_update_external_issue_via_main_workspace() {
     let _log = common::test_log("e2e_routing_update_external_issue_via_main_workspace");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
-    let init = run_br(&main_workspace, ["init"], "init_main");
+    let init = run_obr(&main_workspace, ["init"], "init_main");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let init_external = run_br(&external_workspace, ["init"], "init_external");
+    let init_external = run_obr(&external_workspace, ["init"], "init_external");
     assert!(
         init_external.status.success(),
         "external init failed: {}",
@@ -699,7 +711,7 @@ fn e2e_routing_update_external_issue_via_main_workspace() {
     );
 
     fs::write(
-        external_workspace.root.join(".beads").join("config.yaml"),
+        external_workspace.root.join(".obr").join("config.yaml"),
         "issue_prefix: ext\n",
     )
     .expect("write external config");
@@ -709,7 +721,7 @@ fn e2e_routing_update_external_issue_via_main_workspace() {
         &[("ext-", external_workspace.root.to_string_lossy().as_ref())],
     );
 
-    let create = run_br(
+    let create = run_obr(
         &external_workspace,
         ["create", "External update target", "--json"],
         "create_external_update_target",
@@ -722,7 +734,7 @@ fn e2e_routing_update_external_issue_via_main_workspace() {
         .expect("external id")
         .to_string();
 
-    let update = run_br(
+    let update = run_obr(
         &main_workspace,
         ["update", &external_id, "--status", "in_progress", "--json"],
         "update_external_via_route",
@@ -735,7 +747,7 @@ fn e2e_routing_update_external_issue_via_main_workspace() {
     assert_eq!(updated_array[0]["id"].as_str(), Some(external_id.as_str()));
     assert_eq!(updated_array[0]["status"].as_str(), Some("in_progress"));
 
-    let show_external = run_br(
+    let show_external = run_obr(
         &external_workspace,
         ["show", &external_id, "--json"],
         "show_external_after_routed_update",
@@ -760,8 +772,8 @@ fn e2e_routing_update_description_stdin_is_consumed_once_before_route_fanout() {
         "e2e_routing_update_description_stdin_is_consumed_once_before_route_fanout",
     );
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
     init_workspace(&main_workspace, "init_description_stdin_main");
     init_workspace(&external_workspace, "init_description_stdin_external");
     configure_external_route(&main_workspace, &external_workspace);
@@ -779,7 +791,7 @@ fn e2e_routing_update_description_stdin_is_consumed_once_before_route_fanout() {
     let exact_description =
         "  shared leading spaces\n\n# Shared markdown\n\nroute one\nroute two\n\n";
 
-    let update = run_br_with_stdin(
+    let update = run_obr_with_stdin(
         &main_workspace,
         [
             "update",
@@ -835,13 +847,13 @@ fn e2e_routing_update_sets_invoking_workspace_last_touched_for_follow_up_close()
         "e2e_routing_update_sets_invoking_workspace_last_touched_for_follow_up_close",
     );
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
-    let init = run_br(&main_workspace, ["init"], "init_main");
+    let init = run_obr(&main_workspace, ["init"], "init_main");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let init_external = run_br(&external_workspace, ["init"], "init_external");
+    let init_external = run_obr(&external_workspace, ["init"], "init_external");
     assert!(
         init_external.status.success(),
         "external init failed: {}",
@@ -849,7 +861,7 @@ fn e2e_routing_update_sets_invoking_workspace_last_touched_for_follow_up_close()
     );
 
     fs::write(
-        external_workspace.root.join(".beads").join("config.yaml"),
+        external_workspace.root.join(".obr").join("config.yaml"),
         "issue_prefix: ext\n",
     )
     .expect("write external config");
@@ -858,7 +870,7 @@ fn e2e_routing_update_sets_invoking_workspace_last_touched_for_follow_up_close()
         &[("ext-", external_workspace.root.to_string_lossy().as_ref())],
     );
 
-    let create = run_br(
+    let create = run_obr(
         &external_workspace,
         ["create", "External follow-up close target", "--json"],
         "create_external_follow_up_close_target",
@@ -869,14 +881,14 @@ fn e2e_routing_update_sets_invoking_workspace_last_touched_for_follow_up_close()
     let external_id = created["id"].as_str().expect("external id").to_string();
 
     let routed_input = routed_partial_id(&external_id);
-    let update = run_br(
+    let update = run_obr(
         &main_workspace,
         ["update", &routed_input, "--status", "in_progress", "--json"],
         "update_external_before_follow_up_close",
     );
     assert!(update.status.success(), "update failed: {}", update.stderr);
 
-    let close = run_br(
+    let close = run_obr(
         &main_workspace,
         ["close", "--json"],
         "close_follow_up_using_routed_last_touched",
@@ -888,7 +900,7 @@ fn e2e_routing_update_sets_invoking_workspace_last_touched_for_follow_up_close()
     assert_eq!(closed_array.len(), 1);
     assert_eq!(closed_array[0]["id"].as_str(), Some(external_id.as_str()));
 
-    let show_external = run_br(
+    let show_external = run_obr(
         &external_workspace,
         ["show", &external_id, "--json"],
         "show_external_after_follow_up_close",
@@ -910,13 +922,13 @@ fn e2e_routing_update_sets_invoking_workspace_last_touched_for_follow_up_close()
 fn e2e_routing_close_external_issue_via_main_workspace() {
     let _log = common::test_log("e2e_routing_close_external_issue_via_main_workspace");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
-    let init = run_br(&main_workspace, ["init"], "init_main");
+    let init = run_obr(&main_workspace, ["init"], "init_main");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let init_external = run_br(&external_workspace, ["init"], "init_external");
+    let init_external = run_obr(&external_workspace, ["init"], "init_external");
     assert!(
         init_external.status.success(),
         "external init failed: {}",
@@ -924,7 +936,7 @@ fn e2e_routing_close_external_issue_via_main_workspace() {
     );
 
     fs::write(
-        external_workspace.root.join(".beads").join("config.yaml"),
+        external_workspace.root.join(".obr").join("config.yaml"),
         "issue_prefix: ext\n",
     )
     .expect("write external config");
@@ -933,7 +945,7 @@ fn e2e_routing_close_external_issue_via_main_workspace() {
         &[("ext-", external_workspace.root.to_string_lossy().as_ref())],
     );
 
-    let create = run_br(
+    let create = run_obr(
         &external_workspace,
         ["create", "External close target", "--json"],
         "create_external_close_target",
@@ -944,7 +956,7 @@ fn e2e_routing_close_external_issue_via_main_workspace() {
     let external_id = created["id"].as_str().expect("external id").to_string();
     let routed_input = routed_partial_id(&external_id);
 
-    let close = run_br(
+    let close = run_obr(
         &main_workspace,
         ["close", &routed_input, "--json"],
         "close_external_via_route",
@@ -957,7 +969,7 @@ fn e2e_routing_close_external_issue_via_main_workspace() {
     assert_eq!(closed_array[0]["id"].as_str(), Some(external_id.as_str()));
     assert_eq!(closed_array[0]["status"].as_str(), Some("closed"));
 
-    let show_external = run_br(
+    let show_external = run_obr(
         &external_workspace,
         ["show", &external_id, "--json"],
         "show_external_after_routed_close",
@@ -978,13 +990,13 @@ fn e2e_routing_close_sets_invoking_workspace_last_touched_for_follow_up_reopen()
         "e2e_routing_close_sets_invoking_workspace_last_touched_for_follow_up_reopen",
     );
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
-    let init = run_br(&main_workspace, ["init"], "init_main");
+    let init = run_obr(&main_workspace, ["init"], "init_main");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let init_external = run_br(&external_workspace, ["init"], "init_external");
+    let init_external = run_obr(&external_workspace, ["init"], "init_external");
     assert!(
         init_external.status.success(),
         "external init failed: {}",
@@ -992,7 +1004,7 @@ fn e2e_routing_close_sets_invoking_workspace_last_touched_for_follow_up_reopen()
     );
 
     fs::write(
-        external_workspace.root.join(".beads").join("config.yaml"),
+        external_workspace.root.join(".obr").join("config.yaml"),
         "issue_prefix: ext\n",
     )
     .expect("write external config");
@@ -1001,7 +1013,7 @@ fn e2e_routing_close_sets_invoking_workspace_last_touched_for_follow_up_reopen()
         &[("ext-", external_workspace.root.to_string_lossy().as_ref())],
     );
 
-    let create = run_br(
+    let create = run_obr(
         &external_workspace,
         ["create", "External follow-up reopen target", "--json"],
         "create_external_follow_up_reopen_target",
@@ -1012,14 +1024,14 @@ fn e2e_routing_close_sets_invoking_workspace_last_touched_for_follow_up_reopen()
     let external_id = created["id"].as_str().expect("external id").to_string();
 
     let routed_input = routed_partial_id(&external_id);
-    let close = run_br(
+    let close = run_obr(
         &main_workspace,
         ["close", &routed_input, "--json"],
         "close_external_before_follow_up_reopen",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
 
-    let reopen = run_br(
+    let reopen = run_obr(
         &main_workspace,
         ["reopen", "--json"],
         "reopen_follow_up_using_routed_last_touched",
@@ -1031,7 +1043,7 @@ fn e2e_routing_close_sets_invoking_workspace_last_touched_for_follow_up_reopen()
     assert_eq!(reopened_array.len(), 1);
     assert_eq!(reopened_array[0]["id"].as_str(), Some(external_id.as_str()));
 
-    let show_external = run_br(
+    let show_external = run_obr(
         &external_workspace,
         ["show", &external_id, "--json"],
         "show_external_after_follow_up_reopen",
@@ -1053,13 +1065,13 @@ fn e2e_routing_close_sets_invoking_workspace_last_touched_for_follow_up_reopen()
 fn e2e_routing_reopen_external_issue_via_main_workspace() {
     let _log = common::test_log("e2e_routing_reopen_external_issue_via_main_workspace");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
-    let init = run_br(&main_workspace, ["init"], "init_main");
+    let init = run_obr(&main_workspace, ["init"], "init_main");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let init_external = run_br(&external_workspace, ["init"], "init_external");
+    let init_external = run_obr(&external_workspace, ["init"], "init_external");
     assert!(
         init_external.status.success(),
         "external init failed: {}",
@@ -1067,7 +1079,7 @@ fn e2e_routing_reopen_external_issue_via_main_workspace() {
     );
 
     fs::write(
-        external_workspace.root.join(".beads").join("config.yaml"),
+        external_workspace.root.join(".obr").join("config.yaml"),
         "issue_prefix: ext\n",
     )
     .expect("write external config");
@@ -1076,7 +1088,7 @@ fn e2e_routing_reopen_external_issue_via_main_workspace() {
         &[("ext-", external_workspace.root.to_string_lossy().as_ref())],
     );
 
-    let create = run_br(
+    let create = run_obr(
         &external_workspace,
         ["create", "External reopen target", "--json"],
         "create_external_reopen_target",
@@ -1087,14 +1099,14 @@ fn e2e_routing_reopen_external_issue_via_main_workspace() {
     let external_id = created["id"].as_str().expect("external id").to_string();
     let routed_input = routed_partial_id(&external_id);
 
-    let close = run_br(
+    let close = run_obr(
         &external_workspace,
         ["close", &external_id],
         "close_external_before_routed_reopen",
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
 
-    let reopen = run_br(
+    let reopen = run_obr(
         &main_workspace,
         ["reopen", &routed_input, "--json"],
         "reopen_external_via_route",
@@ -1107,7 +1119,7 @@ fn e2e_routing_reopen_external_issue_via_main_workspace() {
     assert_eq!(reopened_array[0]["id"].as_str(), Some(external_id.as_str()));
     assert_eq!(reopened_array[0]["status"].as_str(), Some("open"));
 
-    let show_external = run_br(
+    let show_external = run_obr(
         &external_workspace,
         ["show", &external_id, "--json"],
         "show_external_after_routed_reopen",
@@ -1126,13 +1138,13 @@ fn e2e_routing_reopen_external_issue_via_main_workspace() {
 fn e2e_routing_defer_and_undefer_external_issue_via_main_workspace() {
     let _log = common::test_log("e2e_routing_defer_and_undefer_external_issue_via_main_workspace");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
-    let init = run_br(&main_workspace, ["init"], "init_main");
+    let init = run_obr(&main_workspace, ["init"], "init_main");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let init_external = run_br(&external_workspace, ["init"], "init_external");
+    let init_external = run_obr(&external_workspace, ["init"], "init_external");
     assert!(
         init_external.status.success(),
         "external init failed: {}",
@@ -1140,7 +1152,7 @@ fn e2e_routing_defer_and_undefer_external_issue_via_main_workspace() {
     );
 
     fs::write(
-        external_workspace.root.join(".beads").join("config.yaml"),
+        external_workspace.root.join(".obr").join("config.yaml"),
         "issue_prefix: ext\n",
     )
     .expect("write external config");
@@ -1149,7 +1161,7 @@ fn e2e_routing_defer_and_undefer_external_issue_via_main_workspace() {
         &[("ext-", external_workspace.root.to_string_lossy().as_ref())],
     );
 
-    let create = run_br(
+    let create = run_obr(
         &external_workspace,
         ["create", "External defer target", "--json"],
         "create_external_defer_target",
@@ -1160,7 +1172,7 @@ fn e2e_routing_defer_and_undefer_external_issue_via_main_workspace() {
     let external_id = created["id"].as_str().expect("external id").to_string();
     let routed_input = routed_partial_id(&external_id);
 
-    let defer = run_br(
+    let defer = run_obr(
         &main_workspace,
         ["defer", &routed_input, "--json"],
         "defer_external_via_route",
@@ -1173,7 +1185,7 @@ fn e2e_routing_defer_and_undefer_external_issue_via_main_workspace() {
     assert_eq!(deferred_array[0]["id"].as_str(), Some(external_id.as_str()));
     assert_eq!(deferred_array[0]["status"].as_str(), Some("deferred"));
 
-    let show_deferred = run_br(
+    let show_deferred = run_obr(
         &external_workspace,
         ["show", &external_id, "--json"],
         "show_external_after_routed_defer",
@@ -1190,7 +1202,7 @@ fn e2e_routing_defer_and_undefer_external_issue_via_main_workspace() {
     let deferred_jsonl_issue = issue_from_jsonl(&external_workspace, &external_id);
     assert_eq!(deferred_jsonl_issue["status"].as_str(), Some("deferred"));
 
-    let undefer = run_br(
+    let undefer = run_obr(
         &main_workspace,
         ["undefer", &routed_input, "--json"],
         "undefer_external_via_route",
@@ -1212,7 +1224,7 @@ fn e2e_routing_defer_and_undefer_external_issue_via_main_workspace() {
     );
     assert_eq!(undeferred_array[0]["status"].as_str(), Some("open"));
 
-    let show_undeferred = run_br(
+    let show_undeferred = run_obr(
         &external_workspace,
         ["show", &external_id, "--json"],
         "show_external_after_routed_undefer",
@@ -1234,11 +1246,13 @@ fn e2e_routing_defer_and_undefer_external_issue_via_main_workspace() {
 fn e2e_routing_defer_and_undefer_import_stale_external_jsonl() {
     let _log = common::test_log("e2e_routing_defer_and_undefer_import_stale_external_jsonl");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
     init_workspace(&main_workspace, "init_main");
     init_workspace(&external_workspace, "init_external");
+    // Hand-authored JSONL drives the stale-import precedence under test.
+    common::cli::pin_jsonl(&external_workspace.root.join(".obr"));
     configure_external_route(&main_workspace, &external_workspace);
 
     let external_id = create_issue_and_get_id(
@@ -1253,7 +1267,7 @@ fn e2e_routing_defer_and_undefer_import_stale_external_jsonl() {
     jsonl_issue["updated_at"] = Value::String("2099-01-01T00:00:00Z".to_string());
     write_single_issue_jsonl(&external_workspace, &jsonl_issue);
 
-    let defer = run_br(
+    let defer = run_obr(
         &main_workspace,
         ["defer", &routed_input, "--json"],
         "defer_external_stale_jsonl_via_route",
@@ -1283,7 +1297,7 @@ fn e2e_routing_defer_and_undefer_import_stale_external_jsonl() {
     stale_deferred_jsonl_issue["updated_at"] = Value::String("2099-01-02T00:00:00Z".to_string());
     write_single_issue_jsonl(&external_workspace, &stale_deferred_jsonl_issue);
 
-    let undefer = run_br(
+    let undefer = run_obr(
         &main_workspace,
         ["undefer", &routed_input, "--json"],
         "undefer_external_stale_jsonl_via_route",
@@ -1321,13 +1335,13 @@ fn e2e_routing_defer_and_undefer_import_stale_external_jsonl() {
 fn e2e_routing_label_add_and_list_external_issue_via_main_workspace() {
     let _log = common::test_log("e2e_routing_label_add_and_list_external_issue_via_main_workspace");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
-    let init = run_br(&main_workspace, ["init"], "init_main");
+    let init = run_obr(&main_workspace, ["init"], "init_main");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let init_external = run_br(&external_workspace, ["init"], "init_external");
+    let init_external = run_obr(&external_workspace, ["init"], "init_external");
     assert!(
         init_external.status.success(),
         "external init failed: {}",
@@ -1335,7 +1349,7 @@ fn e2e_routing_label_add_and_list_external_issue_via_main_workspace() {
     );
 
     fs::write(
-        external_workspace.root.join(".beads").join("config.yaml"),
+        external_workspace.root.join(".obr").join("config.yaml"),
         "issue_prefix: ext\n",
     )
     .expect("write external config");
@@ -1344,7 +1358,7 @@ fn e2e_routing_label_add_and_list_external_issue_via_main_workspace() {
         &[("ext-", external_workspace.root.to_string_lossy().as_ref())],
     );
 
-    let create = run_br(
+    let create = run_obr(
         &external_workspace,
         ["create", "External label target", "--json"],
         "create_external_label_target",
@@ -1355,7 +1369,7 @@ fn e2e_routing_label_add_and_list_external_issue_via_main_workspace() {
     let external_id = created["id"].as_str().expect("external id").to_string();
     let routed_input = routed_partial_id(&external_id);
 
-    let label_add = run_br(
+    let label_add = run_obr(
         &main_workspace,
         ["label", "add", &routed_input, "triage", "--json"],
         "label_add_external_via_route",
@@ -1375,7 +1389,7 @@ fn e2e_routing_label_add_and_list_external_issue_via_main_workspace() {
     );
     assert_eq!(added_array[0]["label"].as_str(), Some("triage"));
 
-    let label_list = run_br(
+    let label_list = run_obr(
         &main_workspace,
         ["label", "list", &routed_input, "--json"],
         "label_list_external_via_route",
@@ -1389,7 +1403,7 @@ fn e2e_routing_label_add_and_list_external_issue_via_main_workspace() {
     let labels: Vec<String> = serde_json::from_str(&labels_payload).expect("label list json");
     assert_eq!(labels, vec!["triage".to_string()]);
 
-    let show_external = run_br(
+    let show_external = run_obr(
         &external_workspace,
         ["show", &external_id, "--json"],
         "show_external_after_routed_label",
@@ -1403,13 +1417,10 @@ fn e2e_routing_label_add_and_list_external_issue_via_main_workspace() {
         serde_json::from_str(&extract_json_payload(&show_external.stdout)).expect("show json");
     assert_eq!(shown[0]["labels"][0].as_str(), Some("triage"));
 
-    let jsonl_issue = issue_from_jsonl(&external_workspace, &external_id);
-    let jsonl_labels = jsonl_issue["labels"].as_array().expect("labels array");
+    let exported = export_text(&external_workspace);
     assert!(
-        jsonl_labels
-            .iter()
-            .any(|label| label.as_str() == Some("triage")),
-        "expected triage label in issues.jsonl"
+        exported.contains(r#":LABELS:   ["triage"]"#),
+        "expected triage label in the external workspace export: {exported}"
     );
 }
 
@@ -1419,13 +1430,13 @@ fn e2e_routing_label_add_sets_invoking_workspace_last_touched_for_follow_up_upda
         "e2e_routing_label_add_sets_invoking_workspace_last_touched_for_follow_up_update",
     );
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
-    let init = run_br(&main_workspace, ["init"], "init_main");
+    let init = run_obr(&main_workspace, ["init"], "init_main");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let init_external = run_br(&external_workspace, ["init"], "init_external");
+    let init_external = run_obr(&external_workspace, ["init"], "init_external");
     assert!(
         init_external.status.success(),
         "external init failed: {}",
@@ -1433,7 +1444,7 @@ fn e2e_routing_label_add_sets_invoking_workspace_last_touched_for_follow_up_upda
     );
 
     fs::write(
-        external_workspace.root.join(".beads").join("config.yaml"),
+        external_workspace.root.join(".obr").join("config.yaml"),
         "issue_prefix: ext\n",
     )
     .expect("write external config");
@@ -1442,7 +1453,7 @@ fn e2e_routing_label_add_sets_invoking_workspace_last_touched_for_follow_up_upda
         &[("ext-", external_workspace.root.to_string_lossy().as_ref())],
     );
 
-    let create = run_br(
+    let create = run_obr(
         &external_workspace,
         ["create", "External label context target", "--json"],
         "create_external_label_context_target",
@@ -1453,7 +1464,7 @@ fn e2e_routing_label_add_sets_invoking_workspace_last_touched_for_follow_up_upda
     let external_id = created["id"].as_str().expect("external id").to_string();
 
     let routed_input = routed_partial_id(&external_id);
-    let label_add = run_br(
+    let label_add = run_obr(
         &main_workspace,
         ["label", "add", &routed_input, "triage", "--json"],
         "label_add_before_follow_up_update",
@@ -1464,7 +1475,7 @@ fn e2e_routing_label_add_sets_invoking_workspace_last_touched_for_follow_up_upda
         label_add.stderr
     );
 
-    let update = run_br(
+    let update = run_obr(
         &main_workspace,
         ["update", "--status", "in_progress", "--json"],
         "update_follow_up_using_label_last_touched",
@@ -1476,7 +1487,7 @@ fn e2e_routing_label_add_sets_invoking_workspace_last_touched_for_follow_up_upda
     assert_eq!(updated_array.len(), 1);
     assert_eq!(updated_array[0]["id"].as_str(), Some(external_id.as_str()));
 
-    let show_external = run_br(
+    let show_external = run_obr(
         &external_workspace,
         ["show", &external_id, "--json"],
         "show_external_after_label_context_update",
@@ -1496,13 +1507,13 @@ fn e2e_routing_comments_add_and_list_external_issue_via_main_workspace() {
     let _log =
         common::test_log("e2e_routing_comments_add_and_list_external_issue_via_main_workspace");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
-    let init = run_br(&main_workspace, ["init"], "init_main");
+    let init = run_obr(&main_workspace, ["init"], "init_main");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let init_external = run_br(&external_workspace, ["init"], "init_external");
+    let init_external = run_obr(&external_workspace, ["init"], "init_external");
     assert!(
         init_external.status.success(),
         "external init failed: {}",
@@ -1510,7 +1521,7 @@ fn e2e_routing_comments_add_and_list_external_issue_via_main_workspace() {
     );
 
     fs::write(
-        external_workspace.root.join(".beads").join("config.yaml"),
+        external_workspace.root.join(".obr").join("config.yaml"),
         "issue_prefix: ext\n",
     )
     .expect("write external config");
@@ -1519,7 +1530,7 @@ fn e2e_routing_comments_add_and_list_external_issue_via_main_workspace() {
         &[("ext-", external_workspace.root.to_string_lossy().as_ref())],
     );
 
-    let create = run_br(
+    let create = run_obr(
         &external_workspace,
         ["create", "External comments target", "--json"],
         "create_external_comments_target",
@@ -1530,7 +1541,7 @@ fn e2e_routing_comments_add_and_list_external_issue_via_main_workspace() {
     let external_id = created["id"].as_str().expect("external id").to_string();
     let routed_input = routed_partial_id(&external_id);
 
-    let comment_add = run_br(
+    let comment_add = run_obr(
         &main_workspace,
         ["comments", "add", &routed_input, "Routed comment", "--json"],
         "comments_add_external_via_route",
@@ -1545,7 +1556,7 @@ fn e2e_routing_comments_add_and_list_external_issue_via_main_workspace() {
     assert_eq!(added["issue_id"].as_str(), Some(external_id.as_str()));
     assert_eq!(added["text"].as_str(), Some("Routed comment"));
 
-    let comment_list = run_br(
+    let comment_list = run_obr(
         &main_workspace,
         ["comments", "list", &routed_input, "--json"],
         "comments_list_external_via_route",
@@ -1561,7 +1572,7 @@ fn e2e_routing_comments_add_and_list_external_issue_via_main_workspace() {
     assert_eq!(comments[0]["issue_id"].as_str(), Some(external_id.as_str()));
     assert_eq!(comments[0]["text"].as_str(), Some("Routed comment"));
 
-    let show_external = run_br(
+    let show_external = run_obr(
         &external_workspace,
         ["show", &external_id, "--json"],
         "show_external_after_routed_comment",
@@ -1578,10 +1589,10 @@ fn e2e_routing_comments_add_and_list_external_issue_via_main_workspace() {
         Some("Routed comment")
     );
 
-    let jsonl_issue = issue_from_jsonl(&external_workspace, &external_id);
-    assert_eq!(
-        jsonl_issue["comments"][0]["text"].as_str(),
-        Some("Routed comment")
+    let exported = export_text(&external_workspace);
+    assert!(
+        exported.contains("** Comments") && exported.contains("Routed comment"),
+        "expected the routed comment in the external workspace export: {exported}"
     );
 }
 
@@ -1589,11 +1600,13 @@ fn e2e_routing_comments_add_and_list_external_issue_via_main_workspace() {
 fn e2e_routing_comments_list_imports_stale_external_jsonl() {
     let _log = common::test_log("e2e_routing_comments_list_imports_stale_external_jsonl");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
     init_workspace(&main_workspace, "init_main");
     init_workspace(&external_workspace, "init_external");
+    // Hand-authored JSONL drives the stale-import precedence under test.
+    common::cli::pin_jsonl(&external_workspace.root.join(".obr"));
     configure_external_route(&main_workspace, &external_workspace);
 
     let external_id = create_issue_and_get_id(
@@ -1616,7 +1629,7 @@ fn e2e_routing_comments_list_imports_stale_external_jsonl() {
     jsonl_issue["updated_at"] = Value::String("2099-01-01T00:00:00Z".to_string());
     write_single_issue_jsonl(&external_workspace, &jsonl_issue);
 
-    let comment_list = run_br(
+    let comment_list = run_obr(
         &main_workspace,
         ["comments", "list", &routed_input, "--json"],
         "comments_list_external_stale_jsonl_via_route",
@@ -1652,13 +1665,13 @@ fn e2e_routing_comments_add_sets_invoking_workspace_last_touched_for_follow_up_u
         "e2e_routing_comments_add_sets_invoking_workspace_last_touched_for_follow_up_update",
     );
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
-    let init = run_br(&main_workspace, ["init"], "init_main");
+    let init = run_obr(&main_workspace, ["init"], "init_main");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let init_external = run_br(&external_workspace, ["init"], "init_external");
+    let init_external = run_obr(&external_workspace, ["init"], "init_external");
     assert!(
         init_external.status.success(),
         "external init failed: {}",
@@ -1666,7 +1679,7 @@ fn e2e_routing_comments_add_sets_invoking_workspace_last_touched_for_follow_up_u
     );
 
     fs::write(
-        external_workspace.root.join(".beads").join("config.yaml"),
+        external_workspace.root.join(".obr").join("config.yaml"),
         "issue_prefix: ext\n",
     )
     .expect("write external config");
@@ -1675,7 +1688,7 @@ fn e2e_routing_comments_add_sets_invoking_workspace_last_touched_for_follow_up_u
         &[("ext-", external_workspace.root.to_string_lossy().as_ref())],
     );
 
-    let create = run_br(
+    let create = run_obr(
         &external_workspace,
         ["create", "External comment context target", "--json"],
         "create_external_comment_context_target",
@@ -1686,7 +1699,7 @@ fn e2e_routing_comments_add_sets_invoking_workspace_last_touched_for_follow_up_u
     let external_id = created["id"].as_str().expect("external id").to_string();
 
     let routed_input = routed_partial_id(&external_id);
-    let comment_add = run_br(
+    let comment_add = run_obr(
         &main_workspace,
         [
             "comments",
@@ -1703,7 +1716,7 @@ fn e2e_routing_comments_add_sets_invoking_workspace_last_touched_for_follow_up_u
         comment_add.stderr
     );
 
-    let update = run_br(
+    let update = run_obr(
         &main_workspace,
         ["update", "--status", "in_progress", "--json"],
         "update_follow_up_using_comment_last_touched",
@@ -1715,7 +1728,7 @@ fn e2e_routing_comments_add_sets_invoking_workspace_last_touched_for_follow_up_u
     assert_eq!(updated_array.len(), 1);
     assert_eq!(updated_array[0]["id"].as_str(), Some(external_id.as_str()));
 
-    let show_external = run_br(
+    let show_external = run_obr(
         &external_workspace,
         ["show", &external_id, "--json"],
         "show_external_after_comment_context_update",
@@ -1735,8 +1748,8 @@ fn e2e_routing_dep_add_remove_and_list_external_issue_via_main_workspace() {
     let _log =
         common::test_log("e2e_routing_dep_add_remove_and_list_external_issue_via_main_workspace");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
     init_workspace(&main_workspace, "init_main");
     init_workspace(&external_workspace, "init_external");
@@ -1755,7 +1768,7 @@ fn e2e_routing_dep_add_remove_and_list_external_issue_via_main_workspace() {
     let routed_parent = routed_partial_id(&parent_id);
     let routed_child = routed_partial_id(&child_id);
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &main_workspace,
         ["dep", "add", &routed_child, &routed_parent, "--json"],
         "dep_add_external_via_route",
@@ -1771,7 +1784,7 @@ fn e2e_routing_dep_add_remove_and_list_external_issue_via_main_workspace() {
     assert_eq!(added["depends_on_id"].as_str(), Some(parent_id.as_str()));
     assert_eq!(added["action"].as_str(), Some("added"));
 
-    let dep_list = run_br(
+    let dep_list = run_obr(
         &main_workspace,
         ["dep", "list", &routed_child, "--json"],
         "dep_list_external_via_route",
@@ -1790,13 +1803,14 @@ fn e2e_routing_dep_add_remove_and_list_external_issue_via_main_workspace() {
         "routed dependency not listed"
     );
 
-    let jsonl_issue = issue_from_jsonl(&external_workspace, &child_id);
-    assert_eq!(
-        jsonl_issue["dependencies"][0]["depends_on_id"].as_str(),
-        Some(parent_id.as_str())
+    let exported = export_text(&external_workspace);
+    assert!(
+        exported.contains("** Dependencies")
+            && exported.contains(&format!("\"depends_on_id\": \"{parent_id}\"")),
+        "expected the routed dependency in the external workspace export: {exported}"
     );
 
-    let dep_remove = run_br(
+    let dep_remove = run_obr(
         &main_workspace,
         ["dep", "remove", &routed_child, &routed_parent, "--json"],
         "dep_remove_external_via_route",
@@ -1812,7 +1826,7 @@ fn e2e_routing_dep_add_remove_and_list_external_issue_via_main_workspace() {
     assert_eq!(removed["depends_on_id"].as_str(), Some(parent_id.as_str()));
     assert_eq!(removed["action"].as_str(), Some("removed"));
 
-    let dep_list_after = run_br(
+    let dep_list_after = run_obr(
         &main_workspace,
         ["dep", "list", &routed_child, "--json"],
         "dep_list_external_after_remove",
@@ -1832,12 +1846,10 @@ fn e2e_routing_dep_add_remove_and_list_external_issue_via_main_workspace() {
         "removed routed dependency still listed"
     );
 
-    let jsonl_issue_after = issue_from_jsonl(&external_workspace, &child_id);
-    assert_eq!(
-        jsonl_issue_after["dependencies"]
-            .as_array()
-            .map_or(0, Vec::len),
-        0
+    let exported_after = export_text(&external_workspace);
+    assert!(
+        !exported_after.contains("** Dependencies"),
+        "removed routed dependency still present in the external workspace export: {exported_after}"
     );
 }
 
@@ -1847,8 +1859,8 @@ fn e2e_routing_dep_add_sets_invoking_workspace_last_touched_for_follow_up_update
         "e2e_routing_dep_add_sets_invoking_workspace_last_touched_for_follow_up_update",
     );
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
     init_workspace(&main_workspace, "init_main");
     init_workspace(&external_workspace, "init_external");
@@ -1867,7 +1879,7 @@ fn e2e_routing_dep_add_sets_invoking_workspace_last_touched_for_follow_up_update
     let routed_parent = routed_partial_id(&parent_id);
     let routed_child = routed_partial_id(&child_id);
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &main_workspace,
         ["dep", "add", &routed_child, &routed_parent, "--json"],
         "dep_add_before_follow_up_update",
@@ -1878,7 +1890,7 @@ fn e2e_routing_dep_add_sets_invoking_workspace_last_touched_for_follow_up_update
         dep_add.stderr
     );
 
-    let update = run_br(
+    let update = run_obr(
         &main_workspace,
         ["update", "--title", "Updated after routed dep", "--json"],
         "update_follow_up_using_dep_last_touched",
@@ -1902,8 +1914,8 @@ fn e2e_routing_dep_add_sets_invoking_workspace_last_touched_for_follow_up_update
 fn e2e_routing_dep_add_rejects_direct_cross_project_target() {
     let _log = common::test_log("e2e_routing_dep_add_rejects_direct_cross_project_target");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
     init_workspace(&main_workspace, "init_main");
     init_workspace(&external_workspace, "init_external");
@@ -1916,7 +1928,7 @@ fn e2e_routing_dep_add_rejects_direct_cross_project_target() {
         "create_external_direct_target",
     );
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &main_workspace,
         ["dep", "add", &local_id, &external_id, "--json"],
         "dep_add_direct_cross_project_target",
@@ -1936,8 +1948,8 @@ fn e2e_routing_dep_add_rejects_direct_cross_project_target() {
 fn e2e_routing_graph_external_issue_via_main_workspace() {
     let _log = common::test_log("e2e_routing_graph_external_issue_via_main_workspace");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
     init_workspace(&main_workspace, "init_main");
     init_workspace(&external_workspace, "init_external");
@@ -1954,7 +1966,7 @@ fn e2e_routing_graph_external_issue_via_main_workspace() {
         "create_external_graph_child",
     );
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &external_workspace,
         ["dep", "add", &child_id, &parent_id, "--json"],
         "external_dep_add_for_graph",
@@ -1966,7 +1978,7 @@ fn e2e_routing_graph_external_issue_via_main_workspace() {
     );
 
     let routed_parent = routed_partial_id(&parent_id);
-    let graph = run_br(
+    let graph = run_obr(
         &main_workspace,
         ["--lock-timeout", "5", "graph", &routed_parent, "--json"],
         "graph_external_via_route",
@@ -1991,8 +2003,8 @@ fn e2e_routing_graph_external_issue_via_main_workspace() {
 fn e2e_routing_delete_external_issue_via_main_workspace() {
     let _log = common::test_log("e2e_routing_delete_external_issue_via_main_workspace");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
     init_workspace(&main_workspace, "init_main");
     init_workspace(&external_workspace, "init_external");
@@ -2005,7 +2017,7 @@ fn e2e_routing_delete_external_issue_via_main_workspace() {
     );
     let routed_issue = routed_partial_id(&issue_id);
 
-    let delete = run_br(
+    let delete = run_obr(
         &main_workspace,
         ["delete", &routed_issue, "--force", "--json"],
         "delete_external_via_route",
@@ -2024,8 +2036,8 @@ fn e2e_routing_delete_external_issue_via_main_workspace() {
 fn e2e_routing_audit_log_external_issue_via_main_workspace() {
     let _log = common::test_log("e2e_routing_audit_log_external_issue_via_main_workspace");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
     init_workspace(&main_workspace, "init_main");
     init_workspace(&external_workspace, "init_external");
@@ -2036,7 +2048,7 @@ fn e2e_routing_audit_log_external_issue_via_main_workspace() {
         "External audit target",
         "create_external_audit_target",
     );
-    let update = run_br(
+    let update = run_obr(
         &external_workspace,
         ["update", &issue_id, "--priority", "0"],
         "update_external_audit_target",
@@ -2044,7 +2056,7 @@ fn e2e_routing_audit_log_external_issue_via_main_workspace() {
     assert!(update.status.success(), "update failed: {}", update.stderr);
 
     let routed_issue = routed_partial_id(&issue_id);
-    let log = run_br(
+    let log = run_obr(
         &main_workspace,
         ["audit", "log", &routed_issue, "--json"],
         "audit_log_external_via_route",
@@ -2066,8 +2078,8 @@ fn e2e_routing_audit_log_external_issue_via_main_workspace() {
 fn e2e_routing_delete_preview_does_not_mutate_earlier_local_batch() {
     let _log = common::test_log("e2e_routing_delete_preview_does_not_mutate_earlier_local_batch");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
     init_workspace(&main_workspace, "init_main");
     init_workspace(&external_workspace, "init_external");
@@ -2089,7 +2101,7 @@ fn e2e_routing_delete_preview_does_not_mutate_earlier_local_batch() {
         "create_external_delete_child",
     );
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &external_workspace,
         ["dep", "add", &child_id, &blocker_id, "--json"],
         "external_dep_add_for_delete_preview",
@@ -2101,7 +2113,7 @@ fn e2e_routing_delete_preview_does_not_mutate_earlier_local_batch() {
     );
 
     let routed_blocker = routed_partial_id(&blocker_id);
-    let delete = run_br(
+    let delete = run_obr(
         &main_workspace,
         ["delete", &local_id, &routed_blocker, "--json"],
         "delete_preview_cross_route_guard",
@@ -2140,8 +2152,8 @@ fn e2e_routing_delete_preview_does_not_mutate_earlier_local_batch() {
 fn e2e_routing_delete_force_dry_run_reports_orphans_not_cascade() {
     let _log = common::test_log("e2e_routing_delete_force_dry_run_reports_orphans_not_cascade");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
     init_workspace(&main_workspace, "init_main");
     init_workspace(&external_workspace, "init_external");
@@ -2163,7 +2175,7 @@ fn e2e_routing_delete_force_dry_run_reports_orphans_not_cascade() {
         "create_external_dry_run_force_grandchild",
     );
 
-    let child_dep = run_br(
+    let child_dep = run_obr(
         &external_workspace,
         ["dep", "add", &child_id, &blocker_id, "--json"],
         "external_child_dep_add_for_force_dry_run",
@@ -2173,7 +2185,7 @@ fn e2e_routing_delete_force_dry_run_reports_orphans_not_cascade() {
         "child dep add failed: {}",
         child_dep.stderr
     );
-    let grandchild_dep = run_br(
+    let grandchild_dep = run_obr(
         &external_workspace,
         ["dep", "add", &grandchild_id, &child_id, "--json"],
         "external_grandchild_dep_add_for_force_dry_run",
@@ -2185,7 +2197,7 @@ fn e2e_routing_delete_force_dry_run_reports_orphans_not_cascade() {
     );
 
     let routed_blocker = routed_partial_id(&blocker_id);
-    let delete = run_br(
+    let delete = run_obr(
         &main_workspace,
         ["delete", &routed_blocker, "--dry-run", "--force", "--json"],
         "delete_force_dry_run_external_via_route",
@@ -2229,14 +2241,14 @@ fn e2e_routing_delete_force_dry_run_reports_orphans_not_cascade() {
 fn e2e_routing_lint_external_issue_via_main_workspace() {
     let _log = common::test_log("e2e_routing_lint_external_issue_via_main_workspace");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
     init_workspace(&main_workspace, "init_main");
     init_workspace(&external_workspace, "init_external");
     configure_external_route(&main_workspace, &external_workspace);
 
-    let create = run_br(
+    let create = run_obr(
         &external_workspace,
         ["create", "External lint target", "--type", "bug", "--json"],
         "create_external_lint_target",
@@ -2247,7 +2259,7 @@ fn e2e_routing_lint_external_issue_via_main_workspace() {
     let issue_id = create_json["id"].as_str().expect("issue id").to_string();
 
     let routed_issue = routed_partial_id(&issue_id);
-    let lint = run_br(
+    let lint = run_obr(
         &main_workspace,
         ["lint", &routed_issue, "--json"],
         "lint_external_via_route",
@@ -2270,13 +2282,13 @@ fn e2e_routing_lint_external_issue_via_main_workspace() {
 fn e2e_routing_label_add_failure_does_not_mutate_earlier_batches() {
     let _log = common::test_log("e2e_routing_label_add_failure_does_not_mutate_earlier_batches");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
-    let init = run_br(&main_workspace, ["init"], "init_main");
+    let init = run_obr(&main_workspace, ["init"], "init_main");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let init_external = run_br(&external_workspace, ["init"], "init_external");
+    let init_external = run_obr(&external_workspace, ["init"], "init_external");
     assert!(
         init_external.status.success(),
         "external init failed: {}",
@@ -2284,7 +2296,7 @@ fn e2e_routing_label_add_failure_does_not_mutate_earlier_batches() {
     );
 
     fs::write(
-        external_workspace.root.join(".beads").join("config.yaml"),
+        external_workspace.root.join(".obr").join("config.yaml"),
         "issue_prefix: ext\n",
     )
     .expect("write external config");
@@ -2293,7 +2305,7 @@ fn e2e_routing_label_add_failure_does_not_mutate_earlier_batches() {
         &[("ext-", external_workspace.root.to_string_lossy().as_ref())],
     );
 
-    let create_target = run_br(
+    let create_target = run_obr(
         &main_workspace,
         ["create", "Local label target", "--json"],
         "create_local_label_target",
@@ -2307,7 +2319,7 @@ fn e2e_routing_label_add_failure_does_not_mutate_earlier_batches() {
         serde_json::from_str(&extract_json_payload(&create_target.stdout)).expect("target json");
     let target_id = target_issue["id"].as_str().expect("target id").to_string();
 
-    let create_other = run_br(
+    let create_other = run_obr(
         &main_workspace,
         ["create", "Last touched sentinel", "--json"],
         "create_last_touched_sentinel",
@@ -2320,7 +2332,7 @@ fn e2e_routing_label_add_failure_does_not_mutate_earlier_batches() {
     let last_touched_path = last_touched_path(&main_workspace);
     let last_touched_before = fs::read_to_string(&last_touched_path).ok();
 
-    let label_add = run_br(
+    let label_add = run_obr(
         &main_workspace,
         [
             "label",
@@ -2347,7 +2359,7 @@ fn e2e_routing_label_add_failure_does_not_mutate_earlier_batches() {
         label_add.stdout
     );
 
-    let label_list = run_br(
+    let label_list = run_obr(
         &main_workspace,
         ["label", "list", &target_id, "--json"],
         "label_list_after_failed_routed_add",
@@ -2369,13 +2381,13 @@ fn e2e_routing_label_add_failure_does_not_mutate_earlier_batches() {
 fn e2e_routing_show_external_issue_uses_metadata_database_path() {
     let _log = common::test_log("e2e_routing_show_external_issue_uses_metadata_database_path");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
-    let init = run_br(&main_workspace, ["init"], "init_main");
+    let init = run_obr(&main_workspace, ["init"], "init_main");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let init_external = run_br(&external_workspace, ["init"], "init_external");
+    let init_external = run_obr(&external_workspace, ["init"], "init_external");
     assert!(
         init_external.status.success(),
         "external init failed: {}",
@@ -2383,7 +2395,7 @@ fn e2e_routing_show_external_issue_uses_metadata_database_path() {
     );
 
     fs::write(
-        external_workspace.root.join(".beads").join("config.yaml"),
+        external_workspace.root.join(".obr").join("config.yaml"),
         "issue_prefix: ext\n",
     )
     .expect("write external config");
@@ -2394,7 +2406,7 @@ fn e2e_routing_show_external_issue_uses_metadata_database_path() {
         &[("ext-", external_workspace.root.to_string_lossy().as_ref())],
     );
 
-    let create = run_br(
+    let create = run_obr(
         &external_workspace,
         ["create", "External issue on custom db", "--json"],
         "create_external_custom_db",
@@ -2407,7 +2419,7 @@ fn e2e_routing_show_external_issue_uses_metadata_database_path() {
         .expect("external id")
         .to_string();
 
-    let show = run_br(
+    let show = run_obr(
         &main_workspace,
         ["show", &external_id, "--json"],
         "show_external_custom_db_via_route",
@@ -2427,13 +2439,13 @@ fn e2e_routing_show_external_issue_uses_metadata_database_path() {
 fn e2e_routing_update_external_issue_uses_metadata_database_path() {
     let _log = common::test_log("e2e_routing_update_external_issue_uses_metadata_database_path");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
-    let init = run_br(&main_workspace, ["init"], "init_main");
+    let init = run_obr(&main_workspace, ["init"], "init_main");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let init_external = run_br(&external_workspace, ["init"], "init_external");
+    let init_external = run_obr(&external_workspace, ["init"], "init_external");
     assert!(
         init_external.status.success(),
         "external init failed: {}",
@@ -2441,7 +2453,7 @@ fn e2e_routing_update_external_issue_uses_metadata_database_path() {
     );
 
     fs::write(
-        external_workspace.root.join(".beads").join("config.yaml"),
+        external_workspace.root.join(".obr").join("config.yaml"),
         "issue_prefix: ext\n",
     )
     .expect("write external config");
@@ -2452,7 +2464,7 @@ fn e2e_routing_update_external_issue_uses_metadata_database_path() {
         &[("ext-", external_workspace.root.to_string_lossy().as_ref())],
     );
 
-    let create = run_br(
+    let create = run_obr(
         &external_workspace,
         ["create", "External update on custom db", "--json"],
         "create_external_update_custom_db",
@@ -2465,7 +2477,7 @@ fn e2e_routing_update_external_issue_uses_metadata_database_path() {
         .expect("external id")
         .to_string();
 
-    let update = run_br(
+    let update = run_obr(
         &main_workspace,
         ["update", &external_id, "--status", "in_progress", "--json"],
         "update_external_custom_db_via_route",
@@ -2478,7 +2490,7 @@ fn e2e_routing_update_external_issue_uses_metadata_database_path() {
     assert_eq!(updated_array[0]["id"].as_str(), Some(external_id.as_str()));
     assert_eq!(updated_array[0]["status"].as_str(), Some("in_progress"));
 
-    let show_external = run_br(
+    let show_external = run_obr(
         &external_workspace,
         ["show", &external_id, "--json"],
         "show_external_custom_db_after_routed_update",
@@ -2499,13 +2511,13 @@ fn e2e_routing_update_external_issue_uses_metadata_database_path() {
 fn e2e_routing_update_mixed_batches_preserve_local_db_override() {
     let _log = common::test_log("e2e_routing_update_mixed_batches_preserve_local_db_override");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
-    let init = run_br(&main_workspace, ["init"], "init_main");
+    let init = run_obr(&main_workspace, ["init"], "init_main");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let init_external = run_br(&external_workspace, ["init"], "init_external");
+    let init_external = run_obr(&external_workspace, ["init"], "init_external");
     assert!(
         init_external.status.success(),
         "external init failed: {}",
@@ -2513,7 +2525,7 @@ fn e2e_routing_update_mixed_batches_preserve_local_db_override() {
     );
 
     fs::write(
-        external_workspace.root.join(".beads").join("config.yaml"),
+        external_workspace.root.join(".obr").join("config.yaml"),
         "issue_prefix: ext\n",
     )
     .expect("write external config");
@@ -2525,13 +2537,10 @@ fn e2e_routing_update_mixed_batches_preserve_local_db_override() {
 
     let local_db = main_workspace.root.join("cache").join("alt-local.db");
     fs::create_dir_all(local_db.parent().expect("alt db parent")).expect("create cache dir");
-    fs::copy(
-        main_workspace.root.join(".beads").join("beads.db"),
-        &local_db,
-    )
-    .expect("copy local db override");
+    fs::copy(main_workspace.root.join(".obr").join("obr.db"), &local_db)
+        .expect("copy local db override");
 
-    let create_local_first = run_br(
+    let create_local_first = run_obr(
         &main_workspace,
         [
             "--db",
@@ -2555,7 +2564,7 @@ fn e2e_routing_update_mixed_batches_preserve_local_db_override() {
         .expect("local first issue id")
         .to_string();
 
-    let create_external = run_br(
+    let create_external = run_obr(
         &external_workspace,
         ["create", "External issue on routed db", "--json"],
         "create_external_override_db",
@@ -2573,7 +2582,7 @@ fn e2e_routing_update_mixed_batches_preserve_local_db_override() {
         .expect("external issue id")
         .to_string();
 
-    let create_local_last = run_br(
+    let create_local_last = run_obr(
         &main_workspace,
         [
             "--db",
@@ -2597,7 +2606,7 @@ fn e2e_routing_update_mixed_batches_preserve_local_db_override() {
         .expect("local last issue id")
         .to_string();
 
-    let update = run_br(
+    let update = run_obr(
         &main_workspace,
         [
             "--db",
@@ -2620,7 +2629,7 @@ fn e2e_routing_update_mixed_batches_preserve_local_db_override() {
     assert_eq!(updated[1]["id"].as_str(), Some(external_id.as_str()));
     assert_eq!(updated[2]["id"].as_str(), Some(local_last_id.as_str()));
 
-    let show_local = run_br(
+    let show_local = run_obr(
         &main_workspace,
         [
             "--db",
@@ -2643,7 +2652,7 @@ fn e2e_routing_update_mixed_batches_preserve_local_db_override() {
         Some("in_progress")
     );
 
-    let show_local_last = run_br(
+    let show_local_last = run_obr(
         &main_workspace,
         [
             "--db",
@@ -2667,7 +2676,7 @@ fn e2e_routing_update_mixed_batches_preserve_local_db_override() {
         Some("in_progress")
     );
 
-    let show_external = run_br(
+    let show_external = run_obr(
         &external_workspace,
         ["show", &external_id, "--json"],
         "show_external_after_mixed_update",
@@ -2690,13 +2699,13 @@ fn e2e_routing_update_mixed_batches_preserve_local_db_override() {
 fn e2e_routing_update_failure_does_not_print_partial_success() {
     let _log = common::test_log("e2e_routing_update_failure_does_not_print_partial_success");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
-    let init = run_br(&main_workspace, ["init"], "init_partial_update_main");
+    let init = run_obr(&main_workspace, ["init"], "init_partial_update_main");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let init_external = run_br(
+    let init_external = run_obr(
         &external_workspace,
         ["init"],
         "init_partial_update_external",
@@ -2708,7 +2717,7 @@ fn e2e_routing_update_failure_does_not_print_partial_success() {
     );
 
     fs::write(
-        external_workspace.root.join(".beads").join("config.yaml"),
+        external_workspace.root.join(".obr").join("config.yaml"),
         "issue_prefix: ext\n",
     )
     .expect("write external config");
@@ -2718,7 +2727,7 @@ fn e2e_routing_update_failure_does_not_print_partial_success() {
         &[("ext-", external_workspace.root.to_string_lossy().as_ref())],
     );
 
-    let create_local = run_br(
+    let create_local = run_obr(
         &main_workspace,
         ["create", "Local issue before routed failure", "--json"],
         "create_local_before_routed_failure",
@@ -2737,7 +2746,7 @@ fn e2e_routing_update_failure_does_not_print_partial_success() {
     let last_touched_path = last_touched_path(&main_workspace);
     let last_touched_before = fs::read_to_string(&last_touched_path).ok();
 
-    let update = run_br(
+    let update = run_obr(
         &main_workspace,
         [
             "update",
@@ -2758,7 +2767,7 @@ fn e2e_routing_update_failure_does_not_print_partial_success() {
         update.stdout
     );
 
-    let show_local = run_br(
+    let show_local = run_obr(
         &main_workspace,
         ["show", &local_id, "--json"],
         "show_local_after_failed_routed_update",
@@ -2780,8 +2789,8 @@ fn e2e_routing_update_failure_does_not_print_partial_success() {
 fn e2e_routing_update_claim_failure_does_not_mutate_earlier_routes() {
     let _log = common::test_log("e2e_routing_update_claim_failure_does_not_mutate_earlier_routes");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
     init_workspace(&main_workspace, "init_routed_claim_failure_main");
     init_workspace(&external_workspace, "init_routed_claim_failure_external");
@@ -2798,7 +2807,7 @@ fn e2e_routing_update_claim_failure_does_not_mutate_earlier_routes() {
         "create_external_routed_claim_target",
     );
 
-    let claim_external = run_br(
+    let claim_external = run_obr(
         &external_workspace,
         [
             "--actor",
@@ -2816,7 +2825,7 @@ fn e2e_routing_update_claim_failure_does_not_mutate_earlier_routes() {
         claim_external.stderr
     );
 
-    let update = run_br(
+    let update = run_obr(
         &main_workspace,
         [
             "--actor",
@@ -2848,17 +2857,17 @@ fn e2e_routing_update_claim_failure_does_not_mutate_earlier_routes() {
 fn e2e_routing_update_text_preserves_requested_order_across_routes() {
     let _log = common::test_log("e2e_routing_update_text_preserves_requested_order_across_routes");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
-    let init_main = run_br(&main_workspace, ["init"], "init_update_text_main");
+    let init_main = run_obr(&main_workspace, ["init"], "init_update_text_main");
     assert!(
         init_main.status.success(),
         "init failed: {}",
         init_main.stderr
     );
 
-    let init_external = run_br(&external_workspace, ["init"], "init_update_text_external");
+    let init_external = run_obr(&external_workspace, ["init"], "init_update_text_external");
     assert!(
         init_external.status.success(),
         "external init failed: {}",
@@ -2866,7 +2875,7 @@ fn e2e_routing_update_text_preserves_requested_order_across_routes() {
     );
 
     fs::write(
-        external_workspace.root.join(".beads").join("config.yaml"),
+        external_workspace.root.join(".obr").join("config.yaml"),
         "issue_prefix: ext\n",
     )
     .expect("write external config");
@@ -2876,7 +2885,7 @@ fn e2e_routing_update_text_preserves_requested_order_across_routes() {
         &[("ext-", external_workspace.root.to_string_lossy().as_ref())],
     );
 
-    let create_local_first = run_br(
+    let create_local_first = run_obr(
         &main_workspace,
         ["create", "Local first update text", "--json"],
         "create_local_first_update_text",
@@ -2894,7 +2903,7 @@ fn e2e_routing_update_text_preserves_requested_order_across_routes() {
         .expect("local first update text id")
         .to_string();
 
-    let create_external_middle = run_br(
+    let create_external_middle = run_obr(
         &external_workspace,
         ["create", "External middle update text", "--json"],
         "create_external_middle_update_text",
@@ -2912,7 +2921,7 @@ fn e2e_routing_update_text_preserves_requested_order_across_routes() {
         .expect("external middle update text id")
         .to_string();
 
-    let create_local_last = run_br(
+    let create_local_last = run_obr(
         &main_workspace,
         ["create", "Local last update text", "--json"],
         "create_local_last_update_text",
@@ -2929,7 +2938,7 @@ fn e2e_routing_update_text_preserves_requested_order_across_routes() {
         .expect("local last update text id")
         .to_string();
 
-    let update = run_br(
+    let update = run_obr(
         &main_workspace,
         [
             "update",
@@ -2964,13 +2973,13 @@ fn e2e_routing_update_text_preserves_requested_order_across_routes() {
 fn e2e_routing_show_mixed_no_db_batches_preserve_local_db_override() {
     let _log = common::test_log("e2e_routing_show_mixed_no_db_batches_preserve_local_db_override");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
-    let init = run_br(&main_workspace, ["init"], "init_main");
+    let init = run_obr(&main_workspace, ["init"], "init_main");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let init_external = run_br(&external_workspace, ["init"], "init_external");
+    let init_external = run_obr(&external_workspace, ["init"], "init_external");
     assert!(
         init_external.status.success(),
         "external init failed: {}",
@@ -2978,7 +2987,7 @@ fn e2e_routing_show_mixed_no_db_batches_preserve_local_db_override() {
     );
 
     fs::write(
-        external_workspace.root.join(".beads").join("config.yaml"),
+        external_workspace.root.join(".obr").join("config.yaml"),
         "issue_prefix: ext\n",
     )
     .expect("write external config");
@@ -2991,7 +3000,7 @@ fn e2e_routing_show_mixed_no_db_batches_preserve_local_db_override() {
     let local_db = main_workspace.root.join("cache").join("alt-local.db");
     fs::create_dir_all(local_db.parent().expect("alt db parent")).expect("create cache dir");
 
-    let create_local = run_br(
+    let create_local = run_obr(
         &main_workspace,
         [
             "--db",
@@ -3014,7 +3023,7 @@ fn e2e_routing_show_mixed_no_db_batches_preserve_local_db_override() {
         .expect("local issue id")
         .to_string();
 
-    let create_external = run_br(
+    let create_external = run_obr(
         &external_workspace,
         ["create", "External issue for no-db show", "--json"],
         "create_external_no_db_show",
@@ -3032,7 +3041,7 @@ fn e2e_routing_show_mixed_no_db_batches_preserve_local_db_override() {
         .expect("external issue id")
         .to_string();
 
-    let show = run_br(
+    let show = run_obr(
         &main_workspace,
         [
             "--no-db",
@@ -3070,26 +3079,26 @@ fn e2e_routing_redirect_file_absolute_path() {
     let _log = common::test_log("e2e_routing_redirect_file_absolute_path");
 
     // Use separate workspaces
-    let actual_workspace = BrWorkspace::new();
-    let redirect_workspace = BrWorkspace::new();
+    let actual_workspace = ObrWorkspace::new();
+    let redirect_workspace = ObrWorkspace::new();
 
     // Initialize the actual workspace
-    let init = run_br(&actual_workspace, ["init"], "init_actual");
+    let init = run_obr(&actual_workspace, ["init"], "init_actual");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create redirect file pointing to actual beads directory (absolute path)
-    let actual_beads = actual_workspace.root.join(".beads");
-    // First create the redirect .beads directory
-    fs::create_dir_all(redirect_workspace.root.join(".beads")).expect("create redirect beads");
+    let actual_obr = actual_workspace.root.join(".obr");
+    // First create the redirect .obr directory
+    fs::create_dir_all(redirect_workspace.root.join(".obr")).expect("create redirect obr");
     // Then create the redirect file
     create_redirect_file(
-        &redirect_workspace.root.join(".beads"),
-        actual_beads.to_str().unwrap(),
+        &redirect_workspace.root.join(".obr"),
+        actual_obr.to_str().unwrap(),
     );
 
-    // The redirect is used during route resolution, not BEADS_DIR discovery.
+    // The redirect is used during route resolution, not OBR_DIR discovery.
     // Test that creating an issue in the actual workspace works
-    let create = run_br(
+    let create = run_obr(
         &actual_workspace,
         [
             "create",
@@ -3105,7 +3114,7 @@ fn e2e_routing_redirect_file_absolute_path() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // Verify issue exists
-    let list = run_br(&actual_workspace, ["list", "--json"], "list");
+    let list = run_obr(&actual_workspace, ["list", "--json"], "list");
     assert!(list.status.success(), "list failed: {}", list.stderr);
     assert!(
         list.stdout.contains("Via redirect test"),
@@ -3116,22 +3125,22 @@ fn e2e_routing_redirect_file_absolute_path() {
 #[test]
 fn e2e_routing_redirect_file_relative_path() {
     let _log = common::test_log("e2e_routing_redirect_file_relative_path");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize workspace
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Test that relative paths in redirect files are handled correctly
     // by creating a redirect file and verifying the path resolution logic
-    let beads_dir = workspace.root.join(".beads");
-    let redirect_path = beads_dir.join("redirect");
+    let obr_dir = workspace.root.join(".obr");
+    let redirect_path = obr_dir.join("redirect");
 
     // Create a redirect to a relative path (which resolves to same location)
     fs::write(&redirect_path, ".").expect("write redirect");
 
     // Should work (redirect to "." means same directory)
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         [
             "create",
@@ -3147,7 +3156,7 @@ fn e2e_routing_redirect_file_relative_path() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // Verify issue exists
-    let list = run_br(&workspace, ["list", "--json"], "list");
+    let list = run_obr(&workspace, ["list", "--json"], "list");
     assert!(list.status.success(), "list failed: {}", list.stderr);
     assert!(
         list.stdout.contains("Test relative redirect"),
@@ -3158,14 +3167,14 @@ fn e2e_routing_redirect_file_relative_path() {
 #[test]
 fn e2e_routing_redirect_missing_target() {
     let _log = common::test_log("e2e_routing_redirect_missing_target");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize workspace
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create a route to a nonexistent external project
-    let routes_path = workspace.root.join(".beads").join("routes.jsonl");
+    let routes_path = workspace.root.join(".obr").join("routes.jsonl");
     fs::write(
         &routes_path,
         r#"{"prefix":"missing-","path":"/nonexistent/path/to/project"}"#,
@@ -3173,16 +3182,16 @@ fn e2e_routing_redirect_missing_target() {
     .expect("write routes.jsonl");
 
     // Create a redirect file in an external route target directory
-    let ext_beads = workspace.root.join("ext").join(".beads");
-    fs::create_dir_all(&ext_beads).expect("create ext beads");
-    create_redirect_file(&ext_beads, "/nonexistent/redirect/target/.beads");
+    let ext_obr = workspace.root.join("ext").join(".obr");
+    fs::create_dir_all(&ext_obr).expect("create ext obr");
+    create_redirect_file(&ext_obr, "/nonexistent/redirect/target/.obr");
 
     // Add route to this external project
     fs::write(&routes_path, r#"{"prefix":"ext-","path":"ext"}"#).expect("write routes.jsonl");
 
     // Trying to show an issue with the ext- prefix should trigger redirect resolution
     // and fail because the redirect target doesn't exist
-    let show = run_br(
+    let show = run_obr(
         &workspace,
         ["show", "ext-abc123", "--json"],
         "show_missing_redirect",
@@ -3208,18 +3217,18 @@ fn e2e_routing_redirect_missing_target() {
 #[test]
 fn e2e_routing_redirect_empty_file() {
     let _log = common::test_log("e2e_routing_redirect_empty_file");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize workspace
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create empty redirect file
-    let redirect_path = workspace.root.join(".beads").join("redirect");
+    let redirect_path = workspace.root.join(".obr").join("redirect");
     fs::write(&redirect_path, "").expect("write empty redirect");
 
     // Should still work (empty redirect is ignored)
-    let list = run_br(&workspace, ["list", "--json"], "list");
+    let list = run_obr(&workspace, ["list", "--json"], "list");
     assert!(
         list.status.success(),
         "Expected success with empty redirect: {}",
@@ -3234,24 +3243,24 @@ fn e2e_routing_redirect_empty_file() {
 #[test]
 fn e2e_routing_db_flag_external_path() {
     let _log = common::test_log("e2e_routing_db_flag_external_path");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Create external project with beads
-    let external_beads = workspace.root.join("external").join(".beads");
-    fs::create_dir_all(&external_beads).expect("create external beads dir");
-    let external_db = external_beads.join("beads.db");
+    let external_obr = workspace.root.join("external").join(".obr");
+    fs::create_dir_all(&external_obr).expect("create external obr dir");
+    let external_db = external_obr.join("obr.db");
 
     // Initialize external database using --db flag
-    let init = run_br_with_env(
+    let init = run_obr_with_env(
         &workspace,
         ["init"],
-        [("BEADS_DIR", external_beads.to_str().unwrap())],
+        [("OBR_DIR", external_obr.to_str().unwrap())],
         "init_external",
     );
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Use --db flag to point to external database
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         [
             "--db",
@@ -3269,7 +3278,7 @@ fn e2e_routing_db_flag_external_path() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // Verify issue exists in external project
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["--db", external_db.to_str().unwrap(), "list", "--json"],
         "list_external",
@@ -3282,14 +3291,14 @@ fn e2e_routing_db_flag_external_path() {
 }
 
 #[test]
-fn e2e_routing_db_flag_external_db_uses_workspace_beads_dir() {
+fn e2e_routing_db_flag_external_db_uses_workspace_obr_dir() {
     let _log = common::test_log("e2e_routing_db_flag_external_db_uses_workspace_beads_dir");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init_workspace");
+    let init = run_obr(&workspace, ["init"], "init_workspace");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         [
             "create",
@@ -3303,18 +3312,18 @@ fn e2e_routing_db_flag_external_db_uses_workspace_beads_dir() {
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    let external_db = workspace.root.join("cache").join("beads.db");
+    let external_db = workspace.root.join("cache").join("obr.db");
     fs::create_dir_all(external_db.parent().unwrap()).expect("create cache dir");
-    fs::copy(workspace.root.join(".beads").join("beads.db"), &external_db).expect("copy db");
+    fs::copy(workspace.root.join(".obr").join("obr.db"), &external_db).expect("copy db");
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["--db", external_db.to_str().unwrap(), "list", "--json"],
         "list_external_db_outside_beads",
     );
     assert!(
         list.status.success(),
-        "commands should still discover the workspace when --db points outside .beads: {}",
+        "commands should still discover the workspace when --db points outside .obr: {}",
         list.stderr
     );
     assert!(list.stdout.contains("Workspace issue"));
@@ -3324,19 +3333,15 @@ fn e2e_routing_db_flag_external_db_uses_workspace_beads_dir() {
 fn e2e_config_get_db_flag_invalid_target_fails_instead_of_falling_back() {
     let _log =
         common::test_log("e2e_config_get_db_flag_invalid_target_fails_instead_of_falling_back");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let external_beads = workspace.root.join("broken").join(".beads");
-    fs::create_dir_all(&external_beads).expect("create external beads dir");
-    let external_db = external_beads.join("beads.db");
+    let external_obr = workspace.root.join("broken").join(".obr");
+    fs::create_dir_all(&external_obr).expect("create external obr dir");
+    let external_db = external_obr.join("obr.db");
     fs::write(&external_db, "not a sqlite database").expect("write corrupt db");
-    fs::write(
-        external_beads.join("config.yaml"),
-        "issue_prefix: PROJECT\n",
-    )
-    .expect("write config");
+    fs::write(external_obr.join("config.yaml"), "issue_prefix: PROJECT\n").expect("write config");
 
-    let get = run_br(
+    let get = run_obr(
         &workspace,
         [
             "--db",
@@ -3349,7 +3354,7 @@ fn e2e_config_get_db_flag_invalid_target_fails_instead_of_falling_back() {
     );
     // config get for YAML-backed keys (issue_prefix) succeeds even with a
     // corrupt DB because the config layer reads from the sibling config.yaml.
-    // The --db flag influences which .beads/ directory the config is loaded
+    // The --db flag influences which .obr/ directory the config is loaded
     // from, so the value from the broken workspace's config.yaml is returned.
     assert!(
         get.status.success(),
@@ -3365,16 +3370,16 @@ fn e2e_config_get_db_flag_invalid_target_fails_instead_of_falling_back() {
 #[test]
 fn e2e_config_delete_db_flag_invalid_target_preserves_yaml() {
     let _log = common::test_log("e2e_config_delete_db_flag_invalid_target_preserves_yaml");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let external_beads = workspace.root.join("broken-delete").join(".beads");
-    fs::create_dir_all(&external_beads).expect("create external beads dir");
-    let external_db = external_beads.join("beads.db");
-    let project_config = external_beads.join("config.yaml");
+    let external_obr = workspace.root.join("broken-delete").join(".obr");
+    fs::create_dir_all(&external_obr).expect("create external obr dir");
+    let external_db = external_obr.join("obr.db");
+    let project_config = external_obr.join("config.yaml");
     fs::write(&external_db, "not a sqlite database").expect("write corrupt db");
     fs::write(&project_config, "issue_prefix: PROJECT\n").expect("write config");
 
-    let delete = run_br(
+    let delete = run_obr(
         &workspace,
         [
             "--db",
@@ -3399,26 +3404,26 @@ fn e2e_config_delete_db_flag_invalid_target_preserves_yaml() {
 #[test]
 fn e2e_changelog_since_commit_uses_target_repo_root() {
     let _log = common::test_log("e2e_changelog_since_commit_uses_target_repo_root");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     let external_root = workspace.root.join("external-repo");
-    let external_beads = external_root.join(".beads");
-    fs::create_dir_all(&external_beads).expect("create external beads dir");
+    let external_obr = external_root.join(".obr");
+    fs::create_dir_all(&external_obr).expect("create external obr dir");
     let head = init_test_git_repo(&external_root);
 
-    let init = run_br_with_env(
+    let init = run_obr_with_env(
         &workspace,
         ["init"],
-        [("BEADS_DIR", external_beads.to_str().unwrap())],
+        [("OBR_DIR", external_obr.to_str().unwrap())],
         "init_external_repo",
     );
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         [
             "--db",
-            external_beads.join("beads.db").to_str().unwrap(),
+            external_obr.join("obr.db").to_str().unwrap(),
             "create",
             "External closed issue",
             "--type",
@@ -3434,11 +3439,11 @@ fn e2e_changelog_since_commit_uses_target_repo_root() {
     let issue: Value = serde_json::from_str(&payload).expect("parse create json");
     let id = issue["id"].as_str().expect("issue id").to_string();
 
-    let close = run_br(
+    let close = run_obr(
         &workspace,
         [
             "--db",
-            external_beads.join("beads.db").to_str().unwrap(),
+            external_obr.join("obr.db").to_str().unwrap(),
             "close",
             &id,
             "--reason",
@@ -3448,11 +3453,11 @@ fn e2e_changelog_since_commit_uses_target_repo_root() {
     );
     assert!(close.status.success(), "close failed: {}", close.stderr);
 
-    let changelog = run_br(
+    let changelog = run_obr(
         &workspace,
         [
             "--db",
-            external_beads.join("beads.db").to_str().unwrap(),
+            external_obr.join("obr.db").to_str().unwrap(),
             "changelog",
             "--since-commit",
             &head,
@@ -3470,17 +3475,17 @@ fn e2e_changelog_since_commit_uses_target_repo_root() {
 #[test]
 fn e2e_routing_path_normalization() {
     let _log = common::test_log("e2e_routing_path_normalization");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Create actual project
-    let actual_beads = workspace.root.join("actual").join(".beads");
-    fs::create_dir_all(&actual_beads).expect("create actual beads dir");
+    let actual_obr = workspace.root.join("actual").join(".obr");
+    fs::create_dir_all(&actual_obr).expect("create actual obr dir");
 
     // Initialize
-    let init = run_br_with_env(
+    let init = run_obr_with_env(
         &workspace,
         ["init"],
-        [("BEADS_DIR", actual_beads.to_str().unwrap())],
+        [("OBR_DIR", actual_obr.to_str().unwrap())],
         "init",
     );
     assert!(init.status.success(), "init failed: {}", init.stderr);
@@ -3491,11 +3496,11 @@ fn e2e_routing_path_normalization() {
         .join("actual")
         .join("subdir")
         .join("..")
-        .join(".beads")
-        .join("beads.db");
+        .join(".obr")
+        .join("obr.db");
     fs::create_dir_all(workspace.root.join("actual").join("subdir")).expect("create subdir");
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["--db", db_with_dotdot.to_str().unwrap(), "list", "--json"],
         "list_normalized",
@@ -3514,17 +3519,17 @@ fn e2e_routing_path_normalization() {
 #[test]
 fn e2e_routing_not_initialized_error() {
     let _log = common::test_log("e2e_routing_not_initialized_error");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Run command without initialization
-    let list = run_br(&workspace, ["list", "--json"], "list_not_init");
+    let list = run_obr(&workspace, ["list", "--json"], "list_not_init");
     assert!(
         !list.status.success(),
         "Expected failure when not initialized"
     );
     assert!(
         list.stdout.contains("not initialized")
-            || list.stdout.contains("br init")
+            || list.stdout.contains("obr init")
             || list.stdout.contains("NotInitialized"),
         "Expected clear error about initialization, got: {}",
         list.stderr
@@ -3532,25 +3537,25 @@ fn e2e_routing_not_initialized_error() {
 }
 
 #[test]
-fn e2e_routing_invalid_beads_dir_env() {
+fn e2e_routing_invalid_obr_dir_env() {
     let _log = common::test_log("e2e_routing_invalid_beads_dir_env");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    // Use BEADS_DIR pointing to nonexistent directory
-    let list = run_br_with_env(
+    // Use OBR_DIR pointing to nonexistent directory
+    let list = run_obr_with_env(
         &workspace,
         ["list", "--json"],
-        [("BEADS_DIR", "/nonexistent/path/.beads")],
+        [("OBR_DIR", "/nonexistent/path/.obr")],
         "list_invalid_env",
     );
     assert!(
         !list.status.success(),
-        "Expected failure for invalid BEADS_DIR"
+        "Expected failure for invalid OBR_DIR"
     );
     // Should fall back to discovery and fail with not initialized
     assert!(
         list.stdout.contains("not initialized")
-            || list.stdout.contains("br init")
+            || list.stdout.contains("obr init")
             || list.stdout.contains("NotInitialized")
             || list.stdout.contains("not found"),
         "Expected clear error, got: {}",
@@ -3563,15 +3568,15 @@ fn e2e_routing_show_external_issue_not_found() {
     let _log = common::test_log("e2e_routing_show_external_issue_not_found");
 
     // Use separate workspaces to avoid init conflicts
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
     // Initialize main workspace
-    let init = run_br(&main_workspace, ["init"], "init");
+    let init = run_obr(&main_workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Initialize external workspace
-    let init_ext = run_br(&external_workspace, ["init"], "init_external");
+    let init_ext = run_obr(&external_workspace, ["init"], "init_external");
     assert!(
         init_ext.status.success(),
         "init failed: {}",
@@ -3579,11 +3584,11 @@ fn e2e_routing_show_external_issue_not_found() {
     );
 
     // Set a different prefix for external project
-    let external_config = external_workspace.root.join(".beads").join("config.yaml");
+    let external_config = external_workspace.root.join(".obr").join("config.yaml");
     fs::write(&external_config, "issue_prefix: ext\n").expect("write external config");
 
     // Create routes file in main workspace pointing to external workspace
-    let routes_path = main_workspace.root.join(".beads").join("routes.jsonl");
+    let routes_path = main_workspace.root.join(".obr").join("routes.jsonl");
     let route_entry = format!(
         r#"{{"prefix":"ext-","path":"{}"}}"#,
         external_workspace.root.display()
@@ -3592,7 +3597,7 @@ fn e2e_routing_show_external_issue_not_found() {
 
     // Try to show a nonexistent issue with ext- prefix
     // This should trigger route resolution to external project
-    let show = run_br(
+    let show = run_obr(
         &main_workspace,
         ["show", "ext-nonexistent", "--json"],
         "show_missing",
@@ -3615,13 +3620,13 @@ fn e2e_routing_show_external_issue_not_found() {
 fn e2e_routing_show_external_issue_not_found_quiet_still_fails() {
     let _log = common::test_log("e2e_routing_show_external_issue_not_found_quiet_still_fails");
 
-    let main_workspace = BrWorkspace::new();
-    let external_workspace = BrWorkspace::new();
+    let main_workspace = ObrWorkspace::new();
+    let external_workspace = ObrWorkspace::new();
 
-    let init = run_br(&main_workspace, ["init"], "init_quiet_missing");
+    let init = run_obr(&main_workspace, ["init"], "init_quiet_missing");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let init_ext = run_br(&external_workspace, ["init"], "init_external_quiet_missing");
+    let init_ext = run_obr(&external_workspace, ["init"], "init_external_quiet_missing");
     assert!(
         init_ext.status.success(),
         "init failed: {}",
@@ -3629,19 +3634,19 @@ fn e2e_routing_show_external_issue_not_found_quiet_still_fails() {
     );
 
     fs::write(
-        external_workspace.root.join(".beads").join("config.yaml"),
+        external_workspace.root.join(".obr").join("config.yaml"),
         "issue_prefix: ext\n",
     )
     .expect("write external config");
 
-    let routes_path = main_workspace.root.join(".beads").join("routes.jsonl");
+    let routes_path = main_workspace.root.join(".obr").join("routes.jsonl");
     let route_entry = format!(
         r#"{{"prefix":"ext-","path":"{}"}}"#,
         external_workspace.root.display()
     );
     fs::write(&routes_path, route_entry).expect("write routes.jsonl");
 
-    let show = run_br(
+    let show = run_obr(
         &main_workspace,
         ["--quiet", "show", "ext-nonexistent"],
         "show_missing_quiet",

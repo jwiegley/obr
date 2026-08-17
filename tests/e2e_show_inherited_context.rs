@@ -1,4 +1,4 @@
-//! E2E coverage for inherited governing context on `br show`
+//! E2E coverage for inherited governing context on `obr show`
 //! (beads_rust#297, beads_rust#351).
 //!
 //! beads_rust#351 regression: when several siblings beneath the same
@@ -10,19 +10,19 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, parse_created_id, run_br, run_br_with_env};
+use common::cli::{ObrWorkspace, parse_created_id, run_obr, run_obr_with_env};
 
-fn init_workspace() -> BrWorkspace {
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "init");
+fn init_workspace() -> ObrWorkspace {
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
     workspace
 }
 
 /// Build an epic carrying `agent_context` plus two children parented
 /// beneath it. Returns `(epic_id, child_a, child_b)`.
-fn epic_with_two_children(workspace: &BrWorkspace) -> (String, String, String) {
-    let epic = run_br(
+fn epic_with_two_children(workspace: &ObrWorkspace) -> (String, String, String) {
+    let epic = run_obr(
         workspace,
         ["create", "Auth rewrite epic", "--type", "epic"],
         "create_epic",
@@ -31,7 +31,7 @@ fn epic_with_two_children(workspace: &BrWorkspace) -> (String, String, String) {
     let epic_id = parse_created_id(&epic.stdout);
     assert!(!epic_id.is_empty(), "missing epic id: {}", epic.stdout);
 
-    let set_ctx = run_br(
+    let set_ctx = run_obr(
         workspace,
         [
             "update",
@@ -52,7 +52,7 @@ fn epic_with_two_children(workspace: &BrWorkspace) -> (String, String, String) {
         ("Token refresh child", "create_child_a"),
         ("Session storage child", "create_child_b"),
     ] {
-        let child = run_br(workspace, ["create", title, "--parent", &epic_id], label);
+        let child = run_obr(workspace, ["create", title, "--parent", &epic_id], label);
         assert!(
             child.status.success(),
             "create child failed: {}",
@@ -78,10 +78,10 @@ fn e2e_show_two_siblings_emits_shared_inherited_context_once() {
     let workspace = init_workspace();
     let (epic_id, child_a, child_b) = epic_with_two_children(&workspace);
 
-    let show = run_br_with_env(
+    let show = run_obr_with_env(
         &workspace,
         ["show", &child_a, &child_b],
-        [("BR_INHERITED_CONTEXT", "1")],
+        [("OBR_INHERITED_CONTEXT", "1")],
         "show_two_siblings",
     );
     assert!(show.status.success(), "show failed: {}", show.stderr);
@@ -134,10 +134,10 @@ fn e2e_show_single_child_still_emits_inherited_context() {
     let workspace = init_workspace();
     let (epic_id, child_a, _child_b) = epic_with_two_children(&workspace);
 
-    let show = run_br_with_env(
+    let show = run_obr_with_env(
         &workspace,
         ["show", &child_a],
-        [("BR_INHERITED_CONTEXT", "1")],
+        [("OBR_INHERITED_CONTEXT", "1")],
         "show_single_child",
     );
     assert!(show.status.success(), "show failed: {}", show.stderr);
@@ -159,10 +159,10 @@ fn e2e_show_json_carries_inherited_context_as_structured_field() {
     let workspace = init_workspace();
     let (epic_id, child_a, _child_b) = epic_with_two_children(&workspace);
 
-    let show = run_br_with_env(
+    let show = run_obr_with_env(
         &workspace,
         ["show", &child_a, "--format", "json"],
-        [("BR_INHERITED_CONTEXT", "1")],
+        [("OBR_INHERITED_CONTEXT", "1")],
         "show_json_inherited",
     );
     assert!(show.status.success(), "show failed: {}", show.stderr);
@@ -206,10 +206,10 @@ fn e2e_show_toon_carries_inherited_context() {
     let workspace = init_workspace();
     let (epic_id, child_a, _child_b) = epic_with_two_children(&workspace);
 
-    let show = run_br_with_env(
+    let show = run_obr_with_env(
         &workspace,
         ["show", &child_a, "--format", "toon"],
-        [("BR_INHERITED_CONTEXT", "1")],
+        [("OBR_INHERITED_CONTEXT", "1")],
         "show_toon_inherited",
     );
     assert!(show.status.success(), "show failed: {}", show.stderr);
@@ -233,7 +233,7 @@ fn e2e_show_json_without_opt_in_omits_inherited_context() {
     let workspace = init_workspace();
     let (_epic_id, child_a, _child_b) = epic_with_two_children(&workspace);
 
-    let show = run_br(
+    let show = run_obr(
         &workspace,
         ["show", &child_a, "--format", "json"],
         "show_json_no_opt_in",
@@ -257,7 +257,7 @@ fn e2e_show_without_opt_in_emits_no_inherited_context() {
     let workspace = init_workspace();
     let (_epic_id, child_a, child_b) = epic_with_two_children(&workspace);
 
-    let show = run_br(&workspace, ["show", &child_a, &child_b], "show_no_opt_in");
+    let show = run_obr(&workspace, ["show", &child_a, &child_b], "show_no_opt_in");
     assert!(show.status.success(), "show failed: {}", show.stderr);
     assert!(
         !show.stdout.contains("Inherited context"),

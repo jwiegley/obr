@@ -2,7 +2,7 @@
 # Fixture: jsonl_duplicate_ids
 # FM: fm-state_files-jsonl-duplicate-ids (P2)
 #
-# Initialises a workspace, then overwrites .beads/issues.jsonl
+# Initialises a workspace, then overwrites .obr/issues.jsonl
 # with a hand-crafted file that contains two records with the same
 # id. Doctor's `jsonl.duplicate_ids` check should fire warn;
 # `--repair` must NOT mutate the file (operator decides canonical).
@@ -26,9 +26,8 @@ cd "$target_dir"
 # while injecting our own duplicates. The detector cares about the
 # top-level `id` substring, which is what each issue record carries.
 header_path=.fixture_header.jsonl
-issue_id_pattern='"id":'
 
-python3 - .beads/issues.jsonl "$header_path" <<'PY'
+python3 - .obr/issues.jsonl "$header_path" <<'PY'
 import sys
 src = sys.argv[1]
 dst = sys.argv[2]
@@ -44,20 +43,20 @@ PY
 
 # Now build the corrupted JSONL: header + 3 records, two of which
 # share `bd-aaa`.
-cat > .beads/issues.jsonl <<JSONL
+cat > .obr/issues.jsonl <<JSONL
 {"id":"bd-aaa","title":"first","status":"open"}
 {"id":"bd-bbb","title":"unique","status":"open"}
 {"id":"bd-aaa","title":"merge-conflict-side","status":"open"}
 JSONL
 # Prepend any preserved header lines back atop the duplicates.
 if [ -s "$header_path" ]; then
-  cat "$header_path" .beads/issues.jsonl > .beads/issues.jsonl.tmp
-  mv .beads/issues.jsonl.tmp .beads/issues.jsonl
+  cat "$header_path" .obr/issues.jsonl > .obr/issues.jsonl.tmp
+  mv .obr/issues.jsonl.tmp .obr/issues.jsonl
 fi
 
 # Snapshot the corrupted bytes — post_repair AND post_undo must
 # match this exactly (no doctor mutation allowed).
-sha256sum .beads/issues.jsonl | awk '{print $1}' > .fixture_jsonl_pre_sha256
+sha256sum .obr/issues.jsonl | awk '{print $1}' > .fixture_jsonl_pre_sha256
 
 if [ -e .fixture_baseline ]; then
   echo "fixture baseline already exists; expected a fresh workspace" >&2

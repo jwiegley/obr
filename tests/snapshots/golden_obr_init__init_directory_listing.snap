@@ -1,0 +1,9 @@
+---
+source: tests/golden_obr_init.rs
+expression: listing
+---
+.obr/
+  .gitignore  (75 bytes)
+  config.yaml  (90 bytes)
+  metadata.json  (56 bytes)
+  obr.db  [binary]

@@ -23,8 +23,8 @@
   DB↔JSONL reconciliation would undo.
 - **Repair contract**: DETECT-ONLY. `--repair` must leave the planted
   graph untouched and both informational payloads truthfully present.
-- **Plant**: pure public CLI — create two issues, `br dep add` the
-  forward edge, `br close` the blocker, flush. No direct DB writes.
+- **Plant**: pure public CLI — create two issues, `obr dep add` the
+  forward edge, `obr close` the blocker, flush. No direct DB writes.
 - **Expected exit codes**:
     - detect: 0 (satisfied dependencies are not findings — #432)
     - repair: 0 tolerated non-zero (unrelated env warns may persist)

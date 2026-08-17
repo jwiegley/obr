@@ -15,7 +15,7 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, extract_json_payload, run_br};
+use common::cli::{ObrWorkspace, extract_json_payload, run_obr};
 use serde_json::Value;
 
 // =============================================================================
@@ -33,13 +33,13 @@ fn parse_created_id(stdout: &str) -> String {
     id_part.trim().to_string()
 }
 
-fn init_workspace(workspace: &BrWorkspace) {
-    let init = run_br(workspace, ["init"], "init");
+fn init_workspace(workspace: &ObrWorkspace) {
+    let init = run_obr(workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 }
 
 fn create_issue_with_description(
-    workspace: &BrWorkspace,
+    workspace: &ObrWorkspace,
     title: &str,
     issue_type: &str,
     description: Option<&str>,
@@ -56,7 +56,7 @@ fn create_issue_with_description(
         args.push(desc.to_string());
     }
 
-    let create = run_br(workspace, &args, &format!("create_{issue_type}"));
+    let create = run_obr(workspace, &args, &format!("create_{issue_type}"));
     assert!(create.status.success(), "create failed: {}", create.stderr);
     parse_created_id(&create.stdout)
 }
@@ -69,10 +69,10 @@ fn create_issue_with_description(
 fn e2e_lint_clean_workspace_no_issues() {
     let _log = common::test_log("e2e_lint_clean_workspace_no_issues");
     // Lint on empty workspace (no issues) should pass with no warnings
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace(&workspace);
 
-    let lint = run_br(&workspace, ["lint"], "lint_empty");
+    let lint = run_obr(&workspace, ["lint"], "lint_empty");
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
     assert!(
         lint.stdout.contains("No template warnings found"),
@@ -85,10 +85,10 @@ fn e2e_lint_clean_workspace_no_issues() {
 fn e2e_lint_clean_workspace_json_empty_results() {
     let _log = common::test_log("e2e_lint_clean_workspace_json_empty_results");
     // JSON output on empty workspace should have empty results array
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace(&workspace);
 
-    let lint = run_br(&workspace, ["lint", "--json"], "lint_empty_json");
+    let lint = run_obr(&workspace, ["lint", "--json"], "lint_empty_json");
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
 
     let json_str = extract_json_payload(&lint.stdout);
@@ -106,14 +106,14 @@ fn e2e_lint_clean_workspace_json_empty_results() {
 fn e2e_lint_issue_with_all_required_sections_passes() {
     let _log = common::test_log("e2e_lint_issue_with_all_required_sections_passes");
     // Bug with all required sections should not trigger warnings
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace(&workspace);
 
     let description =
         "## Steps to Reproduce\n1. Do this\n2. Then that\n\n## Acceptance Criteria\n- Bug is fixed";
     create_issue_with_description(&workspace, "Complete bug", "bug", Some(description));
 
-    let lint = run_br(&workspace, ["lint"], "lint_complete_bug");
+    let lint = run_obr(&workspace, ["lint"], "lint_complete_bug");
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
     assert!(
         lint.stdout.contains("No template warnings found"),
@@ -130,13 +130,13 @@ fn e2e_lint_issue_with_all_required_sections_passes() {
 fn e2e_lint_bug_missing_steps_to_reproduce() {
     let _log = common::test_log("e2e_lint_bug_missing_steps_to_reproduce");
     // Bug without "Steps to Reproduce" should warn
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace(&workspace);
 
     let description = "## Acceptance Criteria\n- Bug is fixed";
     let id = create_issue_with_description(&workspace, "Incomplete bug", "bug", Some(description));
 
-    let lint = run_br(&workspace, ["lint", "--json"], "lint_bug_missing_steps");
+    let lint = run_obr(&workspace, ["lint", "--json"], "lint_bug_missing_steps");
     // In JSON mode, exit code is always 0
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
 
@@ -165,13 +165,13 @@ fn e2e_lint_bug_missing_steps_to_reproduce() {
 fn e2e_lint_bug_missing_acceptance_criteria() {
     let _log = common::test_log("e2e_lint_bug_missing_acceptance_criteria");
     // Bug without "Acceptance Criteria" should warn
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace(&workspace);
 
     let description = "## Steps to Reproduce\n1. Step one";
     let id = create_issue_with_description(&workspace, "Bug without AC", "bug", Some(description));
 
-    let lint = run_br(&workspace, ["lint", "--json"], "lint_bug_missing_ac");
+    let lint = run_obr(&workspace, ["lint", "--json"], "lint_bug_missing_ac");
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
 
     let json_str = extract_json_payload(&lint.stdout);
@@ -194,12 +194,12 @@ fn e2e_lint_bug_missing_acceptance_criteria() {
 fn e2e_lint_bug_missing_all_sections() {
     let _log = common::test_log("e2e_lint_bug_missing_all_sections");
     // Bug without any required sections should have 2 warnings
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace(&workspace);
 
     let id = create_issue_with_description(&workspace, "Bare bug", "bug", Some("Just a bug"));
 
-    let lint = run_br(&workspace, ["lint", "--json"], "lint_bug_missing_all");
+    let lint = run_obr(&workspace, ["lint", "--json"], "lint_bug_missing_all");
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
 
     let json_str = extract_json_payload(&lint.stdout);
@@ -220,13 +220,13 @@ fn e2e_lint_bug_missing_all_sections() {
 fn e2e_lint_task_missing_acceptance_criteria() {
     let _log = common::test_log("e2e_lint_task_missing_acceptance_criteria");
     // Task without "Acceptance Criteria" should warn
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace(&workspace);
 
     let id =
         create_issue_with_description(&workspace, "Task without AC", "task", Some("Just do it"));
 
-    let lint = run_br(&workspace, ["lint", "--json"], "lint_task_missing_ac");
+    let lint = run_obr(&workspace, ["lint", "--json"], "lint_task_missing_ac");
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
 
     let json_str = extract_json_payload(&lint.stdout);
@@ -249,13 +249,13 @@ fn e2e_lint_task_missing_acceptance_criteria() {
 fn e2e_lint_epic_missing_success_criteria() {
     let _log = common::test_log("e2e_lint_epic_missing_success_criteria");
     // Epic without "Success Criteria" should warn
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace(&workspace);
 
     let id =
         create_issue_with_description(&workspace, "Epic without SC", "epic", Some("Big project"));
 
-    let lint = run_br(&workspace, ["lint", "--json"], "lint_epic_missing_sc");
+    let lint = run_obr(&workspace, ["lint", "--json"], "lint_epic_missing_sc");
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
 
     let json_str = extract_json_payload(&lint.stdout);
@@ -278,12 +278,12 @@ fn e2e_lint_epic_missing_success_criteria() {
 fn e2e_lint_chore_no_required_sections() {
     let _log = common::test_log("e2e_lint_chore_no_required_sections");
     // Chore type has no required sections, should never warn
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace(&workspace);
 
     create_issue_with_description(&workspace, "Simple chore", "chore", Some("Just cleanup"));
 
-    let lint = run_br(&workspace, ["lint"], "lint_chore_no_sections");
+    let lint = run_obr(&workspace, ["lint"], "lint_chore_no_sections");
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
     assert!(
         lint.stdout.contains("No template warnings found"),
@@ -300,7 +300,7 @@ fn e2e_lint_chore_no_required_sections() {
 fn e2e_lint_filter_by_type_bug() {
     let _log = common::test_log("e2e_lint_filter_by_type_bug");
     // --type bug should only lint bug issues
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace(&workspace);
 
     // Create bug without required sections
@@ -308,7 +308,7 @@ fn e2e_lint_filter_by_type_bug() {
     // Create task without required sections
     create_issue_with_description(&workspace, "Tasky task", "task", Some("Task desc"));
 
-    let lint = run_br(
+    let lint = run_obr(
         &workspace,
         ["lint", "--type", "bug", "--json"],
         "lint_filter_bug",
@@ -334,16 +334,16 @@ fn e2e_lint_filter_by_type_bug() {
 fn e2e_lint_filter_by_status_all() {
     let _log = common::test_log("e2e_lint_filter_by_status_all");
     // --status all should include non-default issue states.
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace(&workspace);
 
     // Create and close a bug without required sections
     let bug_id = create_issue_with_description(&workspace, "Closed bug", "bug", Some("Closed"));
-    let close = run_br(&workspace, ["close", &bug_id], "close_bug");
+    let close = run_obr(&workspace, ["close", &bug_id], "close_bug");
     assert!(close.status.success(), "close failed: {}", close.stderr);
     let deferred_bug =
         create_issue_with_description(&workspace, "Deferred bug", "bug", Some("Deferred"));
-    let defer = run_br(
+    let defer = run_obr(
         &workspace,
         [
             "update",
@@ -358,7 +358,7 @@ fn e2e_lint_filter_by_status_all() {
     assert!(defer.status.success(), "defer failed: {}", defer.stderr);
 
     // Default lint should not include closed or deferred.
-    let lint_default = run_br(&workspace, ["lint", "--json"], "lint_status_default");
+    let lint_default = run_obr(&workspace, ["lint", "--json"], "lint_status_default");
     let json_str = extract_json_payload(&lint_default.stdout);
     let json: Value = serde_json::from_str(&json_str).expect("valid JSON");
     let default_results = json["results"].as_array().unwrap();
@@ -372,7 +372,7 @@ fn e2e_lint_filter_by_status_all() {
     );
 
     // --status all should include closed and deferred.
-    let lint_all = run_br(
+    let lint_all = run_obr(
         &workspace,
         ["lint", "--status", "all", "--json"],
         "lint_status_all",
@@ -399,13 +399,13 @@ fn e2e_lint_filter_by_status_all() {
 #[test]
 fn e2e_lint_filter_by_status_deferred() {
     let _log = common::test_log("e2e_lint_filter_by_status_deferred");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace(&workspace);
 
     let open_bug = create_issue_with_description(&workspace, "Open bug", "bug", Some("Open"));
     let deferred_bug =
         create_issue_with_description(&workspace, "Deferred bug", "bug", Some("Deferred"));
-    let defer = run_br(
+    let defer = run_obr(
         &workspace,
         [
             "update",
@@ -419,7 +419,7 @@ fn e2e_lint_filter_by_status_deferred() {
     );
     assert!(defer.status.success(), "defer failed: {}", defer.stderr);
 
-    let lint = run_br(
+    let lint = run_obr(
         &workspace,
         ["lint", "--status", "deferred", "--json"],
         "lint_status_deferred",
@@ -444,7 +444,7 @@ fn e2e_lint_filter_by_status_deferred() {
 fn e2e_lint_specific_issue_id() {
     let _log = common::test_log("e2e_lint_specific_issue_id");
     // Lint specific issue by ID
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace(&workspace);
 
     // Create two bugs without required sections
@@ -452,7 +452,7 @@ fn e2e_lint_specific_issue_id() {
     let _bug2_id = create_issue_with_description(&workspace, "Bug two", "bug", Some("Second"));
 
     // Lint only bug1
-    let lint = run_br(&workspace, ["lint", &bug1_id, "--json"], "lint_specific_id");
+    let lint = run_obr(&workspace, ["lint", &bug1_id, "--json"], "lint_specific_id");
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
 
     let json_str = extract_json_payload(&lint.stdout);
@@ -478,12 +478,12 @@ fn e2e_lint_specific_issue_id() {
 fn e2e_lint_json_output_structure() {
     let _log = common::test_log("e2e_lint_json_output_structure");
     // Verify JSON output has correct structure
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace(&workspace);
 
     create_issue_with_description(&workspace, "Test bug", "bug", Some("Minimal"));
 
-    let lint = run_br(&workspace, ["lint", "--json"], "lint_json_structure");
+    let lint = run_obr(&workspace, ["lint", "--json"], "lint_json_structure");
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
 
     let json_str = extract_json_payload(&lint.stdout);
@@ -529,13 +529,13 @@ fn e2e_lint_json_output_structure() {
 fn e2e_lint_json_exit_code_always_zero() {
     let _log = common::test_log("e2e_lint_json_exit_code_always_zero");
     // In JSON mode, exit code should always be 0 (even with warnings)
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace(&workspace);
 
     // Create bug without required sections (will have warnings)
     create_issue_with_description(&workspace, "Buggy", "bug", Some("No sections"));
 
-    let lint = run_br(&workspace, ["lint", "--json"], "lint_json_exit_code");
+    let lint = run_obr(&workspace, ["lint", "--json"], "lint_json_exit_code");
     assert!(
         lint.status.success(),
         "JSON mode should always exit 0, got: {}",
@@ -551,12 +551,12 @@ fn e2e_lint_json_exit_code_always_zero() {
 fn e2e_lint_text_output_warnings() {
     let _log = common::test_log("e2e_lint_text_output_warnings");
     // Text mode with warnings should show formatted output
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace(&workspace);
 
     let id = create_issue_with_description(&workspace, "Warning bug", "bug", Some("No sections"));
 
-    let lint = run_br(&workspace, ["lint"], "lint_text_warnings");
+    let lint = run_obr(&workspace, ["lint"], "lint_text_warnings");
     // Text mode exits non-zero when there are warnings
     // But we should still check the output format
 
@@ -578,12 +578,12 @@ fn e2e_lint_text_output_warnings() {
 fn e2e_lint_text_exit_code_nonzero_with_warnings() {
     let _log = common::test_log("e2e_lint_text_exit_code_nonzero_with_warnings");
     // In text mode, exit code should be 1 when there are warnings
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace(&workspace);
 
     create_issue_with_description(&workspace, "Warning bug", "bug", Some("No sections"));
 
-    let lint = run_br(&workspace, ["lint"], "lint_text_exit_nonzero");
+    let lint = run_obr(&workspace, ["lint"], "lint_text_exit_nonzero");
     assert!(
         !lint.status.success(),
         "text mode with warnings should exit non-zero"
@@ -598,15 +598,15 @@ fn e2e_lint_text_exit_code_nonzero_with_warnings() {
 fn e2e_lint_before_init_fails() {
     let _log = common::test_log("e2e_lint_before_init_fails");
     // Lint without init should fail
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     // Do NOT init
 
-    let lint = run_br(&workspace, ["lint"], "lint_before_init");
+    let lint = run_obr(&workspace, ["lint"], "lint_before_init");
     assert!(!lint.status.success(), "lint before init should fail");
     assert!(
         lint.stderr.contains("not found")
             || lint.stderr.contains("initialize")
-            || lint.stderr.contains("No .beads"),
+            || lint.stderr.contains("No .obr"),
         "error should mention workspace not initialized, got: {}",
         lint.stderr
     );
@@ -616,10 +616,10 @@ fn e2e_lint_before_init_fails() {
 fn e2e_lint_nonexistent_id_error() {
     let _log = common::test_log("e2e_lint_nonexistent_id_error");
     // Lint with nonexistent ID should handle gracefully
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace(&workspace);
 
-    let lint = run_br(
+    let lint = run_obr(
         &workspace,
         ["lint", "bd-nonexistent"],
         "lint_nonexistent_id",
@@ -637,13 +637,13 @@ fn e2e_lint_nonexistent_id_error() {
 fn e2e_lint_unknown_type_filter_no_matches() {
     let _log = common::test_log("e2e_lint_unknown_type_filter_no_matches");
     // Unknown --type value is rejected (bd conformance: only task, bug, feature, epic, chore)
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace(&workspace);
 
     // Create a bug issue
     create_issue_with_description(&workspace, "Sample bug", "bug", None);
 
-    let lint = run_br(
+    let lint = run_obr(
         &workspace,
         ["lint", "--type", "unknown_custom_type"],
         "lint_unknown_type",
@@ -670,14 +670,14 @@ fn e2e_lint_unknown_type_filter_no_matches() {
 fn e2e_lint_case_insensitive_section_matching() {
     let _log = common::test_log("e2e_lint_case_insensitive_section_matching");
     // Section headings should match case-insensitively
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace(&workspace);
 
     // Use lowercase headings
     let description = "## steps to reproduce\n1. Steps\n\n## acceptance criteria\n- Done";
     create_issue_with_description(&workspace, "Lowercase bug", "bug", Some(description));
 
-    let lint = run_br(&workspace, ["lint"], "lint_case_insensitive");
+    let lint = run_obr(&workspace, ["lint"], "lint_case_insensitive");
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
     assert!(
         lint.stdout.contains("No template warnings found"),
@@ -694,14 +694,14 @@ fn e2e_lint_case_insensitive_section_matching() {
 fn e2e_lint_multiple_issues_with_warnings() {
     let _log = common::test_log("e2e_lint_multiple_issues_with_warnings");
     // Multiple issues with warnings should all be reported
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace(&workspace);
 
     let bug1 = create_issue_with_description(&workspace, "Bug 1", "bug", Some("Missing"));
     let bug2 = create_issue_with_description(&workspace, "Bug 2", "bug", Some("Also missing"));
     let task = create_issue_with_description(&workspace, "Task 1", "task", Some("Missing too"));
 
-    let lint = run_br(&workspace, ["lint", "--json"], "lint_multiple");
+    let lint = run_obr(&workspace, ["lint", "--json"], "lint_multiple");
     assert!(lint.status.success(), "lint failed: {}", lint.stderr);
 
     let json_str = extract_json_payload(&lint.stdout);

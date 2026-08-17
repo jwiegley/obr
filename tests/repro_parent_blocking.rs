@@ -1,6 +1,6 @@
-use beads_rust::model::{DependencyType, Issue, IssueType};
-use beads_rust::storage::{ReadyFilters, ReadySortPolicy, SqliteStorage};
 use chrono::Utc;
+use obr::model::{DependencyType, Issue, IssueType};
+use obr::storage::{ReadyFilters, ReadySortPolicy, SqliteStorage};
 
 #[test]
 fn test_blocked_parent_blocks_child_ready() {

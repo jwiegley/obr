@@ -1,4 +1,4 @@
-use beads_rust::format::truncate_title;
+use obr::format::truncate_title;
 
 #[test]
 fn test_truncate_title_with_wide_characters() {

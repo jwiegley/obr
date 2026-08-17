@@ -12,7 +12,7 @@
 
 #![allow(dead_code)]
 
-use beads_rust::model::{Issue, Priority};
+use obr::model::{Issue, Priority};
 use std::fmt::Debug;
 
 /// Assert that `items`, when projected via `key_fn`, are in ascending order.
@@ -112,8 +112,8 @@ pub fn assert_no_duplicate_ids(issues: &[Issue]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beads_rust::model::{IssueType, Status};
     use chrono::{Duration, TimeZone, Utc};
+    use obr::model::{IssueType, Status};
 
     fn make_issue(id: &str, priority: Priority, age_offset_secs: i64) -> Issue {
         let base = Utc.timestamp_opt(1_735_689_600, 0).unwrap();

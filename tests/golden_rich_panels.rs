@@ -1,7 +1,7 @@
 //! Golden snapshots for Rich-mode panel/table widths.
 //!
-//! The usual CLI test helpers force `NO_COLOR=1`, which makes `br` select plain
-//! output. These tests run `br` under `script(1)` so stdout is a pseudo-terminal
+//! The usual CLI test helpers force `NO_COLOR=1`, which makes `obr` select plain
+//! output. These tests run `obr` under `script(1)` so stdout is a pseudo-terminal
 //! and the Rich renderer observes the requested terminal width.
 
 mod common;
@@ -10,10 +10,16 @@ use assert_cmd::Command;
 use insta::assert_snapshot;
 use regex::Regex;
 use serde_json::Value;
-use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use tempfile::TempDir;
+
+/// The pty plumbing lives in one place; `tests/vocabulary_lint.rs` drives the
+/// same terminal through it.
+#[path = "common/rich_pty.rs"]
+mod rich_pty;
+
+use rich_pty::{clear_inherited_obr_env, obr_bin, pin_fixture_identity};
 
 struct RichFixture {
     _temp_dir: TempDir,
@@ -21,42 +27,25 @@ struct RichFixture {
     show_id: String,
 }
 
-fn should_clear_inherited_br_env(key: &OsStr) -> bool {
-    let key = key.to_string_lossy();
-    key.starts_with("BD_")
-        || key.starts_with("BEADS_")
-        || matches!(
-            key.as_ref(),
-            "BR_OUTPUT_FORMAT" | "TOON_DEFAULT_FORMAT" | "TOON_STATS" | "NO_COLOR"
-        )
+fn obr_cmd() -> Command {
+    Command::new(obr_bin())
 }
 
-fn clear_inherited_br_env(cmd: &mut Command) {
-    for (key, _) in std::env::vars_os() {
-        if should_clear_inherited_br_env(&key) {
-            cmd.env_remove(key);
-        }
-    }
-}
-
-fn br_cmd() -> Command {
-    Command::new(assert_cmd::cargo::cargo_bin!("br"))
-}
-
-fn run_setup_br(root: &Path, args: &[&str]) -> String {
-    let mut cmd = br_cmd();
+fn run_setup_obr(root: &Path, args: &[&str]) -> String {
+    let mut cmd = obr_cmd();
     cmd.current_dir(root);
     cmd.args(args);
-    clear_inherited_br_env(&mut cmd);
+    clear_inherited_obr_env(&mut cmd);
     cmd.env("HOME", root);
     cmd.env("NO_COLOR", "1");
     cmd.env("RUST_LOG", "error");
     cmd.env("RUST_BACKTRACE", "1");
+    pin_fixture_identity(&mut cmd);
 
-    let output = cmd.output().expect("run setup br command");
+    let output = cmd.output().expect("run setup obr command");
     assert!(
         output.status.success(),
-        "br setup command failed: {:?}\nstdout:\n{}\nstderr:\n{}",
+        "obr setup command failed: {:?}\nstdout:\n{}\nstderr:\n{}",
         args,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
@@ -80,7 +69,7 @@ fn create_issue(
     description: &str,
     labels: &str,
 ) -> String {
-    let stdout = run_setup_br(
+    let stdout = run_setup_obr(
         root,
         &[
             "create",
@@ -106,7 +95,7 @@ fn init_fixture() -> RichFixture {
         TempDir::new_in(common::cli::isolated_temp_root()).expect("create isolated temp dir");
     let root = temp_dir.path().to_path_buf();
 
-    run_setup_br(&root, &["init", "--prefix", "rich"]);
+    run_setup_obr(&root, &["init", "--prefix", "rich"]);
 
     let show_id = create_issue(
         &root,
@@ -133,7 +122,7 @@ fn init_fixture() -> RichFixture {
         "done,metrics",
     );
 
-    run_setup_br(
+    run_setup_obr(
         &root,
         &[
             "comments",
@@ -144,8 +133,8 @@ fn init_fixture() -> RichFixture {
             "A stable comment keeps the show panel exercising comment rendering.",
         ],
     );
-    run_setup_br(&root, &["dep", "add", &blocked_id, &show_id]);
-    run_setup_br(
+    run_setup_obr(&root, &["dep", "add", &blocked_id, &show_id]);
+    run_setup_obr(
         &root,
         &[
             "close",
@@ -162,39 +151,8 @@ fn init_fixture() -> RichFixture {
     }
 }
 
-fn sh_quote(value: &OsStr) -> String {
-    let value = value.to_string_lossy();
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-fn run_rich_br(root: &Path, width: usize, args: &[&str]) -> String {
-    let br_bin = assert_cmd::cargo::cargo_bin!("br");
-    let mut command_parts = vec![sh_quote(br_bin.as_os_str())];
-    command_parts.extend(args.iter().map(|arg| sh_quote(OsStr::new(arg))));
-    let command_line = format!(
-        "stty cols {width} rows 40 && COLUMNS={width} {}",
-        command_parts.join(" ")
-    );
-
-    let mut cmd = Command::new("script");
-    cmd.current_dir(root);
-    cmd.args(["-q", "-e", "-c", &command_line, "/dev/null"]);
-    clear_inherited_br_env(&mut cmd);
-    cmd.env("HOME", root);
-    cmd.env("COLUMNS", width.to_string());
-    cmd.env("RUST_LOG", "error");
-    cmd.env("RUST_BACKTRACE", "1");
-
-    let output = cmd.output().expect("run br under pseudo-terminal");
-    assert!(
-        output.status.success(),
-        "rich br command failed at width {width}: {:?}\nstdout:\n{}\nstderr:\n{}",
-        args,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    normalize_rich_output(&String::from_utf8_lossy(&output.stdout))
+fn run_rich_obr(root: &Path, width: usize, args: &[&str]) -> String {
+    normalize_rich_output(&rich_pty::rich_obr_ok(root, width, args))
 }
 
 fn issue_id_re() -> &'static Regex {
@@ -218,29 +176,6 @@ fn relative_time_re() -> &'static Regex {
     })
 }
 
-fn strip_ansi(input: &str) -> String {
-    let mut output = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch != '\u{1b}' {
-            output.push(ch);
-            continue;
-        }
-
-        if chars.peek() == Some(&'[') {
-            chars.next();
-            for code in chars.by_ref() {
-                if ('@'..='~').contains(&code) {
-                    break;
-                }
-            }
-        }
-    }
-
-    output
-}
-
 fn replace_preserving_width(input: &str, regex: &Regex, placeholder: &str) -> String {
     regex
         .replace_all(input, |captures: &regex::Captures<'_>| {
@@ -258,15 +193,12 @@ fn replace_preserving_width(input: &str, regex: &Regex, placeholder: &str) -> St
         .into_owned()
 }
 
-fn normalize_rich_output(raw: &str) -> String {
-    let normalized_newlines = raw.replace("\r\n", "\n").replace('\r', "\n");
-    let without_script_markers = normalized_newlines
-        .lines()
-        .filter(|line| !line.starts_with("Script started") && !line.starts_with("Script done"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let without_ansi = strip_ansi(&without_script_markers);
-    let without_ids = replace_preserving_width(&without_ansi, issue_id_re(), "rich-ID");
+/// Golden-specific scrubbing, applied on top of the pty cleanup in
+/// [`rich_pty::pty_text`]: freeze the values that legitimately differ between
+/// runs (generated ids, clocks) while preserving column widths, since these
+/// goldens exist to pin layout.
+fn normalize_rich_output(without_ansi: &str) -> String {
+    let without_ids = replace_preserving_width(without_ansi, issue_id_re(), "rich-ID");
     let without_timestamps = replace_preserving_width(&without_ids, timestamp_re(), "TIMESTAMP");
     let without_relative_times =
         replace_preserving_width(&without_timestamps, relative_time_re(), "TIME_AGO");
@@ -289,15 +221,116 @@ fn assert_rich_frame(output: &str, command: &str, width: usize) {
     );
 }
 
+/// Names that were true before the workspace rename and the D-SURFACE move.
+/// For any workspace obr creates today they are lies, and the `obr init` panel
+/// printed all three — hardcoded — for four releases, because the panel only
+/// renders on a TTY and nothing in the suite ever gave it one.
+const STALE_INIT_LITERALS: &[&str] = &[".beads", "beads.db", "issues.org"];
+
+fn assert_panel_says(output: &str, case: &str, expected: &[&str]) {
+    for line in expected {
+        assert!(
+            output.contains(line),
+            "{case}: init panel never said {line:?}:\n{output}"
+        );
+    }
+}
+
+/// `obr init` on a real pseudo-terminal must describe the workspace it really
+/// created. Covers the default root surface, a `doc/` surface, and a legacy
+/// `.beads` workspace adopted in place.
+#[test]
+fn rich_init_panel_names_the_real_artifacts() {
+    // (a) default: `.obr/` + `obr.db`, surface at the project root.
+    let plain = TempDir::new().expect("temp dir");
+    let out = run_rich_obr(plain.path(), 100, &["init", "--prefix", "gate"]);
+    assert_rich_frame(&out, "init", 100);
+    assert_panel_says(
+        &out,
+        "default workspace",
+        &[
+            "[+] .obr/ directory",
+            "[+] SQLite database (obr.db)",
+            "[+] PLAN.org (empty export seed)",
+            "  .obr/",
+            "    |-- obr.db",
+            "    `-- .gitignore",
+            "  PLAN.org",
+        ],
+    );
+    for stale in STALE_INIT_LITERALS {
+        assert!(
+            !out.contains(stale),
+            "default workspace: panel still prints {stale:?}:\n{out}"
+        );
+    }
+    assert!(plain.path().join(".obr/obr.db").is_file());
+    assert!(plain.path().join("PLAN.org").is_file());
+    assert!(!plain.path().join(".obr/issues.org").exists());
+
+    // (b) a project that already has `doc/`: the surface resolves there.
+    let doc = TempDir::new().expect("temp dir");
+    std::fs::create_dir(doc.path().join("doc")).expect("create doc/");
+    let out = run_rich_obr(doc.path(), 100, &["init", "--prefix", "gate"]);
+    assert_panel_says(
+        &out,
+        "doc surface",
+        &["[+] doc/PLAN.org (empty export seed)", "  doc/PLAN.org"],
+    );
+    for stale in STALE_INIT_LITERALS {
+        assert!(
+            !out.contains(stale),
+            "doc surface: panel still prints {stale:?}:\n{out}"
+        );
+    }
+    assert!(doc.path().join("doc/PLAN.org").is_file());
+    assert!(!doc.path().join("PLAN.org").exists());
+
+    // (c) a genuine pre-rename workspace, adopted in place: here the legacy
+    // names are the truth and the panel is required to print them.
+    let legacy = TempDir::new().expect("temp dir");
+    run_setup_obr(legacy.path(), &["init", "--prefix", "gate"]);
+    let legacy_dir = legacy.path().join(".beads");
+    std::fs::rename(legacy.path().join(".obr"), &legacy_dir).expect("rename workspace");
+    std::fs::rename(legacy_dir.join("obr.db"), legacy_dir.join("beads.db")).expect("rename db");
+    std::fs::write(
+        legacy_dir.join("metadata.json"),
+        br#"{"jsonl_export":"PLAN.org"}"#,
+    )
+    .expect("un-record the database name");
+    std::fs::remove_file(legacy.path().join("PLAN.org")).expect("drop the seeded surface");
+
+    let out = run_rich_obr(legacy.path(), 100, &["init", "--prefix", "gate", "--force"]);
+    assert_panel_says(
+        &out,
+        "legacy workspace",
+        &[
+            "[=] .beads/ directory",
+            "[=] SQLite database (beads.db)",
+            "[+] PLAN.org (empty export seed)",
+            "  .beads/",
+            "    |-- beads.db",
+            "  PLAN.org",
+        ],
+    );
+    assert!(
+        !out.contains("issues.org"),
+        "legacy workspace: the surface is seeded outside the dot dir:\n{out}"
+    );
+    assert!(legacy_dir.join("beads.db").is_file());
+    assert!(legacy.path().join("PLAN.org").is_file());
+    assert!(!legacy.path().join(".obr").exists());
+}
+
 #[test]
 fn golden_list_rich_widths() {
     let fixture = init_fixture();
 
-    let width_80 = run_rich_br(&fixture.root, 80, &["list", "--limit", "3"]);
+    let width_80 = run_rich_obr(&fixture.root, 80, &["list", "--limit", "3"]);
     assert_rich_frame(&width_80, "list", 80);
     assert_snapshot!("list_width_80", width_80);
 
-    let width_120 = run_rich_br(&fixture.root, 120, &["list", "--limit", "3"]);
+    let width_120 = run_rich_obr(&fixture.root, 120, &["list", "--limit", "3"]);
     assert_rich_frame(&width_120, "list", 120);
     assert_snapshot!("list_width_120", width_120);
 }
@@ -306,11 +339,11 @@ fn golden_list_rich_widths() {
 fn golden_show_rich_widths() {
     let fixture = init_fixture();
 
-    let width_80 = run_rich_br(&fixture.root, 80, &["show", &fixture.show_id]);
+    let width_80 = run_rich_obr(&fixture.root, 80, &["show", &fixture.show_id]);
     assert_rich_frame(&width_80, "show", 80);
     assert_snapshot!("show_width_80", width_80);
 
-    let width_120 = run_rich_br(&fixture.root, 120, &["show", &fixture.show_id]);
+    let width_120 = run_rich_obr(&fixture.root, 120, &["show", &fixture.show_id]);
     assert_rich_frame(&width_120, "show", 120);
     assert_snapshot!("show_width_120", width_120);
 }
@@ -319,11 +352,11 @@ fn golden_show_rich_widths() {
 fn golden_stats_rich_widths() {
     let fixture = init_fixture();
 
-    let width_80 = run_rich_br(&fixture.root, 80, &["stats"]);
+    let width_80 = run_rich_obr(&fixture.root, 80, &["stats"]);
     assert_rich_frame(&width_80, "stats", 80);
     assert_snapshot!("stats_width_80", width_80);
 
-    let width_120 = run_rich_br(&fixture.root, 120, &["stats"]);
+    let width_120 = run_rich_obr(&fixture.root, 120, &["stats"]);
     assert_rich_frame(&width_120, "stats", 120);
     assert_snapshot!("stats_width_120", width_120);
 }

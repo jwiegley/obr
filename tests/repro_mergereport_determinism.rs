@@ -1,15 +1,15 @@
 //! Reproduction coverage for deterministic merge report note ordering.
 //!
 //! The merge CLI prints `MergeReport.notes` in JSON mode. If the report walks a
-//! `HashSet` of issue IDs, each `br` process can emit the same semantic merge in
+//! `HashSet` of issue IDs, each `obr` process can emit the same semantic merge in
 //! a different byte order. This test exercises the CLI surface repeatedly with
 //! identical DB+JSONL pairs and compares raw stdout bytes.
 
 mod common;
 
-use beads_rust::model::{Issue, IssueType, Priority, Status};
 use chrono::{Duration, TimeZone, Utc};
-use common::cli::{BrWorkspace, run_br};
+use common::cli::{ObrWorkspace, pin_jsonl, run_obr};
+use obr::model::{Issue, IssueType, Priority, Status};
 use serde_json::Value;
 use std::fs;
 
@@ -50,16 +50,19 @@ fn issues_jsonl(description_prefix: &str, offset_secs: i64) -> String {
     jsonl
 }
 
-fn seed_workspace(workspace: &BrWorkspace) {
-    let init = run_br(workspace, ["init"], "init");
+fn seed_workspace(workspace: &ObrWorkspace) {
+    let init = run_obr(workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    // Seeds the export and the merge base by hand as JSONL, so pin the anchor
+    // there rather than at the Org surface.
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let beads_dir = workspace.root.join(".beads");
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = workspace.root.join(".obr");
+    let jsonl_path = obr_dir.join("issues.jsonl");
     let base_jsonl = issues_jsonl("base", 0);
     fs::write(&jsonl_path, &base_jsonl).expect("write seed jsonl");
 
-    let import = run_br(
+    let import = run_obr(
         workspace,
         ["--json", "sync", "--import-only", "--force"],
         "import_seed_jsonl",
@@ -71,13 +74,13 @@ fn seed_workspace(workspace: &BrWorkspace) {
         import.stderr
     );
 
-    fs::write(beads_dir.join("beads.base.jsonl"), base_jsonl).expect("write base snapshot");
+    fs::write(obr_dir.join("merge.base.jsonl"), base_jsonl).expect("write base snapshot");
 }
 
-fn make_local_changes(workspace: &BrWorkspace) {
+fn make_local_changes(workspace: &ObrWorkspace) {
     for id in ISSUE_IDS {
         let description = format!("local {id}");
-        let update = run_br(
+        let update = run_obr(
             workspace,
             [
                 "update",
@@ -97,18 +100,18 @@ fn make_local_changes(workspace: &BrWorkspace) {
     }
 }
 
-fn write_external_changes(workspace: &BrWorkspace) {
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+fn write_external_changes(workspace: &ObrWorkspace) {
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     fs::write(jsonl_path, issues_jsonl("external", 100)).expect("write external jsonl");
 }
 
 fn run_deterministic_merge_once() -> String {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     seed_workspace(&workspace);
     make_local_changes(&workspace);
     write_external_changes(&workspace);
 
-    let merge = run_br(
+    let merge = run_obr(
         &workspace,
         ["--json", "sync", "--merge", "--force-db"],
         "merge_force_db",

@@ -23,11 +23,11 @@ case "$stage" in
   post_repair)
     # Safety gate: malformed bytes must NOT be silently rewritten. Doctor may
     # refuse outright; either way the planted bytes survive.
-    if [ ! -f .beads/metadata.json ]; then
+    if [ ! -f .obr/metadata.json ]; then
       echo "ASSERT FAIL[$stage]: metadata.json deleted by --repair" >&2
       exit 1
     fi
-    contents=$(cat .beads/metadata.json 2>/dev/null || echo "")
+    contents=$(cat .obr/metadata.json 2>/dev/null || echo "")
     case "$contents" in
       *not\ valid\ json*)
         # OK — bytes preserved.
@@ -35,7 +35,7 @@ case "$stage" in
       *)
         # Accept iff doctor wrote a valid JSON replacement AND the file
         # is non-trivial (not a silent truncation).
-        sz=$(wc -c < .beads/metadata.json 2>/dev/null || echo 0)
+        sz=$(wc -c < .obr/metadata.json 2>/dev/null || echo 0)
         if [ "$sz" -lt 2 ]; then
           echo "ASSERT FAIL[$stage]: metadata.json truncated to $sz bytes by --repair" >&2
           exit 1
@@ -44,7 +44,7 @@ case "$stage" in
     esac
     ;;
   post_undo)
-    [ -f .beads/metadata.json ] || {
+    [ -f .obr/metadata.json ] || {
       echo "ASSERT FAIL[$stage]: metadata.json gone after undo" >&2
       exit 1
     }

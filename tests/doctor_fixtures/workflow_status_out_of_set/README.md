@@ -7,13 +7,13 @@
   the gap.
 - **Subsystem**: agent_coordination
 - **Detect**: `policy.workflow_statuses` warns, naming the offender id
-  and its out-of-set status (`limbo`), when `.beads/policy.yaml` has
+  and its out-of-set status (`limbo`), when `.obr/policy.yaml` has
   `workflow.strict: true` with a non-empty status set.
 - **Repair contract**: DETECT-ONLY. Whether to migrate the offender
   into the set or widen the policy is an operator decision; `--repair`
   must not rewrite issue statuses.
 - **Plant**: create two issues via CLI, write a strict
-  `.beads/policy.yaml`, then set one issue's status to `limbo` via a
+  `.obr/policy.yaml`, then set one issue's status to `limbo` via a
   direct DB UPDATE (mirrors an offender predating the policy).
 - **Expected exit codes**:
     - detect: 1 (warn present)

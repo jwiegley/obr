@@ -11,11 +11,11 @@
 
 use chrono::{TimeZone, Utc};
 
-use beads_rust::model::{Issue, IssueType, Priority, Status};
-use beads_rust::util::id::{
+use obr::model::{Issue, IssueType, Priority, Status};
+use obr::util::id::{
     IdConfig, IdGenerator, compute_id_hash, generate_id_seed, is_valid_id_format, parse_id,
 };
-use beads_rust::util::{ContentHashable, content_hash, content_hash_from_parts};
+use obr::util::{ContentHashable, content_hash, content_hash_from_parts};
 
 // =============================================================================
 // ID GENERATION FIXTURES
@@ -245,9 +245,10 @@ fn id_parsing_fixtures() {
     assert_eq!(hyphen.prefix, "my-project");
     assert_eq!(hyphen.hash, "abc123");
 
-    // Project-style prefix (common in real usage)
-    let project = parse_id("beads_rust-3ea7").unwrap();
-    assert_eq!(project.prefix, "beads_rust");
+    // Project-style prefix (common in real usage): underscores are part of the
+    // prefix, not a separator.
+    let project = parse_id("obr_rust-3ea7").unwrap();
+    assert_eq!(project.prefix, "obr_rust");
     assert_eq!(project.hash, "3ea7");
 
     // Invalid IDs should fail
@@ -302,7 +303,7 @@ fn content_hash_deterministic_fixture() {
     assert_eq!(hash1, hash2, "Content hash must be deterministic");
     assert_eq!(
         hash1, "e7c4a780edbb4ebf7df75cf3a38ca3ccb639e5c567b55066babbcca9f7eb06e2",
-        "Content hash must match the length-prefixed br fixture"
+        "Content hash must match the length-prefixed obr fixture"
     );
     assert_eq!(hash1.len(), 64, "SHA256 hash should be 64 hex chars");
     assert!(
@@ -830,7 +831,7 @@ fn prefix_change_id_generation() {
 /// Test prefix validation in parsing.
 #[test]
 fn prefix_validation_parsing() {
-    use beads_rust::util::id::validate_prefix;
+    use obr::util::id::validate_prefix;
 
     // Matching prefix
     assert!(validate_prefix("bd-abc123", "bd", &[]).is_ok());
@@ -840,8 +841,5 @@ fn prefix_validation_parsing() {
 
     // Prefix mismatch
     let err = validate_prefix("wrong-abc123", "bd", &[]).unwrap_err();
-    assert!(matches!(
-        err,
-        beads_rust::error::BeadsError::PrefixMismatch { .. }
-    ));
+    assert!(matches!(err, obr::error::BeadsError::PrefixMismatch { .. }));
 }

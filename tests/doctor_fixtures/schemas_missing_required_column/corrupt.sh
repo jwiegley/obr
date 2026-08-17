@@ -30,7 +30,7 @@ printf '%s\n' \
   "DROP INDEX IF EXISTS idx_comments_issue_id;" \
   "DROP INDEX IF EXISTS idx_comments_created_at;" \
   "ALTER TABLE comments DROP COLUMN text;" \
-  | sqlite3 .beads/beads.db
+  | sqlite3 .obr/obr.db
 
 if [ -e .fixture_baseline ]; then
   echo "fixture baseline already exists; expected a fresh workspace" >&2

@@ -3,7 +3,7 @@
 #
 # Pass-4 cycle 1: fm-state_files-merge-artifact-stuck graduated from
 # detect-only (Tier B) to auto-fixed (Tier A). The `--repair` flow now
-# quarantines the stuck artifacts under <run-dir>/quarantine/.beads/
+# quarantines the stuck artifacts under <run-dir>/quarantine/.obr/
 # via the mutate() chokepoint, so `doctor undo latest` reverses the
 # move byte-for-byte.
 
@@ -14,9 +14,9 @@ tool_bin="${TOOL_BIN:-br}"
 cd "$target_dir"
 
 ARTIFACTS=(
-  ".beads/issues.base.jsonl"
-  ".beads/issues.left.jsonl"
-  ".beads/issues.right.jsonl"
+  ".obr/issues.base.jsonl"
+  ".obr/issues.left.jsonl"
+  ".obr/issues.right.jsonl"
 )
 
 # Find the run-dir that captured the quarantined artifacts. Under
@@ -29,7 +29,7 @@ find_quarantine_run_dir() {
   [ -d "$runs_root" ] || return 1
   local dir
   while IFS= read -r dir; do
-    if [ -f "$dir/quarantine/.beads/issues.base.jsonl" ]; then
+    if [ -f "$dir/quarantine/.obr/issues.base.jsonl" ]; then
       echo "$dir"
       return 0
     fi
@@ -68,7 +68,7 @@ case "$stage" in
       ls -la "$runs_root" 2>&1 >&2 || true
       exit 1
     fi
-    quarantine="$run_dir/quarantine/.beads"
+    quarantine="$run_dir/quarantine/.obr"
     for f in "${ARTIFACTS[@]}"; do
       name="$(basename "$f")"
       if [ ! -f "$quarantine/$name" ]; then
@@ -104,7 +104,7 @@ case "$stage" in
     ;;
   post_undo)
     # `doctor undo latest` must byte-reverse the quarantine: artifacts
-    # restored to .beads/.
+    # restored to .obr/.
     for f in "${ARTIFACTS[@]}"; do
       if [ ! -f "$f" ]; then
         echo "ASSERT FAIL[$stage]: $f not restored by undo" >&2

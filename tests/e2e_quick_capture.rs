@@ -10,7 +10,7 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, extract_issues_array, extract_json_payload, run_br};
+use common::cli::{ObrWorkspace, extract_issues_array, extract_json_payload, run_obr};
 use serde_json::Value;
 use std::collections::HashSet;
 
@@ -22,12 +22,12 @@ use std::collections::HashSet;
 fn q_creates_issue_returns_id_only() {
     let _log = common::test_log("q_creates_issue_returns_id_only");
     // The q command should output only the issue ID (no "Created" prefix or other text)
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let quick = run_br(&workspace, ["q", "Test quick capture"], "quick");
+    let quick = run_obr(&workspace, ["q", "Test quick capture"], "quick");
     assert!(quick.status.success(), "q failed: {}", quick.stderr);
 
     let output = quick.stdout.trim();
@@ -48,12 +48,12 @@ fn q_creates_issue_returns_id_only() {
 fn q_with_type_flag() {
     let _log = common::test_log("q_with_type_flag");
     // --type bug should set the issue type correctly
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let quick = run_br(
+    let quick = run_obr(
         &workspace,
         ["q", "Bug report", "--type", "bug"],
         "quick_type",
@@ -67,7 +67,7 @@ fn q_with_type_flag() {
     let id = quick.stdout.trim();
 
     // Verify the issue was created with the correct type
-    let show = run_br(&workspace, ["show", id, "--json"], "show");
+    let show = run_obr(&workspace, ["show", id, "--json"], "show");
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
     let payload = extract_json_payload(&show.stdout);
@@ -79,12 +79,12 @@ fn q_with_type_flag() {
 fn q_with_priority_flag() {
     let _log = common::test_log("q_with_priority_flag");
     // --priority 1 should set the priority correctly
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let quick = run_br(
+    let quick = run_obr(
         &workspace,
         ["q", "High priority issue", "-p", "1"],
         "quick_priority",
@@ -94,7 +94,7 @@ fn q_with_priority_flag() {
     let id = quick.stdout.trim();
 
     // Verify the issue was created with the correct priority
-    let show = run_br(&workspace, ["show", id, "--json"], "show");
+    let show = run_obr(&workspace, ["show", id, "--json"], "show");
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
     let payload = extract_json_payload(&show.stdout);
@@ -106,12 +106,12 @@ fn q_with_priority_flag() {
 fn q_with_all_flags() {
     let _log = common::test_log("q_with_all_flags");
     // Combine type + priority + labels
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let quick = run_br(
+    let quick = run_obr(
         &workspace,
         [
             "q",
@@ -136,7 +136,7 @@ fn q_with_all_flags() {
     let id = quick.stdout.trim();
 
     // Verify all fields
-    let show = run_br(&workspace, ["show", id, "--json"], "show");
+    let show = run_obr(&workspace, ["show", id, "--json"], "show");
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
     let payload = extract_json_payload(&show.stdout);
@@ -162,13 +162,13 @@ fn q_with_all_flags() {
 fn q_with_labels() {
     let _log = common::test_log("q_with_labels");
     // Test label functionality including comma-separated values
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Test comma-separated labels
-    let quick = run_br(
+    let quick = run_obr(
         &workspace,
         ["q", "Labeled issue", "-l", "frontend,backend,api"],
         "quick_labels",
@@ -181,7 +181,7 @@ fn q_with_labels() {
 
     let id = quick.stdout.trim();
 
-    let show = run_br(&workspace, ["show", id, "--json"], "show");
+    let show = run_obr(&workspace, ["show", id, "--json"], "show");
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
     let payload = extract_json_payload(&show.stdout);
@@ -201,12 +201,12 @@ fn q_with_labels() {
 #[test]
 fn q_updates_last_touched_context() {
     let _log = common::test_log("q_updates_last_touched_context");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init_q_last_touched");
+    let init = run_obr(&workspace, ["init"], "init_q_last_touched");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let quick = run_br(
+    let quick = run_obr(
         &workspace,
         ["q", "Quick capture updates last touched"],
         "quick_last_touched",
@@ -215,14 +215,14 @@ fn q_updates_last_touched_context() {
     let created_id = quick.stdout.trim().to_string();
     assert!(!created_id.is_empty(), "missing quick-capture id");
 
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         ["update", "--status", "in_progress"],
         "update_last_touched_after_q",
     );
     assert!(update.status.success(), "update failed: {}", update.stderr);
 
-    let show = run_br(
+    let show = run_obr(
         &workspace,
         ["show", &created_id, "--json"],
         "show_last_touched_after_q",
@@ -238,12 +238,12 @@ fn q_updates_last_touched_context() {
 fn q_multiple_words_title() {
     let _log = common::test_log("q_multiple_words_title");
     // Multiple words without quotes should be joined
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let quick = run_br(
+    let quick = run_obr(
         &workspace,
         ["q", "This", "is", "a", "multi", "word", "title"],
         "quick_multiword",
@@ -256,7 +256,7 @@ fn q_multiple_words_title() {
 
     let id = quick.stdout.trim();
 
-    let show = run_br(&workspace, ["show", id, "--json"], "show");
+    let show = run_obr(&workspace, ["show", id, "--json"], "show");
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
     let payload = extract_json_payload(&show.stdout);
@@ -273,12 +273,12 @@ fn q_multiple_words_title() {
 fn q_output_is_valid_id() {
     let _log = common::test_log("q_output_is_valid_id");
     // Verify the output matches the expected ID format
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let quick = run_br(&workspace, ["q", "ID format test"], "quick_id");
+    let quick = run_obr(&workspace, ["q", "ID format test"], "quick_id");
     assert!(quick.status.success(), "q failed: {}", quick.stderr);
 
     let id = quick.stdout.trim();
@@ -300,17 +300,17 @@ fn q_output_is_valid_id() {
 fn q_issue_appears_in_list() {
     let _log = common::test_log("q_issue_appears_in_list");
     // Created issue should be visible in list output
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let quick = run_br(&workspace, ["q", "Listable issue"], "quick_list");
+    let quick = run_obr(&workspace, ["q", "Listable issue"], "quick_list");
     assert!(quick.status.success(), "q failed: {}", quick.stderr);
 
     let id = quick.stdout.trim();
 
-    let list = run_br(&workspace, ["list", "--json"], "list");
+    let list = run_obr(&workspace, ["list", "--json"], "list");
     assert!(list.status.success(), "list failed: {}", list.stderr);
 
     let json = extract_issues_array(&list.stdout);
@@ -322,12 +322,12 @@ fn q_issue_appears_in_list() {
 #[test]
 fn q_parent_accepts_short_parent_id() {
     let _log = common::test_log("q_parent_accepts_short_parent_id");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let parent_create = run_br(&workspace, ["q", "Parent issue"], "q_parent");
+    let parent_create = run_obr(&workspace, ["q", "Parent issue"], "q_parent");
     assert!(
         parent_create.status.success(),
         "parent q failed: {}",
@@ -339,7 +339,7 @@ fn q_parent_accepts_short_parent_id() {
         .map(|(_, hash)| hash)
         .expect("parent id should contain hash segment");
 
-    let child_create = run_br(
+    let child_create = run_obr(
         &workspace,
         ["q", "Child issue", "--parent", short_parent_id],
         "q_child_short_parent",
@@ -356,7 +356,7 @@ fn q_parent_accepts_short_parent_id() {
         "child id should be generated under the resolved parent: {child_id}"
     );
 
-    let show = run_br(&workspace, ["show", child_id, "--json"], "show_child");
+    let show = run_obr(&workspace, ["show", child_id, "--json"], "show_child");
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let payload = extract_json_payload(&show.stdout);
     let json: Vec<Value> = serde_json::from_str(&payload).expect("parse json");
@@ -379,11 +379,11 @@ fn q_parent_accepts_short_parent_id() {
 fn q_without_init_fails() {
     let _log = common::test_log("q_without_init_fails");
     // q should fail if workspace is not initialized
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Do NOT run init
 
-    let quick = run_br(&workspace, ["q", "No init"], "quick_no_init");
+    let quick = run_obr(&workspace, ["q", "No init"], "quick_no_init");
     assert!(
         !quick.status.success(),
         "q should fail without init, but succeeded"
@@ -393,7 +393,7 @@ fn q_without_init_fails() {
     assert!(
         quick.stderr.contains("not initialized")
             || quick.stderr.contains("Not initialized")
-            || quick.stderr.contains(".beads")
+            || quick.stderr.contains(".obr")
             || quick.stderr.contains("init"),
         "error should mention initialization: {}",
         quick.stderr
@@ -404,13 +404,13 @@ fn q_without_init_fails() {
 fn q_empty_title_fails() {
     let _log = common::test_log("q_empty_title_fails");
     // Empty title should be rejected
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Try with empty string
-    let quick = run_br(&workspace, ["q", ""], "quick_empty");
+    let quick = run_obr(&workspace, ["q", ""], "quick_empty");
     assert!(
         !quick.status.success(),
         "q should fail with empty title, but succeeded"
@@ -428,13 +428,13 @@ fn q_empty_title_fails() {
 #[test]
 fn q_rejects_overlong_title_without_persisting() {
     let _log = common::test_log("q_rejects_overlong_title_without_persisting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let title = "x".repeat(501);
-    let quick = run_br(&workspace, ["q", title.as_str()], "quick_overlong_title");
+    let quick = run_obr(&workspace, ["q", title.as_str()], "quick_overlong_title");
     assert!(
         !quick.status.success(),
         "q should fail with an overlong title"
@@ -445,7 +445,7 @@ fn q_rejects_overlong_title_without_persisting() {
         quick.stderr
     );
 
-    let list = run_br(&workspace, ["list", "--json"], "list_after_overlong_q");
+    let list = run_obr(&workspace, ["list", "--json"], "list_after_overlong_q");
     assert!(list.status.success(), "list failed: {}", list.stderr);
     let payload = extract_json_payload(&list.stdout);
     let issues = extract_issues_array(&payload);
@@ -458,13 +458,13 @@ fn q_rejects_overlong_title_without_persisting() {
 #[test]
 fn q_with_custom_type_succeeds() {
     let _log = common::test_log("q_with_custom_type_succeeds");
-    // br (unlike bd) allows custom issue types for flexibility
-    let workspace = BrWorkspace::new();
+    // obr (unlike bd) allows custom issue types for flexibility
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let quick = run_br(
+    let quick = run_obr(
         &workspace,
         ["q", "Custom type issue", "--type", "my_custom_type"],
         "quick_custom_type",
@@ -476,7 +476,7 @@ fn q_with_custom_type_succeeds() {
     );
 
     // Verify the issue was created with the custom type
-    let list = run_br(&workspace, ["list", "--json"], "list_check");
+    let list = run_obr(&workspace, ["list", "--json"], "list_check");
     assert!(list.status.success(), "list failed: {}", list.stderr);
     assert!(
         list.stdout.contains("my_custom_type"),
@@ -488,13 +488,13 @@ fn q_with_custom_type_succeeds() {
 fn q_invalid_priority_fails() {
     let _log = common::test_log("q_invalid_priority_fails");
     // Out of range priority should be rejected
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Priority should be 0-4
-    let quick = run_br(
+    let quick = run_obr(
         &workspace,
         ["q", "Bad priority", "-p", "99"],
         "quick_bad_priority",
@@ -521,18 +521,18 @@ fn q_invalid_priority_fails() {
 fn q_output_usable_in_pipeline() {
     let _log = common::test_log("q_output_usable_in_pipeline");
     // ID can be piped to other commands (e.g., show)
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let quick = run_br(&workspace, ["q", "Pipeline test"], "quick_pipeline");
+    let quick = run_obr(&workspace, ["q", "Pipeline test"], "quick_pipeline");
     assert!(quick.status.success(), "q failed: {}", quick.stderr);
 
     let id = quick.stdout.trim();
 
     // The ID should work directly with show command
-    let show = run_br(&workspace, ["show", id], "show_pipeline");
+    let show = run_obr(&workspace, ["show", id], "show_pipeline");
     assert!(
         show.status.success(),
         "show should succeed with q output: {}",
@@ -544,7 +544,7 @@ fn q_output_usable_in_pipeline() {
     );
 
     // Also verify it works with update
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         ["update", id, "--status", "in_progress"],
         "update_pipeline",
@@ -560,16 +560,16 @@ fn q_output_usable_in_pipeline() {
 fn q_multiple_creates_unique_ids() {
     let _log = common::test_log("q_multiple_creates_unique_ids");
     // Rapid creates should get unique IDs
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let mut ids: HashSet<String> = HashSet::new();
 
     // Create 10 issues rapidly
     for i in 0..10 {
-        let quick = run_br(
+        let quick = run_obr(
             &workspace,
             ["q", &format!("Rapid issue {i}")],
             &format!("quick_{i}"),
@@ -586,7 +586,7 @@ fn q_multiple_creates_unique_ids() {
     assert_eq!(ids.len(), 10, "should have 10 unique IDs");
 
     // Verify all issues exist
-    let list = run_br(&workspace, ["list", "--json"], "list_all");
+    let list = run_obr(&workspace, ["list", "--json"], "list_all");
     assert!(list.status.success(), "list failed: {}", list.stderr);
 
     let json = extract_issues_array(&list.stdout);
@@ -597,12 +597,12 @@ fn q_multiple_creates_unique_ids() {
 fn q_silent_mode_stderr() {
     let _log = common::test_log("q_silent_mode_stderr");
     // No stderr output on success
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let quick = run_br(&workspace, ["q", "Silent test"], "quick_silent");
+    let quick = run_obr(&workspace, ["q", "Silent test"], "quick_silent");
     assert!(quick.status.success(), "q failed: {}", quick.stderr);
 
     // stderr should be empty on success (excluding debug logs if RUST_LOG is set)
@@ -633,12 +633,12 @@ fn q_silent_mode_stderr() {
 fn q_with_p_prefix_priority() {
     let _log = common::test_log("q_with_p_prefix_priority");
     // P0, P1, P2, P3, P4 format should work
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let quick = run_br(
+    let quick = run_obr(
         &workspace,
         ["q", "P-format priority", "-p", "P0"],
         "quick_p_format",
@@ -651,7 +651,7 @@ fn q_with_p_prefix_priority() {
 
     let id = quick.stdout.trim();
 
-    let show = run_br(&workspace, ["show", id, "--json"], "show");
+    let show = run_obr(&workspace, ["show", id, "--json"], "show");
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
     let payload = extract_json_payload(&show.stdout);
@@ -663,13 +663,13 @@ fn q_with_p_prefix_priority() {
 fn q_special_characters_in_title() {
     let _log = common::test_log("q_special_characters_in_title");
     // Special characters should be preserved in title
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let title = "Fix bug: can't parse \"quotes\" & <special> chars!";
-    let quick = run_br(&workspace, ["q", title], "quick_special");
+    let quick = run_obr(&workspace, ["q", title], "quick_special");
     assert!(
         quick.status.success(),
         "q with special chars failed: {}",
@@ -678,7 +678,7 @@ fn q_special_characters_in_title() {
 
     let id = quick.stdout.trim();
 
-    let show = run_br(&workspace, ["show", id, "--json"], "show");
+    let show = run_obr(&workspace, ["show", id, "--json"], "show");
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
     let payload = extract_json_payload(&show.stdout);
@@ -693,17 +693,17 @@ fn q_special_characters_in_title() {
 fn q_default_values() {
     let _log = common::test_log("q_default_values");
     // Without flags, should use defaults (task type, medium priority)
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let quick = run_br(&workspace, ["q", "Default values test"], "quick_defaults");
+    let quick = run_obr(&workspace, ["q", "Default values test"], "quick_defaults");
     assert!(quick.status.success(), "q failed: {}", quick.stderr);
 
     let id = quick.stdout.trim();
 
-    let show = run_br(&workspace, ["show", id, "--json"], "show");
+    let show = run_obr(&workspace, ["show", id, "--json"], "show");
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
     let payload = extract_json_payload(&show.stdout);
@@ -721,16 +721,16 @@ fn q_default_values() {
 fn q_status_is_always_open() {
     let _log = common::test_log("q_status_is_always_open");
     // q command always creates with status=open (no status flag)
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create multiple issues with different types/priorities
     let ids: Vec<String> = vec![
-        run_br(&workspace, ["q", "Issue 1", "-t", "bug"], "q1"),
-        run_br(&workspace, ["q", "Issue 2", "-p", "0"], "q2"),
-        run_br(
+        run_obr(&workspace, ["q", "Issue 1", "-t", "bug"], "q1"),
+        run_obr(&workspace, ["q", "Issue 2", "-p", "0"], "q2"),
+        run_obr(
             &workspace,
             ["q", "Issue 3", "-t", "feature", "-p", "1"],
             "q3",
@@ -745,7 +745,7 @@ fn q_status_is_always_open() {
 
     // All should have status=open
     for id in ids {
-        let show = run_br(&workspace, ["show", &id, "--json"], &format!("show_{id}"));
+        let show = run_obr(&workspace, ["show", &id, "--json"], &format!("show_{id}"));
         assert!(show.status.success(), "show failed: {}", show.stderr);
 
         let payload = extract_json_payload(&show.stdout);

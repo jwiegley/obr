@@ -1,4 +1,4 @@
-//! Regression: `beads_rust-jdmh` — `sync --status` and the `--import-only`
+//! Regression: `obr-jdmh` — `sync --status` and the `--import-only`
 //! stored-hash shortcut asserted health without verifying the DB actually
 //! covers the JSONL issue set.
 //!
@@ -15,20 +15,20 @@
 mod common;
 
 use assert_cmd::Command;
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{METADATA_JSONL_CONTENT_HASH, compute_jsonl_hash};
+use obr::storage::SqliteStorage;
+use obr::sync::{METADATA_JSONL_CONTENT_HASH, compute_jsonl_hash};
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
 
-fn br_cmd(cwd: &Path) -> Command {
-    let mut cmd = Command::cargo_bin("br").expect("locate br binary");
+fn obr_cmd(cwd: &Path) -> Command {
+    let mut cmd = Command::cargo_bin("obr").expect("locate obr binary");
     cmd.current_dir(cwd);
     cmd.env("NO_COLOR", "1");
     cmd.env("RUST_LOG", "warn");
     cmd.env("HOME", cwd);
-    cmd.env("PATH", common::cli::deduplicated_br_path());
+    cmd.env("PATH", common::cli::deduplicated_obr_path());
     for (key, _) in std::env::vars_os() {
         let key_s = key.to_string_lossy();
         if key_s.starts_with("BD_") || key_s.starts_with("BEADS_") {
@@ -39,10 +39,10 @@ fn br_cmd(cwd: &Path) -> Command {
 }
 
 fn run_ok(cwd: &Path, args: &[&str]) -> String {
-    let out = br_cmd(cwd).args(args).output().expect("spawn br");
+    let out = obr_cmd(cwd).args(args).output().expect("spawn obr");
     assert!(
         out.status.success(),
-        "br {args:?} failed: stdout={} stderr={}",
+        "obr {args:?} failed: stdout={} stderr={}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr),
     );
@@ -59,12 +59,13 @@ fn lying_metadata_workspace() -> TempDir {
     let tmp = isolated_tempdir();
     let ws = tmp.path();
     run_ok(ws, &["init", "--prefix", "jd"]);
+    common::cli::pin_jsonl(&ws.join(".obr"));
     run_ok(
         ws,
         &["create", "first issue", "--type", "task", "--priority", "2"],
     );
     run_ok(ws, &["sync", "--flush-only"]);
-    let jsonl_path = ws.join(".beads/issues.jsonl");
+    let jsonl_path = ws.join(".obr/issues.jsonl");
     let one_row = fs::read(&jsonl_path).expect("read 1-row jsonl");
 
     run_ok(
@@ -91,7 +92,7 @@ fn lying_metadata_workspace() -> TempDir {
     let two_row_hash = compute_jsonl_hash(&jsonl_path).expect("hash 2-row jsonl");
     {
         let mut storage =
-            SqliteStorage::open(&ws.join(".beads/beads.db")).expect("open storage directly");
+            SqliteStorage::open(&ws.join(".obr/obr.db")).expect("open storage directly");
         storage
             .set_metadata(METADATA_JSONL_CONTENT_HASH, &two_row_hash)
             .expect("plant lying content hash");
@@ -154,6 +155,7 @@ fn healthy_workspace_reports_no_drift() {
     let tmp = isolated_tempdir();
     let ws = tmp.path();
     run_ok(ws, &["init", "--prefix", "jd"]);
+    common::cli::pin_jsonl(&ws.join(".obr"));
     run_ok(
         ws,
         &["create", "only issue", "--type", "task", "--priority", "2"],

@@ -3,18 +3,18 @@
 Maps every declared `fm-<subsystem>-<slug>` finding id to the fixture(s)
 that exercise it, so coverage drift is visible in review. The mapping was
 built empirically (beads_rust-yx0b): each fixture's planted state was run
-through `br doctor --json` and the non-ok `details.finding_id` values
+through `obr doctor --json` and the non-ok `details.finding_id` values
 recorded; assert-side coverage (special env or flags driven by the
 fixture's own `assert.sh`) is marked `assert`.
 
 **Drift gate**: `tests/e2e_doctor_fixture_suite.rs::fixture_coverage_manifest_is_complete`
-asserts that (a) every fm id in the `br doctor capabilities` envelope has a
+asserts that (a) every fm id in the `obr doctor capabilities` envelope has a
 row here, (b) every fixture named here exists on disk, and (c) every
 fixture directory on disk is mentioned somewhere in this file. Adding a new
 finding id or fixture without updating this manifest fails the gate.
 
 Kinds: `detect` — the planted state fires the finding under plain
-`br doctor --json`; `assert` — the fixture's `assert.sh` drives a special
+`obr doctor --json`; `assert` — the fixture's `assert.sh` drives a special
 invocation (env override or flag) to pin the finding/check contract;
 `exception` — no fixture can fire the id, reason given inline.
 
@@ -30,20 +30,20 @@ invocation (env override or flag) to pin the finding/check contract;
 | fm-caches_indexes-export-hash-cache-divergence | export_hash_cache_divergence, duplicate_metadata_rows | detect |
 | fm-caches_indexes-labels-orphans | labels_orphans | detect |
 | fm-caches_indexes-partial-index-stale | — | exception: fixer-scope id only (gates the REINDEX repair path via the fixer filter); no check emits it as a finding, so no fixture can fire it. Advertised in the capabilities envelope via `fixers[].filter_ids` (beads_rust-oow2) |
-| fm-concurrency_primitives-orphaned-write-lock | orphaned_write_lock, mcp_serve_stale_write_lock, write_lock_symlink_node | assert: the probe contract (GH #395) classifies a free stale-mtime lock as ok via a non-blocking flock probe under `BR_DOCTOR_STALE_LOCK_THRESHOLD_SECS=0`; the warn path (`stale_unprobed`) is unreachable on a workspace whose doctor startup succeeds, because an unopenable lock degrades startup first (see permissions_write_lock_unwritable). write_lock_symlink_node (beads_rust-5sej) pins the fail-closed startup refusal for a symlinked lock node and that no stage touches the node or its target; the directory shape is covered by unit tests plus tests/e2e_doctor_write_lock_shapes.rs |
-| fm-configs-gitignore-leaking-beads | gitignore_leaking_beads, gitignore_bare_pattern, inner_gitignore_append | detect |
+| fm-concurrency_primitives-orphaned-write-lock | orphaned_write_lock, mcp_serve_stale_write_lock, write_lock_symlink_node | assert: the probe contract (GH #395) classifies a free stale-mtime lock as ok via a non-blocking flock probe under `OBR_DOCTOR_STALE_LOCK_THRESHOLD_SECS=0`; the warn path (`stale_unprobed`) is unreachable on a workspace whose doctor startup succeeds, because an unopenable lock degrades startup first (see permissions_write_lock_unwritable). write_lock_symlink_node (obr-5sej) pins the fail-closed startup refusal for a symlinked lock node and that no stage touches the node or its target; the directory shape is covered by unit tests plus tests/e2e_doctor_write_lock_shapes.rs |
+| fm-configs-gitignore-leaking-obr | gitignore_leaking_obr, gitignore_bare_pattern, inner_gitignore_append | detect |
 | fm-configs-metadata-json-stale | metadata_json_drift, metadata_json_malformed | detect |
-| fm-configs-startup-cache-poisoned | startup_cache_poisoned | detect |
+| fm-configs-startup-cache-poisoned | — | exception: retired id. The `startup_cache.health` check that emitted it was removed (obr-848, 2026-08-15) because it could not fire — doctor's own startup rewrites the current-key cache entry before the check inspects it, for both poison kinds, so a poisoned file is repaired by the very run that was supposed to report it. Nothing declares the id any more; the row is kept so a reader who finds it in an old report knows where it went. See `docs/RESIDUALS.md` |
 | fm-configs-yaml-malformed | config_yaml_malformed | detect |
 | fm-dependencies-dead-closed-blocking-edges | dep_dead_closed_blocking_edges | detect |
 | fm-dependencies-fully-unblocked-open-issues | dep_dead_closed_blocking_edges | detect |
 | fm-external_artifacts-binary-version-mismatch | binary_version_mismatch | detect |
-| fm-external_artifacts-multiple-br-in-path | multiple_br_in_path | detect: the fixture builds its own $PATH with two `br` entries; on dual-install developer hosts the finding also fires ambiently in every fixture |
+| fm-external_artifacts-multiple-obr-in-path | multiple_obr_in_path | detect: the fixture builds its own $PATH with two `obr` entries; on dual-install developer hosts the finding also fires ambiently in every fixture |
 | fm-observability-doctor-runs-dir-grows-unbounded | doctor_runs_dir_growth | detect |
 | fm-observability-rust-log-noisy-breaks-json | rust_log_noisy_breaks_json | assert: the fixture's assert.sh runs doctor under a deliberately noisy RUST_LOG; the harness itself pins RUST_LOG=error, so the finding cannot fire under the plain run |
-| fm-permissions-beads-dir-readonly | permissions_beads_dir_readonly | detect |
+| fm-permissions-obr-dir-readonly | permissions_obr_dir_readonly | detect |
 | fm-permissions-config-yaml-mode-leaks-secrets | config_yaml_secret_mode | detect |
-| fm-permissions-db-sidecar-mode-too-open | — | exception: the detector fires deterministically on a planted 0664 `-fsqlite-ns-gate`, but no fixture can pin the post-repair / post-undo stages: every `br doctor` run opens the database, and the pre-open self-heal (GH #403, `heal_namespace_sidecar_modes`) restores owner-only mode inside that same run, so the chmod fixer has nothing left to do by the repair stage. Covered by unit tests instead — `cli::commands::doctor::tests::test_db_sidecar_mode_check_flags_and_repairs_over_permissive_sidecar` and `storage::sqlite::tests::over_permissive_namespace_sidecar_mode_is_healed_before_open` |
+| fm-permissions-db-sidecar-mode-too-open | — | exception: the detector fires deterministically on a planted 0664 `-fsqlite-ns-gate`, but no fixture can pin the post-repair / post-undo stages: every `obr doctor` run opens the database, and the pre-open self-heal (GH #403, `heal_namespace_sidecar_modes`) restores owner-only mode inside that same run, so the chmod fixer has nothing left to do by the repair stage. Covered by unit tests instead — `cli::commands::doctor::tests::test_db_sidecar_mode_check_flags_and_repairs_over_permissive_sidecar` and `storage::sqlite::tests::over_permissive_namespace_sidecar_mode_is_healed_before_open` |
 | fm-permissions-doctor-runs-not-creatable | doctor_runs_not_creatable | detect |
 | fm-permissions-gitignore-not-writable-blocks-repair | root_gitignore_not_writable | detect |
 | fm-permissions-jsonl-world-writable | jsonl_world_writable | detect |
@@ -54,11 +54,11 @@ invocation (env override or flag) to pin the finding/check contract;
 | fm-schemas-missing-required-column | schemas_missing_required_column, empty_database_with_jsonl | detect |
 | fm-schemas-missing-required-table | schemas_missing_required_table, blocked_cache_table_missing, empty_database_with_jsonl | detect |
 | fm-state_files-base-jsonl-missing-or-stale | base_jsonl_missing_post_flush, base_jsonl_stale_regen, base_jsonl_symlink_quarantine | detect |
-| fm-state_files-br-history-grows-unbounded | br_history_growth | detect |
+| fm-state_files-obr-history-grows-unbounded | obr_history_growth | detect |
 | fm-state_files-dirty-flag-divergence | dirty_flag_divergence, dirty_bitmap_orphans | detect |
 | fm-state_files-empty-or-truncated-database | db_missing_with_jsonl | detect |
 | fm-state_files-jsonl-conflict-markers | jsonl_conflict_markers | detect |
-| fm-state_files-jsonl-crlf-line-endings | jsonl_crlf_to_lf | detect |
+| fm-state_files-jsonl-crlf-line-endings | jsonl_crlf_to_lf, jsonl_surface_symlink | detect |
 | fm-state_files-jsonl-duplicate-ids | jsonl_duplicate_ids | detect |
 | fm-state_files-jsonl-malformed-utf8 | jsonl_malformed_utf8, jsonl_bom_strip | detect |
 | fm-state_files-jsonl-missing-trailing-newline | jsonl_trailing_newline | detect |
@@ -66,12 +66,12 @@ invocation (env override or flag) to pin the finding/check contract;
 | fm-state_files-jsonl-row-count-mismatch | jsonl_row_count_mismatch | detect |
 | fm-state_files-jsonl-utf8-bom-prefix | jsonl_bom_strip | detect |
 | fm-state_files-merge-artifact-stuck | merge_artifact_stuck | detect |
-| fm-state_files-no-db-mode-db-checks-skipped | no_db_mode_marker | assert: the fixture's assert.sh runs `br doctor --no-db --json` and pins the ok-status marker check + finding id; a full run must not carry the marker |
+| fm-state_files-no-db-mode-db-checks-skipped | no_db_mode_marker | assert: the fixture's assert.sh runs `obr doctor --no-db --json` and pins the ok-status marker check + finding id; a full run must not carry the marker |
 | fm-state_files-orphan-tmp-files | orphan_tmp_quarantine | detect |
 | fm-state_files-orphaned-write-lock | permissions_write_lock_unwritable | detect: env-skip protocol (exit 3) on hosts where permission bits do not bind (root / CAP_DAC_OVERRIDE) |
 | fm-state_files-recovery-artifacts-orphaned | recovery_artifacts_orphaned, recovery_artifacts_aged | detect |
 | fm-state_files-sqlite-page-malformed | sqlite_page_malformed, doctor_mutates_without_fix | detect |
-| fm-state_files-sync-merge-pending | — | exception: the id is emitted by the `sync.merge_pending` refuse gate, which fires only while a committed `br sync --merge` saga is still unreconciled. Planting one means writing the pending-merge metadata row by hand, and any repair stage then refuses every mutation by design, so a fixture round-trip would assert nothing beyond the refusal already covered by `cli::commands::doctor::tests::pending_sync_merge_read_only_inspector_rejects_duplicate_and_empty_rows` |
+| fm-state_files-sync-merge-pending | — | exception: the id is emitted by the `sync.merge_pending` refuse gate, which fires only while a committed `obr sync --merge` saga is still unreconciled. Planting one means writing the pending-merge metadata row by hand, and any repair stage then refuses every mutation by design, so a fixture round-trip would assert nothing beyond the refusal already covered by `cli::commands::doctor::tests::pending_sync_merge_read_only_inspector_rejects_duplicate_and_empty_rows` |
 | fm-state_files-wal-oversized | wal_oversized_checkpoint | detect |
 | fm-state_files-wal-shm-sidecar-orphan | orphan_shm_sidecar, wal_without_shm | detect: orphan_shm_sidecar fires the error; wal_without_shm pins the tolerated ok-path (WAL without SHM is legal after a clean close) |
 

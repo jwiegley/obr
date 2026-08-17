@@ -1,16 +1,16 @@
-//! Regression test for issue #256: `br update` stdout prints an unrelated
+//! Regression test for issue #256: `obr update` stdout prints an unrelated
 //! bead's fields as the diff.
 //!
 //! Symptom (quoted from the reporter):
 //! ```
-//! $ br update <target-id> --priority 1
+//! $ obr update <target-id> --priority 1
 //! Updated <target-id>: <UNRELATED BEAD'S TITLE>
 //!   status: open → closed
 //!   priority: P1 → P2
 //!   type: bug → task
 //! ```
 //!
-//! The target bead's on-disk state is unchanged, and `br show <target-id>`
+//! The target bead's on-disk state is unchanged, and `obr show <target-id>`
 //! returns the correct values; only the "Updated …" diff block printed to
 //! stdout references a different bead's title + fields.
 //!
@@ -30,7 +30,7 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, parse_created_id, run_br};
+use common::cli::{ObrWorkspace, parse_created_id, run_obr};
 
 /// Minimal end-to-end guarantee: when we update the **target** bead, the
 /// "Updated <id>: <title>" header must name the target bead's title, never
@@ -39,15 +39,15 @@ use common::cli::{BrWorkspace, parse_created_id, run_br};
 #[test]
 fn br_update_prints_target_beads_title_not_unrelated_bead_title() {
     let _log = common::test_log("repro_issue_256_header_title");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create a "noise" bead first — a closed P2 task, exactly matching the
     // shape of the unrelated bead whose fields were leaking into the diff
     // in the bug report.  Closing immediately ensures it is terminal state.
-    let noise_create = run_br(
+    let noise_create = run_obr(
         &workspace,
         [
             "create",
@@ -65,7 +65,7 @@ fn br_update_prints_target_beads_title_not_unrelated_bead_title() {
         noise_create.stderr
     );
     let noise_id = parse_created_id(&noise_create.stdout);
-    let noise_close = run_br(&workspace, ["close", &noise_id], "close_noise");
+    let noise_close = run_obr(&workspace, ["close", &noise_id], "close_noise");
     assert!(
         noise_close.status.success(),
         "noise close failed: {}",
@@ -75,7 +75,7 @@ fn br_update_prints_target_beads_title_not_unrelated_bead_title() {
     // Create the target bead: open / P1 / bug, exactly matching the
     // reporter's scenario.
     let target_title = "TARGET BEAD TITLE";
-    let target_create = run_br(
+    let target_create = run_obr(
         &workspace,
         ["create", target_title, "--type", "bug", "--priority", "1"],
         "create_target",
@@ -89,7 +89,7 @@ fn br_update_prints_target_beads_title_not_unrelated_bead_title() {
 
     // Run the reporter's exact command: idempotent `--priority 1` on an
     // already-P1 bead.
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         ["update", &target_id, "--priority", "1"],
         "update_priority_noop",
@@ -129,7 +129,7 @@ fn br_update_prints_target_beads_title_not_unrelated_bead_title() {
     // Assertion 3: the underlying data on disk must remain target's
     // original values (the reporter confirmed this; we re-assert as a
     // positive invariant).
-    let show = run_br(&workspace, ["show", &target_id, "--json"], "show_after");
+    let show = run_obr(&workspace, ["show", &target_id, "--json"], "show_after");
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let payload = common::cli::extract_json_payload(&show.stdout);
     let show_json: Vec<serde_json::Value> = serde_json::from_str(&payload).expect("show json");
@@ -144,15 +144,15 @@ fn br_update_prints_target_beads_title_not_unrelated_bead_title() {
 /// the header title matches the target bead, and the printed before/after
 /// values match the user's requested change — not some other bead's fields.
 #[test]
-fn br_update_prints_correct_diff_for_real_field_change() {
+fn obr_update_prints_correct_diff_for_real_field_change() {
     let _log = common::test_log("repro_issue_256_real_change");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Same noise shape as above.
-    let noise_create = run_br(
+    let noise_create = run_obr(
         &workspace,
         [
             "create",
@@ -165,10 +165,10 @@ fn br_update_prints_correct_diff_for_real_field_change() {
         "create_noise",
     );
     let noise_id = parse_created_id(&noise_create.stdout);
-    let _ = run_br(&workspace, ["close", &noise_id], "close_noise");
+    let _ = run_obr(&workspace, ["close", &noise_id], "close_noise");
 
     let target_title = "REAL CHANGE TARGET";
-    let target_create = run_br(
+    let target_create = run_obr(
         &workspace,
         ["create", target_title, "--type", "bug", "--priority", "1"],
         "create_target",
@@ -176,7 +176,7 @@ fn br_update_prints_correct_diff_for_real_field_change() {
     let target_id = parse_created_id(&target_create.stdout);
 
     // Request a genuine priority change (P1 -> P3).
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         ["update", &target_id, "--priority", "3"],
         "update_real_change",

@@ -1,14 +1,14 @@
-//! Real Dataset Benchmarks: br (Rust) vs bd (Go) Performance on Real Data
+//! Real Dataset Benchmarks: obr (Rust) vs bd (Go) Performance on Real Data
 //!
 //! This module benchmarks both implementations on actual beads datasets from
-//! real projects (beads_rust, beads_viewer, coding_agent_session_search, brenner_bot).
+//! real projects (obr, beads_viewer, coding_agent_session_search, brenner_bot).
 //!
 //! Run with: cargo test benchmark_dataset --release -- --nocapture --ignored
 //!
 //! Measures:
 //! - Read-heavy workloads (list, search, ready, stats)
 //! - Write-heavy workloads (create, update, close)
-//! - Time + RSS for br and bd
+//! - Time + RSS for obr and bd
 //! - Per-dataset comparison tables
 
 #![allow(clippy::all, clippy::pedantic, clippy::nursery)]
@@ -71,11 +71,11 @@ pub struct CmdOutput {
     pub exit_code: i32,
 }
 
-/// Workspace for dataset benchmarks - uses separate directories for br and bd
+/// Workspace for dataset benchmarks - uses separate directories for obr and bd
 /// to avoid schema compatibility issues between implementations
 pub struct DatasetBenchmarkWorkspace {
     pub temp_dir: tempfile::TempDir,
-    pub br_root: PathBuf,
+    pub obr_root: PathBuf,
     pub bd_root: PathBuf,
     pub log_dir: PathBuf,
     pub metadata: DatasetMetadata,
@@ -84,8 +84,8 @@ pub struct DatasetBenchmarkWorkspace {
 impl DatasetBenchmarkWorkspace {
     /// Create from a known dataset (copies to two separate directories)
     pub fn from_dataset(dataset: KnownDataset) -> std::io::Result<Self> {
-        let source_beads = dataset.beads_dir();
-        if !source_beads.exists() {
+        let source_obr = dataset.obr_dir();
+        if !source_obr.exists() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 format!("Dataset {} not found", dataset.name()),
@@ -95,20 +95,20 @@ impl DatasetBenchmarkWorkspace {
         let temp_dir = tempfile::TempDir::new()?;
         let root = temp_dir.path();
 
-        let br_root = root.join("br_workspace");
+        let obr_root = root.join("br_workspace");
         let bd_root = root.join("bd_workspace");
         let log_dir = root.join("benchmark-logs");
 
-        fs::create_dir_all(&br_root)?;
+        fs::create_dir_all(&obr_root)?;
         fs::create_dir_all(&bd_root)?;
         fs::create_dir_all(&log_dir)?;
 
-        // Copy .beads to both workspaces
-        copy_beads_dir(&source_beads, &br_root.join(".beads"))?;
-        copy_beads_dir(&source_beads, &bd_root.join(".beads"))?;
+        // Copy .obr to both workspaces
+        copy_obr_dir(&source_obr, &obr_root.join(".obr"))?;
+        copy_obr_dir(&source_obr, &bd_root.join(".obr"))?;
 
         // Create minimal git scaffold in both
-        for workspace in [&br_root, &bd_root] {
+        for workspace in [&obr_root, &bd_root] {
             fs::create_dir_all(workspace.join(".git"))?;
             fs::write(
                 workspace.join(".git").join("HEAD"),
@@ -117,8 +117,8 @@ impl DatasetBenchmarkWorkspace {
         }
 
         // Compute metadata from one of the copies
-        let jsonl_path = br_root.join(".beads").join("issues.jsonl");
-        let db_path = br_root.join(".beads").join("beads.db");
+        let jsonl_path = obr_root.join(".obr").join("issues.jsonl");
+        let db_path = obr_root.join(".obr").join("obr.db");
         let jsonl_size_bytes = fs::metadata(&jsonl_path).map(|m| m.len()).unwrap_or(0);
         let db_size_bytes = fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
         let issue_count = count_jsonl_lines(&jsonl_path);
@@ -140,7 +140,7 @@ impl DatasetBenchmarkWorkspace {
 
         Ok(Self {
             temp_dir,
-            br_root,
+            obr_root,
             bd_root,
             log_dir,
             metadata,
@@ -152,16 +152,16 @@ impl DatasetBenchmarkWorkspace {
         let temp_dir = tempfile::TempDir::new()?;
         let root = temp_dir.path();
 
-        let br_root = root.join("br_workspace");
+        let obr_root = root.join("br_workspace");
         let bd_root = root.join("bd_workspace");
         let log_dir = root.join("benchmark-logs");
 
-        fs::create_dir_all(&br_root)?;
+        fs::create_dir_all(&obr_root)?;
         fs::create_dir_all(&bd_root)?;
         fs::create_dir_all(&log_dir)?;
 
         // Create minimal git scaffold in both
-        for workspace in [&br_root, &bd_root] {
+        for workspace in [&obr_root, &bd_root] {
             fs::create_dir_all(workspace.join(".git"))?;
             fs::write(
                 workspace.join(".git").join("HEAD"),
@@ -186,7 +186,7 @@ impl DatasetBenchmarkWorkspace {
 
         Ok(Self {
             temp_dir,
-            br_root,
+            obr_root,
             bd_root,
             log_dir,
             metadata,
@@ -198,13 +198,13 @@ impl DatasetBenchmarkWorkspace {
         &self.metadata
     }
 
-    /// Run br command
-    pub fn run_br<I, S>(&self, args: I) -> CmdOutput
+    /// Run obr command
+    pub fn run_obr<I, S>(&self, args: I) -> CmdOutput
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        run_cmd("br", &self.br_root, args)
+        run_cmd("obr", &self.obr_root, args)
     }
 
     /// Run bd command
@@ -216,13 +216,13 @@ impl DatasetBenchmarkWorkspace {
         run_cmd("bd", &self.bd_root, args)
     }
 
-    /// Time br command (returns just duration)
-    pub fn time_br<I, S>(&self, args: I) -> Duration
+    /// Time obr command (returns just duration)
+    pub fn time_obr<I, S>(&self, args: I) -> Duration
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        self.run_br(args).duration
+        self.run_obr(args).duration
     }
 
     /// Time bd command (returns just duration)
@@ -235,8 +235,8 @@ impl DatasetBenchmarkWorkspace {
     }
 }
 
-/// Copy .beads directory excluding temp files
-fn copy_beads_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
+/// Copy .obr directory excluding temp files
+fn copy_obr_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
     fs::create_dir_all(dst)?;
 
     for entry in fs::read_dir(src)? {
@@ -260,7 +260,7 @@ fn copy_beads_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
         }
 
         if file_type.is_dir() {
-            copy_beads_dir(&src_path, &dst_path)?;
+            copy_obr_dir(&src_path, &dst_path)?;
         } else if file_type.is_file() {
             fs::copy(&src_path, &dst_path)?;
         }
@@ -283,14 +283,14 @@ where
 {
     let start = Instant::now();
 
-    let output = if binary == "br" {
-        let br_bin = assert_cmd::cargo::cargo_bin!("br");
-        std::process::Command::new(&br_bin)
+    let output = if binary == "obr" {
+        let obr_bin = assert_cmd::cargo::cargo_bin!("obr");
+        std::process::Command::new(&obr_bin)
             .current_dir(cwd)
             .args(args)
             .env("NO_COLOR", "1")
             .output()
-            .expect("run br")
+            .expect("run obr")
     } else {
         std::process::Command::new(binary)
             .current_dir(cwd)
@@ -383,8 +383,8 @@ fn measure_rss(binary: &str, cwd: &Path, args: &[&str]) -> MemoryStats {
         return MemoryStats { max_rss_kb: None };
     }
 
-    let program = if binary == "br" {
-        assert_cmd::cargo::cargo_bin!("br").to_path_buf()
+    let program = if binary == "obr" {
+        assert_cmd::cargo::cargo_bin!("obr").to_path_buf()
     } else {
         PathBuf::from("bd")
     };
@@ -412,9 +412,9 @@ fn measure_rss(binary: &str, cwd: &Path, args: &[&str]) -> MemoryStats {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkloadResult {
     pub name: String,
-    pub br_stats: TimingStats,
+    pub obr_stats: TimingStats,
     pub bd_stats: TimingStats,
-    pub br_rss_kb: Option<u64>,
+    pub obr_rss_kb: Option<u64>,
     pub bd_rss_kb: Option<u64>,
     pub speedup_percent: f64,
 }
@@ -422,22 +422,22 @@ pub struct WorkloadResult {
 impl WorkloadResult {
     pub fn new(
         name: &str,
-        br_stats: TimingStats,
+        obr_stats: TimingStats,
         bd_stats: TimingStats,
-        br_rss: MemoryStats,
+        obr_rss: MemoryStats,
         bd_rss: MemoryStats,
     ) -> Self {
-        let speedup_percent = if br_stats.mean_ms > 0.0 {
-            ((bd_stats.mean_ms - br_stats.mean_ms) / bd_stats.mean_ms) * 100.0
+        let speedup_percent = if obr_stats.mean_ms > 0.0 {
+            ((bd_stats.mean_ms - obr_stats.mean_ms) / bd_stats.mean_ms) * 100.0
         } else {
             0.0
         };
 
         Self {
             name: name.to_string(),
-            br_stats,
+            obr_stats,
             bd_stats,
-            br_rss_kb: br_rss.max_rss_kb,
+            obr_rss_kb: obr_rss.max_rss_kb,
             bd_rss_kb: bd_rss.max_rss_kb,
             speedup_percent,
         }
@@ -445,7 +445,7 @@ impl WorkloadResult {
 
     pub fn print(&self) {
         let winner = if self.speedup_percent > 5.0 {
-            "br"
+            "obr"
         } else if self.speedup_percent < -5.0 {
             "bd"
         } else {
@@ -453,14 +453,14 @@ impl WorkloadResult {
         };
 
         println!(
-            "  {:<20} br: {:>8.1}ms  bd: {:>8.1}ms  ({:>+6.1}% {})",
-            self.name, self.br_stats.mean_ms, self.bd_stats.mean_ms, self.speedup_percent, winner
+            "  {:<20} obr: {:>8.1}ms  bd: {:>8.1}ms  ({:>+6.1}% {})",
+            self.name, self.obr_stats.mean_ms, self.bd_stats.mean_ms, self.speedup_percent, winner
         );
 
-        if let (Some(br_rss), Some(bd_rss)) = (self.br_rss_kb, self.bd_rss_kb) {
+        if let (Some(obr_rss), Some(bd_rss)) = (self.obr_rss_kb, self.bd_rss_kb) {
             println!(
-                "                       RSS: br {:>6}KB  bd {:>6}KB",
-                br_rss, bd_rss
+                "                       RSS: obr {:>6}KB  bd {:>6}KB",
+                obr_rss, bd_rss
             );
         }
     }
@@ -528,27 +528,27 @@ fn benchmark_list(workspace: &DatasetBenchmarkWorkspace, config: &BenchConfig) -
 
     // Warmup
     for _ in 0..config.warmup_runs {
-        let _ = workspace.run_br(&args);
+        let _ = workspace.run_obr(&args);
         let _ = workspace.run_bd(&args);
     }
 
     // Timed runs
-    let br_durations: Vec<Duration> = (0..config.timed_runs)
-        .map(|_| workspace.time_br(&args))
+    let obr_durations: Vec<Duration> = (0..config.timed_runs)
+        .map(|_| workspace.time_obr(&args))
         .collect();
     let bd_durations: Vec<Duration> = (0..config.timed_runs)
         .map(|_| workspace.time_bd(&args))
         .collect();
 
     // Memory measurement
-    let br_rss = measure_rss("br", &workspace.br_root, &args);
+    let obr_rss = measure_rss("obr", &workspace.obr_root, &args);
     let bd_rss = measure_rss("bd", &workspace.bd_root, &args);
 
     WorkloadResult::new(
         "list --json",
-        TimingStats::from_durations(&br_durations),
+        TimingStats::from_durations(&obr_durations),
         TimingStats::from_durations(&bd_durations),
-        br_rss,
+        obr_rss,
         bd_rss,
     )
 }
@@ -558,26 +558,26 @@ fn benchmark_search(workspace: &DatasetBenchmarkWorkspace, config: &BenchConfig)
 
     // Warmup
     for _ in 0..config.warmup_runs {
-        let _ = workspace.run_br(&args);
+        let _ = workspace.run_obr(&args);
         let _ = workspace.run_bd(&args);
     }
 
     // Timed runs
-    let br_durations: Vec<Duration> = (0..config.timed_runs)
-        .map(|_| workspace.time_br(&args))
+    let obr_durations: Vec<Duration> = (0..config.timed_runs)
+        .map(|_| workspace.time_obr(&args))
         .collect();
     let bd_durations: Vec<Duration> = (0..config.timed_runs)
         .map(|_| workspace.time_bd(&args))
         .collect();
 
-    let br_rss = measure_rss("br", &workspace.br_root, &args);
+    let obr_rss = measure_rss("obr", &workspace.obr_root, &args);
     let bd_rss = measure_rss("bd", &workspace.bd_root, &args);
 
     WorkloadResult::new(
         "search 'test'",
-        TimingStats::from_durations(&br_durations),
+        TimingStats::from_durations(&obr_durations),
         TimingStats::from_durations(&bd_durations),
-        br_rss,
+        obr_rss,
         bd_rss,
     )
 }
@@ -587,26 +587,26 @@ fn benchmark_ready(workspace: &DatasetBenchmarkWorkspace, config: &BenchConfig) 
 
     // Warmup
     for _ in 0..config.warmup_runs {
-        let _ = workspace.run_br(&args);
+        let _ = workspace.run_obr(&args);
         let _ = workspace.run_bd(&args);
     }
 
     // Timed runs
-    let br_durations: Vec<Duration> = (0..config.timed_runs)
-        .map(|_| workspace.time_br(&args))
+    let obr_durations: Vec<Duration> = (0..config.timed_runs)
+        .map(|_| workspace.time_obr(&args))
         .collect();
     let bd_durations: Vec<Duration> = (0..config.timed_runs)
         .map(|_| workspace.time_bd(&args))
         .collect();
 
-    let br_rss = measure_rss("br", &workspace.br_root, &args);
+    let obr_rss = measure_rss("obr", &workspace.obr_root, &args);
     let bd_rss = measure_rss("bd", &workspace.bd_root, &args);
 
     WorkloadResult::new(
         "ready --json",
-        TimingStats::from_durations(&br_durations),
+        TimingStats::from_durations(&obr_durations),
         TimingStats::from_durations(&bd_durations),
-        br_rss,
+        obr_rss,
         bd_rss,
     )
 }
@@ -616,26 +616,26 @@ fn benchmark_stats(workspace: &DatasetBenchmarkWorkspace, config: &BenchConfig) 
 
     // Warmup
     for _ in 0..config.warmup_runs {
-        let _ = workspace.run_br(&args);
+        let _ = workspace.run_obr(&args);
         let _ = workspace.run_bd(&args);
     }
 
     // Timed runs
-    let br_durations: Vec<Duration> = (0..config.timed_runs)
-        .map(|_| workspace.time_br(&args))
+    let obr_durations: Vec<Duration> = (0..config.timed_runs)
+        .map(|_| workspace.time_obr(&args))
         .collect();
     let bd_durations: Vec<Duration> = (0..config.timed_runs)
         .map(|_| workspace.time_bd(&args))
         .collect();
 
-    let br_rss = measure_rss("br", &workspace.br_root, &args);
+    let obr_rss = measure_rss("obr", &workspace.obr_root, &args);
     let bd_rss = measure_rss("bd", &workspace.bd_root, &args);
 
     WorkloadResult::new(
         "stats --json",
-        TimingStats::from_durations(&br_durations),
+        TimingStats::from_durations(&obr_durations),
         TimingStats::from_durations(&bd_durations),
-        br_rss,
+        obr_rss,
         bd_rss,
     )
 }
@@ -648,26 +648,26 @@ fn benchmark_blocked(
 
     // Warmup
     for _ in 0..config.warmup_runs {
-        let _ = workspace.run_br(&args);
+        let _ = workspace.run_obr(&args);
         let _ = workspace.run_bd(&args);
     }
 
     // Timed runs
-    let br_durations: Vec<Duration> = (0..config.timed_runs)
-        .map(|_| workspace.time_br(&args))
+    let obr_durations: Vec<Duration> = (0..config.timed_runs)
+        .map(|_| workspace.time_obr(&args))
         .collect();
     let bd_durations: Vec<Duration> = (0..config.timed_runs)
         .map(|_| workspace.time_bd(&args))
         .collect();
 
-    let br_rss = measure_rss("br", &workspace.br_root, &args);
+    let obr_rss = measure_rss("obr", &workspace.obr_root, &args);
     let bd_rss = measure_rss("bd", &workspace.bd_root, &args);
 
     WorkloadResult::new(
         "blocked --json",
-        TimingStats::from_durations(&br_durations),
+        TimingStats::from_durations(&obr_durations),
         TimingStats::from_durations(&bd_durations),
-        br_rss,
+        obr_rss,
         bd_rss,
     )
 }
@@ -678,24 +678,24 @@ fn benchmark_blocked(
 
 fn benchmark_create(workspace: &DatasetBenchmarkWorkspace, config: &BenchConfig) -> WorkloadResult {
     // Create issues with unique titles to avoid conflicts
-    let mut br_durations = Vec::with_capacity(config.timed_runs);
+    let mut obr_durations = Vec::with_capacity(config.timed_runs);
     let mut bd_durations = Vec::with_capacity(config.timed_runs);
 
     // Warmup
     for i in 0..config.warmup_runs {
         let title = format!("Warmup issue {i}");
-        let _ = workspace.run_br(["create", &title, "--type", "task"]);
+        let _ = workspace.run_obr(["create", &title, "--type", "task"]);
         let _ = workspace.run_bd(["create", &title, "--type", "task"]);
     }
 
     // Timed runs
     for i in 0..config.timed_runs {
-        let br_title = format!("BR benchmark issue {i}");
+        let obr_title = format!("BR benchmark issue {i}");
         let bd_title = format!("BD benchmark issue {i}");
 
-        let br_start = Instant::now();
-        let _ = workspace.run_br(["create", &br_title, "--type", "task"]);
-        br_durations.push(br_start.elapsed());
+        let obr_start = Instant::now();
+        let _ = workspace.run_obr(["create", &obr_title, "--type", "task"]);
+        obr_durations.push(obr_start.elapsed());
 
         let bd_start = Instant::now();
         let _ = workspace.run_bd(["create", &bd_title, "--type", "task"]);
@@ -703,10 +703,10 @@ fn benchmark_create(workspace: &DatasetBenchmarkWorkspace, config: &BenchConfig)
     }
 
     // RSS measurement for create
-    let br_rss = measure_rss(
-        "br",
-        &workspace.br_root,
-        &["create", "RSS test br", "--type", "task"],
+    let obr_rss = measure_rss(
+        "obr",
+        &workspace.obr_root,
+        &["create", "RSS test obr", "--type", "task"],
     );
     let bd_rss = measure_rss(
         "bd",
@@ -716,18 +716,18 @@ fn benchmark_create(workspace: &DatasetBenchmarkWorkspace, config: &BenchConfig)
 
     WorkloadResult::new(
         "create",
-        TimingStats::from_durations(&br_durations),
+        TimingStats::from_durations(&obr_durations),
         TimingStats::from_durations(&bd_durations),
-        br_rss,
+        obr_rss,
         bd_rss,
     )
 }
 
 fn benchmark_update(workspace: &DatasetBenchmarkWorkspace, config: &BenchConfig) -> WorkloadResult {
     // First, get list of issues to update
-    let br_output = workspace.run_br(["list", "--json"]);
+    let obr_output = workspace.run_obr(["list", "--json"]);
     let issues: Vec<serde_json::Value> =
-        serde_json::from_str(&br_output.stdout).unwrap_or_default();
+        serde_json::from_str(&obr_output.stdout).unwrap_or_default();
 
     if issues.is_empty() {
         return WorkloadResult::new(
@@ -742,13 +742,13 @@ fn benchmark_update(workspace: &DatasetBenchmarkWorkspace, config: &BenchConfig)
     // Get first issue ID
     let issue_id = issues[0]["id"].as_str().unwrap_or("beads-1");
 
-    let mut br_durations = Vec::with_capacity(config.timed_runs);
+    let mut obr_durations = Vec::with_capacity(config.timed_runs);
     let mut bd_durations = Vec::with_capacity(config.timed_runs);
 
     // Warmup
     for i in 0..config.warmup_runs {
         let title = format!("Updated warmup {i}");
-        let _ = workspace.run_br(["update", issue_id, "--title", &title]);
+        let _ = workspace.run_obr(["update", issue_id, "--title", &title]);
         let _ = workspace.run_bd(["update", issue_id, "--title", &title]);
     }
 
@@ -756,9 +756,9 @@ fn benchmark_update(workspace: &DatasetBenchmarkWorkspace, config: &BenchConfig)
     for i in 0..config.timed_runs {
         let title = format!("Benchmark update {i}");
 
-        let br_start = Instant::now();
-        let _ = workspace.run_br(["update", issue_id, "--title", &title]);
-        br_durations.push(br_start.elapsed());
+        let obr_start = Instant::now();
+        let _ = workspace.run_obr(["update", issue_id, "--title", &title]);
+        obr_durations.push(obr_start.elapsed());
 
         let bd_start = Instant::now();
         let _ = workspace.run_bd(["update", issue_id, "--title", &title]);
@@ -766,14 +766,14 @@ fn benchmark_update(workspace: &DatasetBenchmarkWorkspace, config: &BenchConfig)
     }
 
     let args = ["update", issue_id, "--title", "RSS test"];
-    let br_rss = measure_rss("br", &workspace.br_root, &args);
+    let obr_rss = measure_rss("obr", &workspace.obr_root, &args);
     let bd_rss = measure_rss("bd", &workspace.bd_root, &args);
 
     WorkloadResult::new(
         "update",
-        TimingStats::from_durations(&br_durations),
+        TimingStats::from_durations(&obr_durations),
         TimingStats::from_durations(&bd_durations),
-        br_rss,
+        obr_rss,
         bd_rss,
     )
 }
@@ -783,16 +783,16 @@ fn benchmark_close_reopen(
     config: &BenchConfig,
 ) -> WorkloadResult {
     // Create issues specifically for close/reopen testing
-    let mut br_durations = Vec::with_capacity(config.timed_runs);
+    let mut obr_durations = Vec::with_capacity(config.timed_runs);
     let mut bd_durations = Vec::with_capacity(config.timed_runs);
 
     // Warmup with create + close cycle
     for i in 0..config.warmup_runs {
         let title = format!("Close warmup {i}");
-        let br_out = workspace.run_br(["create", &title, "--type", "task", "--json"]);
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&br_out.stdout) {
+        let obr_out = workspace.run_obr(["create", &title, "--type", "task", "--json"]);
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&obr_out.stdout) {
             if let Some(id) = v.get("id").and_then(|i| i.as_str()) {
-                let _ = workspace.run_br(["close", id]);
+                let _ = workspace.run_obr(["close", id]);
             }
         }
 
@@ -807,13 +807,13 @@ fn benchmark_close_reopen(
     // Timed runs: create then close
     for i in 0..config.timed_runs {
         // BR: create then close
-        let br_title = format!("BR close bench {i}");
-        let br_create = workspace.run_br(["create", &br_title, "--type", "task", "--json"]);
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&br_create.stdout) {
+        let obr_title = format!("BR close bench {i}");
+        let obr_create = workspace.run_obr(["create", &obr_title, "--type", "task", "--json"]);
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&obr_create.stdout) {
             if let Some(id) = v.get("id").and_then(|i| i.as_str()) {
                 let start = Instant::now();
-                let _ = workspace.run_br(["close", id]);
-                br_durations.push(start.elapsed());
+                let _ = workspace.run_obr(["close", id]);
+                obr_durations.push(start.elapsed());
             }
         }
 
@@ -830,10 +830,11 @@ fn benchmark_close_reopen(
     }
 
     // RSS for close (create issue first)
-    let br_create = workspace.run_br(["create", "RSS close test br", "--type", "task", "--json"]);
-    let br_rss = if let Ok(v) = serde_json::from_str::<serde_json::Value>(&br_create.stdout) {
+    let obr_create =
+        workspace.run_obr(["create", "RSS close test obr", "--type", "task", "--json"]);
+    let obr_rss = if let Ok(v) = serde_json::from_str::<serde_json::Value>(&obr_create.stdout) {
         if let Some(id) = v.get("id").and_then(|i| i.as_str()) {
-            measure_rss("br", &workspace.br_root, &["close", id])
+            measure_rss("obr", &workspace.obr_root, &["close", id])
         } else {
             MemoryStats { max_rss_kb: None }
         }
@@ -854,9 +855,9 @@ fn benchmark_close_reopen(
 
     WorkloadResult::new(
         "close",
-        TimingStats::from_durations(&br_durations),
+        TimingStats::from_durations(&obr_durations),
         TimingStats::from_durations(&bd_durations),
-        br_rss,
+        obr_rss,
         bd_rss,
     )
 }
@@ -913,13 +914,13 @@ fn benchmark_dataset(
         metadata.name, metadata.issue_count
     );
 
-    // Check if br is compatible with this dataset (some datasets have old issue ID formats)
-    let br_check = workspace.run_br(["list", "--json"]);
-    if !br_check.success {
+    // Check if obr is compatible with this dataset (some datasets have old issue ID formats)
+    let obr_check = workspace.run_obr(["list", "--json"]);
+    if !obr_check.success {
         eprintln!(
-            "  [SKIP] {} - br not compatible with this dataset: {}",
+            "  [SKIP] {} - obr not compatible with this dataset: {}",
             dataset.name(),
-            br_check.stderr.lines().next().unwrap_or("unknown error")
+            obr_check.stderr.lines().next().unwrap_or("unknown error")
         );
         return None;
     }
@@ -983,7 +984,7 @@ impl DatasetBenchmarkReport {
         println!("\n");
         println!("╔══════════════════════════════════════════════════════════════╗");
         println!("║         REAL DATASET BENCHMARK COMPARISON REPORT            ║");
-        println!("║                    br (Rust) vs bd (Go)                      ║");
+        println!("║                    obr (Rust) vs bd (Go)                      ║");
         println!("╚══════════════════════════════════════════════════════════════╝");
         println!("Timestamp: {}", self.timestamp);
         println!(
@@ -1005,54 +1006,54 @@ impl DatasetBenchmarkReport {
         println!("══════════════════════════════════════════════════════════════");
 
         let mut total_read = 0;
-        let mut br_faster_read = 0;
+        let mut obr_faster_read = 0;
         let mut total_write = 0;
-        let mut br_faster_write = 0;
+        let mut obr_faster_write = 0;
 
         for result in &self.results {
             for workload in &result.read_workloads {
                 total_read += 1;
                 if workload.speedup_percent > 0.0 {
-                    br_faster_read += 1;
+                    obr_faster_read += 1;
                 }
             }
             for workload in &result.write_workloads {
                 total_write += 1;
                 if workload.speedup_percent > 0.0 {
-                    br_faster_write += 1;
+                    obr_faster_write += 1;
                 }
             }
         }
 
         println!(
-            "\nRead-heavy workloads:  br faster in {}/{} ({:.0}%)",
-            br_faster_read,
+            "\nRead-heavy workloads:  obr faster in {}/{} ({:.0}%)",
+            obr_faster_read,
             total_read,
             if total_read > 0 {
-                br_faster_read as f64 / total_read as f64 * 100.0
+                obr_faster_read as f64 / total_read as f64 * 100.0
             } else {
                 0.0
             }
         );
         println!(
-            "Write-heavy workloads: br faster in {}/{} ({:.0}%)",
-            br_faster_write,
+            "Write-heavy workloads: obr faster in {}/{} ({:.0}%)",
+            obr_faster_write,
             total_write,
             if total_write > 0 {
-                br_faster_write as f64 / total_write as f64 * 100.0
+                obr_faster_write as f64 / total_write as f64 * 100.0
             } else {
                 0.0
             }
         );
 
         let total = total_read + total_write;
-        let br_faster = br_faster_read + br_faster_write;
+        let obr_faster = obr_faster_read + obr_faster_write;
         println!(
-            "\nOverall: br faster in {}/{} workloads ({:.0}%)",
-            br_faster,
+            "\nOverall: obr faster in {}/{} workloads ({:.0}%)",
+            obr_faster,
             total,
             if total > 0 {
-                br_faster as f64 / total as f64 * 100.0
+                obr_faster as f64 / total as f64 * 100.0
             } else {
                 0.0
             }
@@ -1076,17 +1077,17 @@ fn workload_duration_ms(stats: &TimingStats) -> u128 {
     }
 }
 
-fn workload_ratio(br_stats: &TimingStats, bd_stats: &TimingStats) -> f64 {
+fn workload_ratio(obr_stats: &TimingStats, bd_stats: &TimingStats) -> f64 {
     if bd_stats.median_ms > 0.0 {
-        br_stats.median_ms / bd_stats.median_ms
+        obr_stats.median_ms / bd_stats.median_ms
     } else {
         1.0
     }
 }
 
-fn workload_rss_ratio(br_rss_kb: Option<u64>, bd_rss_kb: Option<u64>) -> Option<f64> {
-    match (br_rss_kb, bd_rss_kb) {
-        (Some(br), Some(bd)) if bd > 0 => Some(br as f64 / bd as f64),
+fn workload_rss_ratio(obr_rss_kb: Option<u64>, bd_rss_kb: Option<u64>) -> Option<f64> {
+    match (obr_rss_kb, bd_rss_kb) {
+        (Some(obr), Some(bd)) if bd > 0 => Some(obr as f64 / bd as f64),
         _ => None,
     }
 }
@@ -1101,12 +1102,12 @@ fn collect_comparisons(
         .iter()
         .chain(result.write_workloads.iter())
     {
-        let ratio = workload_ratio(&workload.br_stats, &workload.bd_stats);
-        let br_ms = workload_duration_ms(&workload.br_stats);
+        let ratio = workload_ratio(&workload.obr_stats, &workload.bd_stats);
+        let obr_ms = workload_duration_ms(&workload.obr_stats);
         let bd_ms = workload_duration_ms(&workload.bd_stats);
-        let rss_ratio = workload_rss_ratio(workload.br_rss_kb, workload.bd_rss_kb);
+        let rss_ratio = workload_rss_ratio(workload.obr_rss_kb, workload.bd_rss_kb);
 
-        comparisons.push((workload.name.clone(), ratio, br_ms, bd_ms, rss_ratio));
+        comparisons.push((workload.name.clone(), ratio, obr_ms, bd_ms, rss_ratio));
     }
 
     comparisons
@@ -1134,7 +1135,7 @@ fn run_regression_checks(results: &[DatasetBenchmarkResult]) {
             );
         }
 
-        for (label, ratio, _br_ms, _bd_ms, rss_ratio) in comparisons {
+        for (label, ratio, _obr_ms, _bd_ms, rss_ratio) in comparisons {
             if let Some(baseline) = baselines.get_baseline(&result.dataset_name, &label) {
                 regression_results.push(RegressionResult::check(
                     &label,
@@ -1228,7 +1229,7 @@ fn benchmark_dataset_full() {
     }
 }
 
-/// Quick benchmark on beads_rust only for CI
+/// Quick benchmark on obr only for CI
 #[test]
 fn benchmark_dataset_quick() {
     init_test_logging();
@@ -1236,7 +1237,7 @@ fn benchmark_dataset_quick() {
     let registry = DatasetRegistry::new();
     match quick_benchmark_readiness(
         common::bd_available(),
-        registry.is_available(KnownDataset::BeadsRust),
+        registry.is_available(KnownDataset::Obr),
     ) {
         QuickBenchmarkReadiness::Ready => {}
         QuickBenchmarkReadiness::MissingBd => {
@@ -1245,8 +1246,8 @@ fn benchmark_dataset_quick() {
         }
         QuickBenchmarkReadiness::MissingDataset => {
             eprintln!(
-                "Skipping benchmark_dataset_quick: beads_rust dataset not available \
-                 (no untracked .beads/beads.db in this checkout)"
+                "Skipping benchmark_dataset_quick: obr dataset not available \
+                 (no untracked .obr/obr.db in this checkout)"
             );
             return;
         }
@@ -1259,8 +1260,8 @@ fn benchmark_dataset_quick() {
         timed_runs: 3,
     };
 
-    // Just benchmark beads_rust as a quick sanity check
-    let result = benchmark_dataset(KnownDataset::BeadsRust, &config);
+    // Just benchmark obr as a quick sanity check
+    let result = benchmark_dataset(KnownDataset::Obr, &config);
     assert!(result.is_some(), "BeadsRust benchmark should succeed");
 
     let result = result.unwrap();
@@ -1313,15 +1314,15 @@ fn benchmark_dataset_infrastructure_works() {
     // Test workspace creation using empty workspaces + init
     let workspace = DatasetBenchmarkWorkspace::empty().expect("should create empty workspace");
 
-    assert!(workspace.br_root.exists());
+    assert!(workspace.obr_root.exists());
     assert!(workspace.bd_root.exists());
 
-    // Initialize br workspace
-    let br_init = workspace.run_br(["init"]);
+    // Initialize obr workspace
+    let obr_init = workspace.run_obr(["init"]);
     assert!(
-        br_init.success,
-        "br init should succeed: {}",
-        br_init.stderr
+        obr_init.success,
+        "obr init should succeed: {}",
+        obr_init.stderr
     );
 
     // Initialize bd workspace
@@ -1333,11 +1334,11 @@ fn benchmark_dataset_infrastructure_works() {
     );
 
     // Create a test issue in each
-    let br_create = workspace.run_br(["create", "Test issue br", "--type", "task"]);
+    let obr_create = workspace.run_obr(["create", "Test issue obr", "--type", "task"]);
     assert!(
-        br_create.success,
-        "br create should succeed: {}",
-        br_create.stderr
+        obr_create.success,
+        "obr create should succeed: {}",
+        obr_create.stderr
     );
 
     let bd_create = workspace.run_bd(["create", "Test issue bd", "--type", "task"]);
@@ -1348,8 +1349,12 @@ fn benchmark_dataset_infrastructure_works() {
     );
 
     // Test list commands
-    let br_out = workspace.run_br(["list", "--json"]);
-    assert!(br_out.success, "br list should succeed: {}", br_out.stderr);
+    let obr_out = workspace.run_obr(["list", "--json"]);
+    assert!(
+        obr_out.success,
+        "obr list should succeed: {}",
+        obr_out.stderr
+    );
 
     let bd_out = workspace.run_bd(["list", "--json"]);
     assert!(bd_out.success, "bd list should succeed: {}", bd_out.stderr);

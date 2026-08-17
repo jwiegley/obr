@@ -4,7 +4,7 @@
 - **Subsystem**: routes_external
 - **Detect**: `routes.targets` check goes to `warn` enumerating each
   route whose `path` resolves to a directory that doesn't exist OR
-  doesn't carry a recognizable `.beads`-style suffix. Each unresolved
+  doesn't carry a recognizable `.obr`-style suffix. Each unresolved
   entry surfaces the prefix, declared `path`, the resolved absolute
   target, and the failure reason ("target is not a beads directory",
   "redirect loop", etc.).

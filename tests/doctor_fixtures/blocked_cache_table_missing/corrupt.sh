@@ -33,7 +33,7 @@ b_id=$(echo "$ids" | sed -n 2p)
 printf '%s\n' \
   "DROP INDEX IF EXISTS idx_blocked_cache_blocked_at;" \
   "DROP TABLE IF EXISTS blocked_issues_cache;" \
-  | sqlite3 .beads/beads.db
+  | sqlite3 .obr/obr.db
 
 if [ -e .fixture_baseline ]; then
   echo "fixture baseline already exists; expected a fresh workspace" >&2

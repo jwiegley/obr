@@ -20,12 +20,12 @@ cd "$target_dir"
 "$tool_bin" sync --flush-only >/dev/null 2>&1
 
 # Capture the LF baseline — post_repair must match this.
-sha256sum .beads/issues.jsonl | awk '{print $1}' > .fixture_jsonl_post_repair_sha256
+sha256sum .obr/issues.jsonl | awk '{print $1}' > .fixture_jsonl_post_repair_sha256
 
 # Rewrite with CRLF line endings. Python keeps the byte-level
 # semantics explicit and avoids locale issues with sed/awk.
 python3 - <<'PY'
-path = ".beads/issues.jsonl"
+path = ".obr/issues.jsonl"
 with open(path, "rb") as f:
     data = f.read()
 # Replace every \n with \r\n (idempotent: \r\n -> \r\r\n would be
@@ -36,10 +36,10 @@ with open(path, "wb") as f:
 PY
 
 # Snapshot the CRLF-corrupted bytes — post_undo must match this.
-sha256sum .beads/issues.jsonl | awk '{print $1}' > .fixture_jsonl_pre_sha256
+sha256sum .obr/issues.jsonl | awk '{print $1}' > .fixture_jsonl_pre_sha256
 
 # Sanity check: file MUST contain at least one \r\n now.
-if ! grep -q $'\r' .beads/issues.jsonl; then
+if ! grep -q $'\r' .obr/issues.jsonl; then
   echo "corrupt: failed to inject CRLF" >&2
   exit 1
 fi

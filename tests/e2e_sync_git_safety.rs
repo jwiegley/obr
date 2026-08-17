@@ -1,13 +1,13 @@
 //! Regression tests for sync git safety.
 //!
-//! These tests verify that `br sync` NEVER:
+//! These tests verify that `obr sync` NEVER:
 //! - Executes git commands
 //! - Creates commits
 //! - Stages changes
 //! - Mutates the .git directory
 //!
 //! This is a critical safety invariant documented in:
-//! - beads_rust-0v1.2.4: "Guarantee no git operations are executed by br sync"
+//! - beads_rust-0v1.2.4: "Guarantee no git operations are executed by obr sync"
 //! - beads_rust-0v1.3.3: "Regression test: sync never runs git or creates commits"
 
 #![allow(
@@ -19,8 +19,8 @@
 mod common;
 
 #[cfg(unix)]
-use common::cli::{BrRun, extract_json_payload, run_br_with_env};
-use common::cli::{BrWorkspace, run_br};
+use common::cli::{ObrRun, extract_json_payload, run_obr_with_env};
+use common::cli::{ObrWorkspace, run_obr};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 #[cfg(unix)]
@@ -43,7 +43,7 @@ fn visit_dir(dir: &Path, base: &Path, hash_map: &mut BTreeMap<String, String>) {
                 if let Ok(contents) = fs::read(&path) {
                     let mut digest = Sha256::new();
                     digest.update(&contents);
-                    let hash = beads_rust::util::hex_encode(&digest.finalize());
+                    let hash = obr::util::hex_encode(&digest.finalize());
                     hash_map.insert(rel_path, hash);
                 }
             } else if path.is_dir() {
@@ -104,7 +104,7 @@ fn get_commit_count(dir: &Path) -> usize {
 }
 
 /// Initialize a git repo in the workspace with an initial commit.
-fn init_git_repo(workspace: &BrWorkspace) {
+fn init_git_repo(workspace: &ObrWorkspace) {
     // Initialize git
     let init = Command::new("git")
         .args(["init"])
@@ -240,13 +240,13 @@ fn changed_git_entries(
 
 #[cfg(unix)]
 fn guarded_sync(
-    workspace: &BrWorkspace,
+    workspace: &ObrWorkspace,
     sentinel_path: &Path,
     sentinel_dir: &Path,
     args: &[String],
     extra_env: &[(OsString, OsString)],
     label: &str,
-) -> BrRun {
+) -> ObrRun {
     assert!(
         !sentinel_path.exists(),
         "Git PATH sentinel was already invoked before {label}"
@@ -258,7 +258,7 @@ fn guarded_sync(
         OsString::from("PATH"),
         sentinel_dir.as_os_str().to_os_string(),
     ));
-    let result = run_br_with_env(workspace, args.iter(), environment, label);
+    let result = run_obr_with_env(workspace, args.iter(), environment, label);
     let after = snapshot_git_tree(&git_dir);
     assert!(
         !sentinel_path.exists(),
@@ -289,11 +289,15 @@ fn e2e_every_sync_mode_has_zero_git_authority_and_zero_git_mutation() {
     use std::os::unix::fs::PermissionsExt;
 
     let _log = common::test_log("e2e_every_sync_mode_has_zero_git_authority_and_zero_git_mutation");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_git_repo(&workspace);
-    let init = run_br(&workspace, ["init"], "matrix_init");
+    let init = run_obr(&workspace, ["init"], "matrix_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
-    let create = run_br(
+    // Class A: the matrix covers `sync --witness` (chunk witnesses are only
+    // defined for line-oriented JSONL) and seeds a `merge.base.jsonl` anchor
+    // from the export, so this workspace must stay on the JSONL export.
+    common::cli::pin_jsonl(&workspace.root.join(".obr"));
+    let create = run_obr(
         &workspace,
         ["create", "Sync safety matrix seed"],
         "matrix_create",
@@ -420,7 +424,7 @@ fn e2e_every_sync_mode_has_zero_git_authority_and_zero_git_mutation() {
                 result.stdout
             );
             assert!(
-                result.stdout.contains("br vcs-status --json"),
+                result.stdout.contains("obr vcs-status --json"),
                 "human sync status omitted the explicit diagnostic pointer:\n{}",
                 result.stdout
             );
@@ -467,15 +471,15 @@ fn e2e_every_sync_mode_has_zero_git_authority_and_zero_git_mutation() {
                 result.stdout
             );
             assert!(
-                result.stdout.contains("br vcs-status --json"),
+                result.stdout.contains("obr vcs-status --json"),
                 "no-DB human sync status omitted the explicit diagnostic pointer:\n{}",
                 result.stdout
             );
         }
     }
 
-    let jsonl_path = workspace.root.join(".beads/issues.jsonl");
-    fs::copy(&jsonl_path, workspace.root.join(".beads/beads.base.jsonl")).expect("seed merge base");
+    let jsonl_path = workspace.root.join(".obr/issues.jsonl");
+    fs::copy(&jsonl_path, workspace.root.join(".obr/merge.base.jsonl")).expect("seed merge base");
     // Merge correctness has dedicated semantic tests. This matrix exercises
     // every conflict-resolution dispatch policy under the no-process/no-.git
     // authority sentinel, even when the converged fixture has no conflict.
@@ -567,7 +571,7 @@ fn e2e_every_sync_mode_has_zero_git_authority_and_zero_git_mutation() {
     fs::create_dir(&external_dir).expect("create external JSONL directory");
     let external_jsonl = external_dir.join("issues.jsonl");
     let external_env = vec![(
-        OsString::from("BEADS_JSONL"),
+        OsString::from("OBR_JSONL"),
         external_jsonl.as_os_str().to_os_string(),
     )];
     let external = guarded_sync(
@@ -641,7 +645,7 @@ fn e2e_every_sync_mode_has_zero_git_authority_and_zero_git_mutation() {
             assert_eq!(payload["git_export"]["available"], false, "{payload}");
             assert_eq!(payload["git_export"]["reason"], "not_probed", "{payload}");
             assert_eq!(
-                payload["git_export"]["diagnostic_command"], "br vcs-status --json",
+                payload["git_export"]["diagnostic_command"], "obr vcs-status --json",
                 "{payload}"
             );
         }
@@ -715,17 +719,17 @@ fn e2e_every_sync_mode_has_zero_git_authority_and_zero_git_mutation() {
 /// Regression test: sync export does not create git commits or mutate .git
 #[test]
 fn regression_sync_export_does_not_create_commits() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize git repo first
     init_git_repo(&workspace);
 
     // Initialize beads
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create some issues
-    let create1 = run_br(
+    let create1 = run_obr(
         &workspace,
         ["create", "Test issue 1", "--no-auto-flush"],
         "create1",
@@ -735,7 +739,7 @@ fn regression_sync_export_does_not_create_commits() {
         "create1 failed: {}",
         create1.stderr
     );
-    let create2 = run_br(
+    let create2 = run_obr(
         &workspace,
         ["create", "Test issue 2", "--no-auto-flush"],
         "create2",
@@ -753,7 +757,7 @@ fn regression_sync_export_does_not_create_commits() {
     let git_dir_hash_before = hash_directory_contents(&workspace.root.join(".git"));
 
     // Run sync export
-    let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_export");
+    let sync = run_obr(&workspace, ["sync", "--flush-only"], "sync_export");
     assert!(sync.status.success(), "sync export failed: {}", sync.stderr);
 
     // Record git state AFTER sync
@@ -838,16 +842,17 @@ fn regression_sync_export_does_not_create_commits() {
 /// Regression test: sync import does not create git commits or mutate .git
 #[test]
 fn regression_sync_import_does_not_create_commits() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize git repo first
     init_git_repo(&workspace);
 
     // Initialize beads and create an issue
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    common::cli::pin_jsonl(&workspace.root.join(".obr")); // Class A: JSONL-specific machinery
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Original issue", "--no-auto-flush"],
         "create",
@@ -855,7 +860,7 @@ fn regression_sync_import_does_not_create_commits() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // Export first
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "flush");
     assert!(flush.status.success(), "flush failed: {}", flush.stderr);
 
     // Record git state BEFORE import
@@ -864,7 +869,7 @@ fn regression_sync_import_does_not_create_commits() {
     let git_dir_hash_before = hash_directory_contents(&workspace.root.join(".git"));
 
     // Run sync import
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--force"],
         "sync_import",
@@ -939,27 +944,28 @@ fn regression_sync_import_does_not_create_commits() {
 /// Regression test: full sync cycle does not touch git
 #[test]
 fn regression_full_sync_cycle_does_not_touch_git() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize git repo
     init_git_repo(&workspace);
 
     // Initialize beads
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    common::cli::pin_jsonl(&workspace.root.join(".obr")); // Class A: JSONL-specific machinery
 
     // Create multiple issues with different types
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["create", "Bug fix", "-t", "bug", "--no-auto-flush"],
         "create_bug",
     );
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["create", "New feature", "-t", "feature", "--no-auto-flush"],
         "create_feature",
     );
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["create", "Documentation", "-t", "docs", "--no-auto-flush"],
         "create_docs",
@@ -971,17 +977,17 @@ fn regression_full_sync_cycle_does_not_touch_git() {
     let baseline_git_hash = hash_directory_contents(&workspace.root.join(".git"));
 
     // Perform full sync cycle: export -> modify JSONL -> import
-    let flush1 = run_br(&workspace, ["sync", "--flush-only"], "flush1");
+    let flush1 = run_obr(&workspace, ["sync", "--flush-only"], "flush1");
     assert!(flush1.status.success(), "flush1 failed");
 
     // Modify JSONL externally (simulate git pull bringing changes)
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
     let modified = original.replace("Bug fix", "Critical bug fix");
     fs::write(&jsonl_path, modified).expect("write jsonl");
 
     // Import modified JSONL
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--force"],
         "import_modified",
@@ -989,11 +995,11 @@ fn regression_full_sync_cycle_does_not_touch_git() {
     assert!(import.status.success(), "import failed");
 
     // Export again
-    let flush2 = run_br(&workspace, ["sync", "--flush-only", "--force"], "flush2");
+    let flush2 = run_obr(&workspace, ["sync", "--flush-only", "--force"], "flush2");
     assert!(flush2.status.success(), "flush2 failed");
 
     // Check sync status
-    let status = run_br(&workspace, ["sync", "--status"], "status");
+    let status = run_obr(&workspace, ["sync", "--status"], "status");
     assert!(status.status.success(), "status failed");
 
     // Verify git state is unchanged after entire cycle
@@ -1057,16 +1063,16 @@ fn regression_full_sync_cycle_does_not_touch_git() {
 /// Regression test: sync with manifest does not touch git
 #[test]
 fn regression_sync_manifest_does_not_touch_git() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize git repo
     init_git_repo(&workspace);
 
     // Initialize beads
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Manifest test issue", "--no-auto-flush"],
         "create",
@@ -1077,7 +1083,7 @@ fn regression_sync_manifest_does_not_touch_git() {
     let commit_before = get_head_commit(&workspace.root);
 
     // Run sync with manifest flag
-    let sync = run_br(
+    let sync = run_obr(
         &workspace,
         ["sync", "--flush-only", "--manifest"],
         "sync_manifest",
@@ -1089,7 +1095,7 @@ fn regression_sync_manifest_does_not_touch_git() {
     );
 
     // Verify manifest was created
-    let manifest_path = workspace.root.join(".beads").join(".manifest.json");
+    let manifest_path = workspace.root.join(".obr").join(".manifest.json");
     assert!(manifest_path.exists(), "manifest file should be created");
 
     // Verify git state unchanged
@@ -1105,7 +1111,7 @@ fn regression_sync_manifest_does_not_touch_git() {
 /// Regression test: verify source files are never touched by sync
 #[test]
 fn regression_sync_never_touches_source_files() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize git repo with source files
     init_git_repo(&workspace);
@@ -1137,25 +1143,26 @@ fn regression_sync_never_touches_source_files() {
             let content = fs::read(p).unwrap();
             let mut hasher = Sha256::new();
             hasher.update(&content);
-            (p.clone(), beads_rust::util::hex_encode(&hasher.finalize()))
+            (p.clone(), obr::util::hex_encode(&hasher.finalize()))
         })
         .collect();
 
     // Initialize beads and perform sync operations
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed");
+    common::cli::pin_jsonl(&workspace.root.join(".obr")); // Class A: JSONL-specific machinery
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Test issue", "--no-auto-flush"],
         "create",
     );
     assert!(create.status.success(), "create failed");
 
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "flush");
     assert!(flush.status.success(), "flush failed");
 
-    let import = run_br(&workspace, ["sync", "--import-only", "--force"], "import");
+    let import = run_obr(&workspace, ["sync", "--import-only", "--force"], "import");
     assert!(import.status.success(), "import failed");
 
     // Hash source files after sync
@@ -1166,7 +1173,7 @@ fn regression_sync_never_touches_source_files() {
             let content = fs::read(p).unwrap();
             let mut hasher = Sha256::new();
             hasher.update(&content);
-            (p.clone(), beads_rust::util::hex_encode(&hasher.finalize()))
+            (p.clone(), obr::util::hex_encode(&hasher.finalize()))
         })
         .collect();
 
@@ -1200,25 +1207,59 @@ fn regression_sync_never_touches_source_files() {
 
 // ============================================================================
 // COMPREHENSIVE INTEGRATION TEST: beads_rust-0v1.3.2
-// Verifies sync operations only touch allowed files in .beads/
+// Verifies sync operations only touch allowed files in .obr/
 // ============================================================================
 
-/// Files that sync is allowed to modify within `.beads/`.
+/// Files that sync is allowed to modify within `.obr/`.
 ///
 /// This matches the allowlist in `src/sync/path.rs` for sync-direct writes,
-/// PLUS recognizes recovery artifacts under `.beads/.br_recovery/` that may
+/// PLUS recognizes recovery artifacts under `.obr/recovery/` that may
 /// be created as a side effect of storage recovery flows triggered during
-/// sync's invocation (e.g., `br sync --import-only --force` may invoke a
-/// rebuild that backs up the existing DB family to `.br_recovery/<name>.<stamp>.bak`
+/// sync's invocation (e.g., `obr sync --import-only --force` may invoke a
+/// rebuild that backs up the existing DB family to `recovery/<name>.<stamp>.bak`
 /// before overwriting). The recovery flow has its own path validation in
 /// `src/config/mod.rs::backup_database_family_for_recovery`; it does not
 /// flow through `src/sync/path.rs::validate_sync_path`.
 ///
-/// See `.beads/SYNC_SAFETY_INVARIANTS.md` invariant **PC-RECOVERY** for the
+/// See `docs/SYNC_SAFETY_INVARIANTS.md` invariant **PC-RECOVERY** for the
 /// precise contract.
+/// True for the tracked surface, given a path relative to the workspace root.
+///
+/// Exact-path only: `PLAN.org` at the root or under one of the surface
+/// subdirectories, plus the `PLAN.org.tmp` / `PLAN.org.<pid>.tmp` siblings the
+/// atomic export stages. A regression that scattered `.org` files anywhere else
+/// would still be a violation, which is the whole point of asserting the
+/// surface here rather than relaxing the extension check.
+fn is_surface_sync_file(rel_path: &str) -> bool {
+    let normalized = rel_path.replace('\\', "/");
+    let (dir, filename) = normalized
+        .rsplit_once('/')
+        .unwrap_or(("", normalized.as_str()));
+    if !dir.is_empty() && !obr::config::SURFACE_SUBDIRS.contains(&dir) {
+        return false;
+    }
+    let surface = obr::config::SURFACE_FILENAME;
+    if filename == surface {
+        return true;
+    }
+    let Some(prefix) = filename.strip_suffix(".tmp") else {
+        return false;
+    };
+    prefix == surface
+        || prefix.rsplit_once('.').is_some_and(|(base, pid)| {
+            base == surface && !pid.is_empty() && pid.chars().all(|c| c.is_ascii_digit())
+        })
+}
+
 fn is_allowed_sync_file(rel_path: &str) -> bool {
-    // Must be under .beads/
-    if !rel_path.starts_with(".beads/") && !rel_path.starts_with(".beads\\") {
+    // D-SURFACE: the tracked surface is the one artifact sync writes OUTSIDE
+    // `.obr/`, by design — it is what git is meant to see.
+    if is_surface_sync_file(rel_path) {
+        return true;
+    }
+
+    // Everything else must be under .obr/
+    if !rel_path.starts_with(".obr/") && !rel_path.starts_with(".obr\\") {
         return false;
     }
 
@@ -1231,6 +1272,13 @@ fn is_allowed_sync_file(rel_path: &str) -> bool {
     // Check exact name matches
     const ALLOWED_EXACT_NAMES: &[&str] = &[".manifest.json", "metadata.json", "last-touched"];
     if ALLOWED_EXACT_NAMES.iter().any(|&name| filename == name) {
+        return true;
+    }
+
+    // Advisory lock sidecars. Asked of production rather than hand-copied, for
+    // the same reason the extension loop below is: this helper has drifted
+    // from what sync actually writes three times already.
+    if obr::sync::path::is_workspace_lock_sidecar_name(&filename) {
         return true;
     }
 
@@ -1256,46 +1304,35 @@ fn is_allowed_sync_file(rel_path: &str) -> bool {
         return true;
     }
 
-    // Allow .br_history meta files (history snapshot metadata)
+    // Allow history meta files (history snapshot metadata)
     if filename.ends_with(".meta.json")
-        && (rel_path.contains(".br_history/") || rel_path.contains(".br_history\\"))
+        && (rel_path.contains("history/") || rel_path.contains("history\\"))
     {
         return true;
     }
 
-    // Allow .br_recovery artifacts created as a side effect of storage
+    // Allow recovery artifacts created as a side effect of storage
     // recovery flows triggered during sync invocations. These are written
     // by `src/config/mod.rs::recovery_backup_filename` (format
     // `<original-filename>.<stamp>.<suffix>`); recognized suffixes:
     //   - "bak"             → routine pre-rebuild backup of the DB family
     //   - "rebuild-failed"  → rollback marker after a failed rebuild
     //   - "truncated-wal"   → quarantined WAL/SHM sidecar (< 32 bytes)
-    // PC-RECOVERY invariant: any file under .beads/.br_recovery/ ending in
+    // PC-RECOVERY invariant: any file under .obr/recovery/ ending in
     // one of these suffixes is allowed; arbitrary other contents are NOT
     // (so we still catch a regression that scatters non-recovery files into
     // the recovery dir).
-    if rel_path.contains(".br_recovery/") || rel_path.contains(".br_recovery\\") {
+    if rel_path.contains("recovery/") || rel_path.contains("recovery\\") {
         const RECOVERY_SUFFIXES: &[&str] = &[".bak", ".rebuild-failed", ".truncated-wal"];
         if RECOVERY_SUFFIXES.iter().any(|s| filename.ends_with(s)) {
             return true;
         }
     }
 
-    // Check extension matches
-    const ALLOWED_EXTENSIONS: &[&str] = &[
-        "db",                 // SQLite database
-        "db-journal",         // SQLite rollback journal
-        "db-wal",             // SQLite WAL
-        "db-wal-cert",        // fsqlite parallel-WAL durability certificate
-        "db-wal-cert-head",   // fsqlite checkpoint hand-off head
-        "db-shm",             // SQLite shared memory
-        "db-fsqlite-ns-gate", // fsqlite multi-process namespace gate
-        "db-fsqlite-ns-use",  // fsqlite multi-process namespace use-count
-        "jsonl",              // JSONL export
-        "jsonl.tmp",          // Atomic write temp files
-    ];
-
-    for ext in ALLOWED_EXTENSIONS {
+    // Check extension matches against the production allowlist itself, so
+    // this test can never drift from the real safety boundary again (it
+    // previously kept a hand-copied list that missed new entries).
+    for ext in obr::sync::path::ALLOWED_EXTENSIONS {
         if filename.ends_with(&format!(".{ext}")) {
             return true;
         }
@@ -1343,7 +1380,7 @@ impl FileTreeSnapshot {
                     if let Ok(contents) = fs::read(&path) {
                         let mut hasher = Sha256::new();
                         hasher.update(&contents);
-                        let hash = beads_rust::util::hex_encode(&hasher.finalize());
+                        let hash = obr::util::hex_encode(&hasher.finalize());
                         let size = contents.len() as u64;
                         files.insert(rel_path, (hash, size));
                     }
@@ -1484,7 +1521,7 @@ impl FileTreeDiff {
         }
 
         for change in &self.deleted {
-            // Deletions outside .beads are always violations
+            // Deletions outside .obr are always violations
             if is_allowed_sync_file(&change.path) {
                 allowed.push(change);
             } else {
@@ -1559,21 +1596,21 @@ impl FileTreeDiff {
 /// - Takes complete file tree snapshot before sync
 /// - Runs sync export and import operations
 /// - Takes complete file tree snapshot after
-/// - Verifies ONLY allowed .beads files changed
+/// - Verifies ONLY allowed .obr files changed
 /// - Captures detailed logs for postmortem on failure
 #[test]
 fn integration_sync_only_touches_allowed_files() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Create a realistic project structure
     create_realistic_project(&workspace);
 
     // Initialize beads
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create several issues to ensure JSONL has content
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         [
             "create",
@@ -1586,7 +1623,7 @@ fn integration_sync_only_touches_allowed_files() {
         ],
         "create_feature",
     );
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         [
             "create",
@@ -1599,7 +1636,7 @@ fn integration_sync_only_touches_allowed_files() {
         ],
         "create_bug",
     );
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         [
             "create",
@@ -1610,7 +1647,7 @@ fn integration_sync_only_touches_allowed_files() {
         ],
         "create_task",
     );
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         [
             "create",
@@ -1638,7 +1675,7 @@ fn integration_sync_only_touches_allowed_files() {
     );
 
     // Run sync export
-    let export = run_br(&workspace, ["sync", "--flush-only"], "sync_export");
+    let export = run_obr(&workspace, ["sync", "--flush-only"], "sync_export");
     assert!(
         export.status.success(),
         "sync export failed: {}\nLog: {}",
@@ -1660,7 +1697,7 @@ fn integration_sync_only_touches_allowed_files() {
     // Write detailed log for export phase
     let export_log = format!(
         "=== SYNC EXPORT PHASE ===\n\
-         Command: br sync --flush-only\n\
+         Command: obr sync --flush-only\n\
          Status: {}\n\
          Duration: {:?}\n\n\
          {}\n\n\
@@ -1718,7 +1755,7 @@ fn integration_sync_only_touches_allowed_files() {
     eprintln!("\n[TEST 2] Testing sync import...");
 
     // Modify the JSONL to simulate external changes (like git pull)
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     if jsonl_path.exists() {
         let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
         let modified = original.replace("User authentication", "User auth v2");
@@ -1733,7 +1770,7 @@ fn integration_sync_only_touches_allowed_files() {
     );
 
     // Run sync import
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--force"],
         "sync_import",
@@ -1759,7 +1796,7 @@ fn integration_sync_only_touches_allowed_files() {
     // Write detailed log for import phase
     let import_log = format!(
         "=== SYNC IMPORT PHASE ===\n\
-         Command: br sync --import-only --force\n\
+         Command: obr sync --import-only --force\n\
          Status: {}\n\
          Duration: {:?}\n\n\
          {}\n\n\
@@ -1820,18 +1857,18 @@ fn integration_sync_only_touches_allowed_files() {
     let snapshot_before_cycle = FileTreeSnapshot::new(&workspace.root);
 
     // Create more issues, run multiple sync operations
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["create", "Chore: Update deps", "-t", "chore"],
         "create_chore",
     );
-    let _ = run_br(&workspace, ["sync", "--flush-only"], "cycle_flush1");
-    let _ = run_br(
+    let _ = run_obr(&workspace, ["sync", "--flush-only"], "cycle_flush1");
+    let _ = run_obr(
         &workspace,
         ["sync", "--import-only", "--force"],
         "cycle_import",
     );
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["sync", "--flush-only", "--force"],
         "cycle_flush2",
@@ -1914,7 +1951,7 @@ fn integration_sync_only_touches_allowed_files() {
 }
 
 /// Create a realistic project structure for testing.
-fn create_realistic_project(workspace: &BrWorkspace) {
+fn create_realistic_project(workspace: &ObrWorkspace) {
     // Source files
     let src_dir = workspace.root.join("src");
     fs::create_dir_all(&src_dir).expect("create src dir");
@@ -1975,7 +2012,7 @@ fn create_realistic_project(workspace: &BrWorkspace) {
     )
     .expect("write API.md");
 
-    // Hidden files (not .beads)
+    // Hidden files (not .obr)
     fs::write(
         workspace.root.join(".editorconfig"),
         "root = true\n\n[*]\nindent_style = space\n",
@@ -2027,16 +2064,16 @@ fn count_files(dir: &Path) -> usize {
 /// Integration test: sync with manifest touches only allowed files.
 #[test]
 fn integration_sync_manifest_only_touches_allowed_files() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Create project structure
     create_realistic_project(&workspace);
 
     // Initialize beads
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed");
 
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["create", "Test issue", "--no-auto-flush"],
         "create",
@@ -2046,7 +2083,7 @@ fn integration_sync_manifest_only_touches_allowed_files() {
     let snapshot_before = FileTreeSnapshot::new(&workspace.root);
 
     // Run sync with manifest
-    let sync = run_br(
+    let sync = run_obr(
         &workspace,
         ["sync", "--flush-only", "--manifest"],
         "sync_manifest",
@@ -2083,11 +2120,7 @@ fn integration_sync_manifest_only_touches_allowed_files() {
     );
 
     // Verify manifest was actually created
-    let manifest_exists = workspace
-        .root
-        .join(".beads")
-        .join(".manifest.json")
-        .exists();
+    let manifest_exists = workspace.root.join(".obr").join(".manifest.json").exists();
     assert!(manifest_exists, "Manifest file should have been created");
 
     eprintln!(
@@ -2103,13 +2136,13 @@ fn integration_sync_manifest_only_touches_allowed_files() {
 // alone tells the story.
 // ============================================================================
 
-/// PC-1 + PC-RECOVERY: when a stale `.br_recovery/*.bak` exists at workspace
+/// PC-1 + PC-RECOVERY: when a stale `recovery/*.bak` exists at workspace
 /// open time (e.g., from a prior sync invocation), a fresh sync export +
 /// import cycle MUST NOT touch the existing recovery artifact (no rewrite,
 /// no delete). Recovery artifacts are an append-only side-effect surface.
 #[test]
 fn integration_sync_after_recovery_artifact_present_does_not_touch_artifacts() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     create_realistic_project(&workspace);
 
     eprintln!(
@@ -2117,21 +2150,21 @@ fn integration_sync_after_recovery_artifact_present_does_not_touch_artifacts() {
     );
     eprintln!("  Phase 1: init + create issues");
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["create", "Test issue", "-t", "task", "--no-auto-flush"],
         "create_test",
     );
-    let _ = run_br(&workspace, ["sync", "--flush-only"], "initial_flush");
+    let _ = run_obr(&workspace, ["sync", "--flush-only"], "initial_flush");
 
     // Pre-place a fake recovery artifact and capture its hash + mtime
-    eprintln!("  Phase 2: pre-place a stale .br_recovery artifact");
-    let recovery_dir = workspace.root.join(".beads").join(".br_recovery");
+    eprintln!("  Phase 2: pre-place a stale recovery artifact");
+    let recovery_dir = workspace.root.join(".obr").join("recovery");
     fs::create_dir_all(&recovery_dir).expect("create recovery dir");
-    let stale_artifact = recovery_dir.join("beads.db.20260101_000000_000000000.bak");
+    let stale_artifact = recovery_dir.join("obr.db.20260101_000000_000000000.bak");
     let stale_contents = b"STALE_RECOVERY_ARTIFACT_DO_NOT_TOUCH";
     fs::write(&stale_artifact, stale_contents).expect("write stale artifact");
     let stale_meta_before = fs::metadata(&stale_artifact).expect("stat stale");
@@ -2149,13 +2182,13 @@ fn integration_sync_after_recovery_artifact_present_does_not_touch_artifacts() {
 
     // Run a sync cycle
     eprintln!("  Phase 3: run sync export + import (should NOT touch the stale artifact)");
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["create", "Another issue", "-t", "task"],
         "create_2nd",
     );
-    let _ = run_br(&workspace, ["sync", "--flush-only"], "second_flush");
-    let _ = run_br(
+    let _ = run_obr(&workspace, ["sync", "--flush-only"], "second_flush");
+    let _ = run_obr(
         &workspace,
         ["sync", "--import-only", "--force"],
         "second_import",
@@ -2202,7 +2235,7 @@ fn integration_sync_after_recovery_artifact_present_does_not_touch_artifacts() {
                 ext_matches("bak") || ext_matches("rebuild-failed") || ext_matches("truncated-wal");
             assert!(
                 valid,
-                "PC-RECOVERY: unexpected file in .br_recovery/: {name} (must end in .bak/.rebuild-failed/.truncated-wal)"
+                "PC-RECOVERY: unexpected file in recovery/: {name} (must end in .bak/.rebuild-failed/.truncated-wal)"
             );
             eprintln!("    recovery dir entry: {name} (valid suffix)");
         }
@@ -2214,29 +2247,29 @@ fn integration_sync_after_recovery_artifact_present_does_not_touch_artifacts() {
 }
 
 /// PC-1 + NGI-3: a full sync cycle MUST NOT create or modify ANY file at
-/// `.beads/.git/*` or any other `.git/*` path under the workspace.
+/// `.obr/.git/*` or any other `.git/*` path under the workspace.
 /// This is a hard invariant; even an accidental traversal would be a
 /// CRITICAL regression. Note: this is in addition to the sync-touches-source
 /// regressions (regression_full_sync_cycle_does_not_touch_git etc.) and
 /// is paranoid by design — checks both `.git/` directories *adjacent* to
-/// `.beads/` AND any `.git/` *under* `.beads/`.
+/// `.obr/` AND any `.git/` *under* `.obr/`.
 #[test]
 fn integration_sync_does_not_create_or_modify_dotgit_anywhere() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     create_realistic_project(&workspace);
 
     eprintln!("[yyxo TEST] integration_sync_does_not_create_or_modify_dotgit_anywhere");
     eprintln!("  Phase 1: init + create + initial sync");
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["create", "T1", "-t", "task", "--no-auto-flush"],
         "create_1",
     );
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["create", "T2", "-t", "bug", "--no-auto-flush"],
         "create_2",
@@ -2255,13 +2288,13 @@ fn integration_sync_does_not_create_or_modify_dotgit_anywhere() {
 
     // Phase 2: Run a multi-step sync cycle
     eprintln!("  Phase 2: full sync cycle");
-    let _ = run_br(&workspace, ["sync", "--flush-only"], "flush");
-    let _ = run_br(
+    let _ = run_obr(&workspace, ["sync", "--flush-only"], "flush");
+    let _ = run_obr(
         &workspace,
         ["sync", "--import-only", "--force"],
         "import_force",
     );
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["sync", "--flush-only", "--force"],
         "flush_force",
@@ -2283,21 +2316,21 @@ fn integration_sync_does_not_create_or_modify_dotgit_anywhere() {
 }
 
 /// PC-1 + PC-3: when a sync invocation is made from a SUBDIRECTORY of the
-/// project (e.g., `cd src/cli && br sync --flush-only`), the workspace resolution MUST
-/// land on the nearest `.beads/` and not escape via `..` traversal during
+/// project (e.g., `cd src/cli && obr sync --flush-only`), the workspace resolution MUST
+/// land on the nearest `.obr/` and not escape via `..` traversal during
 /// canonicalization.
 #[test]
-fn integration_sync_in_subdirectory_only_touches_nearest_beads_dir() {
-    let workspace = BrWorkspace::new();
+fn integration_sync_in_subdirectory_only_touches_nearest_workspace_dir() {
+    let workspace = ObrWorkspace::new();
     create_realistic_project(&workspace);
 
-    eprintln!("[yyxo TEST] integration_sync_in_subdirectory_only_touches_nearest_beads_dir");
+    eprintln!("[yyxo TEST] integration_sync_in_subdirectory_only_touches_nearest_workspace_dir");
     eprintln!("  Phase 1: init + create issues");
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["create", "Subdir test", "-t", "task", "--no-auto-flush"],
         "create_subdir",
@@ -2308,24 +2341,24 @@ fn integration_sync_in_subdirectory_only_touches_nearest_beads_dir() {
     eprintln!("    files before: {}", snapshot_before.files.len());
 
     // Phase 3: Run sync from a subdirectory
-    eprintln!("  Phase 2: sync from subdir (mimics `cd src/cli && br sync --flush-only`)");
+    eprintln!("  Phase 2: sync from subdir (mimics `cd src/cli && obr sync --flush-only`)");
     let subdir = workspace.root.join("src");
     if !subdir.exists() {
         fs::create_dir_all(&subdir).expect("create src/");
     }
 
-    // Run br sync with cwd=subdir; the binary should auto-discover the
-    // workspace .beads/ via parent-walk
-    let br_path = std::env::var("CARGO_BIN_EXE_br")
+    // Run obr sync with cwd=subdir; the binary should auto-discover the
+    // workspace .obr/ via parent-walk
+    let obr_path = std::env::var("CARGO_BIN_EXE_obr")
         .or_else(|_| std::env::var("BR_BIN").map(|b| b.trim().to_string()))
-        .unwrap_or_else(|_| "br".to_string());
-    let output = std::process::Command::new(&br_path)
+        .unwrap_or_else(|_| "obr".to_string());
+    let output = std::process::Command::new(&obr_path)
         .args(["sync", "--flush-only"])
         .current_dir(&subdir)
         .env("RUST_LOG", "info")
         .env("RCH_DISABLED", "1")
         .output()
-        .expect("spawn br sync from subdir");
+        .expect("spawn obr sync from subdir");
     eprintln!(
         "    sync exit: {} stderr_len: {}",
         output.status,
@@ -2338,7 +2371,7 @@ fn integration_sync_in_subdirectory_only_touches_nearest_beads_dir() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Phase 4: Snapshot after; verify only the workspace .beads/ was touched
+    // Phase 4: Snapshot after; verify only the workspace .obr/ was touched
     let snapshot_after = FileTreeSnapshot::new(&workspace.root);
     let diff = snapshot_before.diff(&snapshot_after);
     let (violations, allowed) = diff.check_allowed_changes();
@@ -2349,35 +2382,35 @@ fn integration_sync_in_subdirectory_only_touches_nearest_beads_dir() {
     );
     assert!(
         violations.is_empty(),
-        "PC-1: sync from subdir touched files outside the nearest .beads/: {:?}",
+        "PC-1: sync from subdir touched files outside the nearest .obr/: {:?}",
         violations
             .iter()
             .map(|c| c.format_detail())
             .collect::<Vec<_>>()
     );
 
-    eprintln!("  [PASS] sync from subdirectory only touched nearest .beads/");
+    eprintln!("  [PASS] sync from subdirectory only touched nearest .obr/");
 }
 
-/// PC-1 + PC-2: when `BEADS_JSONL` env var explicitly authorizes an external
-/// JSONL path, sync MUST only touch (a) `.beads/` of the workspace, AND
+/// PC-1 + PC-2: when `OBR_JSONL` env var explicitly authorizes an external
+/// JSONL path, sync MUST only touch (a) `.obr/` of the workspace, AND
 /// (b) the explicitly-authorized external path (and same-directory atomic
 /// temp files). No third party.
 #[test]
-fn integration_sync_with_external_jsonl_path_touches_only_target_and_beads() {
-    use common::cli::run_br_with_env;
+fn integration_sync_with_external_jsonl_path_touches_only_target_and_obr() {
+    use common::cli::run_obr_with_env;
 
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     create_realistic_project(&workspace);
 
     eprintln!(
         "[yyxo TEST] integration_sync_with_external_jsonl_path_touches_only_target_and_beads"
     );
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         [
             "create",
@@ -2399,9 +2432,9 @@ fn integration_sync_with_external_jsonl_path_touches_only_target_and_beads() {
     let snapshot_before = FileTreeSnapshot::new(workspace.temp_dir.path());
     eprintln!("  files before sync: {}", snapshot_before.files.len());
 
-    // Run sync with explicit BEADS_JSONL + --allow-external-jsonl --force
-    let env_vars = vec![("BEADS_JSONL", external_jsonl.to_str().unwrap().to_string())];
-    let sync = run_br_with_env(
+    // Run sync with explicit OBR_JSONL + --allow-external-jsonl --force
+    let env_vars = vec![("OBR_JSONL", external_jsonl.to_str().unwrap().to_string())];
+    let sync = run_obr_with_env(
         &workspace,
         ["sync", "--flush-only", "--allow-external-jsonl", "--force"],
         env_vars,
@@ -2418,8 +2451,8 @@ fn integration_sync_with_external_jsonl_path_touches_only_target_and_beads() {
     // should appear (no `.git/`, no random tmpfile in /tmp/, etc).
     let snapshot_after = FileTreeSnapshot::new(workspace.temp_dir.path());
     let diff = snapshot_after.files.iter().filter(|(path, _)| {
-        // Allow files in .beads/ (workspace metadata)
-        if path.starts_with(".beads/") || path.contains(".beads\\") {
+        // Allow files in .obr/ (workspace metadata)
+        if path.starts_with(".obr/") || path.contains(".obr\\") {
             return false;
         }
         // Allow files explicitly under the external target's directory
@@ -2441,14 +2474,14 @@ fn integration_sync_with_external_jsonl_path_touches_only_target_and_beads() {
 
     let unexpected: Vec<_> = diff.collect();
     if !unexpected.is_empty() {
-        eprintln!("  UNEXPECTED FILES TOUCHED OUTSIDE .beads/ AND EXTERNAL TARGET:");
+        eprintln!("  UNEXPECTED FILES TOUCHED OUTSIDE .obr/ AND EXTERNAL TARGET:");
         for (p, _) in &unexpected {
             eprintln!("    {p}");
         }
     }
     assert!(
         unexpected.is_empty(),
-        "PC-1 violation: sync with BEADS_JSONL touched unexpected files outside .beads/ and the external target"
+        "PC-1 violation: sync with OBR_JSONL touched unexpected files outside .obr/ and the external target"
     );
 
     // If sync succeeded, the external file must have been created

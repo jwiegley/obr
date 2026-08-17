@@ -11,8 +11,8 @@ cd "$target_dir"
 
 snapshot_current_tree() {
     local prefix="${1:?prefix}"
-    ( cd .beads && find . -type f -printf '%P\n' | sort ) > ".fixture_baseline/${prefix}.files"
-    ( cd .beads && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d ' ' -f 1 ) \
+    ( cd .obr && find . -type f -printf '%P\n' | sort ) > ".fixture_baseline/${prefix}.files"
+    ( cd .obr && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d ' ' -f 1 ) \
         > ".fixture_baseline/${prefix}.sha256"
 }
 
@@ -24,11 +24,11 @@ assert_tree_matches_snapshot() {
     snapshot_current_tree "${prefix}.current"
 
     if ! diff -u ".fixture_baseline/${prefix}.files" "$current_files" >&2; then
-        echo "ASSERT FAIL[$stage]: .beads file list changed" >&2
+        echo "ASSERT FAIL[$stage]: .obr file list changed" >&2
         exit 1
     fi
     if ! diff -u ".fixture_baseline/${prefix}.sha256" "$current_sha" >&2; then
-        echo "ASSERT FAIL[$stage]: .beads file bytes changed" >&2
+        echo "ASSERT FAIL[$stage]: .obr file bytes changed" >&2
         exit 1
     fi
 }
@@ -42,11 +42,11 @@ run_readonly_doctor_stably() {
     snapshot_current_tree "${prefix}.after"
 
     if ! diff -u ".fixture_baseline/${prefix}.before.files" ".fixture_baseline/${prefix}.after.files" >&2; then
-        echo "ASSERT FAIL[$stage]: read-only doctor changed .beads file list" >&2
+        echo "ASSERT FAIL[$stage]: read-only doctor changed .obr file list" >&2
         exit 1
     fi
     if ! diff -u ".fixture_baseline/${prefix}.before.sha256" ".fixture_baseline/${prefix}.after.sha256" >&2; then
-        echo "ASSERT FAIL[$stage]: read-only doctor changed .beads file bytes" >&2
+        echo "ASSERT FAIL[$stage]: read-only doctor changed .obr file bytes" >&2
         exit 1
     fi
 

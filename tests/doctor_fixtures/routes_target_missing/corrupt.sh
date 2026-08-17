@@ -16,9 +16,9 @@ mkdir -p "$target_dir"
 cd "$target_dir"
 "$tool_bin" init >/dev/null 2>&1
 
-# Two routes: one valid (".", points at the workspace's own .beads),
+# Two routes: one valid (".", points at the workspace's own .obr),
 # one broken (relative path to a sibling that doesn't exist).
-cat > .beads/routes.jsonl <<'JSONL'
+cat > .obr/routes.jsonl <<'JSONL'
 {"prefix":"self-","path":"."}
 {"prefix":"ghost-","path":"../never-existed-workspace"}
 JSONL

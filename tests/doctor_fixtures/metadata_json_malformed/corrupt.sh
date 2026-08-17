@@ -2,7 +2,7 @@
 # Fixture: metadata_json_malformed
 # FM: fm-state_files-metadata-json-stale-or-malformed (P1) — ParseError variant
 #
-# Overwrites .beads/metadata.json with non-JSON bytes. Triggers the
+# Overwrites .obr/metadata.json with non-JSON bytes. Triggers the
 # `metadata` check = error with "Failed to read metadata.json: JSON error".
 # Safety: doctor's repair path is detect-only here; we assert the malformed
 # bytes are preserved (operator review required).
@@ -18,7 +18,7 @@ cd "$target_dir"
 
 # Plant invalid JSON. Capture the planted bytes so post-repair assertions can
 # verify they survive.
-printf '%s' '{not valid json {{' > .beads/metadata.json
+printf '%s' '{not valid json {{' > .obr/metadata.json
 
 if [ -e .fixture_baseline ]; then
   echo "fixture baseline already exists; expected a fresh workspace" >&2

@@ -15,7 +15,7 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, parse_list_issues, parse_list_page, run_br};
+use common::cli::{ObrWorkspace, parse_list_issues, parse_list_page, run_obr};
 
 fn parse_created_id(stdout: &str) -> String {
     let line = stdout.lines().next().unwrap_or("");
@@ -30,22 +30,22 @@ fn parse_created_id(stdout: &str) -> String {
 
 /// Setup a workspace with a variety of test issues for comprehensive filtering.
 #[allow(clippy::too_many_lines)]
-fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "init");
+fn setup_diverse_workspace() -> (ObrWorkspace, Vec<String>) {
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let mut ids = Vec::new();
 
     // Issue 1: Open task, P1, labeled "core"
-    let issue1 = run_br(
+    let issue1 = run_obr(
         &workspace,
         ["create", "Core task", "-t", "task", "-p", "1"],
         "create_task1",
     );
     assert!(issue1.status.success());
     let id1 = parse_created_id(&issue1.stdout);
-    run_br(
+    run_obr(
         &workspace,
         ["update", &id1, "--add-label", "core"],
         "label_task1",
@@ -53,14 +53,14 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     ids.push(id1);
 
     // Issue 2: Open bug, P0, labeled "urgent", assigned to "alice"
-    let issue2 = run_br(
+    let issue2 = run_obr(
         &workspace,
         ["create", "Critical bug", "-t", "bug", "-p", "0"],
         "create_bug1",
     );
     assert!(issue2.status.success());
     let id2 = parse_created_id(&issue2.stdout);
-    run_br(
+    run_obr(
         &workspace,
         [
             "update",
@@ -75,14 +75,14 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     ids.push(id2);
 
     // Issue 3: Open feature, P2, labeled "core" and "frontend", assigned to "bob"
-    let issue3 = run_br(
+    let issue3 = run_obr(
         &workspace,
         ["create", "New feature", "-t", "feature", "-p", "2"],
         "create_feature1",
     );
     assert!(issue3.status.success());
     let id3 = parse_created_id(&issue3.stdout);
-    run_br(
+    run_obr(
         &workspace,
         [
             "update",
@@ -99,16 +99,16 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     ids.push(id3);
 
     // Issue 4: Closed task, P3
-    let issue4 = run_br(
+    let issue4 = run_obr(
         &workspace,
         ["create", "Old task", "-t", "task", "-p", "3"],
         "create_task2",
     );
     assert!(issue4.status.success());
     let id4 = parse_created_id(&issue4.stdout);
-    // beads_rust#301: terminal-state transitions go through `br close` so
-    // close-policy fires uniformly. `br update --status closed` is rejected.
-    run_br(
+    // beads_rust#301: terminal-state transitions go through `obr close` so
+    // close-policy fires uniformly. `obr update --status closed` is rejected.
+    run_obr(
         &workspace,
         ["close", &id4, "--reason", "fixture: closed in setup"],
         "close_task2",
@@ -116,14 +116,14 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     ids.push(id4);
 
     // Issue 5: Deferred epic, P2
-    let issue5 = run_br(
+    let issue5 = run_obr(
         &workspace,
         ["create", "Deferred epic", "-t", "epic", "-p", "2"],
         "create_epic1",
     );
     assert!(issue5.status.success());
     let id5 = parse_created_id(&issue5.stdout);
-    run_br(
+    run_obr(
         &workspace,
         [
             "update",
@@ -138,7 +138,7 @@ fn setup_diverse_workspace() -> (BrWorkspace, Vec<String>) {
     ids.push(id5);
 
     // Issue 6: Open task, P4 (backlog), with description containing "searchable"
-    let issue6 = run_br(
+    let issue6 = run_obr(
         &workspace,
         [
             "create",
@@ -168,7 +168,7 @@ fn e2e_list_basic_text_output() {
     let _log = common::test_log("e2e_list_basic_text_output");
     let (workspace, ids) = setup_diverse_workspace();
 
-    let list = run_br(&workspace, ["list"], "list_text");
+    let list = run_obr(&workspace, ["list"], "list_text");
     assert!(list.status.success(), "list failed: {}", list.stderr);
 
     // Default list excludes closed but includes deferred
@@ -203,7 +203,7 @@ fn e2e_list_json_output() {
     let _log = common::test_log("e2e_list_json_output");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(&workspace, ["list", "--json"], "list_json");
+    let list = run_obr(&workspace, ["list", "--json"], "list_json");
     assert!(list.status.success(), "list json failed: {}", list.stderr);
 
     let issues = parse_list_issues(&list.stdout);
@@ -226,7 +226,7 @@ fn e2e_list_csv_output() {
     let _log = common::test_log("e2e_list_csv_output");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(&workspace, ["list", "--format", "csv"], "list_csv");
+    let list = run_obr(&workspace, ["list", "--format", "csv"], "list_csv");
     assert!(list.status.success(), "list csv failed: {}", list.stderr);
 
     let lines: Vec<&str> = list.stdout.lines().collect();
@@ -249,7 +249,7 @@ fn e2e_list_status_filter_open() {
     let _log = common::test_log("e2e_list_status_filter_open");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--status", "open", "--json"],
         "list_status_open",
@@ -269,7 +269,7 @@ fn e2e_list_status_filter_closed() {
     let _log = common::test_log("e2e_list_status_filter_closed");
     let (workspace, ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--status", "closed", "--json"],
         "list_status_closed",
@@ -289,7 +289,7 @@ fn e2e_list_status_filter_deferred() {
     let _log = common::test_log("e2e_list_status_filter_deferred");
     let (workspace, ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--status", "deferred", "--json"],
         "list_status_deferred",
@@ -309,7 +309,7 @@ fn e2e_list_all_includes_closed() {
     let _log = common::test_log("e2e_list_all_includes_closed");
     let (workspace, ids) = setup_diverse_workspace();
 
-    let list = run_br(&workspace, ["list", "--all", "--json"], "list_all");
+    let list = run_obr(&workspace, ["list", "--all", "--json"], "list_all");
     assert!(list.status.success());
 
     let issues = parse_list_issues(&list.stdout);
@@ -329,7 +329,7 @@ fn e2e_list_multiple_status_filter() {
     let _log = common::test_log("e2e_list_multiple_status_filter");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--status", "open", "--status", "closed", "--json"],
         "list_multi_status",
@@ -360,7 +360,7 @@ fn e2e_list_type_filter_task() {
     let _log = common::test_log("e2e_list_type_filter_task");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--type", "task", "--json"],
         "list_type_task",
@@ -381,7 +381,7 @@ fn e2e_list_type_filter_bug() {
     let _log = common::test_log("e2e_list_type_filter_bug");
     let (workspace, ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--type", "bug", "--json"],
         "list_type_bug",
@@ -401,7 +401,7 @@ fn e2e_list_multiple_type_filter() {
     let _log = common::test_log("e2e_list_multiple_type_filter");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--type", "bug", "--type", "feature", "--json"],
         "list_multi_type",
@@ -430,7 +430,7 @@ fn e2e_list_priority_filter_exact() {
     let _log = common::test_log("e2e_list_priority_filter_exact");
     let (workspace, ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--priority", "0", "--json"],
         "list_priority_0",
@@ -451,7 +451,7 @@ fn e2e_list_priority_min() {
     let (workspace, _ids) = setup_diverse_workspace();
 
     // priority-min=2 means priority >= 2 (P2, P3, P4 = lower priority)
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--priority-min", "2", "--json"],
         "list_priority_min",
@@ -475,7 +475,7 @@ fn e2e_list_priority_max() {
     let (workspace, _ids) = setup_diverse_workspace();
 
     // priority-max=1 means priority <= 1 (P0, P1 = high priority)
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--priority-max", "1", "--json"],
         "list_priority_max",
@@ -498,7 +498,7 @@ fn e2e_list_priority_range() {
     let (workspace, _ids) = setup_diverse_workspace();
 
     // Priority range 1-2
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         [
             "list",
@@ -536,7 +536,7 @@ fn e2e_list_label_filter_and() {
     let (workspace, ids) = setup_diverse_workspace();
 
     // Filter by label "core" (AND logic)
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--label", "core", "--json"],
         "list_label_core",
@@ -557,7 +557,7 @@ fn e2e_list_label_filter_multiple_and() {
     let (workspace, ids) = setup_diverse_workspace();
 
     // Filter by labels "core" AND "frontend" (must have both)
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--label", "core", "--label", "frontend", "--json"],
         "list_label_and",
@@ -577,7 +577,7 @@ fn e2e_list_label_filter_or() {
     let (workspace, ids) = setup_diverse_workspace();
 
     // Filter by labels "urgent" OR "frontend" (any match)
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         [
             "list",
@@ -608,7 +608,7 @@ fn e2e_list_assignee_filter() {
     let _log = common::test_log("e2e_list_assignee_filter");
     let (workspace, ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--assignee", "alice", "--json"],
         "list_assignee_alice",
@@ -628,7 +628,7 @@ fn e2e_list_unassigned_filter() {
     let _log = common::test_log("e2e_list_unassigned_filter");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--unassigned", "--json"],
         "list_unassigned",
@@ -657,7 +657,7 @@ fn e2e_list_title_contains() {
     let _log = common::test_log("e2e_list_title_contains");
     let (workspace, ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--title-contains", "Critical", "--json"],
         "list_title_contains",
@@ -677,7 +677,7 @@ fn e2e_list_desc_contains() {
     let _log = common::test_log("e2e_list_desc_contains");
     let (workspace, ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--desc-contains", "searchable", "--json"],
         "list_desc_contains",
@@ -700,7 +700,7 @@ fn e2e_list_sort_by_priority() {
     let _log = common::test_log("e2e_list_sort_by_priority");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--sort", "priority", "--json"],
         "list_sort_priority",
@@ -727,7 +727,7 @@ fn e2e_list_sort_by_priority_reverse() {
     let _log = common::test_log("e2e_list_sort_by_priority_reverse");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--sort", "priority", "--reverse", "--json"],
         "list_sort_priority_rev",
@@ -755,7 +755,7 @@ fn e2e_list_sort_by_title() {
     let _log = common::test_log("e2e_list_sort_by_title");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--sort", "title", "--json"],
         "list_sort_title",
@@ -783,7 +783,7 @@ fn e2e_list_limit() {
     let _log = common::test_log("e2e_list_limit");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(&workspace, ["list", "--limit", "2", "--json"], "list_limit");
+    let list = run_obr(&workspace, ["list", "--limit", "2", "--json"], "list_limit");
     assert!(list.status.success());
 
     let issues = parse_list_issues(&list.stdout);
@@ -797,7 +797,7 @@ fn e2e_list_limit_with_label_filter() {
     let _log = common::test_log("e2e_list_limit_with_label_filter");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--label", "core", "--limit", "1", "--json"],
         "list_limit_label",
@@ -815,7 +815,7 @@ fn e2e_list_limit_zero_unlimited() {
     let _log = common::test_log("e2e_list_limit_zero_unlimited");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--limit", "0", "--json"],
         "list_limit_unlimited",
@@ -834,7 +834,7 @@ fn e2e_list_limit_zero_with_offset_reports_unpaginated_total() {
     let _log = common::test_log("e2e_list_limit_zero_with_offset_reports_unpaginated_total");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--limit", "0", "--offset", "2", "--json"],
         "list_limit_zero_offset",
@@ -860,7 +860,7 @@ fn e2e_list_deferred_flag() {
     let _log = common::test_log("e2e_list_deferred_flag");
     let (workspace, ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--deferred", "--json"],
         "list_deferred",
@@ -888,7 +888,7 @@ fn e2e_list_long_format() {
     let _log = common::test_log("e2e_list_long_format");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(&workspace, ["list", "--long"], "list_long");
+    let list = run_obr(&workspace, ["list", "--long"], "list_long");
     assert!(list.status.success());
 
     assert!(
@@ -908,7 +908,7 @@ fn e2e_list_pretty_format() {
     let _log = common::test_log("e2e_list_pretty_format");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(&workspace, ["list", "--pretty"], "list_pretty");
+    let list = run_obr(&workspace, ["list", "--pretty"], "list_pretty");
     assert!(list.status.success());
 
     assert!(
@@ -923,8 +923,8 @@ fn e2e_list_default_and_pretty_outputs_differ() {
     let _log = common::test_log("e2e_list_default_and_pretty_outputs_differ");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let normal = run_br(&workspace, ["list"], "list_default_plain");
-    let pretty = run_br(&workspace, ["list", "--pretty"], "list_pretty_plain");
+    let normal = run_obr(&workspace, ["list"], "list_default_plain");
+    let pretty = run_obr(&workspace, ["list", "--pretty"], "list_pretty_plain");
 
     assert!(normal.status.success());
     assert!(pretty.status.success());
@@ -939,7 +939,7 @@ fn e2e_list_csv_custom_fields() {
     let _log = common::test_log("e2e_list_csv_custom_fields");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         [
             "list",
@@ -963,27 +963,27 @@ fn e2e_list_csv_custom_fields() {
 #[test]
 fn e2e_list_csv_escaping() {
     let _log = common::test_log("e2e_list_csv_escaping");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
     // Create issues with CSV-problematic characters
-    let create_comma = run_br(
+    let create_comma = run_obr(
         &workspace,
         ["create", "Fix login, signup flow"],
         "create_comma",
     );
     assert!(create_comma.status.success());
 
-    let create_quote = run_br(
+    let create_quote = run_obr(
         &workspace,
         ["create", "Handle \"double quotes\" properly"],
         "create_quote",
     );
     assert!(create_quote.status.success());
 
-    let list = run_br(&workspace, ["list", "--format", "csv"], "list_csv_escape");
+    let list = run_obr(&workspace, ["list", "--format", "csv"], "list_csv_escape");
     assert!(list.status.success(), "list csv failed: {}", list.stderr);
 
     let lines: Vec<&str> = list.stdout.lines().collect();
@@ -1038,7 +1038,7 @@ fn e2e_list_combined_filters() {
     let (workspace, ids) = setup_diverse_workspace();
 
     // Combine type, priority, and label filters
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         [
             "list",
@@ -1067,7 +1067,7 @@ fn e2e_list_empty_result() {
     let (workspace, _ids) = setup_diverse_workspace();
 
     // Filter that matches nothing
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         [
             "list",
@@ -1094,15 +1094,15 @@ fn e2e_list_empty_result() {
 #[test]
 fn e2e_list_before_init_fails() {
     let _log = common::test_log("e2e_list_before_init_fails");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let list = run_br(&workspace, ["list"], "list_no_init");
+    let list = run_obr(&workspace, ["list"], "list_no_init");
     assert!(!list.status.success(), "list should fail before init");
     assert!(
         list.stderr.contains("not initialized")
             || list.stderr.contains("NotInitialized")
             || list.stderr.contains("not found")
-            || list.stderr.contains(".beads"),
+            || list.stderr.contains(".obr"),
         "error should mention initialization: {}",
         list.stderr
     );
@@ -1116,7 +1116,7 @@ fn e2e_list_custom_status() {
     // An unknown status value is rejected rather than silently matching
     // zero issues (#418): a typo must be distinguishable from a genuinely
     // empty result.
-    let unknown = run_br(
+    let unknown = run_obr(
         &workspace,
         ["list", "--status", "invalid_status"],
         "list_unknown_status",
@@ -1140,7 +1140,7 @@ fn e2e_list_custom_type() {
     let _log = common::test_log("e2e_list_custom_type");
     let (workspace, _ids) = setup_diverse_workspace();
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--type", "custom_type", "--json"],
         "list_custom_type",
@@ -1158,7 +1158,7 @@ fn e2e_list_custom_type() {
     );
 }
 
-/// Regression for GitHub #463: text-mode `br list --limit N` with no other
+/// Regression for GitHub #463: text-mode `obr list --limit N` with no other
 /// filter used an `INDEXED BY` hint the planner could refuse, so the command
 /// failed with "internal error: no query solution".
 #[test]
@@ -1166,7 +1166,7 @@ fn e2e_list_limit_text_output_without_status_filter() {
     let _log = common::test_log("e2e_list_limit_text_output_without_status_filter");
     let (workspace, ids) = setup_diverse_workspace();
 
-    let list = run_br(&workspace, ["list", "--limit", "1"], "list_limit_text");
+    let list = run_obr(&workspace, ["list", "--limit", "1"], "list_limit_text");
     assert!(
         list.status.success(),
         "list --limit 1 failed: {}\n{}",
@@ -1176,7 +1176,7 @@ fn e2e_list_limit_text_output_without_status_filter() {
     let shown = ids.iter().filter(|id| list.stdout.contains(*id)).count();
     assert_eq!(shown, 1, "expected exactly one issue row:\n{}", list.stdout);
 
-    let paged = run_br(
+    let paged = run_obr(
         &workspace,
         ["list", "--limit", "2", "--offset", "1"],
         "list_limit_offset_text",
@@ -1193,7 +1193,7 @@ fn e2e_list_limit_text_output_without_status_filter() {
         paged.stdout
     );
 
-    let unlimited = run_br(&workspace, ["list"], "list_default_text");
+    let unlimited = run_obr(&workspace, ["list"], "list_default_text");
     assert!(
         unlimited.status.success(),
         "bare list failed: {}",

@@ -1,10 +1,10 @@
 mod common;
 
-use beads_rust::model::{Issue, IssueType, Priority, Status};
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{auto_flush, compute_jsonl_hash, read_issues_from_jsonl};
 use chrono::Utc;
-use common::cli::{BrWorkspace, parse_created_id, run_br};
+use common::cli::{ObrWorkspace, parse_created_id, pin_jsonl, run_obr};
+use obr::model::{Issue, IssueType, Priority, Status};
+use obr::storage::SqliteStorage;
+use obr::sync::{auto_flush, compute_jsonl_hash, read_issues_from_jsonl};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
@@ -30,10 +30,10 @@ fn make_issue(id: &str) -> Issue {
 #[ignore = "integration test cannot mark an issue dirty without changing JSONL bytes"]
 fn test_auto_flush_optimizes_no_content_change() {
     let temp_dir = TempDir::new().unwrap();
-    let beads_dir = temp_dir.path().join(".beads");
-    fs::create_dir(&beads_dir).unwrap();
-    let db_path = beads_dir.join("beads.db");
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = temp_dir.path().join(".obr");
+    fs::create_dir(&obr_dir).unwrap();
+    let db_path = obr_dir.join("obr.db");
+    let jsonl_path = obr_dir.join("issues.jsonl");
 
     let mut storage = SqliteStorage::open(&db_path).unwrap();
 
@@ -42,7 +42,7 @@ fn test_auto_flush_optimizes_no_content_change() {
     storage.create_issue(&issue, "tester").unwrap();
 
     // 2. First auto-flush (should export)
-    let result = auto_flush(&mut storage, &beads_dir, &jsonl_path, false).unwrap();
+    let result = auto_flush(&mut storage, &obr_dir, &jsonl_path, false).unwrap();
     assert!(result.flushed, "First flush should happen");
     assert_eq!(result.exported_count, 1);
 
@@ -51,7 +51,7 @@ fn test_auto_flush_optimizes_no_content_change() {
     // NOTE: This relies on the fact that we haven't exported the intermediate state.
 
     // Change title
-    let update_change = beads_rust::storage::IssueUpdate {
+    let update_change = obr::storage::IssueUpdate {
         title: Some("Changed Title".to_string()),
         ..Default::default()
     };
@@ -60,7 +60,7 @@ fn test_auto_flush_optimizes_no_content_change() {
         .unwrap();
 
     // Revert title
-    let update_revert = beads_rust::storage::IssueUpdate {
+    let update_revert = obr::storage::IssueUpdate {
         title: Some("Test Issue".to_string()),
         ..Default::default()
     };
@@ -74,7 +74,7 @@ fn test_auto_flush_optimizes_no_content_change() {
 
     // 4. Second auto-flush should now skip the rewrite because the exported JSONL
     // would be byte-identical.
-    let result = auto_flush(&mut storage, &beads_dir, &jsonl_path, false).unwrap();
+    let result = auto_flush(&mut storage, &obr_dir, &jsonl_path, false).unwrap();
 
     assert!(
         !result.flushed,
@@ -89,10 +89,10 @@ fn test_auto_flush_optimizes_no_content_change() {
 #[test]
 fn test_auto_flush_flush_on_label_change() {
     let temp_dir = TempDir::new().unwrap();
-    let beads_dir = temp_dir.path().join(".beads");
-    fs::create_dir(&beads_dir).unwrap();
-    let db_path = beads_dir.join("beads.db");
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = temp_dir.path().join(".obr");
+    fs::create_dir(&obr_dir).unwrap();
+    let db_path = obr_dir.join("obr.db");
+    let jsonl_path = obr_dir.join("issues.jsonl");
 
     let mut storage = SqliteStorage::open(&db_path).unwrap();
 
@@ -101,7 +101,7 @@ fn test_auto_flush_flush_on_label_change() {
     storage.create_issue(&issue, "tester").unwrap();
 
     // 2. First auto-flush
-    let result = auto_flush(&mut storage, &beads_dir, &jsonl_path, false).unwrap();
+    let result = auto_flush(&mut storage, &obr_dir, &jsonl_path, false).unwrap();
     assert!(result.flushed);
 
     // 3. Add a label
@@ -112,7 +112,7 @@ fn test_auto_flush_flush_on_label_change() {
     assert_eq!(dirty_ids.len(), 1);
 
     // 4. Second auto-flush - SHOULD FLUSH because label was added
-    let result = auto_flush(&mut storage, &beads_dir, &jsonl_path, false).unwrap();
+    let result = auto_flush(&mut storage, &obr_dir, &jsonl_path, false).unwrap();
 
     // This assertion will FAIL if my optimization is active and flawed
     assert!(result.flushed, "Should flush when label is added");
@@ -121,35 +121,35 @@ fn test_auto_flush_flush_on_label_change() {
 #[test]
 fn test_auto_flush_uses_resolved_jsonl_path() {
     let temp_dir = TempDir::new().unwrap();
-    let beads_dir = temp_dir.path().join(".beads");
-    fs::create_dir(&beads_dir).unwrap();
-    let db_path = beads_dir.join("beads.db");
+    let obr_dir = temp_dir.path().join(".obr");
+    fs::create_dir(&obr_dir).unwrap();
+    let db_path = obr_dir.join("obr.db");
     let custom_jsonl_path = temp_dir.path().join("custom-issues.jsonl");
 
     let mut storage = SqliteStorage::open(&db_path).unwrap();
     storage.create_issue(&make_issue("bd-1"), "tester").unwrap();
 
-    // A JSONL path outside `.beads/` requires `allow_external_jsonl = true`
+    // A JSONL path outside `.obr/` requires `allow_external_jsonl = true`
     // — otherwise export refuses with "Path is outside the beads directory"
     // as a safety check against wayward writes during refactors.
-    let result = auto_flush(&mut storage, &beads_dir, &custom_jsonl_path, true).unwrap();
+    let result = auto_flush(&mut storage, &obr_dir, &custom_jsonl_path, true).unwrap();
 
     assert!(result.flushed);
     assert!(custom_jsonl_path.exists());
-    assert!(!beads_dir.join("issues.jsonl").exists());
+    assert!(!obr_dir.join("issues.jsonl").exists());
 }
 
 #[test]
 fn test_auto_flush_preserves_unrelated_existing_jsonl_lines() {
     let temp_dir = TempDir::new().unwrap();
-    let beads_dir = temp_dir.path().join(".beads");
-    fs::create_dir(&beads_dir).unwrap();
-    let db_path = beads_dir.join("beads.db");
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = temp_dir.path().join(".obr");
+    fs::create_dir(&obr_dir).unwrap();
+    let db_path = obr_dir.join("obr.db");
+    let jsonl_path = obr_dir.join("issues.jsonl");
 
     let mut storage = SqliteStorage::open(&db_path).unwrap();
     storage.create_issue(&make_issue("bd-1"), "tester").unwrap();
-    auto_flush(&mut storage, &beads_dir, &jsonl_path, false).unwrap();
+    auto_flush(&mut storage, &obr_dir, &jsonl_path, false).unwrap();
 
     let extra_issue = make_issue("bd-extra");
     let mut contents = fs::read_to_string(&jsonl_path).unwrap();
@@ -162,7 +162,7 @@ fn test_auto_flush_preserves_unrelated_existing_jsonl_lines() {
     storage
         .update_issue(
             "bd-1",
-            &beads_rust::storage::IssueUpdate {
+            &obr::storage::IssueUpdate {
                 title: Some("Updated".to_string()),
                 ..Default::default()
             },
@@ -170,10 +170,10 @@ fn test_auto_flush_preserves_unrelated_existing_jsonl_lines() {
         )
         .unwrap();
 
-    let result = auto_flush(&mut storage, &beads_dir, &jsonl_path, false).unwrap();
+    let result = auto_flush(&mut storage, &obr_dir, &jsonl_path, false).unwrap();
     assert!(result.flushed);
 
-    let issues = beads_rust::sync::read_issues_from_jsonl(&jsonl_path).unwrap();
+    let issues = obr::sync::read_issues_from_jsonl(&jsonl_path).unwrap();
     let ids = issues
         .iter()
         .map(|issue| issue.id.as_str())
@@ -191,24 +191,24 @@ fn test_auto_flush_preserves_unrelated_existing_jsonl_lines() {
 
 /// GitHub #404: creates used to take the streaming in-place writer, which can
 /// only put an id it did not find at the tail. Any id sorting before a row
-/// already on disk therefore left `.beads/issues.jsonl` non-canonically
-/// ordered, and only `br sync --flush-only --force` repaired it. Creates now
+/// already on disk therefore left `.obr/issues.jsonl` non-canonically
+/// ordered, and only `obr sync --flush-only --force` repaired it. Creates now
 /// decline the fast path so the canonical `BTreeMap` writer emits the file in
 /// id order; updates keep the cheap in-place write.
 #[test]
 fn test_auto_flush_keeps_jsonl_id_sorted_after_creates() {
     let temp_dir = TempDir::new().unwrap();
-    let beads_dir = temp_dir.path().join(".beads");
-    fs::create_dir(&beads_dir).unwrap();
-    let db_path = beads_dir.join("beads.db");
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = temp_dir.path().join(".obr");
+    fs::create_dir(&obr_dir).unwrap();
+    let db_path = obr_dir.join("obr.db");
+    let jsonl_path = obr_dir.join("issues.jsonl");
 
     let mut storage = SqliteStorage::open(&db_path).unwrap();
     storage
         .create_issue(&make_issue("bd-r48"), "tester")
         .unwrap();
     assert!(
-        auto_flush(&mut storage, &beads_dir, &jsonl_path, false)
+        auto_flush(&mut storage, &obr_dir, &jsonl_path, false)
             .unwrap()
             .flushed
     );
@@ -221,7 +221,7 @@ fn test_auto_flush_keeps_jsonl_id_sorted_after_creates() {
     storage
         .create_issue(&make_issue("bd-a12"), "tester")
         .unwrap();
-    let flushed_creates = auto_flush(&mut storage, &beads_dir, &jsonl_path, false).unwrap();
+    let flushed_creates = auto_flush(&mut storage, &obr_dir, &jsonl_path, false).unwrap();
     assert!(flushed_creates.flushed);
     assert_eq!(flushed_creates.exported_count, 3);
 
@@ -241,7 +241,7 @@ fn test_auto_flush_keeps_jsonl_id_sorted_after_creates() {
     storage
         .update_issue(
             "bd-r48",
-            &beads_rust::storage::IssueUpdate {
+            &obr::storage::IssueUpdate {
                 title: Some("Renamed".to_string()),
                 ..Default::default()
             },
@@ -249,7 +249,7 @@ fn test_auto_flush_keeps_jsonl_id_sorted_after_creates() {
         )
         .unwrap();
     assert!(
-        auto_flush(&mut storage, &beads_dir, &jsonl_path, false)
+        auto_flush(&mut storage, &obr_dir, &jsonl_path, false)
             .unwrap()
             .flushed
     );
@@ -314,10 +314,10 @@ fn positional_line_churn(before: &[String], after: &[String]) -> usize {
     common_changed + before.len().abs_diff(after.len())
 }
 
-fn assert_jsonl_is_valid_and_acyclic(workspace: &BrWorkspace, label: &str) {
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+fn assert_jsonl_is_valid_and_acyclic(workspace: &ObrWorkspace, label: &str) {
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     read_issues_from_jsonl(&jsonl_path).unwrap();
-    let cycles = run_br(
+    let cycles = run_obr(
         workspace,
         ["dep", "cycles", "--json"],
         &format!("{label}_dep_cycles"),
@@ -331,13 +331,13 @@ fn assert_jsonl_is_valid_and_acyclic(workspace: &BrWorkspace, label: &str) {
 }
 
 fn assert_bounded_jsonl_diff(
-    workspace: &BrWorkspace,
+    workspace: &ObrWorkspace,
     label: &str,
     before: &[String],
     expected_changed_ids: &[String],
     max_line_churn: usize,
 ) {
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     let after = read_jsonl_lines(&jsonl_path);
     let observed_changed_ids = changed_issue_ids(before, &after);
     let expected_changed_ids = expected_changed_ids
@@ -365,12 +365,13 @@ fn e2e_auto_flush_single_mutations_preserve_bounded_jsonl_diff_after_import() {
     let _log = common::test_log(
         "e2e_auto_flush_single_mutations_preserve_bounded_jsonl_diff_after_import",
     );
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "bounded_diff_init");
+    let init = run_obr(&workspace, ["init"], "bounded_diff_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create_a = run_br(&workspace, ["create", "Alpha"], "bounded_diff_create_a");
+    let create_a = run_obr(&workspace, ["create", "Alpha"], "bounded_diff_create_a");
     assert!(
         create_a.status.success(),
         "create alpha failed: {}",
@@ -378,7 +379,7 @@ fn e2e_auto_flush_single_mutations_preserve_bounded_jsonl_diff_after_import() {
     );
     let alpha_id = parse_created_id(&create_a.stdout);
 
-    let create_b = run_br(&workspace, ["create", "Beta"], "bounded_diff_create_b");
+    let create_b = run_obr(&workspace, ["create", "Beta"], "bounded_diff_create_b");
     assert!(
         create_b.status.success(),
         "create beta failed: {}",
@@ -386,7 +387,7 @@ fn e2e_auto_flush_single_mutations_preserve_bounded_jsonl_diff_after_import() {
     );
     let beta_id = parse_created_id(&create_b.stdout);
 
-    let create_c = run_br(&workspace, ["create", "Gamma"], "bounded_diff_create_c");
+    let create_c = run_obr(&workspace, ["create", "Gamma"], "bounded_diff_create_c");
     assert!(
         create_c.status.success(),
         "create gamma failed: {}",
@@ -394,12 +395,12 @@ fn e2e_auto_flush_single_mutations_preserve_bounded_jsonl_diff_after_import() {
     );
     let gamma_id = parse_created_id(&create_c.stdout);
 
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     let mut imported_lines = read_jsonl_lines(&jsonl_path);
     imported_lines.reverse();
     fs::write(&jsonl_path, format!("{}\n", imported_lines.join("\n"))).unwrap();
 
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--force", "--json"],
         "bounded_diff_import_reordered_jsonl",
@@ -417,7 +418,7 @@ fn e2e_auto_flush_single_mutations_preserve_bounded_jsonl_diff_after_import() {
     );
 
     let before_update = read_jsonl_lines(&jsonl_path);
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         ["update", &alpha_id, "--title", "Alpha renamed", "--json"],
         "bounded_diff_update",
@@ -437,7 +438,7 @@ fn e2e_auto_flush_single_mutations_preserve_bounded_jsonl_diff_after_import() {
     );
 
     let before_comment = read_jsonl_lines(&jsonl_path);
-    let comment = run_br(
+    let comment = run_obr(
         &workspace,
         ["comments", "add", &alpha_id, "bounded comment", "--json"],
         "bounded_diff_comment",
@@ -457,7 +458,7 @@ fn e2e_auto_flush_single_mutations_preserve_bounded_jsonl_diff_after_import() {
     );
 
     let before_dep = read_jsonl_lines(&jsonl_path);
-    let dep = run_br(
+    let dep = run_obr(
         &workspace,
         [
             "dep", "add", &alpha_id, &beta_id, "--type", "related", "--json",
@@ -479,7 +480,7 @@ fn e2e_auto_flush_single_mutations_preserve_bounded_jsonl_diff_after_import() {
     );
 
     let before_create = read_jsonl_lines(&jsonl_path);
-    let create_new = run_br(&workspace, ["create", "Delta"], "bounded_diff_create_delta");
+    let create_new = run_obr(&workspace, ["create", "Delta"], "bounded_diff_create_delta");
     assert!(
         create_new.status.success(),
         "create delta failed: stdout={} stderr={}",

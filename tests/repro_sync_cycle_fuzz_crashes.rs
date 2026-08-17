@@ -6,9 +6,9 @@
 
 mod common;
 
-use beads_rust::model::{Issue, IssueType, Priority, Status};
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{
+use obr::model::{Issue, IssueType, Priority, Status};
+use obr::storage::SqliteStorage;
+use obr::sync::{
     ExportConfig, ImportConfig, OrphanMode, compute_jsonl_hash, compute_staleness,
     ensure_no_conflict_markers, export_to_jsonl, import_from_jsonl, preflight_import,
 };
@@ -17,10 +17,10 @@ use tempfile::TempDir;
 
 fn setup_workspace() -> (TempDir, std::path::PathBuf, std::path::PathBuf) {
     let temp = TempDir::new().expect("temp dir");
-    let beads_dir = temp.path().join(".beads");
-    fs::create_dir_all(&beads_dir).expect("create .beads");
-    let jsonl_path = beads_dir.join("issues.jsonl");
-    (temp, beads_dir, jsonl_path)
+    let obr_dir = temp.path().join(".obr");
+    fs::create_dir_all(&obr_dir).expect("create .obr");
+    let jsonl_path = obr_dir.join("issues.jsonl");
+    (temp, obr_dir, jsonl_path)
 }
 
 fn seed_storage(storage: &mut SqliteStorage) {
@@ -36,21 +36,21 @@ fn seed_storage(storage: &mut SqliteStorage) {
     storage.create_issue(&issue, "test").unwrap();
 }
 
-fn default_export_config(beads_dir: &std::path::Path) -> ExportConfig {
+fn default_export_config(obr_dir: &std::path::Path) -> ExportConfig {
     ExportConfig {
         force: true,
         is_default_path: true,
-        beads_dir: Some(beads_dir.to_path_buf()),
+        obr_dir: Some(obr_dir.to_path_buf()),
         show_progress: false,
         ..ExportConfig::default()
     }
 }
 
-fn default_import_config(beads_dir: &std::path::Path) -> ImportConfig {
+fn default_import_config(obr_dir: &std::path::Path) -> ImportConfig {
     ImportConfig {
         skip_prefix_validation: true,
         clear_duplicate_external_refs: true,
-        beads_dir: Some(beads_dir.to_path_buf()),
+        obr_dir: Some(obr_dir.to_path_buf()),
         show_progress: false,
         ..ImportConfig::default()
     }
@@ -61,8 +61,8 @@ fn default_import_config(beads_dir: &std::path::Path) -> ImportConfig {
 /// rather than panicking.
 #[test]
 fn repro_sync_cycle_crash_conflict_markers() {
-    let (_temp, beads_dir, jsonl_path) = setup_workspace();
-    let db_path = beads_dir.join("beads.db");
+    let (_temp, obr_dir, jsonl_path) = setup_workspace();
+    let db_path = obr_dir.join("obr.db");
     let mut storage = SqliteStorage::open(&db_path).unwrap();
     seed_storage(&mut storage);
 
@@ -78,7 +78,7 @@ fn repro_sync_cycle_crash_conflict_markers() {
     let import_result = import_from_jsonl(
         &mut storage,
         &jsonl_path,
-        &default_import_config(&beads_dir),
+        &default_import_config(&obr_dir),
         Some("bd"),
     );
     match import_result {
@@ -94,8 +94,8 @@ fn repro_sync_cycle_crash_conflict_markers() {
 /// Variant of the conflict marker test with longer content inside the markers.
 #[test]
 fn repro_sync_cycle_crash_conflict_markers_variant() {
-    let (_temp, beads_dir, jsonl_path) = setup_workspace();
-    let db_path = beads_dir.join("beads.db");
+    let (_temp, obr_dir, jsonl_path) = setup_workspace();
+    let db_path = obr_dir.join("obr.db");
     let mut storage = SqliteStorage::open(&db_path).unwrap();
     seed_storage(&mut storage);
 
@@ -114,12 +114,12 @@ fn repro_sync_cycle_crash_conflict_markers_variant() {
 /// through force-export, force-upsert, and orphan-mode-variant paths.
 #[test]
 fn repro_sync_cycle_crash_export_upsert_orphan() {
-    let (_temp, beads_dir, jsonl_path) = setup_workspace();
-    let db_path = beads_dir.join("beads.db");
+    let (_temp, obr_dir, jsonl_path) = setup_workspace();
+    let db_path = obr_dir.join("obr.db");
     let mut storage = SqliteStorage::open(&db_path).unwrap();
     seed_storage(&mut storage);
 
-    export_to_jsonl(&storage, &jsonl_path, &default_export_config(&beads_dir)).unwrap();
+    export_to_jsonl(&storage, &jsonl_path, &default_export_config(&obr_dir)).unwrap();
 
     let jsonl_content = fs::read_to_string(&jsonl_path).unwrap();
     let modified = format!(
@@ -129,25 +129,25 @@ fn repro_sync_cycle_crash_export_upsert_orphan() {
 
     let config_strict = ImportConfig {
         orphan_mode: OrphanMode::Strict,
-        ..default_import_config(&beads_dir)
+        ..default_import_config(&obr_dir)
     };
     let _ = import_from_jsonl(&mut storage, &jsonl_path, &config_strict, Some("bd"));
 
     let config_allow = ImportConfig {
         orphan_mode: OrphanMode::Allow,
-        ..default_import_config(&beads_dir)
+        ..default_import_config(&obr_dir)
     };
     let _ = import_from_jsonl(&mut storage, &jsonl_path, &config_allow, Some("bd"));
 
     let config_skip = ImportConfig {
         orphan_mode: OrphanMode::Skip,
-        ..default_import_config(&beads_dir)
+        ..default_import_config(&obr_dir)
     };
     let _ = import_from_jsonl(&mut storage, &jsonl_path, &config_skip, Some("bd"));
 
     let config_resurrect = ImportConfig {
         orphan_mode: OrphanMode::Resurrect,
-        ..default_import_config(&beads_dir)
+        ..default_import_config(&obr_dir)
     };
     let _ = import_from_jsonl(&mut storage, &jsonl_path, &config_resurrect, Some("bd"));
 }
@@ -156,12 +156,12 @@ fn repro_sync_cycle_crash_export_upsert_orphan() {
 /// and upsert flags.
 #[test]
 fn repro_sync_cycle_crash_binary_garbage_jsonl() {
-    let (_temp, beads_dir, jsonl_path) = setup_workspace();
-    let db_path = beads_dir.join("beads.db");
+    let (_temp, obr_dir, jsonl_path) = setup_workspace();
+    let db_path = obr_dir.join("obr.db");
     let mut storage = SqliteStorage::open(&db_path).unwrap();
     seed_storage(&mut storage);
 
-    export_to_jsonl(&storage, &jsonl_path, &default_export_config(&beads_dir)).unwrap();
+    export_to_jsonl(&storage, &jsonl_path, &default_export_config(&obr_dir)).unwrap();
 
     let mut content = fs::read(&jsonl_path).unwrap();
     content.extend_from_slice(b"\n\x00\x06garbage-line-with-nulls\n");
@@ -170,7 +170,7 @@ fn repro_sync_cycle_crash_binary_garbage_jsonl() {
     let import_result = import_from_jsonl(
         &mut storage,
         &jsonl_path,
-        &default_import_config(&beads_dir),
+        &default_import_config(&obr_dir),
         Some("bd"),
     );
     match import_result {
@@ -185,12 +185,12 @@ fn repro_sync_cycle_crash_binary_garbage_jsonl() {
 /// crash-f397: Highly mangled binary data mixed with partial string fragments.
 #[test]
 fn repro_sync_cycle_crash_mangled_binary() {
-    let (_temp, beads_dir, jsonl_path) = setup_workspace();
-    let db_path = beads_dir.join("beads.db");
+    let (_temp, obr_dir, jsonl_path) = setup_workspace();
+    let db_path = obr_dir.join("obr.db");
     let mut storage = SqliteStorage::open(&db_path).unwrap();
     seed_storage(&mut storage);
 
-    export_to_jsonl(&storage, &jsonl_path, &default_export_config(&beads_dir)).unwrap();
+    export_to_jsonl(&storage, &jsonl_path, &default_export_config(&obr_dir)).unwrap();
 
     let mangled: Vec<u8> = vec![
         0xbb, 0x61, 0x55, 0x04, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x64, 0x74, 0x40, 0x72,
@@ -201,7 +201,7 @@ fn repro_sync_cycle_crash_mangled_binary() {
     let import_result = import_from_jsonl(
         &mut storage,
         &jsonl_path,
-        &default_import_config(&beads_dir),
+        &default_import_config(&obr_dir),
         Some("bd"),
     );
     match import_result {
@@ -223,17 +223,17 @@ fn repro_sync_cycle_crash_mangled_binary() {
 /// Verify it completes within a reasonable timeout.
 #[test]
 fn repro_sync_cycle_slow_unit_force_upsert_orphan() {
-    let (_temp, beads_dir, jsonl_path) = setup_workspace();
-    let db_path = beads_dir.join("beads.db");
+    let (_temp, obr_dir, jsonl_path) = setup_workspace();
+    let db_path = obr_dir.join("obr.db");
     let mut storage = SqliteStorage::open(&db_path).unwrap();
     seed_storage(&mut storage);
 
-    export_to_jsonl(&storage, &jsonl_path, &default_export_config(&beads_dir)).unwrap();
+    export_to_jsonl(&storage, &jsonl_path, &default_export_config(&obr_dir)).unwrap();
 
     let config_force = ImportConfig {
         force_upsert: true,
         orphan_mode: OrphanMode::Allow,
-        ..default_import_config(&beads_dir)
+        ..default_import_config(&obr_dir)
     };
 
     let start = std::time::Instant::now();
@@ -248,12 +248,12 @@ fn repro_sync_cycle_slow_unit_force_upsert_orphan() {
 /// Verify CRLF line endings in JSONL don't cause panics.
 #[test]
 fn repro_sync_cycle_crlf_jsonl() {
-    let (_temp, beads_dir, jsonl_path) = setup_workspace();
-    let db_path = beads_dir.join("beads.db");
+    let (_temp, obr_dir, jsonl_path) = setup_workspace();
+    let db_path = obr_dir.join("obr.db");
     let mut storage = SqliteStorage::open(&db_path).unwrap();
     seed_storage(&mut storage);
 
-    export_to_jsonl(&storage, &jsonl_path, &default_export_config(&beads_dir)).unwrap();
+    export_to_jsonl(&storage, &jsonl_path, &default_export_config(&obr_dir)).unwrap();
 
     let content = fs::read_to_string(&jsonl_path).unwrap();
     let crlf_content = content.replace('\n', "\r\n");
@@ -262,7 +262,7 @@ fn repro_sync_cycle_crlf_jsonl() {
     let import_result = import_from_jsonl(
         &mut storage,
         &jsonl_path,
-        &default_import_config(&beads_dir),
+        &default_import_config(&obr_dir),
         Some("bd"),
     );
     match import_result {
@@ -274,12 +274,12 @@ fn repro_sync_cycle_crlf_jsonl() {
 /// Verify duplicate JSONL lines are handled gracefully.
 #[test]
 fn repro_sync_cycle_duplicate_lines() {
-    let (_temp, beads_dir, jsonl_path) = setup_workspace();
-    let db_path = beads_dir.join("beads.db");
+    let (_temp, obr_dir, jsonl_path) = setup_workspace();
+    let db_path = obr_dir.join("obr.db");
     let mut storage = SqliteStorage::open(&db_path).unwrap();
     seed_storage(&mut storage);
 
-    export_to_jsonl(&storage, &jsonl_path, &default_export_config(&beads_dir)).unwrap();
+    export_to_jsonl(&storage, &jsonl_path, &default_export_config(&obr_dir)).unwrap();
 
     let content = fs::read_to_string(&jsonl_path).unwrap();
     if let Some(first_line) = content.lines().find(|l| !l.trim().is_empty()) {
@@ -290,7 +290,7 @@ fn repro_sync_cycle_duplicate_lines() {
     let _ = import_from_jsonl(
         &mut storage,
         &jsonl_path,
-        &default_import_config(&beads_dir),
+        &default_import_config(&obr_dir),
         Some("bd"),
     );
 }
@@ -298,8 +298,8 @@ fn repro_sync_cycle_duplicate_lines() {
 /// Verify empty JSONL file doesn't crash.
 #[test]
 fn repro_sync_cycle_empty_jsonl() {
-    let (_temp, beads_dir, jsonl_path) = setup_workspace();
-    let db_path = beads_dir.join("beads.db");
+    let (_temp, obr_dir, jsonl_path) = setup_workspace();
+    let db_path = obr_dir.join("obr.db");
     let mut storage = SqliteStorage::open(&db_path).unwrap();
     seed_storage(&mut storage);
 
@@ -308,7 +308,7 @@ fn repro_sync_cycle_empty_jsonl() {
     let import_result = import_from_jsonl(
         &mut storage,
         &jsonl_path,
-        &default_import_config(&beads_dir),
+        &default_import_config(&obr_dir),
         Some("bd"),
     );
     match import_result {
@@ -320,8 +320,8 @@ fn repro_sync_cycle_empty_jsonl() {
 /// Verify corrupt SQLite DB doesn't cause panics in sync paths.
 #[test]
 fn repro_sync_cycle_corrupt_db() {
-    let (_temp, beads_dir, _jsonl_path) = setup_workspace();
-    let db_path = beads_dir.join("beads.db");
+    let (_temp, obr_dir, _jsonl_path) = setup_workspace();
+    let db_path = obr_dir.join("obr.db");
 
     fs::write(&db_path, b"not a sqlite database\n").unwrap();
 
@@ -340,18 +340,18 @@ fn repro_sync_cycle_corrupt_db() {
 /// Verify stale WAL/SHM sidecar files don't cause panics.
 #[test]
 fn repro_sync_cycle_stale_wal_shm() {
-    let (_temp, beads_dir, jsonl_path) = setup_workspace();
-    let db_path = beads_dir.join("beads.db");
+    let (_temp, obr_dir, jsonl_path) = setup_workspace();
+    let db_path = obr_dir.join("obr.db");
 
-    fs::write(beads_dir.join("beads.db-wal"), b"garbage wal data").unwrap();
-    fs::write(beads_dir.join("beads.db-shm"), b"garbage shm data").unwrap();
+    fs::write(obr_dir.join("obr.db-wal"), b"garbage wal data").unwrap();
+    fs::write(obr_dir.join("obr.db-shm"), b"garbage shm data").unwrap();
 
     let storage_result = SqliteStorage::open(&db_path);
     match storage_result {
         Ok(mut storage) => {
             seed_storage(&mut storage);
             let export_result =
-                export_to_jsonl(&storage, &jsonl_path, &default_export_config(&beads_dir));
+                export_to_jsonl(&storage, &jsonl_path, &default_export_config(&obr_dir));
             match export_result {
                 Ok(_) => {}
                 Err(err) => assert!(!err.to_string().trim().is_empty()),
@@ -364,12 +364,12 @@ fn repro_sync_cycle_stale_wal_shm() {
 /// Verify preflight_import handles malformed JSONL gracefully.
 #[test]
 fn repro_sync_cycle_preflight_malformed() {
-    let (_temp, beads_dir, jsonl_path) = setup_workspace();
+    let (_temp, obr_dir, jsonl_path) = setup_workspace();
 
     fs::write(&jsonl_path, b"{bad json\n{also bad\n").unwrap();
 
     let preflight_result =
-        preflight_import(&jsonl_path, &default_import_config(&beads_dir), Some("bd"));
+        preflight_import(&jsonl_path, &default_import_config(&obr_dir), Some("bd"));
     match preflight_result {
         Ok(_) => {}
         Err(err) => assert!(!err.to_string().trim().is_empty()),
@@ -379,7 +379,7 @@ fn repro_sync_cycle_preflight_malformed() {
 /// Verify compute_jsonl_hash handles empty and malformed files.
 #[test]
 fn repro_sync_cycle_hash_edge_cases() {
-    let (_temp, _beads_dir, jsonl_path) = setup_workspace();
+    let (_temp, _obr_dir, jsonl_path) = setup_workspace();
 
     fs::write(&jsonl_path, "").unwrap();
     let hash1 = compute_jsonl_hash(&jsonl_path);

@@ -12,7 +12,8 @@ stage="${2:?usage: assert.sh <target_dir> <stage>}"
 tool_bin="${TOOL_BIN:-br}"
 cd "$target_dir"
 
-# Load paths recorded by corrupt.sh.
+# Load paths recorded by corrupt.sh (generated at fixture runtime).
+# shellcheck disable=SC1091
 . ./.fixture_paths
 
 runs_root="$target_dir/.doctor/runs"
@@ -21,7 +22,7 @@ find_quarantine_run_dir() {
   [ -d "$runs_root" ] || return 1
   local dir
   while IFS= read -r dir; do
-    if [ -f "$dir/quarantine/.beads/.br_recovery/$(basename "$AGED")" ]; then
+    if [ -f "$dir/quarantine/.obr/recovery/$(basename "$AGED")" ]; then
       echo "$dir"
       return 0
     fi
@@ -43,7 +44,7 @@ case "$stage" in
     [ -f "$AGED" ] || { echo "ASSERT FAIL[$stage]: pre-repair aged $AGED missing" >&2; exit 1; }
     [ -f "$RECENT" ] || { echo "ASSERT FAIL[$stage]: pre-repair recent $RECENT missing" >&2; exit 1; }
     [ -f "$BAD_SIBLING" ] || { echo "ASSERT FAIL[$stage]: pre-repair $BAD_SIBLING missing" >&2; exit 1; }
-    # Details should list 2 aged artifacts (the .br_recovery one and the .bad_<TS>).
+    # Details should list 2 aged artifacts (the recovery one and the .bad_<TS>).
     aged_count=$(echo "$out" | jq '[.checks[] | select(.name == "db.recovery_artifacts.aged") | .details.artifacts[]?] | length')
     if [ "${aged_count:-0}" -ne 2 ]; then
       echo "ASSERT FAIL[$stage]: expected 2 aged artifacts in details, got $aged_count" >&2
@@ -72,7 +73,7 @@ case "$stage" in
       ls -la "$runs_root" 2>&1 >&2 || true
       exit 1
     fi
-    q="$run_dir/quarantine/.beads/.br_recovery"
+    q="$run_dir/quarantine/.obr/recovery"
     [ -f "$q/$(basename "$AGED")" ] || {
       echo "ASSERT FAIL[$stage]: aged $(basename "$AGED") missing from quarantine $q" >&2
       ls -la "$q" 2>&1 >&2 || true
@@ -108,8 +109,8 @@ case "$stage" in
       exit 1
     fi
 
-    # .beads/ workspace must be intact (db, jsonl unchanged).
-    [ -f .beads/beads.db ] || { echo "ASSERT FAIL[$stage]: beads.db vanished" >&2; exit 1; }
+    # .obr/ workspace must be intact (db, jsonl unchanged).
+    [ -f .obr/obr.db ] || { echo "ASSERT FAIL[$stage]: obr.db vanished" >&2; exit 1; }
     ;;
   post_undo)
     # Aged artifacts restored at their original paths.

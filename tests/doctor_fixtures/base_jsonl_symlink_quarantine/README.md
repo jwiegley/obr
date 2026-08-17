@@ -1,8 +1,8 @@
 # base_jsonl_symlink_quarantine
 
 - **FM**: `fm-state_files-base-jsonl-missing-or-stale` (P2, SYMLINK
-  subset) — `.beads/beads.base.jsonl` is a symlink. The merge anchor
-  is read by `br sync --merge` when reconciling a remote with a local
+  subset) — `.obr/merge.base.jsonl` is a symlink. The merge anchor
+  is read by `obr sync --merge` when reconciling a remote with a local
   workspace; a symlinked anchor is an attacker shape (a malicious
   actor could point it at any file on disk, causing 3-way merges
   to diff against attacker-chosen content).
@@ -12,7 +12,7 @@
   Details payload carries `kind: "symlink"`.
 - **Repair contract**: SAFETY — `--repair` renames the symlink
   (not its target — `fs::rename` operates on the link bytes) into
-  `<run-dir>/quarantine/.beads/beads.base.jsonl` via
+  `<run-dir>/quarantine/.obr/merge.base.jsonl` via
   `chokepoint::mutate(Op::Rename)`. Per AGENTS.md RULE 1: rename,
   never delete. The chokepoint snapshots the symlink bytes
   themselves; `doctor undo` reinstates the symlink at its original
@@ -46,16 +46,16 @@ implementation diverges from this intent:
 
 1. **Backup** — `copy_verbatim_with_perms` (`mutate.rs:479`) uses
    `fs::copy` which FOLLOWS symlinks. The backup stored under
-   `<run-dir>/backups/.beads/beads.base.jsonl` is therefore a
+   `<run-dir>/backups/.obr/merge.base.jsonl` is therefore a
    REGULAR FILE containing the link target's content, not the
    link bytes.
 2. **Forward rename** — `fs::rename` correctly preserves the
    symlink bytes; the quarantined entry under
-   `<run-dir>/quarantine/.beads/beads.base.jsonl` IS a symlink.
+   `<run-dir>/quarantine/.obr/merge.base.jsonl` IS a symlink.
 3. **Undo** — `restore_rename` (`surface.rs:1438`) checks
    `from.exists()` against the quarantined entry. `Path::exists()`
    follows symlinks, and the relative target `issues.jsonl`
-   doesn't resolve under `<run-dir>/quarantine/.beads/`, so the
+   doesn't resolve under `<run-dir>/quarantine/.obr/`, so the
    check returns `false` and undo falls back to the byte backup
    via `Op::WriteFile`. Result: the original path is restored as
    a REGULAR FILE containing the link target's content.

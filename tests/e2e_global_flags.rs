@@ -6,7 +6,8 @@
 mod common;
 
 use common::cli::{
-    BrWorkspace, extract_issues_array, extract_json_payload, parse_list_issues, run_br,
+    ObrWorkspace, export_path, extract_issues_array, extract_json_payload, parse_list_issues,
+    run_obr,
 };
 use serde_json::Value;
 use std::fs;
@@ -23,12 +24,12 @@ fn parse_created_id(stdout: &str) -> String {
 }
 
 fn assert_quiet_command<const N: usize>(
-    workspace: &BrWorkspace,
+    workspace: &ObrWorkspace,
     args: [&str; N],
     label: &str,
     description: &str,
 ) {
-    let result = run_br(workspace, args, label);
+    let result = run_obr(workspace, args, label);
     assert!(
         result.status.success(),
         "{description} failed: {}",
@@ -42,12 +43,12 @@ fn assert_quiet_command<const N: usize>(
 }
 
 fn run_quiet_json<const N: usize>(
-    workspace: &BrWorkspace,
+    workspace: &ObrWorkspace,
     args: [&str; N],
     label: &str,
     description: &str,
 ) -> Value {
-    let result = run_br(workspace, args, label);
+    let result = run_obr(workspace, args, label);
     assert!(
         result.status.success(),
         "{description} failed: {}",
@@ -64,17 +65,17 @@ fn run_quiet_json<const N: usize>(
 #[test]
 fn e2e_json_flag_list() {
     let _log = common::test_log("e2e_json_flag_list");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize and create issue
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "JSON test issue"], "create");
+    let create = run_obr(&workspace, ["create", "JSON test issue"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // List with --json flag
-    let list = run_br(&workspace, ["list", "--json"], "list_json");
+    let list = run_obr(&workspace, ["list", "--json"], "list_json");
     assert!(list.status.success(), "list --json failed: {}", list.stderr);
 
     // Output should be valid paginated JSON with an issues array.
@@ -89,12 +90,12 @@ fn e2e_json_flag_list() {
 #[test]
 fn e2e_json_flag_show() {
     let _log = common::test_log("e2e_json_flag_show");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Show JSON test"], "create");
+    let create = run_obr(&workspace, ["create", "Show JSON test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     let id = create
@@ -108,7 +109,7 @@ fn e2e_json_flag_show() {
         .trim();
 
     // Show with --json flag
-    let show = run_br(&workspace, ["show", id, "--json"], "show_json");
+    let show = run_obr(&workspace, ["show", id, "--json"], "show_json");
     assert!(show.status.success(), "show --json failed: {}", show.stderr);
 
     let payload = extract_json_payload(&show.stdout);
@@ -119,16 +120,16 @@ fn e2e_json_flag_show() {
 #[test]
 fn e2e_json_flag_ready() {
     let _log = common::test_log("e2e_json_flag_ready");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Ready JSON test"], "create");
+    let create = run_obr(&workspace, ["create", "Ready JSON test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // Ready with --json flag
-    let ready = run_br(&workspace, ["ready", "--json"], "ready_json");
+    let ready = run_obr(&workspace, ["ready", "--json"], "ready_json");
     assert!(
         ready.status.success(),
         "ready --json failed: {}",
@@ -143,13 +144,13 @@ fn e2e_json_flag_ready() {
 #[test]
 fn e2e_json_flag_blocked() {
     let _log = common::test_log("e2e_json_flag_blocked");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Blocked with --json flag (even with no blocked issues)
-    let blocked = run_br(&workspace, ["blocked", "--json"], "blocked_json");
+    let blocked = run_obr(&workspace, ["blocked", "--json"], "blocked_json");
     assert!(
         blocked.status.success(),
         "blocked --json failed: {}",
@@ -169,16 +170,16 @@ fn e2e_json_flag_blocked() {
 #[test]
 fn e2e_json_flag_stats() {
     let _log = common::test_log("e2e_json_flag_stats");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Stats JSON test"], "create");
+    let create = run_obr(&workspace, ["create", "Stats JSON test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // Stats with --json flag
-    let stats = run_br(&workspace, ["stats", "--json"], "stats_json");
+    let stats = run_obr(&workspace, ["stats", "--json"], "stats_json");
     assert!(
         stats.status.success(),
         "stats --json failed: {}",
@@ -210,16 +211,16 @@ fn e2e_json_flag_stats() {
 #[test]
 fn e2e_robot_flag_list() {
     let _log = common::test_log("e2e_robot_flag_list");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Robot test issue"], "create");
+    let create = run_obr(&workspace, ["create", "Robot test issue"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // List with --json flag (provides robot-parseable output)
-    let list = run_br(&workspace, ["list", "--json"], "list_json");
+    let list = run_obr(&workspace, ["list", "--json"], "list_json");
     assert!(list.status.success(), "list --json failed: {}", list.stderr);
 
     // JSON mode should output valid JSON to stdout
@@ -235,13 +236,13 @@ fn e2e_robot_flag_list() {
 #[test]
 fn e2e_robot_flag_stderr_diagnostics() {
     let _log = common::test_log("e2e_robot_flag_stderr_diagnostics");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Use --no-auto-flush so sync has something to export
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Robot stderr test", "--no-auto-flush"],
         "create",
@@ -249,7 +250,7 @@ fn e2e_robot_flag_stderr_diagnostics() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // Sync with --json flag to get JSON output
-    let sync = run_br(&workspace, ["sync", "--flush-only", "--json"], "sync_json");
+    let sync = run_obr(&workspace, ["sync", "--flush-only", "--json"], "sync_json");
     assert!(sync.status.success(), "sync --json failed: {}", sync.stderr);
 
     // stdout should be parseable JSON
@@ -267,19 +268,19 @@ fn e2e_robot_flag_stderr_diagnostics() {
 #[test]
 fn e2e_robot_flag_sync_flush_outputs_json() {
     let _log = common::test_log("e2e_robot_flag_sync_flush_outputs_json");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Robot sync flush test", "--no-auto-flush"],
         "create",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    let sync = run_br(
+    let sync = run_obr(
         &workspace,
         ["sync", "--flush-only", "--robot"],
         "sync_robot_flush",
@@ -302,16 +303,16 @@ fn e2e_robot_flag_sync_flush_outputs_json() {
 #[test]
 fn e2e_no_color_flag() {
     let _log = common::test_log("e2e_no_color_flag");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "No-color test"], "create");
+    let create = run_obr(&workspace, ["create", "No-color test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // Note: Our test harness already sets NO_COLOR=1, but let's verify --no-color works
-    let list = run_br(&workspace, ["list", "--no-color"], "list_no_color");
+    let list = run_obr(&workspace, ["list", "--no-color"], "list_no_color");
     assert!(
         list.status.success(),
         "list --no-color failed: {}",
@@ -328,16 +329,16 @@ fn e2e_no_color_flag() {
 #[test]
 fn e2e_no_color_env_var() {
     let _log = common::test_log("e2e_no_color_env_var");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "NO_COLOR env test"], "create");
+    let create = run_obr(&workspace, ["create", "NO_COLOR env test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // Test with NO_COLOR environment variable (already set by test harness)
-    let list = run_br(&workspace, ["list"], "list_with_no_color_env");
+    let list = run_obr(&workspace, ["list"], "list_with_no_color_env");
     assert!(list.status.success(), "list failed: {}", list.stderr);
 
     // Output should not contain ANSI escape codes
@@ -350,23 +351,23 @@ fn e2e_no_color_env_var() {
 #[test]
 fn e2e_env_output_format_json_defaults_count_to_structured_output() {
     let _log = common::test_log("e2e_env_output_format_json_defaults_count_to_structured_output");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Env default JSON count"], "create");
+    let create = run_obr(&workspace, ["create", "Env default JSON count"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    let count = common::cli::run_br_with_env(
+    let count = common::cli::run_obr_with_env(
         &workspace,
         ["count"],
-        [("BR_OUTPUT_FORMAT", "json")],
+        [("OBR_OUTPUT_FORMAT", "json")],
         "count_env_json",
     );
     assert!(
         count.status.success(),
-        "count with BR_OUTPUT_FORMAT=json failed: {}",
+        "count with OBR_OUTPUT_FORMAT=json failed: {}",
         count.stderr
     );
 
@@ -382,23 +383,23 @@ fn e2e_env_output_format_json_defaults_count_to_structured_output() {
 #[test]
 fn e2e_quiet_overrides_env_json_for_list() {
     let _log = common::test_log("e2e_quiet_overrides_env_json_for_list");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Quiet env JSON list"], "create");
+    let create = run_obr(&workspace, ["create", "Quiet env JSON list"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    let list = common::cli::run_br_with_env(
+    let list = common::cli::run_obr_with_env(
         &workspace,
         ["list", "--quiet"],
-        [("BR_OUTPUT_FORMAT", "json")],
+        [("OBR_OUTPUT_FORMAT", "json")],
         "list_quiet_env_json",
     );
     assert!(
         list.status.success(),
-        "list --quiet with BR_OUTPUT_FORMAT=json failed: {}",
+        "list --quiet with OBR_OUTPUT_FORMAT=json failed: {}",
         list.stderr
     );
     assert!(
@@ -415,20 +416,20 @@ fn e2e_quiet_overrides_env_json_for_list() {
 #[test]
 fn e2e_no_db_flag_list() {
     let _log = common::test_log("e2e_no_db_flag_list");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create issue and flush to JSONL
-    let create = run_br(&workspace, ["create", "No-DB list test"], "create");
+    let create = run_obr(&workspace, ["create", "No-DB list test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    let sync = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(sync.status.success(), "sync flush failed: {}", sync.stderr);
 
     // List with --no-db flag (reads from JSONL only)
-    let list = run_br(&workspace, ["--no-db", "list", "--json"], "list_no_db");
+    let list = run_obr(&workspace, ["--no-db", "list", "--json"], "list_no_db");
     assert!(
         list.status.success(),
         "list --no-db failed: {}",
@@ -445,12 +446,12 @@ fn e2e_no_db_flag_list() {
 #[test]
 fn e2e_no_db_flag_show() {
     let _log = common::test_log("e2e_no_db_flag_show");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "No-DB show test"], "create");
+    let create = run_obr(&workspace, ["create", "No-DB show test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     let id = create
@@ -463,11 +464,11 @@ fn e2e_no_db_flag_show() {
         .unwrap_or("")
         .trim();
 
-    let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    let sync = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(sync.status.success(), "sync flush failed: {}", sync.stderr);
 
     // Show with --no-db flag
-    let show = run_br(&workspace, ["--no-db", "show", id, "--json"], "show_no_db");
+    let show = run_obr(&workspace, ["--no-db", "show", id, "--json"], "show_no_db");
     assert!(
         show.status.success(),
         "show --no-db failed: {}",
@@ -482,12 +483,12 @@ fn e2e_no_db_flag_show() {
 #[test]
 fn e2e_no_db_show_bypasses_corrupt_db_and_preserves_relations() {
     let _log = common::test_log("e2e_no_db_show_bypasses_corrupt_db_and_preserves_relations");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let parent = run_br(&workspace, ["create", "Parent issue"], "create_parent");
+    let parent = run_obr(&workspace, ["create", "Parent issue"], "create_parent");
     assert!(
         parent.status.success(),
         "create parent failed: {}",
@@ -504,7 +505,7 @@ fn e2e_no_db_show_bypasses_corrupt_db_and_preserves_relations() {
         .trim()
         .to_string();
 
-    let child = run_br(&workspace, ["create", "Child issue"], "create_child");
+    let child = run_obr(&workspace, ["create", "Child issue"], "create_child");
     assert!(
         child.status.success(),
         "create child failed: {}",
@@ -521,7 +522,7 @@ fn e2e_no_db_show_bypasses_corrupt_db_and_preserves_relations() {
         .trim()
         .to_string();
 
-    let dep = run_br(
+    let dep = run_obr(
         &workspace,
         [
             "dep",
@@ -535,16 +536,16 @@ fn e2e_no_db_show_bypasses_corrupt_db_and_preserves_relations() {
     );
     assert!(dep.status.success(), "dep add failed: {}", dep.stderr);
 
-    let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    let sync = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(sync.status.success(), "sync flush failed: {}", sync.stderr);
 
     fs::write(
-        workspace.root.join(".beads").join("beads.db"),
+        workspace.root.join(".obr").join("obr.db"),
         b"not a sqlite db",
     )
     .expect("corrupt db for no-db regression");
 
-    let show_child = run_br(
+    let show_child = run_obr(
         &workspace,
         ["--no-db", "show", &child_id, "--json"],
         "show_no_db_corrupt_child",
@@ -558,7 +559,7 @@ fn e2e_no_db_show_bypasses_corrupt_db_and_preserves_relations() {
     let child_json: Vec<Value> = serde_json::from_str(&child_payload).expect("valid child JSON");
     assert_eq!(child_json[0]["parent"], parent_id);
 
-    let show_parent = run_br(
+    let show_parent = run_obr(
         &workspace,
         ["--no-db", "show", &parent_id, "--json"],
         "show_no_db_corrupt_parent",
@@ -580,19 +581,19 @@ fn e2e_no_db_show_bypasses_corrupt_db_and_preserves_relations() {
 #[test]
 fn e2e_no_db_flag_ready() {
     let _log = common::test_log("e2e_no_db_flag_ready");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "No-DB ready test"], "create");
+    let create = run_obr(&workspace, ["create", "No-DB ready test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    let sync = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(sync.status.success(), "sync flush failed: {}", sync.stderr);
 
     // Ready with --no-db flag
-    let ready = run_br(&workspace, ["--no-db", "ready", "--json"], "ready_no_db");
+    let ready = run_obr(&workspace, ["--no-db", "ready", "--json"], "ready_no_db");
     assert!(
         ready.status.success(),
         "ready --no-db failed: {}",
@@ -607,12 +608,12 @@ fn e2e_no_db_flag_ready() {
 #[test]
 fn e2e_no_db_hard_delete_flushes_jsonl() {
     let _log = common::test_log("e2e_no_db_hard_delete_flushes_jsonl");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "No-DB hard delete test"], "create");
+    let create = run_obr(&workspace, ["create", "No-DB hard delete test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     let issue_id = create
@@ -627,17 +628,19 @@ fn e2e_no_db_hard_delete_flushes_jsonl() {
         .to_string();
     assert!(!issue_id.is_empty(), "expected created issue id in stdout");
 
-    let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    let sync = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(sync.status.success(), "sync flush failed: {}", sync.stderr);
 
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    let before = fs::read_to_string(&jsonl_path).expect("read jsonl before delete");
+    // Class B: `--no-db` hard delete is the subject; the export artifact's
+    // format is incidental, so assert against the default (Org) export.
+    let export = export_path(&workspace);
+    let before = fs::read_to_string(&export).expect("read export before delete");
     assert!(
-        before.contains(&format!("\"id\":\"{issue_id}\"")),
-        "issue should be present in JSONL before delete"
+        before.contains(&issue_id),
+        "issue should be present in the export before delete"
     );
 
-    let delete = run_br(
+    let delete = run_obr(
         &workspace,
         ["--no-db", "delete", &issue_id, "--hard"],
         "delete_no_db_hard",
@@ -648,10 +651,10 @@ fn e2e_no_db_hard_delete_flushes_jsonl() {
         delete.stderr
     );
 
-    let after = fs::read_to_string(&jsonl_path).expect("read jsonl after delete");
+    let after = fs::read_to_string(&export).expect("read export after delete");
     assert!(
-        !after.contains(&format!("\"id\":\"{issue_id}\"")),
-        "hard delete in --no-db mode should remove the issue from JSONL"
+        !after.contains(&issue_id),
+        "hard delete in --no-db mode should remove the issue from the export"
     );
 }
 
@@ -662,25 +665,26 @@ fn e2e_no_db_hard_delete_flushes_jsonl() {
 #[test]
 fn e2e_allow_stale_flag() {
     let _log = common::test_log("e2e_allow_stale_flag");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Stale test"], "create");
+    let create = run_obr(&workspace, ["create", "Stale test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // Sync to make JSONL current
-    let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    let sync = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(sync.status.success(), "sync flush failed: {}", sync.stderr);
 
-    // Modify JSONL directly (makes DB "stale" relative to JSONL)
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    let contents = fs::read_to_string(&jsonl_path).expect("read jsonl");
-    fs::write(&jsonl_path, format!("{}\n", contents.trim())).expect("write jsonl");
+    // Class B: `--allow-stale` is the subject; touch the default (Org) export
+    // directly so the DB reads as "stale" relative to it.
+    let export = export_path(&workspace);
+    let contents = fs::read_to_string(&export).expect("read export");
+    fs::write(&export, format!("{}\n", contents.trim())).expect("write export");
 
     // List with --allow-stale should succeed even if DB is stale
-    let list = run_br(&workspace, ["--allow-stale", "list"], "list_allow_stale");
+    let list = run_obr(&workspace, ["--allow-stale", "list"], "list_allow_stale");
     assert!(
         list.status.success(),
         "list --allow-stale failed: {}",
@@ -695,25 +699,26 @@ fn e2e_allow_stale_flag() {
 #[test]
 fn e2e_no_auto_import_flag() {
     let _log = common::test_log("e2e_no_auto_import_flag");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Auto-import test"], "create");
+    let create = run_obr(&workspace, ["create", "Auto-import test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Export to JSONL
-    let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    // Export to the flat file
+    let sync = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(sync.status.success(), "sync flush failed: {}", sync.stderr);
 
-    // Modify JSONL directly to make it newer than the DB
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    let contents = fs::read_to_string(&jsonl_path).expect("read jsonl");
-    fs::write(&jsonl_path, format!("{}\n", contents.trim())).expect("write jsonl");
+    // Class B: `--no-auto-import` is the subject; touch the default (Org)
+    // export directly to make it newer than the DB.
+    let export = export_path(&workspace);
+    let contents = fs::read_to_string(&export).expect("read export");
+    fs::write(&export, format!("{}\n", contents.trim())).expect("write export");
 
     // With --no-auto-import, should skip the startup import probe entirely
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["--no-auto-import", "list"],
         "list_no_auto_import",
@@ -732,42 +737,37 @@ fn e2e_no_auto_import_flag() {
 #[test]
 fn e2e_no_auto_flush_flag() {
     let _log = common::test_log("e2e_no_auto_flush_flag");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create with --no-auto-flush
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "No auto-flush test", "--no-auto-flush"],
         "create",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Check if JSONL exists and if it contains the issue
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-
-    if jsonl_path.exists() {
-        let contents = fs::read_to_string(&jsonl_path).expect("read jsonl");
-        // With --no-auto-flush, the issue should NOT be in JSONL yet
-        // (unless there was a previous sync)
-        // This is a soft check since auto-import might have created empty file
-        if contents.contains("No auto-flush test") {
-            // If it does contain it, that's unexpected but not necessarily wrong
-            // depending on implementation details
-        }
-    }
+    // Class B: `--no-auto-flush` is the subject; assert against the default
+    // (Org) export, which `init` seeds so it always exists.
+    let export = export_path(&workspace);
+    let before = fs::read_to_string(&export).expect("read export before flush");
+    assert!(
+        !before.contains("No auto-flush test"),
+        "issue should not be in the export before explicit flush"
+    );
 
     // Now explicitly flush
-    let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    let sync = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(sync.status.success(), "sync flush failed: {}", sync.stderr);
 
-    // After flush, issue should be in JSONL
-    let contents = fs::read_to_string(&jsonl_path).expect("read jsonl");
+    // After flush, issue should be in the export
+    let contents = fs::read_to_string(&export).expect("read export");
     assert!(
         contents.contains("No auto-flush test"),
-        "issue should be in JSONL after explicit flush"
+        "issue should be in the export after explicit flush"
     );
 }
 
@@ -776,40 +776,39 @@ fn e2e_no_auto_flush_flag() {
 #[test]
 fn e2e_no_auto_flush_from_project_config() {
     let _log = common::test_log("e2e_no_auto_flush_from_project_config");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Disable auto-flush via project config.
-    let config_path = workspace.root.join(".beads").join("config.yaml");
+    let config_path = workspace.root.join(".obr").join("config.yaml");
     fs::write(&config_path, "sync:\n  auto_flush: false\n").expect("write config");
 
     // Create without --no-auto-flush flag; config should suppress auto-flush.
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "No auto-flush from config"],
         "create_with_config",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Issue should not be present in JSONL until explicit flush.
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    if jsonl_path.exists() {
-        let contents = fs::read_to_string(&jsonl_path).expect("read jsonl");
-        assert!(
-            !contents.contains("No auto-flush from config"),
-            "issue should not be in JSONL before explicit flush when sync.auto_flush=false"
-        );
-    }
+    // Class B: `sync.auto_flush` is the subject; assert against the default
+    // (Org) export, which `init` seeds so it always exists.
+    let export = export_path(&workspace);
+    let before = fs::read_to_string(&export).expect("read export before flush");
+    assert!(
+        !before.contains("No auto-flush from config"),
+        "issue should not be in the export before explicit flush when sync.auto_flush=false"
+    );
 
-    let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    let sync = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(sync.status.success(), "sync flush failed: {}", sync.stderr);
 
-    let contents = fs::read_to_string(&jsonl_path).expect("read jsonl");
+    let contents = fs::read_to_string(&export).expect("read export");
     assert!(
         contents.contains("No auto-flush from config"),
-        "issue should be in JSONL after explicit flush"
+        "issue should be in the export after explicit flush"
     );
 }
 
@@ -818,38 +817,38 @@ fn e2e_no_auto_flush_from_project_config() {
 #[test]
 fn e2e_no_auto_flush_config_hyphen_variant() {
     let _log = common::test_log("e2e_no_auto_flush_config_hyphen_variant");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Use hyphen variant in config.
-    let config_path = workspace.root.join(".beads").join("config.yaml");
+    let config_path = workspace.root.join(".obr").join("config.yaml");
     fs::write(&config_path, "sync:\n  auto-flush: false\n").expect("write config");
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Hyphen config no flush"],
         "create_hyphen",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    if jsonl_path.exists() {
-        let contents = fs::read_to_string(&jsonl_path).expect("read jsonl");
-        assert!(
-            !contents.contains("Hyphen config no flush"),
-            "issue should not be in JSONL when sync.auto-flush=false (hyphen)"
-        );
-    }
+    // Class B: `sync.auto-flush` is the subject; assert against the default
+    // (Org) export, which `init` seeds so it always exists.
+    let export = export_path(&workspace);
+    let before = fs::read_to_string(&export).expect("read export before flush");
+    assert!(
+        !before.contains("Hyphen config no flush"),
+        "issue should not be in the export when sync.auto-flush=false (hyphen)"
+    );
 
-    let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    let sync = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(sync.status.success(), "sync flush failed: {}", sync.stderr);
 
-    let contents = fs::read_to_string(&jsonl_path).expect("read jsonl");
+    let contents = fs::read_to_string(&export).expect("read export");
     assert!(
         contents.contains("Hyphen config no flush"),
-        "issue should be in JSONL after explicit flush with hyphen config"
+        "issue should be in the export after explicit flush with hyphen config"
     );
 }
 
@@ -860,13 +859,13 @@ fn e2e_no_auto_flush_config_hyphen_variant() {
 #[test]
 fn e2e_lock_timeout_flag() {
     let _log = common::test_log("e2e_lock_timeout_flag");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create with custom lock timeout
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["--lock-timeout", "5000", "create", "Lock timeout test"],
         "create_with_timeout",
@@ -878,7 +877,7 @@ fn e2e_lock_timeout_flag() {
     );
 
     // Verify issue was created
-    let list = run_br(&workspace, ["list", "--json"], "list");
+    let list = run_obr(&workspace, ["list", "--json"], "list");
     assert!(list.status.success(), "list failed: {}", list.stderr);
 
     let json = parse_list_issues(&list.stdout);
@@ -895,13 +894,13 @@ fn e2e_lock_timeout_flag() {
 #[test]
 fn e2e_quiet_flag() {
     let _log = common::test_log("e2e_quiet_flag");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create with --quiet flag
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["--quiet", "create", "Quiet test"],
         "create_quiet",
@@ -919,16 +918,16 @@ fn e2e_quiet_flag() {
 #[test]
 fn e2e_quiet_flag_list() {
     let _log = common::test_log("e2e_quiet_flag_list");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Quiet list test"], "create");
+    let create = run_obr(&workspace, ["create", "Quiet list test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // List with --quiet flag
-    let list = run_br(&workspace, ["--quiet", "list"], "list_quiet");
+    let list = run_obr(&workspace, ["--quiet", "list"], "list_quiet");
     assert!(
         list.status.success(),
         "list --quiet failed: {}",
@@ -943,17 +942,17 @@ fn e2e_quiet_flag_list() {
 #[test]
 fn e2e_quiet_list_suppresses_truncation_note() {
     let _log = common::test_log("e2e_quiet_list_suppresses_truncation_note");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     for title in ["Quiet list a", "Quiet list b"] {
-        let create = run_br(&workspace, ["create", title], "create");
+        let create = run_obr(&workspace, ["create", title], "create");
         assert!(create.status.success(), "create failed: {}", create.stderr);
     }
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["--quiet", "list", "--limit", "1"],
         "list_quiet_limit",
@@ -978,18 +977,18 @@ fn e2e_quiet_list_suppresses_truncation_note() {
 #[test]
 fn e2e_quiet_flag_dep_subcommands() {
     let _log = common::test_log("e2e_quiet_flag_dep_subcommands");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create_a = run_br(&workspace, ["create", "Quiet dep A"], "create_a");
+    let create_a = run_obr(&workspace, ["create", "Quiet dep A"], "create_a");
     assert!(
         create_a.status.success(),
         "create A failed: {}",
         create_a.stderr
     );
-    let create_b = run_br(&workspace, ["create", "Quiet dep B"], "create_b");
+    let create_b = run_obr(&workspace, ["create", "Quiet dep B"], "create_b");
     assert!(
         create_b.status.success(),
         "create B failed: {}",
@@ -1017,7 +1016,7 @@ fn e2e_quiet_flag_dep_subcommands() {
         .trim()
         .to_string();
 
-    let add = run_br(
+    let add = run_obr(
         &workspace,
         ["--quiet", "dep", "add", &id_a, &id_b],
         "dep_add_quiet",
@@ -1033,7 +1032,7 @@ fn e2e_quiet_flag_dep_subcommands() {
         add.stdout
     );
 
-    let cycles = run_br(&workspace, ["--quiet", "dep", "cycles"], "dep_cycles_quiet");
+    let cycles = run_obr(&workspace, ["--quiet", "dep", "cycles"], "dep_cycles_quiet");
     assert!(
         cycles.status.success(),
         "dep cycles --quiet failed: {}",
@@ -1045,7 +1044,7 @@ fn e2e_quiet_flag_dep_subcommands() {
         cycles.stdout
     );
 
-    let remove = run_br(
+    let remove = run_obr(
         &workspace,
         ["--quiet", "dep", "remove", &id_a, &id_b],
         "dep_remove_quiet",
@@ -1065,12 +1064,12 @@ fn e2e_quiet_flag_dep_subcommands() {
 #[test]
 fn e2e_quiet_flag_graph_subcommands() {
     let _log = common::test_log("e2e_quiet_flag_graph_subcommands");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Quiet graph test"],
         "create_graph_quiet",
@@ -1089,7 +1088,7 @@ fn e2e_quiet_flag_graph_subcommands() {
         .to_string();
     assert!(!issue_id.is_empty(), "expected created issue id in stdout");
 
-    let graph_single = run_br(
+    let graph_single = run_obr(
         &workspace,
         ["--quiet", "graph", &issue_id],
         "graph_quiet_single",
@@ -1105,7 +1104,7 @@ fn e2e_quiet_flag_graph_subcommands() {
         graph_single.stdout
     );
 
-    let graph_all = run_br(&workspace, ["--quiet", "graph", "--all"], "graph_quiet_all");
+    let graph_all = run_obr(&workspace, ["--quiet", "graph", "--all"], "graph_quiet_all");
     assert!(
         graph_all.status.success(),
         "graph --quiet --all failed: {}",
@@ -1121,12 +1120,12 @@ fn e2e_quiet_flag_graph_subcommands() {
 #[test]
 fn e2e_quiet_flag_comments_subcommands() {
     let _log = common::test_log("e2e_quiet_flag_comments_subcommands");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Quiet comments test"],
         "create_comments_quiet",
@@ -1145,7 +1144,7 @@ fn e2e_quiet_flag_comments_subcommands() {
         .to_string();
     assert!(!issue_id.is_empty(), "expected created issue id in stdout");
 
-    let add = run_br(
+    let add = run_obr(
         &workspace,
         [
             "--quiet",
@@ -1167,7 +1166,7 @@ fn e2e_quiet_flag_comments_subcommands() {
         add.stdout
     );
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["--quiet", "comments", "list", &issue_id],
         "comments_list_quiet",
@@ -1187,19 +1186,19 @@ fn e2e_quiet_flag_comments_subcommands() {
 #[test]
 fn e2e_quiet_flag_query_subcommands() {
     let _log = common::test_log("e2e_quiet_flag_query_subcommands");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Quiet query test"],
         "create_query_quiet",
     );
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    let save = run_br(
+    let save = run_obr(
         &workspace,
         ["--quiet", "query", "save", "mine", "--status", "open"],
         "query_save_quiet",
@@ -1215,7 +1214,7 @@ fn e2e_quiet_flag_query_subcommands() {
         save.stdout
     );
 
-    let list = run_br(&workspace, ["--quiet", "query", "list"], "query_list_quiet");
+    let list = run_obr(&workspace, ["--quiet", "query", "list"], "query_list_quiet");
     assert!(
         list.status.success(),
         "query list --quiet failed: {}",
@@ -1227,7 +1226,7 @@ fn e2e_quiet_flag_query_subcommands() {
         list.stdout
     );
 
-    let delete = run_br(
+    let delete = run_obr(
         &workspace,
         ["--quiet", "query", "delete", "mine"],
         "query_delete_quiet",
@@ -1247,12 +1246,12 @@ fn e2e_quiet_flag_query_subcommands() {
 #[test]
 fn e2e_quiet_flag_count_and_where() {
     let _log = common::test_log("e2e_quiet_flag_count_and_where");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Quiet count/where test"],
         "create_count_where_quiet",
@@ -1316,7 +1315,7 @@ fn e2e_quiet_flag_count_and_where() {
     assert!(
         info_thanks_value["thanks"]
             .as_str()
-            .is_some_and(|message| message.contains("Thanks for using br")),
+            .is_some_and(|message| message.contains("Thanks for using obr")),
         "info --thanks --json should preserve the thanks message: {info_thanks_value}"
     );
 }
@@ -1324,12 +1323,12 @@ fn e2e_quiet_flag_count_and_where() {
 #[test]
 fn e2e_quiet_flag_defer_subcommands() {
     let _log = common::test_log("e2e_quiet_flag_defer_subcommands");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Quiet defer test"],
         "create_defer_quiet",
@@ -1348,7 +1347,7 @@ fn e2e_quiet_flag_defer_subcommands() {
         .to_string();
     assert!(!issue_id.is_empty(), "expected created issue id in stdout");
 
-    let defer = run_br(&workspace, ["--quiet", "defer", &issue_id], "defer_quiet");
+    let defer = run_obr(&workspace, ["--quiet", "defer", &issue_id], "defer_quiet");
     assert!(
         defer.status.success(),
         "defer --quiet failed: {}",
@@ -1360,7 +1359,7 @@ fn e2e_quiet_flag_defer_subcommands() {
         defer.stdout
     );
 
-    let undefer = run_br(
+    let undefer = run_obr(
         &workspace,
         ["--quiet", "undefer", &issue_id],
         "undefer_quiet",
@@ -1380,9 +1379,9 @@ fn e2e_quiet_flag_defer_subcommands() {
 #[test]
 fn e2e_quiet_flag_config_epic_label_and_q_subcommands() {
     let _log = common::test_log("e2e_quiet_flag_config_epic_label_and_q_subcommands");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     assert_quiet_command(
@@ -1404,7 +1403,7 @@ fn e2e_quiet_flag_config_epic_label_and_q_subcommands() {
         "epic close-eligible --quiet",
     );
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Quiet label test"],
         "create_label_quiet",
@@ -1437,12 +1436,12 @@ fn e2e_quiet_flag_config_epic_label_and_q_subcommands() {
 #[test]
 fn e2e_quiet_flag_sync_subcommands() {
     let _log = common::test_log("e2e_quiet_flag_sync_subcommands");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Quiet sync test", "--no-auto-flush"],
         "create_sync_quiet",
@@ -1487,13 +1486,13 @@ fn e2e_quiet_flag_sync_subcommands() {
 #[test]
 fn e2e_verbose_flag() {
     let _log = common::test_log("e2e_verbose_flag");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create with -v flag
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["-v", "create", "Verbose test"],
         "create_verbose",
@@ -1512,13 +1511,13 @@ fn e2e_verbose_flag() {
 #[test]
 fn e2e_very_verbose_flag() {
     let _log = common::test_log("e2e_very_verbose_flag");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create with -vv flag for more verbosity
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["-vv", "create", "Very verbose test"],
         "create_very_verbose",
@@ -1537,16 +1536,16 @@ fn e2e_very_verbose_flag() {
 #[test]
 fn e2e_json_no_color_combined() {
     let _log = common::test_log("e2e_json_no_color_combined");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Combined flags test"], "create");
+    let create = run_obr(&workspace, ["create", "Combined flags test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // Combine --json and --no-color
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--json", "--no-color"],
         "list_combined",
@@ -1568,19 +1567,19 @@ fn e2e_json_no_color_combined() {
 #[test]
 fn e2e_no_db_json_combined() {
     let _log = common::test_log("e2e_no_db_json_combined");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "No-DB JSON test"], "create");
+    let create = run_obr(&workspace, ["create", "No-DB JSON test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    let sync = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(sync.status.success(), "sync flush failed: {}", sync.stderr);
 
     // Combine --no-db and --json
-    let list = run_br(&workspace, ["--no-db", "list", "--json"], "list_no_db_json");
+    let list = run_obr(&workspace, ["--no-db", "list", "--json"], "list_no_db_json");
     assert!(
         list.status.success(),
         "list --no-db --json failed: {}",
@@ -1597,16 +1596,16 @@ fn e2e_no_db_json_combined() {
 #[test]
 fn e2e_quiet_json_combined() {
     let _log = common::test_log("e2e_quiet_json_combined");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Quiet JSON test"], "create");
+    let create = run_obr(&workspace, ["create", "Quiet JSON test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // Combine --quiet and --json
-    let list = run_br(&workspace, ["--quiet", "list", "--json"], "list_quiet_json");
+    let list = run_obr(&workspace, ["--quiet", "list", "--json"], "list_quiet_json");
     assert!(
         list.status.success(),
         "list --quiet --json failed: {}",
@@ -1624,16 +1623,16 @@ fn e2e_quiet_json_combined() {
 #[test]
 fn e2e_global_flag_before_command() {
     let _log = common::test_log("e2e_global_flag_before_command");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Position test"], "create");
+    let create = run_obr(&workspace, ["create", "Position test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // Global flag before command
-    let list = run_br(&workspace, ["--json", "list"], "list_flag_before");
+    let list = run_obr(&workspace, ["--json", "list"], "list_flag_before");
     assert!(
         list.status.success(),
         "list with --json before command failed: {}",
@@ -1646,16 +1645,16 @@ fn e2e_global_flag_before_command() {
 #[test]
 fn e2e_global_flag_after_command() {
     let _log = common::test_log("e2e_global_flag_after_command");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Position test 2"], "create");
+    let create = run_obr(&workspace, ["create", "Position test 2"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // Global flag after command
-    let list = run_br(&workspace, ["list", "--json"], "list_flag_after");
+    let list = run_obr(&workspace, ["list", "--json"], "list_flag_after");
     assert!(
         list.status.success(),
         "list with --json after command failed: {}",
@@ -1673,12 +1672,12 @@ fn e2e_global_flag_after_command() {
 #[test]
 fn e2e_json_stdout_is_clean_json() {
     let _log = common::test_log("e2e_json_stdout_is_clean_json");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let create = run_br(&workspace, ["create", "JSON clean test"], "create");
+    let create = run_obr(&workspace, ["create", "JSON clean test"], "create");
     assert!(create.status.success());
 
     // Verify multiple commands produce clean JSON stdout
@@ -1689,7 +1688,7 @@ fn e2e_json_stdout_is_clean_json() {
         (vec!["count", "--json"], "count"),
         (vec!["stats", "--json"], "stats"),
     ] {
-        let output = run_br(&workspace, cmd.clone(), &format!("clean_json_{label}"));
+        let output = run_obr(&workspace, cmd.clone(), &format!("clean_json_{label}"));
         assert!(output.status.success(), "{label} failed: {}", output.stderr);
 
         let payload = extract_json_payload(&output.stdout);
@@ -1712,20 +1711,20 @@ fn e2e_json_stdout_is_clean_json() {
 #[test]
 fn e2e_quiet_reduces_output() {
     let _log = common::test_log("e2e_quiet_reduces_output");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let create = run_br(&workspace, ["create", "Quiet reduction test"], "create");
+    let create = run_obr(&workspace, ["create", "Quiet reduction test"], "create");
     assert!(create.status.success());
 
     // Normal list output
-    let normal = run_br(&workspace, ["list"], "list_normal");
+    let normal = run_obr(&workspace, ["list"], "list_normal");
     assert!(normal.status.success());
 
     // Quiet list output
-    let quiet = run_br(&workspace, ["--quiet", "list"], "list_quiet_cmp");
+    let quiet = run_obr(&workspace, ["--quiet", "list"], "list_quiet_cmp");
     assert!(quiet.status.success());
 
     // Quiet output should be shorter or equal (never longer)
@@ -1743,16 +1742,16 @@ fn e2e_quiet_reduces_output() {
 #[test]
 fn e2e_json_overrides_quiet() {
     let _log = common::test_log("e2e_json_overrides_quiet");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let create = run_br(&workspace, ["create", "Precedence test"], "create");
+    let create = run_obr(&workspace, ["create", "Precedence test"], "create");
     assert!(create.status.success());
 
     // --quiet --json should still produce valid JSON
-    let output = run_br(&workspace, ["--quiet", "list", "--json"], "quiet_json_prec");
+    let output = run_obr(&workspace, ["--quiet", "list", "--json"], "quiet_json_prec");
     assert!(output.status.success());
 
     let json = parse_list_issues(&output.stdout);
@@ -1766,13 +1765,13 @@ fn e2e_json_overrides_quiet() {
 #[test]
 fn e2e_no_color_across_commands() {
     let _log = common::test_log("e2e_no_color_across_commands");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
     let id = {
-        let create = run_br(&workspace, ["create", "No-color multi test"], "create");
+        let create = run_obr(&workspace, ["create", "No-color multi test"], "create");
         assert!(create.status.success());
         create
             .stdout
@@ -1801,7 +1800,7 @@ fn e2e_no_color_across_commands() {
         (vec!["stats", "--no-color"], "stats"),
         (vec!["count", "--no-color"], "count"),
     ] {
-        let output = run_br(&workspace, cmd.clone(), &format!("no_color_{label}"));
+        let output = run_obr(&workspace, cmd.clone(), &format!("no_color_{label}"));
         assert!(output.status.success(), "{label} failed: {}", output.stderr);
 
         assert!(

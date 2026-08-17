@@ -2,7 +2,7 @@
 # Fixture: recovery_artifacts_aged
 # FM: fm-state_files-recovery-artifacts-orphaned (P3) — TTL-quarantine variant
 #
-# Plants two recovery artifacts under .beads/.br_recovery/:
+# Plants two recovery artifacts under .obr/recovery/:
 #   - one aged (mtime > RECOVERY_AGED_TTL_DAYS) — should be quarantined
 #   - one recent (mtime < TTL) — should be PRESERVED in place
 # Also plants one aged .bad_<TS> sibling next to the live DB to exercise
@@ -31,22 +31,22 @@ for path in sys.argv[2:]:
 PY
 }
 
-recovery="$target_dir/.beads/.br_recovery"
+recovery="$target_dir/.obr/recovery"
 mkdir -p "$recovery"
 
 # Aged: 60 days old (well past the 30-day TTL).
-aged_path="$recovery/beads.db.20250101T000000Z"
-cp .beads/beads.db "$aged_path"
+aged_path="$recovery/obr.db.20250101T000000Z"
+cp .obr/obr.db "$aged_path"
 set_mtime_days_ago 60 "$aged_path"
 
 # Recent: 1 day old (well within the TTL).
-recent_path="$recovery/beads.db.20260512T000000Z"
-cp .beads/beads.db "$recent_path"
+recent_path="$recovery/obr.db.20260512T000000Z"
+cp .obr/obr.db "$recent_path"
 set_mtime_days_ago 1 "$recent_path"
 
 # Aged sibling .bad_<TS> next to the live DB.
-bad_sibling="$target_dir/.beads/beads.db.bad_20250101T000000Z"
-cp .beads/beads.db "$bad_sibling"
+bad_sibling="$target_dir/.obr/obr.db.bad_20250101T000000Z"
+cp .obr/obr.db "$bad_sibling"
 set_mtime_days_ago 60 "$bad_sibling"
 
 # Record the paths for assert.sh.

@@ -28,7 +28,7 @@ cd "$target_dir"
 # derived from the DB; pruning orphan COMMENT rows should never
 # affect the JSONL bytes (comments are stored per-issue and an
 # orphan row by definition isn't reachable from any issue).
-sha256sum .beads/issues.jsonl | awk '{print $1}' > .fixture_jsonl_pre_sha256
+sha256sum .obr/issues.jsonl | awk '{print $1}' > .fixture_jsonl_pre_sha256
 
 # Inject an orphan comment row referencing a non-existent issue.
 # PRAGMA foreign_keys=OFF lets the INSERT succeed where the CASCADE
@@ -36,7 +36,7 @@ sha256sum .beads/issues.jsonl | awk '{print $1}' > .fixture_jsonl_pre_sha256
 # isn't guaranteed in the harness env.
 python3 <<'PY'
 import sqlite3
-conn = sqlite3.connect(".beads/beads.db")
+conn = sqlite3.connect(".obr/obr.db")
 cur = conn.cursor()
 cur.execute("PRAGMA foreign_keys = OFF")
 cur.execute(

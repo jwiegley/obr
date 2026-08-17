@@ -1,40 +1,40 @@
-//! Phase 5 — End-to-end safety harness for the `br doctor --repair`
+//! Phase 5 — End-to-end safety harness for the `obr doctor --repair`
 //! chokepoint round-trip.
 //!
-//! These tests prove the chokepoint actually works on a real built `br`
+//! These tests prove the chokepoint actually works on a real built `obr`
 //! binary against a real corrupted workspace:
 //!
 //! 1. corrupt → diagnose → `--repair` → assert healthy
 //! 2. take inventory of the produced `.doctor/runs/<id>/` artifact dir
-//! 3. `br doctor undo <id>` → assert the affected files restore to the
+//! 3. `obr doctor undo <id>` → assert the affected files restore to the
 //!    chokepoint's recorded `before_hash` (the byte-identical recovery
 //!    contract)
 //! 4. exercise the dry-run / idempotence / capabilities / triage
 //!    contracts
 //!
-//! Per AGENTS.md, runtime `br` code never invokes `Command::new("git")`;
-//! these tests use only `assert_cmd::Command::cargo_bin("br")` and
+//! Per AGENTS.md, runtime `obr` code never invokes `Command::new("git")`;
+//! these tests use only `assert_cmd::Command::cargo_bin("obr")` and
 //! `tempfile::TempDir`. The fixture workspace is created in-process via
-//! `br init` (idiomatic for the rest of the e2e suite) and corrupted
+//! `obr init` (idiomatic for the rest of the e2e suite) and corrupted
 //! with a `.gitignore` line that triggers the
-//! `gitignore.beads_inner` detector + the `doctor.gitignore_repair`
+//! `gitignore.obr_inner` detector + the `doctor.gitignore_repair`
 //! fixer — currently the most thoroughly chokepoint-rewired path under
 //! WP3.
 //!
 //! Why not a checked-in fixture: the only existing
 //! `tests/fixtures/workspace_failures/*` cases route most of their
 //! repair work through legacy non-chokepointed paths (DB rebuild, WAL
-//! cleanup, etc.). A clean `br init` workspace plus an offending root
+//! cleanup, etc.). A clean `obr init` workspace plus an offending root
 //! `.gitignore` isolates the WP3-rewired chokepoint flow without
 //! dragging the as-yet-unmigrated repair paths into the assertion.
 
 mod common;
 
 use assert_cmd::Command;
-use beads_rust::cli::commands::doctor_subsystems::mutate::{
+use obr::cli::commands::doctor_subsystems::mutate::{
     Capabilities, DbArg, MutateContext, Op, mutate,
 };
-use beads_rust::franken_sync::Connection;
+use obr::franken_sync::Connection;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -47,18 +47,18 @@ use tempfile::TempDir;
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Make a fresh `br` invocation rooted at `cwd` with a hermetic env so
+/// Make a fresh `obr` invocation rooted at `cwd` with a hermetic env so
 /// tests don't pick up the developer's shell config.
-fn br_cmd(cwd: &Path) -> Command {
-    let mut cmd = Command::cargo_bin("br").expect("locate br binary");
+fn obr_cmd(cwd: &Path) -> Command {
+    let mut cmd = Command::cargo_bin("obr").expect("locate obr binary");
     cmd.current_dir(cwd);
     cmd.env("NO_COLOR", "1");
     cmd.env("RUST_LOG", "warn");
     cmd.env("HOME", cwd);
-    // Hermetic $PATH: a developer host with two `br` installs (install
-    // script + cargo install) otherwise trips the `br_path_dupes` doctor
+    // Hermetic $PATH: a developer host with two `obr` installs (install
+    // script + cargo install) otherwise trips the `obr_path_dupes` doctor
     // warning inside every spawned doctor run (beads_rust-ozdh).
-    cmd.env("PATH", common::cli::deduplicated_br_path());
+    cmd.env("PATH", common::cli::deduplicated_obr_path());
     // Strip any inherited beads / bd env that might redirect storage.
     for (key, _) in std::env::vars_os() {
         let key_s = key.to_string_lossy();
@@ -69,12 +69,12 @@ fn br_cmd(cwd: &Path) -> Command {
     cmd
 }
 
-/// Run `br init` in `cwd` and assert it succeeded.
-fn br_init(cwd: &Path) {
-    let out = br_cmd(cwd).arg("init").output().expect("br init spawned");
+/// Run `obr init` in `cwd` and assert it succeeded.
+fn obr_init(cwd: &Path) {
+    let out = obr_cmd(cwd).arg("init").output().expect("obr init spawned");
     assert!(
         out.status.success(),
-        "br init failed: status={:?}\nstdout={}\nstderr={}",
+        "obr init failed: status={:?}\nstdout={}\nstderr={}",
         out.status,
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr),
@@ -85,10 +85,14 @@ fn isolated_tempdir() -> TempDir {
     TempDir::new_in(common::cli::isolated_temp_root()).expect("create isolated tempdir")
 }
 
-/// Plant the `gitignore.beads_inner` failure: a root `.gitignore` whose
-/// `.beads/` line shadows br's own ignore rules.
+/// Plant the `gitignore.obr_inner` failure: a root `.gitignore` whose
+/// `PLAN.org` line hides the tracked surface from git.
+///
+/// D-SURFACE inverted this detector — `.obr/` is per-machine cache and is
+/// SUPPOSED to be ignored, so the line that breaks the model is the one
+/// covering the surface.
 fn corrupt_root_gitignore(cwd: &Path) {
-    let body = "# project\nnode_modules\n.beads/\n";
+    let body = "# project\nnode_modules\nPLAN.org\n";
     fs::write(cwd.join(".gitignore"), body).expect("write corrupt .gitignore");
 }
 
@@ -115,7 +119,7 @@ fn walk_workspace_hashes(dir: &Path, root: &Path, out: &mut BTreeMap<PathBuf, St
         if rel.starts_with(".doctor") {
             continue;
         }
-        if rel.parent() == Some(Path::new(".beads")) && is_runtime_lock_sidecar_name(rel) {
+        if rel.parent() == Some(Path::new(".obr")) && is_runtime_lock_sidecar_name(rel) {
             continue;
         }
         let ft = entry.file_type().expect("file_type");
@@ -149,7 +153,7 @@ fn is_runtime_lock_sidecar_name(rel: &Path) -> bool {
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
-    beads_rust::util::hex_encode(&h.finalize())
+    obr::util::hex_encode(&h.finalize())
 }
 
 /// Locate the single run-dir under `<root>/.doctor/runs/`. Panics if
@@ -208,7 +212,7 @@ fn doctor_check<'a>(payload: &'a Value, name: &str) -> &'a Value {
 
 fn seed_blocked_cache_db(db_path: &Path, blocked_by: &str) {
     let conn = Connection::open(db_path.to_string_lossy().into_owned()).unwrap();
-    beads_rust::storage::schema::apply_schema(&conn).expect("apply current schema");
+    obr::storage::schema::apply_schema(&conn).expect("apply current schema");
     conn.execute(
         "CREATE TABLE IF NOT EXISTS blocked_issues_cache (
             issue_id TEXT PRIMARY KEY,
@@ -348,14 +352,14 @@ fn chokepoint_round_trip_gitignore() {
     let tmp = isolated_tempdir();
     let root = tmp.path().to_path_buf();
 
-    br_init(&root);
+    obr_init(&root);
     corrupt_root_gitignore(&root);
 
     // Step 1: --repair
-    let out = br_cmd(&root)
+    let out = obr_cmd(&root)
         .args(["doctor", "--repair", "--json"])
         .output()
-        .expect("br doctor --repair spawned");
+        .expect("obr doctor --repair spawned");
     let exit = out.status.code().unwrap_or(-1);
     assert!(
         matches!(exit, 0 | 2),
@@ -409,16 +413,16 @@ fn chokepoint_round_trip_gitignore() {
         assert!(ah.starts_with("sha256:") && ah.len() == 71, "ah={ah}");
     }
 
-    // Step 4: workspace is now healthy by br doctor's reckoning, at
-    // least with respect to the gitignore.beads_inner check.
-    let post_repair_doctor = br_cmd(&root)
+    // Step 4: workspace is now healthy by obr doctor's reckoning, at
+    // least with respect to the gitignore.obr_inner check.
+    let post_repair_doctor = obr_cmd(&root)
         .args(["doctor", "--json"])
         .output()
-        .expect("br doctor (read-only) spawned");
+        .expect("obr doctor (read-only) spawned");
     let _post_exit = post_repair_doctor.status.code().unwrap_or(-1);
     let body = String::from_utf8_lossy(&post_repair_doctor.stdout);
     assert!(
-        !body.contains("gitignore.beads_inner: Root .gitignore excludes"),
+        !body.contains("gitignore.obr_inner: Root .gitignore hides"),
         "post-repair doctor still warns about gitignore: {body}"
     );
 
@@ -431,18 +435,18 @@ fn chokepoint_round_trip_gitignore() {
         .and_then(|s| s.to_str())
         .expect("run id name")
         .to_string();
-    let undo = br_cmd(&root)
+    let undo = obr_cmd(&root)
         .args(["doctor", "undo", &run_id, "--json"])
         .output()
-        .expect("br doctor undo spawned");
+        .expect("obr doctor undo spawned");
     assert!(
         undo.status.success(),
-        "br doctor undo failed: {}\n{}",
+        "obr doctor undo failed: {}\n{}",
         String::from_utf8_lossy(&undo.stdout),
         String::from_utf8_lossy(&undo.stderr),
     );
     let undo_envelope = parse_trailing_json(&String::from_utf8_lossy(&undo.stdout));
-    assert_eq!(undo_envelope["schema_version"], "br.doctor.undo.v1");
+    assert_eq!(undo_envelope["schema_version"], "obr.doctor.undo.v1");
     assert!(
         undo_envelope["restored"].as_u64().unwrap_or(0) >= 1,
         "expected at least one restored file; envelope={undo_envelope}"
@@ -521,7 +525,7 @@ fn chokepoint_round_trip_gitignore() {
 fn repair_refuses_when_run_dir_creation_fails() {
     let tmp = isolated_tempdir();
     let root = tmp.path().to_path_buf();
-    br_init(&root);
+    obr_init(&root);
     corrupt_root_gitignore(&root);
 
     let gitignore = root.join(".gitignore");
@@ -529,11 +533,11 @@ fn repair_refuses_when_run_dir_creation_fails() {
     let bad_runs_root = root.join("doctor-runs-target-is-file");
     fs::write(&bad_runs_root, b"not a directory").expect("seed invalid runs override");
 
-    let out = br_cmd(&root)
+    let out = obr_cmd(&root)
         .args(["doctor", "--repair", "--json"])
-        .env("BR_DOCTOR_RUNS_DIR", &bad_runs_root)
+        .env("OBR_DOCTOR_RUNS_DIR", &bad_runs_root)
         .output()
-        .expect("br doctor --repair spawned");
+        .expect("obr doctor --repair spawned");
 
     assert!(
         !out.status.success(),
@@ -582,14 +586,14 @@ fn repair_refuses_when_run_dir_creation_fails() {
 fn chokepoint_dry_run_writes_no_files() {
     let tmp = isolated_tempdir();
     let root = tmp.path().to_path_buf();
-    br_init(&root);
+    obr_init(&root);
     corrupt_root_gitignore(&root);
 
     let pre = hash_workspace(&root);
-    let out = br_cmd(&root)
+    let out = obr_cmd(&root)
         .args(["doctor", "--repair", "--dry-run", "--json"])
         .output()
-        .expect("br doctor --repair --dry-run spawned");
+        .expect("obr doctor --repair --dry-run spawned");
     assert!(
         out.status.success(),
         "dry-run should exit 0; got {:?}",
@@ -622,11 +626,11 @@ fn chokepoint_dry_run_writes_no_files() {
 fn chokepoint_idempotence() {
     let tmp = isolated_tempdir();
     let root = tmp.path().to_path_buf();
-    br_init(&root);
+    obr_init(&root);
     corrupt_root_gitignore(&root);
 
     // First repair: must do at least one action.
-    let out1 = br_cmd(&root)
+    let out1 = obr_cmd(&root)
         .args(["doctor", "--repair", "--json"])
         .output()
         .expect("repair 1 spawned");
@@ -657,7 +661,7 @@ fn chokepoint_idempotence() {
     // directory rather than a re-entered existing one.)
     std::thread::sleep(std::time::Duration::from_millis(1100));
 
-    let out2 = br_cmd(&root)
+    let out2 = obr_cmd(&root)
         .args(["doctor", "--repair", "--json"])
         .output()
         .expect("repair 2 spawned");
@@ -698,10 +702,10 @@ fn chokepoint_idempotence() {
 fn chokepoint_undo_latest_resolves() {
     let tmp = isolated_tempdir();
     let root = tmp.path().to_path_buf();
-    br_init(&root);
+    obr_init(&root);
     corrupt_root_gitignore(&root);
 
-    let out = br_cmd(&root)
+    let out = obr_cmd(&root)
         .args(["doctor", "--repair", "--json"])
         .output()
         .expect("repair spawned");
@@ -709,7 +713,7 @@ fn chokepoint_undo_latest_resolves() {
     assert!(matches!(exit, 0 | 2), "unexpected repair exit {exit}");
     let run_dir = single_run_dir(&root);
 
-    let undo = br_cmd(&root)
+    let undo = obr_cmd(&root)
         .args(["doctor", "undo", "latest", "--json"])
         .output()
         .expect("undo latest spawned");
@@ -720,7 +724,7 @@ fn chokepoint_undo_latest_resolves() {
         String::from_utf8_lossy(&undo.stderr)
     );
     let envelope = parse_trailing_json(&String::from_utf8_lossy(&undo.stdout));
-    assert_eq!(envelope["schema_version"], "br.doctor.undo.v1");
+    assert_eq!(envelope["schema_version"], "obr.doctor.undo.v1");
     assert_eq!(envelope["dry_run"], false);
 
     // The original run's report.json carries an `undone_at` timestamp
@@ -736,7 +740,7 @@ fn chokepoint_undo_latest_resolves() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 5 — `capabilities` envelope conforms to br.doctor.capabilities.v1
+// Test 5 — `capabilities` envelope conforms to obr.doctor.capabilities.v1
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -745,7 +749,7 @@ fn chokepoint_capabilities_envelope_v1() {
     let root = tmp.path().to_path_buf();
     // capabilities is repo-independent; we just need a cwd.
 
-    let out = br_cmd(&root)
+    let out = obr_cmd(&root)
         .args(["doctor", "capabilities", "--format", "json"])
         .output()
         .expect("capabilities spawned");
@@ -759,7 +763,7 @@ fn chokepoint_capabilities_envelope_v1() {
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
     let env = parse_trailing_json(&stdout);
 
-    assert_eq!(env["schema_version"], "br.doctor.capabilities.v1");
+    assert_eq!(env["schema_version"], "obr.doctor.capabilities.v1");
     assert_eq!(env["contract_version"], "1");
     assert!(
         env["doctor_version"].is_string(),
@@ -778,8 +782,8 @@ fn chokepoint_capabilities_envelope_v1() {
 
     let scopes = env["write_scopes"].as_array().expect("write_scopes array");
     assert!(
-        scopes.iter().any(|v| v == ".beads/"),
-        ".beads/ missing from write_scopes: {scopes:?}"
+        scopes.iter().any(|v| v == ".obr/"),
+        ".obr/ missing from write_scopes: {scopes:?}"
     );
     assert!(
         scopes.iter().any(|v| v == ".doctor/"),
@@ -788,22 +792,22 @@ fn chokepoint_capabilities_envelope_v1() {
 
     let env_vars = env["env_vars"].as_array().expect("env_vars array");
     assert!(
-        env_vars.iter().any(|v| v == "BR_DOCTOR_RUNS_DIR"),
-        "BR_DOCTOR_RUNS_DIR missing from env_vars: {env_vars:?}"
+        env_vars.iter().any(|v| v == "OBR_DOCTOR_RUNS_DIR"),
+        "OBR_DOCTOR_RUNS_DIR missing from env_vars: {env_vars:?}"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Test 6 — `--robot-triage` envelope conforms to br.doctor.triage.v1
+// Test 6 — `--robot-triage` envelope conforms to obr.doctor.triage.v1
 // ---------------------------------------------------------------------------
 
 #[test]
 fn chokepoint_robot_triage_envelope_v1() {
     let tmp = isolated_tempdir();
     let root = tmp.path().to_path_buf();
-    br_init(&root);
+    obr_init(&root);
 
-    let out = br_cmd(&root)
+    let out = obr_cmd(&root)
         .args(["doctor", "--robot-triage", "--json"])
         .output()
         .expect("robot-triage spawned");
@@ -817,7 +821,7 @@ fn chokepoint_robot_triage_envelope_v1() {
     );
 
     let env = parse_trailing_json(&String::from_utf8_lossy(&out.stdout));
-    assert_eq!(env["schema_version"], "br.doctor.triage.v1");
+    assert_eq!(env["schema_version"], "obr.doctor.triage.v1");
 
     for key in &[
         "summary",
@@ -847,9 +851,9 @@ fn chokepoint_robot_triage_envelope_v1() {
     }
     assert_eq!(
         env["capabilities_url"],
-        "br doctor capabilities --format json"
+        "obr doctor capabilities --format json"
     );
-    assert_eq!(env["robot_docs_command"], "br doctor robot-docs");
+    assert_eq!(env["robot_docs_command"], "obr doctor robot-docs");
 }
 
 // ---------------------------------------------------------------------------
@@ -875,9 +879,9 @@ fn chokepoint_robot_triage_envelope_v1() {
 fn chokepoint_db_exec_round_trip() {
     let tmp = isolated_tempdir();
     let root = tmp.path().to_path_buf();
-    let beads_dir = root.join(".beads");
-    fs::create_dir_all(&beads_dir).expect("mkdir .beads");
-    let db_path = beads_dir.join("beads.db");
+    let obr_dir = root.join(".obr");
+    fs::create_dir_all(&obr_dir).expect("mkdir .obr");
+    let db_path = obr_dir.join("obr.db");
 
     // Build a minimal DB with the cache table and intentionally-corrupt
     // contents (a row whose blocked_by is wrong on purpose).
@@ -948,7 +952,7 @@ fn chokepoint_db_exec_round_trip() {
         let body = fs::read_to_string(snap).unwrap();
         let v: Value = serde_json::from_str(&body).expect("snapshot is JSON");
         assert_eq!(v["table"], "blocked_issues_cache");
-        assert_eq!(v["schema_version"], "br.doctor.db_snapshot.v1");
+        assert_eq!(v["schema_version"], "obr.doctor.db_snapshot.v1");
         let rows = v["rows"].as_array().expect("rows array");
         if rows.iter().any(|r| {
             r.get("issue_id").and_then(Value::as_str) == Some("bd-1")
@@ -967,7 +971,7 @@ fn chokepoint_db_exec_round_trip() {
 // Test 8 — undo of `Op::DbExec` re-inserts JSON snapshots
 //
 // Drives the same DELETE+INSERT shape Test 7 uses to PROVE the forward
-// path; then invokes `br doctor undo <run-id>` and asserts the cache
+// path; then invokes `obr doctor undo <run-id>` and asserts the cache
 // table is byte-equivalent to the pre-DELETE state (the corrupt row
 // reappears, the corrected row is gone). This proves the chokepoint
 // round-trip works for DB ops, not just file ops.
@@ -977,11 +981,17 @@ fn chokepoint_db_exec_round_trip() {
 fn chokepoint_db_exec_undo_replay() {
     let tmp = isolated_tempdir();
     let root = tmp.path().to_path_buf();
-    let beads_dir = root.join(".beads");
-    fs::create_dir_all(&beads_dir).expect("mkdir .beads");
-    let db_path = beads_dir.join("beads.db");
+    // A REAL workspace, as this file's own module doc says the fixtures use
+    // ("created in-process via `obr init`, idiomatic for the rest of the e2e
+    // suite"). This test alone hand-built `.obr/` with only a cache table, so
+    // the database read as user_version 0 and `doctor undo` refused it —
+    // correctly, since undo replays snapshots INTO the database and declines
+    // when it cannot verify what it is writing to (obr-oz9).
+    obr_init(&root);
+    let obr_dir = root.join(".obr");
+    let db_path = obr_dir.join("obr.db");
 
-    // Build the DB with a corrupt cache row.
+    // Build the corrupt cache row on top of the real schema.
     seed_blocked_cache_db(&db_path, "[\"WRONG\"]");
 
     // Build a chokepoint context rooted at `root`.
@@ -999,19 +1009,19 @@ fn chokepoint_db_exec_undo_replay() {
     // undo path can re-open it for read.
     drop(ctx);
 
-    // Now invoke `br doctor undo <run-id>` against the workspace.
-    let bin_path = env!("CARGO_BIN_EXE_br");
+    // Now invoke `obr doctor undo <run-id>` against the workspace.
+    let bin_path = env!("CARGO_BIN_EXE_obr");
     let output = std::process::Command::new(bin_path)
         .args(["doctor", "undo", run_id, "--json"])
         .current_dir(&root)
         .env("RUST_LOG", "error")
-        .env("BR_NO_AUTOFLUSH", "1")
-        .env("PATH", common::cli::deduplicated_br_path())
+        .env("OBR_NO_AUTO_FLUSH", "1")
+        .env("PATH", common::cli::deduplicated_obr_path())
         .output()
-        .expect("invoke br doctor undo");
+        .expect("invoke obr doctor undo");
     assert!(
         output.status.success(),
-        "br doctor undo failed: status={:?} stderr={}",
+        "obr doctor undo failed: status={:?} stderr={}",
         output.status,
         String::from_utf8_lossy(&output.stderr)
     );
@@ -1031,16 +1041,16 @@ fn chokepoint_db_exec_undo_replay() {
 
 // ---------------------------------------------------------------------------
 // Test 9 (round-3 fresh-eyes follow-through, bead `beads_rust-sexc`):
-// `br doctor --repair` must serialize against concurrent mutating br
-// invocations via the workspace `.beads/.write.lock`. The detection
+// `obr doctor --repair` must serialize against concurrent mutating obr
+// invocations via the workspace `.obr/.write.lock`. The detection
 // surface is the structured `ConcurrencyLost` exit code (5) from
 // `doctor_subsystems::exit_codes`, NOT the generic `BeadsError::Config`
 // (1) used pre-fix.
 //
 // We hold the lock from THIS test process by opening
-// `.beads/.write.lock` and `try_lock()`-ing the resulting `File`. That
+// `.obr/.write.lock` and `try_lock()`-ing the resulting `File`. That
 // installs the same advisory exclusive lock `blocking_write_lock_with_timeout`
-// installs, but from a different process than the subordinate `br`
+// installs, but from a different process than the subordinate `obr`
 // child we then spawn — proving the cross-process serialization
 // contract from the bead.
 // ---------------------------------------------------------------------------
@@ -1050,17 +1060,17 @@ fn chokepoint_repair_acquires_workspace_lock() {
     let tmp = isolated_tempdir();
     let root = tmp.path().to_path_buf();
 
-    // Init a real workspace so .beads/.write.lock has a parent that
-    // exists and metadata.json is in place. Without `br init` the
-    // doctor short-circuits with "missing .beads directory" and exits
+    // Init a real workspace so .obr/.write.lock has a parent that
+    // exists and metadata.json is in place. Without `obr init` the
+    // doctor short-circuits with "missing .obr directory" and exits
     // BEFORE the lock guard runs, which is not the contention path we
     // want to test.
-    br_init(&root);
+    obr_init(&root);
 
-    let beads_dir = root.join(".beads");
-    let lock_path = beads_dir.join(".write.lock");
+    let obr_dir = root.join(".obr");
+    let lock_path = obr_dir.join(".write.lock");
 
-    // Hold the workspace write lock from the test process. The br
+    // Hold the workspace write lock from the test process. The obr
     // child below sees this as "another process holds the lock" and
     // must refuse with exit code 5.
     let lock_file = std::fs::OpenOptions::new()
@@ -1076,17 +1086,17 @@ fn chokepoint_repair_acquires_workspace_lock() {
 
     // Use a tiny lock_timeout so the child gives up quickly instead of
     // burning the default 30s timeout per the env's setting.
-    let bin_path = env!("CARGO_BIN_EXE_br");
+    let bin_path = env!("CARGO_BIN_EXE_obr");
     let output = std::process::Command::new(bin_path)
         .args(["--lock-timeout", "200", "doctor", "--repair", "--json"])
         .current_dir(&root)
         .env("RUST_LOG", "error")
-        .env("BR_NO_AUTOFLUSH", "1")
-        .env("PATH", common::cli::deduplicated_br_path())
-        .env_remove("BD_DB")
-        .env_remove("BEADS_DB")
+        .env("OBR_NO_AUTO_FLUSH", "1")
+        .env("PATH", common::cli::deduplicated_obr_path())
+        .env_remove("OBR_DB")
+        .env_remove("OBR_DB")
         .output()
-        .expect("invoke br doctor --repair");
+        .expect("invoke obr doctor --repair");
 
     // Exit code must be the structured ConcurrencyLost (5), per the
     // doctor_subsystems::exit_codes contract.
@@ -1128,12 +1138,12 @@ fn chokepoint_repair_acquires_workspace_lock() {
         .args(["--lock-timeout", "5000", "doctor", "--repair", "--json"])
         .current_dir(&root)
         .env("RUST_LOG", "error")
-        .env("BR_NO_AUTOFLUSH", "1")
-        .env("PATH", common::cli::deduplicated_br_path())
-        .env_remove("BD_DB")
-        .env_remove("BEADS_DB")
+        .env("OBR_NO_AUTO_FLUSH", "1")
+        .env("PATH", common::cli::deduplicated_obr_path())
+        .env_remove("OBR_DB")
+        .env_remove("OBR_DB")
         .output()
-        .expect("invoke br doctor --repair (post-release)");
+        .expect("invoke obr doctor --repair (post-release)");
     assert_ne!(
         output2.status.code(),
         Some(5),
@@ -1145,7 +1155,7 @@ fn chokepoint_repair_acquires_workspace_lock() {
 
 // ---------------------------------------------------------------------------
 // Test 9b (Phase-10 cold-prober follow-through, bead `beads_rust-mbpq`):
-// `br doctor --repair --dry-run` (and `--repair` in general) must refuse
+// `obr doctor --repair --dry-run` (and `--repair` in general) must refuse
 // IMMEDIATELY with exit 5 when another process holds the workspace lock,
 // NOT block up to --lock-timeout. The agent contract is "try-lock or
 // refuse"; the timing of the refusal is part of the contract.
@@ -1162,10 +1172,10 @@ fn chokepoint_repair_dry_run_refuses_on_lock_contention() {
 
     let tmp = isolated_tempdir();
     let root = tmp.path().to_path_buf();
-    br_init(&root);
+    obr_init(&root);
 
-    let beads_dir = root.join(".beads");
-    let lock_path = beads_dir.join(".write.lock");
+    let obr_dir = root.join(".obr");
+    let lock_path = obr_dir.join(".write.lock");
 
     let lock_file = std::fs::OpenOptions::new()
         .read(true)
@@ -1178,7 +1188,7 @@ fn chokepoint_repair_dry_run_refuses_on_lock_contention() {
         .try_lock()
         .expect("test should be uncontended at this point");
 
-    let bin_path = env!("CARGO_BIN_EXE_br");
+    let bin_path = env!("CARGO_BIN_EXE_obr");
     // Note: no `--lock-timeout` flag — relying on the doctor's default
     // try-once behavior introduced by the mbpq fix. If the fix
     // regresses, the child will wait for the 30s default and this
@@ -1188,12 +1198,12 @@ fn chokepoint_repair_dry_run_refuses_on_lock_contention() {
         .args(["doctor", "--repair", "--dry-run", "--json"])
         .current_dir(&root)
         .env("RUST_LOG", "error")
-        .env("BR_NO_AUTOFLUSH", "1")
-        .env("PATH", common::cli::deduplicated_br_path())
-        .env_remove("BD_DB")
-        .env_remove("BEADS_DB")
+        .env("OBR_NO_AUTO_FLUSH", "1")
+        .env("PATH", common::cli::deduplicated_obr_path())
+        .env_remove("OBR_DB")
+        .env_remove("OBR_DB")
         .output()
-        .expect("invoke br doctor --repair --dry-run");
+        .expect("invoke obr doctor --repair --dry-run");
     let elapsed = start.elapsed();
 
     assert!(
@@ -1230,7 +1240,7 @@ fn chokepoint_repair_dry_run_refuses_on_lock_contention() {
 /// `refuse_gates::run_all` must run BEFORE any fixer / `mutate()` call
 /// in the `--repair` flow. Plant a DB whose on-disk
 /// `PRAGMA user_version` is higher than the binary's
-/// `CURRENT_SCHEMA_VERSION` and assert `br doctor --repair` exits 4
+/// `CURRENT_SCHEMA_VERSION` and assert `obr doctor --repair` exits 4
 /// (`RefusedUnsafe`) with a structured envelope that names the
 /// `schema_version_downgrade` gate. Pure-precondition: workspace must
 /// remain unchanged on refusal.
@@ -1239,14 +1249,14 @@ fn chokepoint_refuse_gate_blocks_downgrade() {
     let tmp = isolated_tempdir();
     let root = tmp.path().to_path_buf();
 
-    // Real init so .beads/.write.lock + metadata.json + a real DB
+    // Real init so .obr/.write.lock + metadata.json + a real DB
     // (with a real, lower user_version) all exist.
-    br_init(&root);
+    obr_init(&root);
 
-    let db_path = root.join(".beads").join("beads.db");
+    let db_path = root.join(".obr").join("obr.db");
     assert!(
         db_path.is_file(),
-        "br init must produce {}",
+        "obr init must produce {}",
         db_path.display()
     );
 
@@ -1262,7 +1272,7 @@ fn chokepoint_refuse_gate_blocks_downgrade() {
             .read(true)
             .write(true)
             .open(&db_path)
-            .expect("open beads.db for header patch");
+            .expect("open obr.db for header patch");
         // Sanity: confirm we are looking at a real SQLite file.
         let mut magic = [0_u8; 16];
         f.read_exact(&mut magic).expect("read sqlite magic");
@@ -1282,18 +1292,18 @@ fn chokepoint_refuse_gate_blocks_downgrade() {
     // pure-read contract.
     let pre_state = hash_workspace(&root);
 
-    // Drive `br doctor --repair --json` and capture exit + stdout.
-    let bin_path = env!("CARGO_BIN_EXE_br");
+    // Drive `obr doctor --repair --json` and capture exit + stdout.
+    let bin_path = env!("CARGO_BIN_EXE_obr");
     let output = std::process::Command::new(bin_path)
         .args(["doctor", "--repair", "--json"])
         .current_dir(&root)
         .env("RUST_LOG", "error")
-        .env("BR_NO_AUTOFLUSH", "1")
-        .env("PATH", common::cli::deduplicated_br_path())
-        .env_remove("BD_DB")
-        .env_remove("BEADS_DB")
+        .env("OBR_NO_AUTO_FLUSH", "1")
+        .env("PATH", common::cli::deduplicated_obr_path())
+        .env_remove("OBR_DB")
+        .env_remove("OBR_DB")
         .output()
-        .expect("invoke br doctor --repair");
+        .expect("invoke obr doctor --repair");
 
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -1344,7 +1354,7 @@ fn chokepoint_refuse_gate_blocks_downgrade() {
     );
 }
 
-/// `br doctor --repair-indexes` is narrower than `--repair`, but it still
+/// `obr doctor --repair-indexes` is narrower than `--repair`, but it still
 /// mutates SQLite index b-trees. It must therefore honor the same WP1
 /// refuse-unsafe gates before snapshotting or running REINDEX.
 #[test]
@@ -1352,12 +1362,12 @@ fn chokepoint_repair_indexes_refuse_gate_blocks_downgrade() {
     let tmp = isolated_tempdir();
     let root = tmp.path().to_path_buf();
 
-    br_init(&root);
+    obr_init(&root);
 
-    let db_path = root.join(".beads").join("beads.db");
+    let db_path = root.join(".obr").join("obr.db");
     assert!(
         db_path.is_file(),
-        "br init must produce {}",
+        "obr init must produce {}",
         db_path.display()
     );
 
@@ -1368,7 +1378,7 @@ fn chokepoint_repair_indexes_refuse_gate_blocks_downgrade() {
             .read(true)
             .write(true)
             .open(&db_path)
-            .expect("open beads.db for header patch");
+            .expect("open obr.db for header patch");
         let mut magic = [0_u8; 16];
         f.read_exact(&mut magic).expect("read sqlite magic");
         assert_eq!(
@@ -1383,17 +1393,17 @@ fn chokepoint_repair_indexes_refuse_gate_blocks_downgrade() {
 
     let pre_state = hash_workspace(&root);
 
-    let bin_path = env!("CARGO_BIN_EXE_br");
+    let bin_path = env!("CARGO_BIN_EXE_obr");
     let output = std::process::Command::new(bin_path)
         .args(["doctor", "--repair-indexes", "--json"])
         .current_dir(&root)
         .env("RUST_LOG", "error")
-        .env("BR_NO_AUTOFLUSH", "1")
-        .env("PATH", common::cli::deduplicated_br_path())
-        .env_remove("BD_DB")
-        .env_remove("BEADS_DB")
+        .env("OBR_NO_AUTO_FLUSH", "1")
+        .env("PATH", common::cli::deduplicated_obr_path())
+        .env_remove("OBR_DB")
+        .env_remove("OBR_DB")
         .output()
-        .expect("invoke br doctor --repair-indexes");
+        .expect("invoke obr doctor --repair-indexes");
 
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -1429,31 +1439,31 @@ fn chokepoint_repair_indexes_refuse_gate_blocks_downgrade() {
 
 // ---------------------------------------------------------------------------
 // Test 11 (Phase-10 cold-prober follow-through, bead `beads_rust-s7nx`):
-// `br doctor` (flat, no --repair) in a directory that does not contain a
-// `.beads/` workspace must exit with code 66 (`no_input`) per the
+// `obr doctor` (flat, no --repair) in a directory that does not contain a
+// `.obr/` workspace must exit with code 66 (`no_input`) per the
 // documented exit-code dictionary — NOT exit 0 or 1. The companion
-// `br doctor health` already handles this case cleanly; this test
+// `obr doctor health` already handles this case cleanly; this test
 // asserts the flat path agrees.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn chokepoint_doctor_in_non_beads_dir_exits_no_input() {
+fn chokepoint_doctor_in_non_obr_dir_exits_no_input() {
     let tmp = isolated_tempdir();
     let root = tmp.path().to_path_buf();
-    // Intentionally NO `br init` — this dir has no `.beads/`.
-    assert!(!root.join(".beads").exists());
+    // Intentionally NO `obr init` — this dir has no `.obr/`.
+    assert!(!root.join(".obr").exists());
 
-    let bin_path = env!("CARGO_BIN_EXE_br");
+    let bin_path = env!("CARGO_BIN_EXE_obr");
     let output = std::process::Command::new(bin_path)
         .args(["doctor", "--json"])
         .current_dir(&root)
         .env("RUST_LOG", "error")
-        .env("BR_NO_AUTOFLUSH", "1")
-        .env("PATH", common::cli::deduplicated_br_path())
-        .env_remove("BD_DB")
-        .env_remove("BEADS_DB")
+        .env("OBR_NO_AUTO_FLUSH", "1")
+        .env("PATH", common::cli::deduplicated_obr_path())
+        .env_remove("OBR_DB")
+        .env_remove("OBR_DB")
         .output()
-        .expect("invoke br doctor");
+        .expect("invoke obr doctor");
 
     assert_eq!(
         output.status.code(),
@@ -1483,10 +1493,10 @@ fn chokepoint_doctor_in_non_beads_dir_exits_no_input() {
 fn legacy_op_audit_for_page_corruption_repair() {
     let tmp = isolated_tempdir();
     let root = tmp.path().to_path_buf();
-    br_init(&root);
+    obr_init(&root);
 
     // Seed at least one row so the DB has user pages to corrupt.
-    let seed = br_cmd(&root)
+    let seed = obr_cmd(&root)
         .args([
             "create",
             "--title",
@@ -1498,25 +1508,25 @@ fn legacy_op_audit_for_page_corruption_repair() {
             "--no-auto-flush",
         ])
         .output()
-        .expect("br create spawned");
+        .expect("obr create spawned");
     assert!(
         seed.status.success(),
-        "br create failed: stdout={} stderr={}",
+        "obr create failed: stdout={} stderr={}",
         String::from_utf8_lossy(&seed.stdout),
         String::from_utf8_lossy(&seed.stderr)
     );
-    let flush = br_cmd(&root)
+    let flush = obr_cmd(&root)
         .args(["sync", "--flush-only"])
         .output()
-        .expect("br sync spawned");
-    assert!(flush.status.success(), "br sync --flush-only failed");
+        .expect("obr sync spawned");
+    assert!(flush.status.success(), "obr sync --flush-only failed");
 
     // Force any WAL contents into the main DB before we corrupt the page,
     // otherwise the corrupted page may be masked by an uncheckpointed
     // overlay.
-    let db_path = root.join(".beads").join("beads.db");
-    let _ = fs::remove_file(root.join(".beads").join("beads.db-wal"));
-    let _ = fs::remove_file(root.join(".beads").join("beads.db-shm"));
+    let db_path = root.join(".obr").join("obr.db");
+    let _ = fs::remove_file(root.join(".obr").join("obr.db-wal"));
+    let _ = fs::remove_file(root.join(".obr").join("obr.db-shm"));
 
     // Overwrite a non-header page so `PRAGMA integrity_check` reports
     // page-level corruption (a trigger for `repair_via_vacuum` or, if the
@@ -1538,12 +1548,12 @@ fn legacy_op_audit_for_page_corruption_repair() {
     let pre_repair_db_bytes = fs::read(&db_path).expect("read corrupted db");
     let pre_repair_db_hash = sha256_hex(&pre_repair_db_bytes);
 
-    // Run `br doctor --repair --json`. We don't assert exit 0 because
+    // Run `obr doctor --repair --json`. We don't assert exit 0 because
     // page-malformed corruption may still surface non-fatal warnings.
-    let out = br_cmd(&root)
+    let out = obr_cmd(&root)
         .args(["doctor", "--repair", "--json"])
         .output()
-        .expect("br doctor --repair spawned");
+        .expect("obr doctor --repair spawned");
     let exit = out.status.code().unwrap_or(-1);
     assert!(
         matches!(exit, 0..=2),
@@ -1598,17 +1608,17 @@ fn legacy_op_audit_for_page_corruption_repair() {
         }
     }
 
-    // At least one of the legacy_op lines targets `.beads/beads.db`;
+    // At least one of the legacy_op lines targets `.obr/obr.db`;
     // its verbatim backup must exist under `<run-dir>/backups/` AND its
     // bytes must hash to the captured pre-VACUUM SHA-256. This proves
     // the chokepoint took the snapshot BEFORE the legacy fixer rewrote
     // the file.
     let db_action = legacy_actions
         .iter()
-        .find(|a| a["path"].as_str() == Some(".beads/beads.db"))
+        .find(|a| a["path"].as_str() == Some(".obr/obr.db"))
         .unwrap_or_else(|| {
             panic!(
-                "no legacy_op line targeting .beads/beads.db; got legacy_actions={legacy_actions:#?}"
+                "no legacy_op line targeting .obr/obr.db; got legacy_actions={legacy_actions:#?}"
             )
         });
     let recorded_before = db_action["before_hash"]
@@ -1620,7 +1630,7 @@ fn legacy_op_audit_for_page_corruption_repair() {
         "before_hash on legacy_op line does not match pre-repair DB SHA-256"
     );
 
-    let backup_path = run_dir.join("backups").join(".beads").join("beads.db");
+    let backup_path = run_dir.join("backups").join(".obr").join("obr.db");
     assert!(
         backup_path.is_file(),
         "verbatim backup missing at {}",
@@ -1635,7 +1645,7 @@ fn legacy_op_audit_for_page_corruption_repair() {
         backup_path.display()
     );
 
-    // Run `br doctor undo` and verify it does not fault on legacy_op
+    // Run `obr doctor undo` and verify it does not fault on legacy_op
     // entries. The byte-exact post-repair restoration may not match
     // the pre-repair file (DB-family rewrites change page-level bytes), but
     // undo must not surface as a hard failure for the legacy_op rows.
@@ -1644,13 +1654,13 @@ fn legacy_op_audit_for_page_corruption_repair() {
         .and_then(|s| s.to_str())
         .expect("run id name")
         .to_string();
-    let undo = br_cmd(&root)
+    let undo = obr_cmd(&root)
         .args(["doctor", "undo", &run_id, "--json"])
         .output()
-        .expect("br doctor undo spawned");
+        .expect("obr doctor undo spawned");
     assert!(
         undo.status.success(),
-        "br doctor undo failed: stdout={} stderr={}",
+        "obr doctor undo failed: stdout={} stderr={}",
         String::from_utf8_lossy(&undo.stdout),
         String::from_utf8_lossy(&undo.stderr)
     );
@@ -1671,20 +1681,20 @@ fn legacy_op_audit_for_page_corruption_repair() {
 /// dirty in the DB only, then corrupt page 2 of the checkpointed DB.
 /// Returns the dirty issue's id.
 fn seed_dirty_issue_and_corrupt_db(root: &Path) -> String {
-    br_init(root);
+    obr_init(root);
 
-    let flushed = br_cmd(root)
+    let flushed = obr_cmd(root)
         .args(["create", "--title", "flushed fine", "--priority", "2"])
         .output()
-        .expect("br create spawned");
-    assert!(flushed.status.success(), "br create (flushed) failed");
-    let flush = br_cmd(root)
+        .expect("obr create spawned");
+    assert!(flushed.status.success(), "obr create (flushed) failed");
+    let flush = obr_cmd(root)
         .args(["sync", "--flush-only"])
         .output()
-        .expect("br sync spawned");
-    assert!(flush.status.success(), "br sync --flush-only failed");
+        .expect("obr sync spawned");
+    assert!(flush.status.success(), "obr sync --flush-only failed");
 
-    let dirty = br_cmd(root)
+    let dirty = obr_cmd(root)
         .args([
             "create",
             "--title",
@@ -1694,14 +1704,14 @@ fn seed_dirty_issue_and_corrupt_db(root: &Path) -> String {
             "--no-auto-flush",
         ])
         .output()
-        .expect("br create spawned");
-    assert!(dirty.status.success(), "br create (dirty) failed");
+        .expect("obr create spawned");
+    assert!(dirty.status.success(), "obr create (dirty) failed");
 
-    let list = br_cmd(root)
+    let list = obr_cmd(root)
         .args(["list", "--json"])
         .output()
-        .expect("br list spawned");
-    assert!(list.status.success(), "br list --json failed");
+        .expect("obr list spawned");
+    assert!(list.status.success(), "obr list --json failed");
     let listed = parse_trailing_json(&String::from_utf8_lossy(&list.stdout));
     let dirty_id = listed["issues"]
         .as_array()
@@ -1714,13 +1724,13 @@ fn seed_dirty_issue_and_corrupt_db(root: &Path) -> String {
 
     // Drop any WAL/SHM sidecars so the page corruption lands in the
     // authoritative main DB file rather than being masked by an
-    // uncheckpointed overlay. (This does not checkpoint anything — br
+    // uncheckpointed overlay. (This does not checkpoint anything — obr
     // checkpoints on clean close, so the rows are already in the main
     // file; removal just discards the empty sidecars.) Same pattern as
     // the vacuum test above.
-    let db_path = root.join(".beads").join("beads.db");
-    let _ = fs::remove_file(root.join(".beads").join("beads.db-wal"));
-    let _ = fs::remove_file(root.join(".beads").join("beads.db-shm"));
+    let db_path = root.join(".obr").join("obr.db");
+    let _ = fs::remove_file(root.join(".obr").join("obr.db-wal"));
+    let _ = fs::remove_file(root.join(".obr").join("obr.db-shm"));
     {
         use std::os::unix::fs::FileExt;
         let f = std::fs::OpenOptions::new()
@@ -1740,13 +1750,13 @@ fn repair_rebuild_preserves_dirty_unflushed_issue() {
     let root = tmp.path().to_path_buf();
     let dirty_id = seed_dirty_issue_and_corrupt_db(&root);
 
-    let out = br_cmd(&root)
+    let out = obr_cmd(&root)
         .args(["doctor", "--repair", "--json"])
         .output()
-        .expect("br doctor --repair spawned");
+        .expect("obr doctor --repair spawned");
     assert!(
         out.status.success(),
-        "br doctor --repair must verify after preserving the dirty issue: \
+        "obr doctor --repair must verify after preserving the dirty issue: \
          stdout={}\nstderr={}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
@@ -1766,10 +1776,10 @@ fn repair_rebuild_preserves_dirty_unflushed_issue() {
     );
 
     // The preserved issue is alive in the rebuilt store...
-    let show = br_cmd(&root)
+    let show = obr_cmd(&root)
         .args(["show", &dirty_id, "--json"])
         .output()
-        .expect("br show spawned");
+        .expect("obr show spawned");
     assert!(
         show.status.success(),
         "preserved issue {dirty_id} vanished across --repair: stderr={}",
@@ -1777,25 +1787,29 @@ fn repair_rebuild_preserves_dirty_unflushed_issue() {
     );
 
     // ...still marked dirty, and the next flush exports it to the JSONL.
-    let status = br_cmd(&root)
+    let status = obr_cmd(&root)
         .args(["sync", "--status", "--json"])
         .output()
-        .expect("br sync --status spawned");
+        .expect("obr sync --status spawned");
     let status_json = parse_trailing_json(&String::from_utf8_lossy(&status.stdout));
     assert_eq!(
         status_json["dirty_count"], 1,
         "preserved issue must be re-marked dirty: {status_json}"
     );
-    let flush = br_cmd(&root)
+    let flush = obr_cmd(&root)
         .args(["sync", "--flush-only"])
         .output()
-        .expect("br sync spawned");
+        .expect("obr sync spawned");
     assert!(flush.status.success(), "post-repair flush failed");
-    let jsonl =
-        fs::read_to_string(root.join(".beads").join("issues.jsonl")).expect("read issues.jsonl");
+    // The claim is that the preserved issue reaches the export, whatever
+    // format that is; since D-SURFACE the default export is the tracked
+    // surface outside `.obr/`, so ask for the resolved path.
+    let surface = obr::config::computed_surface_path(&root);
+    let exported = fs::read_to_string(&surface)
+        .unwrap_or_else(|err| panic!("read {}: {err}", surface.display()));
     assert!(
-        jsonl.contains("db-only issue"),
-        "flush after repair must export the preserved issue; jsonl:\n{jsonl}"
+        exported.contains("db-only issue"),
+        "flush after repair must export the preserved issue; export:\n{exported}"
     );
 }
 
@@ -1808,13 +1822,13 @@ fn startup_auto_recovery_preserves_dirty_unflushed_issue() {
     let root = tmp.path().to_path_buf();
     let dirty_id = seed_dirty_issue_and_corrupt_db(&root);
 
-    let list = br_cmd(&root)
+    let list = obr_cmd(&root)
         .args(["list", "--json"])
         .output()
-        .expect("br list spawned");
+        .expect("obr list spawned");
     assert!(
         list.status.success(),
-        "br list must auto-recover: stderr={}",
+        "obr list must auto-recover: stderr={}",
         String::from_utf8_lossy(&list.stderr)
     );
     let listed = parse_trailing_json(&String::from_utf8_lossy(&list.stdout));
@@ -1830,10 +1844,10 @@ fn startup_auto_recovery_preserves_dirty_unflushed_issue() {
     );
     assert!(titles.contains(&"flushed fine"), "titles: {titles:?}");
 
-    let status = br_cmd(&root)
+    let status = obr_cmd(&root)
         .args(["sync", "--status", "--json"])
         .output()
-        .expect("br sync --status spawned");
+        .expect("obr sync --status spawned");
     let status_json = parse_trailing_json(&String::from_utf8_lossy(&status.stdout));
     assert_eq!(
         status_json["dirty_count"], 1,
@@ -1846,8 +1860,8 @@ fn startup_auto_recovery_preserves_dirty_unflushed_issue() {
 fn e2e_reviewed_schema_migration_plan_apply_barrier_and_non_deleting_undo() {
     let temp = isolated_tempdir();
     let root = temp.path().to_path_buf();
-    br_init(&root);
-    let db_path = root.join(".beads/beads.db");
+    obr_init(&root);
+    let db_path = root.join(".obr/obr.db");
 
     {
         let conn =
@@ -1867,7 +1881,7 @@ fn e2e_reviewed_schema_migration_plan_apply_barrier_and_non_deleting_undo() {
         conn.close().expect("close v14 fixture");
     }
 
-    let refused = br_cmd(&root)
+    let refused = obr_cmd(&root)
         .args(["--no-auto-import", "--allow-stale", "list", "--json"])
         .output()
         .expect("ordinary command spawned");
@@ -1882,11 +1896,11 @@ fn e2e_reviewed_schema_migration_plan_apply_barrier_and_non_deleting_undo() {
         String::from_utf8_lossy(&refused.stderr)
     );
     assert!(
-        refusal_text.contains("br doctor migrate-schema plan"),
+        refusal_text.contains("obr doctor migrate-schema plan"),
         "refusal must route the operator to the reviewed workflow: {refusal_text}"
     );
 
-    let plan = br_cmd(&root)
+    let plan = obr_cmd(&root)
         .args(["doctor", "migrate-schema", "plan", "--json"])
         .output()
         .expect("migration plan spawned");
@@ -1899,13 +1913,13 @@ fn e2e_reviewed_schema_migration_plan_apply_barrier_and_non_deleting_undo() {
     let plan_json = parse_trailing_json(&String::from_utf8_lossy(&plan.stdout));
     assert_eq!(
         plan_json["schema_version"],
-        "br.doctor.schema_migration.plan.v1"
+        "obr.doctor.schema_migration.plan.v1"
     );
     assert_eq!(plan_json["eligible"], true);
     assert_eq!(plan_json["from_version"], 14);
     assert_eq!(
         plan_json["to_version"],
-        beads_rust::storage::schema::CURRENT_SCHEMA_VERSION
+        obr::storage::schema::CURRENT_SCHEMA_VERSION
     );
     let token = plan_json["plan_token"]
         .as_str()
@@ -1917,7 +1931,7 @@ fn e2e_reviewed_schema_migration_plan_apply_barrier_and_non_deleting_undo() {
         "planning must not migrate the live database"
     );
 
-    let apply = br_cmd(&root)
+    let apply = obr_cmd(&root)
         .args([
             "doctor",
             "migrate-schema",
@@ -1937,7 +1951,7 @@ fn e2e_reviewed_schema_migration_plan_apply_barrier_and_non_deleting_undo() {
     let apply_json = parse_trailing_json(&String::from_utf8_lossy(&apply.stdout));
     assert_eq!(
         apply_json["schema_version"],
-        "br.doctor.schema_migration.applied.v1"
+        "obr.doctor.schema_migration.applied.v1"
     );
     let run_id = apply_json["run_id"]
         .as_str()
@@ -1945,16 +1959,14 @@ fn e2e_reviewed_schema_migration_plan_apply_barrier_and_non_deleting_undo() {
         .to_string();
     assert_eq!(
         db_user_version(&db_path),
-        i64::from(beads_rust::storage::schema::CURRENT_SCHEMA_VERSION)
+        i64::from(obr::storage::schema::CURRENT_SCHEMA_VERSION)
     );
-    let run_dir = root
-        .join(".beads/.br_recovery/schema-migrations")
-        .join(&run_id);
+    let run_dir = root.join(".obr/recovery/schema-migrations").join(&run_id);
     assert!(run_dir.join("prepared.json").is_file());
     assert!(run_dir.join("applied.json").is_file());
-    assert!(run_dir.join("before/beads.db").is_file());
+    assert!(run_dir.join("before/obr.db").is_file());
 
-    let list_after = br_cmd(&root)
+    let list_after = obr_cmd(&root)
         .args(["--no-auto-import", "--allow-stale", "list", "--json"])
         .output()
         .expect("post-migration list spawned");
@@ -1965,7 +1977,7 @@ fn e2e_reviewed_schema_migration_plan_apply_barrier_and_non_deleting_undo() {
         String::from_utf8_lossy(&list_after.stderr)
     );
 
-    let undo_plan = br_cmd(&root)
+    let undo_plan = obr_cmd(&root)
         .args([
             "doctor",
             "migrate-schema",
@@ -1984,10 +1996,10 @@ fn e2e_reviewed_schema_migration_plan_apply_barrier_and_non_deleting_undo() {
     );
     assert_eq!(
         db_user_version(&db_path),
-        i64::from(beads_rust::storage::schema::CURRENT_SCHEMA_VERSION)
+        i64::from(obr::storage::schema::CURRENT_SCHEMA_VERSION)
     );
 
-    let undo = br_cmd(&root)
+    let undo = obr_cmd(&root)
         .args(["doctor", "migrate-schema", "undo", &run_id, "--json"])
         .output()
         .expect("migration undo spawned");
@@ -2000,7 +2012,7 @@ fn e2e_reviewed_schema_migration_plan_apply_barrier_and_non_deleting_undo() {
     let undo_json = parse_trailing_json(&String::from_utf8_lossy(&undo.stdout));
     assert_eq!(
         undo_json["schema_version"],
-        "br.doctor.schema_migration.undo.v1"
+        "obr.doctor.schema_migration.undo.v1"
     );
     assert_eq!(undo_json["dry_run"], false);
     assert_eq!(db_user_version(&db_path), 14);

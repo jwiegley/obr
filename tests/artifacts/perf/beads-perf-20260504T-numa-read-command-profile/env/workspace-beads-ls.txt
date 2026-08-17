@@ -1,4 +1,0 @@
-total 57260
--rw-rw-r-- 1 ubuntu ubuntu 48513024 May  4 16:20 beads.db
--rw-rw-r-- 1 ubuntu ubuntu       32 May  4 15:47 beads.db-wal
--rw------- 1 ubuntu ubuntu 10116894 May  4 06:55 issues.jsonl

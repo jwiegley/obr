@@ -22,7 +22,7 @@ cd "$target_dir"
 
 # Drop a required table that the doctor's check_schema_tables list watches.
 # Test harness DROPs; the fixer never DROPs.
-printf '%s\n' "DROP TABLE IF EXISTS export_hashes;" | sqlite3 .beads/beads.db
+printf '%s\n' "DROP TABLE IF EXISTS export_hashes;" | sqlite3 .obr/obr.db
 
 if [ -e .fixture_baseline ]; then
   echo "fixture baseline already exists; expected a fresh workspace" >&2

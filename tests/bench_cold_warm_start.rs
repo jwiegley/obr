@@ -1,7 +1,7 @@
 //! Cold vs Warm Start Benchmark Suite
 //!
 //! Measures the difference between cold start (fresh process, first run) and warm start
-//! (repeat runs) for both br (Rust) and bd (Go) implementations.
+//! (repeat runs) for both obr (Rust) and bd (Go) implementations.
 //!
 //! # Usage
 //!
@@ -20,7 +20,7 @@
 //! - Cold start time (first execution after workspace setup)
 //! - Warm start times (subsequent executions)
 //! - Cold/warm ratio for each command
-//! - Comparison between br and bd for cold and warm scenarios
+//! - Comparison between obr and bd for cold and warm scenarios
 //!
 //! # Commands Tested
 //!
@@ -34,7 +34,6 @@
 
 mod common;
 
-use beads_rust::util::hex_encode;
 use common::artifact_validator::{
     ArtifactValidator, PerfEvidenceBinary, PerfEvidenceCommand, PerfEvidenceComparison,
     PerfEvidenceDataset, PerfEvidenceEnvVar, PerfEvidenceEnvironment, PerfEvidenceGit,
@@ -43,6 +42,7 @@ use common::artifact_validator::{
 };
 use common::binary_discovery::{DiscoveredBinaries, discover_binaries};
 use common::dataset_registry::{IsolatedDataset, KnownDataset};
+use obr::util::hex_encode;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
@@ -61,7 +61,7 @@ use tempfile::TempDir;
 pub struct ColdWarmMetrics {
     /// Command label
     pub command: String,
-    /// Binary name (br or bd)
+    /// Binary name (obr or bd)
     pub binary: String,
     /// Cold start duration (first run, ms)
     pub cold_start_ms: u128,
@@ -77,16 +77,16 @@ pub struct ColdWarmMetrics {
     pub success: bool,
 }
 
-/// Comparison between br and bd for cold/warm behavior.
+/// Comparison between obr and bd for cold/warm behavior.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColdWarmComparison {
     pub command: String,
-    pub br: ColdWarmMetrics,
+    pub obr: ColdWarmMetrics,
     pub bd: ColdWarmMetrics,
-    /// br cold / bd cold ratio (< 1.0 means br cold is faster)
-    pub cold_ratio_br_bd: f64,
-    /// br warm / bd warm ratio (< 1.0 means br warm is faster)
-    pub warm_ratio_br_bd: f64,
+    /// obr cold / bd cold ratio (< 1.0 means obr cold is faster)
+    pub cold_ratio_obr_bd: f64,
+    /// obr warm / bd warm ratio (< 1.0 means obr warm is faster)
+    pub warm_ratio_obr_bd: f64,
 }
 
 /// Full benchmark results.
@@ -106,14 +106,14 @@ pub struct ColdWarmBenchmark {
 /// Summary of cold/warm benchmark results.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColdWarmSummary {
-    /// Average cold/warm ratio across all commands for br
-    pub br_avg_cold_warm_ratio: f64,
+    /// Average cold/warm ratio across all commands for obr
+    pub obr_avg_cold_warm_ratio: f64,
     /// Average cold/warm ratio across all commands for bd
     pub bd_avg_cold_warm_ratio: f64,
-    /// Commands where br is faster cold
-    pub br_faster_cold_count: usize,
-    /// Commands where br is faster warm
-    pub br_faster_warm_count: usize,
+    /// Commands where obr is faster cold
+    pub obr_faster_cold_count: usize,
+    /// Commands where obr is faster warm
+    pub obr_faster_warm_count: usize,
     /// Total commands tested
     pub total_commands: usize,
 }
@@ -171,13 +171,13 @@ fn run_startup_matrix_command(
     let mut command = Command::new(binary_path);
     command.args(args).current_dir(cwd);
     for key in [
-        "BD_ACTOR",
-        "BD_DB",
-        "BD_DATABASE",
-        "BEADS_DIR",
-        "BEADS_JSONL",
-        "BEADS_CACHE_DIR",
-        "BR_OUTPUT_FORMAT",
+        "OBR_ACTOR",
+        "OBR_DB",
+        "OBR_DATABASE",
+        "OBR_DIR",
+        "OBR_JSONL",
+        "OBR_CACHE_DIR",
+        "OBR_OUTPUT_FORMAT",
         "TOON_DEFAULT_FORMAT",
         "TOON_STATS",
     ] {
@@ -270,8 +270,11 @@ fn measure_cold_warm(
 // Workspace Setup
 // =============================================================================
 
-/// Create a fresh workspace with br initialized and populated.
-fn create_br_workspace(br_path: &Path, issue_count: usize) -> std::io::Result<(TempDir, PathBuf)> {
+/// Create a fresh workspace with obr initialized and populated.
+fn create_obr_workspace(
+    obr_path: &Path,
+    issue_count: usize,
+) -> std::io::Result<(TempDir, PathBuf)> {
     let temp_dir = TempDir::new_in(common::cli::isolated_temp_root())?;
     let root = temp_dir.path().to_path_buf();
 
@@ -280,14 +283,14 @@ fn create_br_workspace(br_path: &Path, issue_count: usize) -> std::io::Result<(T
     fs::write(root.join(".git").join("HEAD"), "ref: refs/heads/main\n")?;
 
     // Initialize beads
-    let init_output = Command::new(br_path)
+    let init_output = Command::new(obr_path)
         .args(["init"])
         .current_dir(&root)
         .output()?;
 
     if !init_output.status.success() {
         return Err(std::io::Error::other(format!(
-            "br init failed: {}",
+            "obr init failed: {}",
             String::from_utf8_lossy(&init_output.stderr)
         )));
     }
@@ -297,14 +300,14 @@ fn create_br_workspace(br_path: &Path, issue_count: usize) -> std::io::Result<(T
         let title = format!("Benchmark issue {i}");
         let priority = (i % 5).to_string();
 
-        let _ = Command::new(br_path)
+        let _ = Command::new(obr_path)
             .args(["create", "--title", &title, "--priority", &priority])
             .current_dir(&root)
             .output()?;
     }
 
     // Flush to JSONL for consistent state
-    let _ = Command::new(br_path)
+    let _ = Command::new(obr_path)
         .args(["sync", "--flush-only"])
         .current_dir(&root)
         .output()?;
@@ -312,23 +315,23 @@ fn create_br_workspace(br_path: &Path, issue_count: usize) -> std::io::Result<(T
     Ok((temp_dir, root))
 }
 
-/// Copy a br workspace for bd usage (same JSONL, fresh DB).
-fn copy_workspace_for_bd(br_root: &Path, bd_path: &Path) -> std::io::Result<(TempDir, PathBuf)> {
+/// Copy a obr workspace for bd usage (same JSONL, fresh DB).
+fn copy_workspace_for_bd(obr_root: &Path, bd_path: &Path) -> std::io::Result<(TempDir, PathBuf)> {
     let temp_dir = TempDir::new()?;
     let root = temp_dir.path().to_path_buf();
 
     // Copy entire directory structure
-    copy_dir_all(br_root, &root)?;
+    copy_dir_all(obr_root, &root)?;
 
-    // Remove br's database so bd creates its own
-    let br_db = root.join(".beads").join("beads.db");
-    if br_db.exists() {
-        fs::remove_file(&br_db)?;
+    // Remove obr's database so bd creates its own
+    let obr_db = root.join(".obr").join("obr.db");
+    if obr_db.exists() {
+        fs::remove_file(&obr_db)?;
     }
     // Also remove WAL and SHM files if present
-    let _ = fs::remove_file(root.join(".beads").join("beads.db-wal"));
-    let _ = fs::remove_file(root.join(".beads").join("beads.db-shm"));
-    let _ = fs::remove_file(root.join(".beads").join("beads.db-journal"));
+    let _ = fs::remove_file(root.join(".obr").join("obr.db-wal"));
+    let _ = fs::remove_file(root.join(".obr").join("obr.db-shm"));
+    let _ = fs::remove_file(root.join(".obr").join("obr.db-journal"));
 
     // Import into bd's database
     let import_output = Command::new(bd_path)
@@ -364,8 +367,8 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
 }
 
 /// Get a valid issue ID from the workspace.
-fn get_first_issue_id(br_path: &Path, workspace: &Path) -> Option<String> {
-    let output = Command::new(br_path)
+fn get_first_issue_id(obr_path: &Path, workspace: &Path) -> Option<String> {
+    let output = Command::new(obr_path)
         .args(["list", "--limit=1", "--json"])
         .current_dir(workspace)
         .output()
@@ -419,14 +422,14 @@ fn startup_matrix_args(state: &str) -> &'static [&'static str] {
 }
 
 fn prepare_startup_matrix_workspace(
-    br_path: &Path,
+    obr_path: &Path,
     state: &str,
 ) -> std::io::Result<(TempDir, PathBuf)> {
-    let (temp_dir, root) = create_br_workspace(br_path, 3)?;
+    let (temp_dir, root) = create_obr_workspace(obr_path, 3)?;
 
     match state {
         "stale" => {
-            let output = Command::new(br_path)
+            let output = Command::new(obr_path)
                 .args(["create", "Startup matrix stale marker", "--no-auto-flush"])
                 .current_dir(&root)
                 .output()?;
@@ -438,7 +441,7 @@ fn prepare_startup_matrix_workspace(
             }
         }
         "recovery_anomaly" => {
-            let recovery_dir = root.join(".beads").join(".br_recovery");
+            let recovery_dir = root.join(".obr").join("recovery");
             fs::create_dir_all(&recovery_dir)?;
             fs::write(
                 recovery_dir.join("startup-matrix-leftover.txt"),
@@ -533,14 +536,14 @@ fn write_startup_matrix_state_artifacts(
 }
 
 fn write_startup_matrix_smoke_bundle(
-    br_path: &Path,
+    obr_path: &Path,
     bundle_dir: &Path,
 ) -> std::io::Result<StartupMatrixManifest> {
     fs::create_dir_all(bundle_dir)?;
     let mut states = Vec::with_capacity(STARTUP_MATRIX_STATES.len());
 
     for &state in STARTUP_MATRIX_STATES {
-        let (_workspace_guard, workspace_root) = prepare_startup_matrix_workspace(br_path, state)?;
+        let (_workspace_guard, workspace_root) = prepare_startup_matrix_workspace(obr_path, state)?;
         let routed_cwd = if state == "routed" {
             Some(TempDir::new()?)
         } else {
@@ -550,15 +553,12 @@ fn write_startup_matrix_smoke_bundle(
             .as_ref()
             .map_or(workspace_root.as_path(), tempfile::TempDir::path);
         let env_vars = if state == "routed" {
-            vec![(
-                "BEADS_DIR",
-                workspace_root.join(".beads").display().to_string(),
-            )]
+            vec![("OBR_DIR", workspace_root.join(".obr").display().to_string())]
         } else {
             Vec::new()
         };
         let args = startup_matrix_args(state);
-        let run = run_startup_matrix_command(br_path, args, cwd, &env_vars)?;
+        let run = run_startup_matrix_command(obr_path, args, cwd, &env_vars)?;
         if !run.success {
             return Err(std::io::Error::other(format!(
                 "startup matrix state {state} failed with code {}; stdout={}; stderr={}",
@@ -574,7 +574,7 @@ fn write_startup_matrix_smoke_bundle(
     }
 
     let manifest = StartupMatrixManifest {
-        schema_version: "br.startup-matrix.v1".to_string(),
+        schema_version: "obr.startup-matrix.v1".to_string(),
         matrix_name: "storage-open-smoke".to_string(),
         generated_at: chrono::Utc::now().to_rfc3339(),
         states,
@@ -649,7 +649,7 @@ fn prepare_perf_evidence_bundle_dir(bundle_dir: &Path) -> std::io::Result<()> {
 }
 
 fn record_perf_evidence_runs(
-    br_path: &Path,
+    obr_path: &Path,
     workspace_root: &Path,
     bundle_dir: &Path,
     args: &[&str],
@@ -658,7 +658,7 @@ fn record_perf_evidence_runs(
     let mut raw_artifact_paths = Vec::new();
 
     for run_index in 0..3 {
-        let run = run_startup_matrix_command(br_path, args, workspace_root, &[])?;
+        let run = run_startup_matrix_command(obr_path, args, workspace_root, &[])?;
         if !run.success {
             return Err(std::io::Error::other(format!(
                 "perf evidence smoke command failed with code {}; stdout={}; stderr={}",
@@ -766,7 +766,7 @@ fn write_perf_evidence_support_artifacts(
     fs::write(
         bundle_dir.join("logs/list.log"),
         format!(
-            "command: br {}\nworkspace: {}\nsamples: {}\nstdout_sha256: {stdout_sha256}\nstderr_sha256: {stderr_sha256}\n",
+            "command: obr {}\nworkspace: {}\nsamples: {}\nstdout_sha256: {stdout_sha256}\nstderr_sha256: {stderr_sha256}\n",
             args.join(" "),
             workspace_root.display(),
             sample_count
@@ -788,14 +788,14 @@ fn write_perf_evidence_support_artifacts(
     }
     fs::write(
         bundle_dir.join("proof/isomorphism.md"),
-        "## Change: perf evidence smoke ledger\n- Ordering preserved: yes; command output is not transformed.\n- Tie-breaking unchanged: yes; br list decides ordering.\n- Floating-point: N/A for command output; timings are evidence only.\n- RNG seeds: unchanged/N/A.\n- Golden outputs: stdout and stderr SHA-256 hashes recorded in golden/checksums.txt.\n",
+        "## Change: perf evidence smoke ledger\n- Ordering preserved: yes; command output is not transformed.\n- Tie-breaking unchanged: yes; obr list decides ordering.\n- Floating-point: N/A for command output; timings are evidence only.\n- RNG seeds: unchanged/N/A.\n- Golden outputs: stdout and stderr SHA-256 hashes recorded in golden/checksums.txt.\n",
     )?;
 
     Ok(())
 }
 
 fn build_perf_evidence_manifest(
-    br_path: &Path,
+    obr_path: &Path,
     workspace_root: &Path,
     args: &[&str],
     timing: PerfEvidenceTiming,
@@ -803,10 +803,12 @@ fn build_perf_evidence_manifest(
     raw_artifact_paths: Vec<String>,
 ) -> std::io::Result<PerfEvidenceManifest> {
     let (stdout_sha256, stderr_sha256) = hashes;
-    let issues_jsonl = fs::read(workspace_root.join(".beads").join("issues.jsonl"))?;
+    // The dataset hash covers whatever the workspace exports; since D-SURFACE
+    // that is the tracked surface at the workspace root, not an in-`.obr` file.
+    let exported = fs::read(obr::config::computed_surface_path(workspace_root))?;
     let generated_at = chrono::Utc::now();
     Ok(PerfEvidenceManifest {
-        schema_version: "br.perf-evidence.v1".to_string(),
+        schema_version: "obr.perf-evidence.v1".to_string(),
         generated_at: generated_at.to_rfc3339(),
         valid_until: Some((generated_at + chrono::Duration::days(30)).to_rfc3339()),
         command: PerfEvidenceCommand {
@@ -816,14 +818,14 @@ fn build_perf_evidence_manifest(
         dataset: PerfEvidenceDataset {
             name: "tiny-smoke".to_string(),
             issue_count: Some(3),
-            content_hash: Some(sha256_hex(&issues_jsonl)),
+            content_hash: Some(sha256_hex(&exported)),
         },
         git: PerfEvidenceGit {
             revision: git_revision_for_perf_evidence(),
             dirty: git_dirty_for_perf_evidence(),
         },
         binary: PerfEvidenceBinary {
-            path: br_path.display().to_string(),
+            path: obr_path.display().to_string(),
             version: None,
         },
         environment: PerfEvidenceEnvironment {
@@ -868,15 +870,15 @@ fn build_perf_evidence_manifest(
 }
 
 fn write_perf_evidence_smoke_bundle(
-    br_path: &Path,
+    obr_path: &Path,
     bundle_dir: &Path,
 ) -> std::io::Result<PerfEvidenceManifest> {
     prepare_perf_evidence_bundle_dir(bundle_dir)?;
 
-    let (_workspace_guard, workspace_root) = create_br_workspace(br_path, 3)?;
+    let (_workspace_guard, workspace_root) = create_obr_workspace(obr_path, 3)?;
     let args = ["list", "--json"];
     let (runs, raw_artifact_paths) =
-        record_perf_evidence_runs(br_path, &workspace_root, bundle_dir, &args)?;
+        record_perf_evidence_runs(obr_path, &workspace_root, bundle_dir, &args)?;
     let hashes = write_perf_evidence_golden(bundle_dir, &runs)?;
     let timing = write_perf_evidence_timing(bundle_dir, &runs)?;
     write_perf_evidence_support_artifacts(
@@ -888,7 +890,7 @@ fn write_perf_evidence_smoke_bundle(
         &hashes.1,
     )?;
     let manifest = build_perf_evidence_manifest(
-        br_path,
+        obr_path,
         &workspace_root,
         &args,
         timing,
@@ -918,16 +920,16 @@ fn benchmark_cold_warm(
 
     eprintln!("Setting up workspace with {issue_count} issues...");
 
-    // Create br workspace
-    let (_br_temp, br_root) = create_br_workspace(&binaries.br.path, issue_count)
-        .map_err(|e| format!("Failed to create br workspace: {e}"))?;
+    // Create obr workspace
+    let (_obr_temp, obr_root) = create_obr_workspace(&binaries.obr.path, issue_count)
+        .map_err(|e| format!("Failed to create obr workspace: {e}"))?;
 
     // Copy for bd
-    let (_bd_temp, bd_root) = copy_workspace_for_bd(&br_root, &bd.path)
+    let (_bd_temp, bd_root) = copy_workspace_for_bd(&obr_root, &bd.path)
         .map_err(|e| format!("Failed to create bd workspace: {e}"))?;
 
     // Get an issue ID for show command
-    let issue_id = get_first_issue_id(&binaries.br.path, &br_root);
+    let issue_id = get_first_issue_id(&binaries.obr.path, &obr_root);
 
     let mut comparisons = Vec::new();
 
@@ -935,29 +937,29 @@ fn benchmark_cold_warm(
     for (label, args) in BENCHMARK_COMMANDS {
         eprintln!("  Benchmarking {label}...");
 
-        let br_metrics =
-            measure_cold_warm(&binaries.br.path, args, &br_root, "br", label, WARM_RUNS);
+        let obr_metrics =
+            measure_cold_warm(&binaries.obr.path, args, &obr_root, "obr", label, WARM_RUNS);
 
         let bd_metrics = measure_cold_warm(&bd.path, args, &bd_root, "bd", label, WARM_RUNS);
 
-        let cold_ratio_br_bd = if bd_metrics.cold_start_ms > 0 {
-            br_metrics.cold_start_ms as f64 / bd_metrics.cold_start_ms as f64
+        let cold_ratio_obr_bd = if bd_metrics.cold_start_ms > 0 {
+            obr_metrics.cold_start_ms as f64 / bd_metrics.cold_start_ms as f64
         } else {
             1.0
         };
 
-        let warm_ratio_br_bd = if bd_metrics.warm_avg_ms > 0.0 {
-            br_metrics.warm_avg_ms / bd_metrics.warm_avg_ms
+        let warm_ratio_obr_bd = if bd_metrics.warm_avg_ms > 0.0 {
+            obr_metrics.warm_avg_ms / bd_metrics.warm_avg_ms
         } else {
             1.0
         };
 
         comparisons.push(ColdWarmComparison {
             command: label.to_string(),
-            br: br_metrics,
+            obr: obr_metrics,
             bd: bd_metrics,
-            cold_ratio_br_bd,
-            warm_ratio_br_bd,
+            cold_ratio_obr_bd,
+            warm_ratio_obr_bd,
         });
     }
 
@@ -966,11 +968,11 @@ fn benchmark_cold_warm(
         eprintln!("  Benchmarking show...");
 
         let show_args: Vec<&str> = vec!["show", &id, "--json"];
-        let br_metrics = measure_cold_warm(
-            &binaries.br.path,
+        let obr_metrics = measure_cold_warm(
+            &binaries.obr.path,
             &show_args,
-            &br_root,
-            "br",
+            &obr_root,
+            "obr",
             "show",
             WARM_RUNS,
         );
@@ -978,35 +980,36 @@ fn benchmark_cold_warm(
         // Use same ID for bd (copied workspace)
         let bd_metrics = measure_cold_warm(&bd.path, &show_args, &bd_root, "bd", "show", WARM_RUNS);
 
-        let cold_ratio_br_bd = if bd_metrics.cold_start_ms > 0 {
-            br_metrics.cold_start_ms as f64 / bd_metrics.cold_start_ms as f64
+        let cold_ratio_obr_bd = if bd_metrics.cold_start_ms > 0 {
+            obr_metrics.cold_start_ms as f64 / bd_metrics.cold_start_ms as f64
         } else {
             1.0
         };
 
-        let warm_ratio_br_bd = if bd_metrics.warm_avg_ms > 0.0 {
-            br_metrics.warm_avg_ms / bd_metrics.warm_avg_ms
+        let warm_ratio_obr_bd = if bd_metrics.warm_avg_ms > 0.0 {
+            obr_metrics.warm_avg_ms / bd_metrics.warm_avg_ms
         } else {
             1.0
         };
 
         comparisons.push(ColdWarmComparison {
             command: "show".to_string(),
-            br: br_metrics,
+            obr: obr_metrics,
             bd: bd_metrics,
-            cold_ratio_br_bd,
-            warm_ratio_br_bd,
+            cold_ratio_obr_bd,
+            warm_ratio_obr_bd,
         });
     }
 
     // Calculate summary
-    let br_cold_warm_ratios: Vec<f64> = comparisons.iter().map(|c| c.br.cold_warm_ratio).collect();
+    let obr_cold_warm_ratios: Vec<f64> =
+        comparisons.iter().map(|c| c.obr.cold_warm_ratio).collect();
     let bd_cold_warm_ratios: Vec<f64> = comparisons.iter().map(|c| c.bd.cold_warm_ratio).collect();
 
-    let br_avg_cold_warm_ratio = if br_cold_warm_ratios.is_empty() {
+    let obr_avg_cold_warm_ratio = if obr_cold_warm_ratios.is_empty() {
         1.0
     } else {
-        br_cold_warm_ratios.iter().sum::<f64>() / br_cold_warm_ratios.len() as f64
+        obr_cold_warm_ratios.iter().sum::<f64>() / obr_cold_warm_ratios.len() as f64
     };
 
     let bd_avg_cold_warm_ratio = if bd_cold_warm_ratios.is_empty() {
@@ -1015,20 +1018,20 @@ fn benchmark_cold_warm(
         bd_cold_warm_ratios.iter().sum::<f64>() / bd_cold_warm_ratios.len() as f64
     };
 
-    let br_faster_cold_count = comparisons
+    let obr_faster_cold_count = comparisons
         .iter()
-        .filter(|c| c.cold_ratio_br_bd < 1.0)
+        .filter(|c| c.cold_ratio_obr_bd < 1.0)
         .count();
-    let br_faster_warm_count = comparisons
+    let obr_faster_warm_count = comparisons
         .iter()
-        .filter(|c| c.warm_ratio_br_bd < 1.0)
+        .filter(|c| c.warm_ratio_obr_bd < 1.0)
         .count();
 
     let summary = ColdWarmSummary {
-        br_avg_cold_warm_ratio,
+        obr_avg_cold_warm_ratio,
         bd_avg_cold_warm_ratio,
-        br_faster_cold_count,
-        br_faster_warm_count,
+        obr_faster_cold_count,
+        obr_faster_warm_count,
         total_commands: comparisons.len(),
     };
 
@@ -1062,14 +1065,14 @@ fn print_benchmark(benchmark: &ColdWarmBenchmark) {
     println!(
         "\n{:<15} {:>12} {:>12} {:>10} {:>12} {:>12} {:>10} {:>12} {:>12}",
         "Command",
-        "br Cold(ms)",
-        "br Warm(ms)",
-        "br C/W",
+        "obr Cold(ms)",
+        "obr Warm(ms)",
+        "obr C/W",
         "bd Cold(ms)",
         "bd Warm(ms)",
         "bd C/W",
-        "Cold br/bd",
-        "Warm br/bd"
+        "Cold obr/bd",
+        "Warm obr/bd"
     );
     println!("{dash}");
 
@@ -1077,34 +1080,34 @@ fn print_benchmark(benchmark: &ColdWarmBenchmark) {
         println!(
             "{:<15} {:>12} {:>12.1} {:>10.2}x {:>12} {:>12.1} {:>10.2}x {:>12.2}x {:>12.2}x",
             c.command,
-            c.br.cold_start_ms,
-            c.br.warm_avg_ms,
-            c.br.cold_warm_ratio,
+            c.obr.cold_start_ms,
+            c.obr.warm_avg_ms,
+            c.obr.cold_warm_ratio,
             c.bd.cold_start_ms,
             c.bd.warm_avg_ms,
             c.bd.cold_warm_ratio,
-            c.cold_ratio_br_bd,
-            c.warm_ratio_br_bd
+            c.cold_ratio_obr_bd,
+            c.warm_ratio_obr_bd
         );
     }
 
     println!("{dash}");
     println!("\nSummary:");
     println!(
-        "  br average cold/warm ratio: {:.2}x",
-        benchmark.summary.br_avg_cold_warm_ratio
+        "  obr average cold/warm ratio: {:.2}x",
+        benchmark.summary.obr_avg_cold_warm_ratio
     );
     println!(
         "  bd average cold/warm ratio: {:.2}x",
         benchmark.summary.bd_avg_cold_warm_ratio
     );
     println!(
-        "  br faster on cold start: {}/{} commands",
-        benchmark.summary.br_faster_cold_count, benchmark.summary.total_commands
+        "  obr faster on cold start: {}/{} commands",
+        benchmark.summary.obr_faster_cold_count, benchmark.summary.total_commands
     );
     println!(
-        "  br faster on warm start: {}/{} commands",
-        benchmark.summary.br_faster_warm_count, benchmark.summary.total_commands
+        "  obr faster on warm start: {}/{} commands",
+        benchmark.summary.obr_faster_warm_count, benchmark.summary.total_commands
     );
     println!();
 }
@@ -1131,7 +1134,7 @@ fn cold_warm_small() {
         Ok(b) => b,
         Err(e) => {
             eprintln!("Binary discovery failed: {e}");
-            panic!("Cannot run benchmarks without br binary");
+            panic!("Cannot run benchmarks without obr binary");
         }
     };
 
@@ -1167,7 +1170,7 @@ fn cold_warm_medium() {
         Ok(b) => b,
         Err(e) => {
             eprintln!("Binary discovery failed: {e}");
-            panic!("Cannot run benchmarks without br binary");
+            panic!("Cannot run benchmarks without obr binary");
         }
     };
 
@@ -1202,7 +1205,7 @@ fn cold_warm_large() {
         Ok(b) => b,
         Err(e) => {
             eprintln!("Binary discovery failed: {e}");
-            panic!("Cannot run benchmarks without br binary");
+            panic!("Cannot run benchmarks without obr binary");
         }
     };
 
@@ -1237,14 +1240,14 @@ fn cold_warm_all() {
         Ok(b) => b,
         Err(e) => {
             eprintln!("Binary discovery failed: {e}");
-            panic!("Cannot run benchmarks without br binary");
+            panic!("Cannot run benchmarks without obr binary");
         }
     };
 
     println!(
-        "br: {} ({})",
-        binaries.br.path.display(),
-        binaries.br.version
+        "obr: {} ({})",
+        binaries.obr.path.display(),
+        binaries.obr.version
     );
     if let Some(ref bd) = binaries.bd {
         println!("bd: {} ({})", bd.path.display(), bd.version);
@@ -1292,14 +1295,14 @@ fn cold_warm_all() {
     for b in &all_benchmarks {
         println!("\n{}: {} issues", b.dataset_name, b.issue_count);
         println!(
-            "  br cold/warm ratio: {:.2}x, bd cold/warm ratio: {:.2}x",
-            b.summary.br_avg_cold_warm_ratio, b.summary.bd_avg_cold_warm_ratio
+            "  obr cold/warm ratio: {:.2}x, bd cold/warm ratio: {:.2}x",
+            b.summary.obr_avg_cold_warm_ratio, b.summary.bd_avg_cold_warm_ratio
         );
         println!(
-            "  br faster: cold {}/{}, warm {}/{}",
-            b.summary.br_faster_cold_count,
+            "  obr faster: cold {}/{}, warm {}/{}",
+            b.summary.obr_faster_cold_count,
             b.summary.total_commands,
-            b.summary.br_faster_warm_count,
+            b.summary.obr_faster_warm_count,
             b.summary.total_commands
         );
     }
@@ -1316,7 +1319,7 @@ fn cold_warm_real_datasets() {
         Ok(b) => b,
         Err(e) => {
             eprintln!("Binary discovery failed: {e}");
-            panic!("Cannot run benchmarks without br binary");
+            panic!("Cannot run benchmarks without obr binary");
         }
     };
 
@@ -1329,16 +1332,16 @@ fn cold_warm_real_datasets() {
     };
 
     println!(
-        "br: {} ({})",
-        binaries.br.path.display(),
-        binaries.br.version
+        "obr: {} ({})",
+        binaries.obr.path.display(),
+        binaries.obr.version
     );
     println!("bd: {} ({})", bd.path.display(), bd.version);
 
     let mut all_results = Vec::new();
 
     for dataset in KnownDataset::all() {
-        if !dataset.beads_dir().exists() {
+        if !dataset.obr_dir().exists() {
             println!("\nSkipping {} (not available)", dataset.name());
             continue;
         }
@@ -1346,10 +1349,10 @@ fn cold_warm_real_datasets() {
         println!("\n--- Dataset: {} ---", dataset.name());
 
         // Create isolated copies
-        let br_isolated = match IsolatedDataset::from_dataset(*dataset) {
+        let obr_isolated = match IsolatedDataset::from_dataset(*dataset) {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("Failed to create br workspace: {e}");
+                eprintln!("Failed to create obr workspace: {e}");
                 continue;
             }
         };
@@ -1362,19 +1365,19 @@ fn cold_warm_real_datasets() {
             }
         };
 
-        let issue_count = br_isolated.metadata.issue_count;
-        let issue_id = get_first_issue_id(&binaries.br.path, br_isolated.workspace_root());
+        let issue_count = obr_isolated.metadata.issue_count;
+        let issue_id = get_first_issue_id(&binaries.obr.path, obr_isolated.workspace_root());
 
         let mut comparisons = Vec::new();
 
         for (label, args) in BENCHMARK_COMMANDS {
             eprintln!("  Benchmarking {label}...");
 
-            let br_metrics = measure_cold_warm(
-                &binaries.br.path,
+            let obr_metrics = measure_cold_warm(
+                &binaries.obr.path,
                 args,
-                br_isolated.workspace_root(),
-                "br",
+                obr_isolated.workspace_root(),
+                "obr",
                 label,
                 WARM_RUNS,
             );
@@ -1388,24 +1391,24 @@ fn cold_warm_real_datasets() {
                 WARM_RUNS,
             );
 
-            let cold_ratio_br_bd = if bd_metrics.cold_start_ms > 0 {
-                br_metrics.cold_start_ms as f64 / bd_metrics.cold_start_ms as f64
+            let cold_ratio_obr_bd = if bd_metrics.cold_start_ms > 0 {
+                obr_metrics.cold_start_ms as f64 / bd_metrics.cold_start_ms as f64
             } else {
                 1.0
             };
 
-            let warm_ratio_br_bd = if bd_metrics.warm_avg_ms > 0.0 {
-                br_metrics.warm_avg_ms / bd_metrics.warm_avg_ms
+            let warm_ratio_obr_bd = if bd_metrics.warm_avg_ms > 0.0 {
+                obr_metrics.warm_avg_ms / bd_metrics.warm_avg_ms
             } else {
                 1.0
             };
 
             comparisons.push(ColdWarmComparison {
                 command: label.to_string(),
-                br: br_metrics,
+                obr: obr_metrics,
                 bd: bd_metrics,
-                cold_ratio_br_bd,
-                warm_ratio_br_bd,
+                cold_ratio_obr_bd,
+                warm_ratio_obr_bd,
             });
         }
 
@@ -1414,11 +1417,11 @@ fn cold_warm_real_datasets() {
             eprintln!("  Benchmarking show...");
             let show_args: Vec<&str> = vec!["show", &id, "--json"];
 
-            let br_metrics = measure_cold_warm(
-                &binaries.br.path,
+            let obr_metrics = measure_cold_warm(
+                &binaries.obr.path,
                 &show_args,
-                br_isolated.workspace_root(),
-                "br",
+                obr_isolated.workspace_root(),
+                "obr",
                 "show",
                 WARM_RUNS,
             );
@@ -1432,37 +1435,37 @@ fn cold_warm_real_datasets() {
                 WARM_RUNS,
             );
 
-            let cold_ratio_br_bd = if bd_metrics.cold_start_ms > 0 {
-                br_metrics.cold_start_ms as f64 / bd_metrics.cold_start_ms as f64
+            let cold_ratio_obr_bd = if bd_metrics.cold_start_ms > 0 {
+                obr_metrics.cold_start_ms as f64 / bd_metrics.cold_start_ms as f64
             } else {
                 1.0
             };
 
-            let warm_ratio_br_bd = if bd_metrics.warm_avg_ms > 0.0 {
-                br_metrics.warm_avg_ms / bd_metrics.warm_avg_ms
+            let warm_ratio_obr_bd = if bd_metrics.warm_avg_ms > 0.0 {
+                obr_metrics.warm_avg_ms / bd_metrics.warm_avg_ms
             } else {
                 1.0
             };
 
             comparisons.push(ColdWarmComparison {
                 command: "show".to_string(),
-                br: br_metrics,
+                obr: obr_metrics,
                 bd: bd_metrics,
-                cold_ratio_br_bd,
-                warm_ratio_br_bd,
+                cold_ratio_obr_bd,
+                warm_ratio_obr_bd,
             });
         }
 
         // Calculate summary
-        let br_cold_warm_ratios: Vec<f64> =
-            comparisons.iter().map(|c| c.br.cold_warm_ratio).collect();
+        let obr_cold_warm_ratios: Vec<f64> =
+            comparisons.iter().map(|c| c.obr.cold_warm_ratio).collect();
         let bd_cold_warm_ratios: Vec<f64> =
             comparisons.iter().map(|c| c.bd.cold_warm_ratio).collect();
 
-        let br_avg_cold_warm_ratio = if br_cold_warm_ratios.is_empty() {
+        let obr_avg_cold_warm_ratio = if obr_cold_warm_ratios.is_empty() {
             1.0
         } else {
-            br_cold_warm_ratios.iter().sum::<f64>() / br_cold_warm_ratios.len() as f64
+            obr_cold_warm_ratios.iter().sum::<f64>() / obr_cold_warm_ratios.len() as f64
         };
 
         let bd_avg_cold_warm_ratio = if bd_cold_warm_ratios.is_empty() {
@@ -1472,15 +1475,15 @@ fn cold_warm_real_datasets() {
         };
 
         let summary = ColdWarmSummary {
-            br_avg_cold_warm_ratio,
+            obr_avg_cold_warm_ratio,
             bd_avg_cold_warm_ratio,
-            br_faster_cold_count: comparisons
+            obr_faster_cold_count: comparisons
                 .iter()
-                .filter(|c| c.cold_ratio_br_bd < 1.0)
+                .filter(|c| c.cold_ratio_obr_bd < 1.0)
                 .count(),
-            br_faster_warm_count: comparisons
+            obr_faster_warm_count: comparisons
                 .iter()
-                .filter(|c| c.warm_ratio_br_bd < 1.0)
+                .filter(|c| c.warm_ratio_obr_bd < 1.0)
                 .count(),
             total_commands: comparisons.len(),
         };
@@ -1511,7 +1514,7 @@ fn cold_warm_real_datasets() {
 /// Smoke runner for the storage-open startup matrix artifact bundle.
 #[test]
 fn startup_matrix_smoke_bundle_covers_storage_open_states() -> std::io::Result<()> {
-    let br_path = assert_cmd::cargo::cargo_bin!("br");
+    let obr_path = assert_cmd::cargo::cargo_bin!("obr");
     let run_id = format!(
         "startup-matrix-smoke-{}-{}",
         chrono::Utc::now().format("%Y%m%dT%H%M%S%fZ"),
@@ -1519,7 +1522,7 @@ fn startup_matrix_smoke_bundle_covers_storage_open_states() -> std::io::Result<(
     );
     let bundle_dir = PathBuf::from("target").join("perf-artifacts").join(run_id);
 
-    let manifest = write_startup_matrix_smoke_bundle(br_path, &bundle_dir)?;
+    let manifest = write_startup_matrix_smoke_bundle(obr_path, &bundle_dir)?;
     let validation = ArtifactValidator::new().validate_startup_matrix_bundle_dir(&bundle_dir);
     assert!(
         validation.valid,
@@ -1543,7 +1546,7 @@ fn startup_matrix_smoke_bundle_covers_storage_open_states() -> std::io::Result<(
 /// Smoke runner for the reusable performance evidence ledger bundle.
 #[test]
 fn perf_evidence_smoke_bundle_records_list_json_command() -> std::io::Result<()> {
-    let br_path = assert_cmd::cargo::cargo_bin!("br");
+    let obr_path = assert_cmd::cargo::cargo_bin!("obr");
     let run_id = format!(
         "perf-evidence-smoke-{}-{}",
         chrono::Utc::now().format("%Y%m%dT%H%M%S%fZ"),
@@ -1551,14 +1554,14 @@ fn perf_evidence_smoke_bundle_records_list_json_command() -> std::io::Result<()>
     );
     let bundle_dir = PathBuf::from("target").join("perf-artifacts").join(run_id);
 
-    let manifest = write_perf_evidence_smoke_bundle(br_path, &bundle_dir)?;
+    let manifest = write_perf_evidence_smoke_bundle(obr_path, &bundle_dir)?;
     let validation = ArtifactValidator::new().validate_perf_evidence_bundle_dir(&bundle_dir);
     assert!(
         validation.valid,
         "perf evidence bundle should validate: {:?}",
         validation.errors
     );
-    assert_eq!(manifest.schema_version, "br.perf-evidence.v1");
+    assert_eq!(manifest.schema_version, "obr.perf-evidence.v1");
     assert_eq!(manifest.command.args, ["list", "--json"]);
     assert_eq!(manifest.policy.mode, "enforcing");
     assert_eq!(manifest.comparison.status, "pass");

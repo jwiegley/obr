@@ -7,11 +7,11 @@
 //! - tombstone protection (tombstoned issues cannot be resurrected)
 //! - conflict detection under Manual strategy
 
-use beads_rust::model::{Issue, IssueType, Priority, Status};
-use beads_rust::sync::{
+use chrono::{Duration, TimeZone, Utc};
+use obr::model::{Issue, IssueType, Priority, Status};
+use obr::sync::{
     ConflictResolution, ConflictType, MergeContext, MergeResult, merge_issue, three_way_merge,
 };
-use chrono::{Duration, TimeZone, Utc};
 use proptest::prelude::*;
 use std::collections::{HashMap, HashSet};
 

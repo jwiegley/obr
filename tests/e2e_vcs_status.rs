@@ -1,4 +1,4 @@
-//! End-to-end contract tests for the explicit, bounded `br vcs-status`
+//! End-to-end contract tests for the explicit, bounded `obr vcs-status`
 //! diagnostic. These tests intentionally live outside sync safety coverage:
 //! VCS process authority is opt-in and isolated to this command.
 
@@ -7,14 +7,20 @@
 mod common;
 
 use common::cli::{
-    BrWorkspace, extract_json_payload, run_br, run_br_smoke_at_root_with_env, run_br_with_env,
+    ObrWorkspace, extract_json_payload, pin_jsonl, run_obr, run_obr_smoke_at_root_with_env,
+    run_obr_with_env,
 };
 use serde_json::Value;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-const JSONL: &str = ".beads/issues.jsonl";
+/// Every test in this file is Class A: `vcs-status` inspects the JSONL export
+/// artifact, and the fixtures key Git plumbing (`update-index`, `hash-object`,
+/// `--cacheinfo`) and `.gitattributes` patterns to this exact literal path, or
+/// pass an explicit `--jsonl <leaf>`. Workspaces are therefore pinned to the
+/// legacy JSONL export rather than following the Org default.
+const JSONL: &str = ".obr/issues.jsonl";
 
 fn git(root: &Path, args: &[&str]) -> std::process::Output {
     Command::new("git")
@@ -48,6 +54,35 @@ fn git_ok(root: &Path, args: &[&str]) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+/// Re-include the pinned in-dir export so git reports it as UNTRACKED.
+///
+/// P6-06 made `.obr/` self-ignoring, which correctly turns an in-dir export
+/// into an *ignored* file. Scenarios whose subject is the untracked → staged
+/// → dirty progression need the untracked state to exist at all, so they
+/// negate the rule for this one leaf rather than assert the ignored state and
+/// lose the coverage. Scenarios whose subject IS ignoring do not call this.
+fn unignore_export(root: &Path) {
+    let inner = root.join(".obr").join(".gitignore");
+    let mut body = std::fs::read_to_string(&inner).unwrap_or_default();
+    if !body.ends_with('\n') {
+        body.push('\n');
+    }
+    body.push_str("!issues.jsonl\n");
+    std::fs::write(&inner, body).expect("negate the export ignore rule");
+}
+
+/// `git add` for the pinned in-dir export these tests deliberately track.
+///
+/// P6-06 made `.obr/` self-ignoring, so a plain `git add .obr/issues.jsonl`
+/// is refused. These scenarios exist precisely to exercise git states for a
+/// tracked in-dir leaf, so forcing the add is the honest expression of the
+/// setup — it does not change what any assertion checks.
+fn git_add_export(root: &Path, args: &[&str]) {
+    let mut forced = vec!["add", "-f"];
+    forced.extend_from_slice(args);
+    git_ok(root, &forced);
 }
 
 fn git_stdout(root: &Path, args: &[&str]) -> String {
@@ -100,41 +135,43 @@ fn git_with_stdin_ok(root: &Path, args: &[&str], input: &str) {
     );
 }
 
-fn export_workspace() -> BrWorkspace {
-    let workspace = BrWorkspace::new();
+fn export_workspace() -> ObrWorkspace {
+    let workspace = ObrWorkspace::new();
     git_ok(&workspace.root, &["init", "--initial-branch=main"]);
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
-    let create = run_br(&workspace, ["create", "VCS status issue"], "create");
+    pin_jsonl(&workspace.root.join(".obr"));
+    let create = run_obr(&workspace, ["create", "VCS status issue"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "flush");
     assert!(flush.status.success(), "flush failed: {}", flush.stderr);
     workspace
 }
 
-fn tracked_workspace() -> BrWorkspace {
+fn tracked_workspace() -> ObrWorkspace {
     let workspace = export_workspace();
-    git_ok(&workspace.root, &["add", JSONL]);
+    git_add_export(&workspace.root, &[JSONL]);
     git_ok(&workspace.root, &["commit", "-m", "track JSONL export"]);
     workspace
 }
 
-fn head_then_untracked_export_workspace() -> BrWorkspace {
-    let workspace = BrWorkspace::new();
+fn head_then_untracked_export_workspace() -> ObrWorkspace {
+    let workspace = ObrWorkspace::new();
     git_ok(&workspace.root, &["init", "--initial-branch=main"]);
     std::fs::write(workspace.root.join("README.md"), "fixture\n").expect("README");
     git_ok(&workspace.root, &["add", "README.md"]);
     git_ok(&workspace.root, &["commit", "-m", "initial HEAD"]);
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
-    let create = run_br(&workspace, ["create", "VCS status issue"], "create");
+    pin_jsonl(&workspace.root.join(".obr"));
+    let create = run_obr(&workspace, ["create", "VCS status issue"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "flush");
     assert!(flush.status.success(), "flush failed: {}", flush.stderr);
     workspace
 }
 
-fn append_jsonl(workspace: &BrWorkspace, id: &str) {
+fn append_jsonl(workspace: &ObrWorkspace, id: &str) {
     let mut file = std::fs::OpenOptions::new()
         .append(true)
         .open(workspace.root.join(JSONL))
@@ -142,8 +179,8 @@ fn append_jsonl(workspace: &BrWorkspace, id: &str) {
     writeln!(file, "{{\"id\":\"{id}\"}}").expect("append JSONL");
 }
 
-fn vcs_status_json(workspace: &BrWorkspace, label: &str) -> Value {
-    let output = run_br(workspace, ["vcs-status", "--json"], label);
+fn vcs_status_json(workspace: &ObrWorkspace, label: &str) -> Value {
+    let output = run_obr(workspace, ["vcs-status", "--json"], label);
     assert!(
         output.status.success(),
         "vcs-status failed: {}",
@@ -155,13 +192,13 @@ fn vcs_status_json(workspace: &BrWorkspace, label: &str) -> Value {
 }
 
 fn assert_common_contract(value: &Value, available: bool) {
-    assert_eq!(value["schema"], "br.vcs-export-status.v2", "{value}");
+    assert_eq!(value["schema"], "obr.vcs-export-status.v2", "{value}");
     assert_eq!(value["requested"], true, "{value}");
     assert_eq!(value["available"], available, "{value}");
     assert_eq!(value["vcs"], "git", "{value}");
     assert_eq!(value["observation_atomic"], false, "{value}");
     assert_eq!(value["path_scope"], "workspace", "{value}");
-    assert_eq!(value["path"], ".beads/issues.jsonl", "{value}");
+    assert_eq!(value["path"], ".obr/issues.jsonl", "{value}");
     assert!(value["timeout_ms"].as_u64().is_some(), "{value}");
     assert!(value["duration_ms"].as_u64().is_some(), "{value}");
 }
@@ -172,6 +209,7 @@ fn e2e_vcs_status_tracks_untracked_clean_unstaged_staged_and_double_dirty_states
         "e2e_vcs_status_tracks_untracked_clean_unstaged_staged_and_double_dirty_states",
     );
     let workspace = export_workspace();
+    unignore_export(&workspace.root);
     let untracked = vcs_status_json(&workspace, "untracked");
     assert_common_contract(&untracked, true);
     assert!(untracked.get("reason").is_none(), "{untracked}");
@@ -199,7 +237,7 @@ fn e2e_vcs_status_tracks_untracked_clean_unstaged_staged_and_double_dirty_states
         "{untracked}"
     );
 
-    git_ok(&workspace.root, &["add", JSONL]);
+    git_add_export(&workspace.root, &[JSONL]);
     git_ok(&workspace.root, &["commit", "-m", "track JSONL export"]);
     let committed = vcs_status_json(&workspace, "committed");
     assert_common_contract(&committed, true);
@@ -225,7 +263,7 @@ fn e2e_vcs_status_tracks_untracked_clean_unstaged_staged_and_double_dirty_states
         "{unstaged}"
     );
 
-    git_ok(&workspace.root, &["add", JSONL]);
+    git_add_export(&workspace.root, &[JSONL]);
     let staged = vcs_status_json(&workspace, "staged_matching");
     assert_common_contract(&staged, true);
     assert_eq!(staged["index_clean"], false, "{staged}");
@@ -252,18 +290,19 @@ fn e2e_vcs_status_tracks_untracked_clean_unstaged_staged_and_double_dirty_states
 #[test]
 fn e2e_vcs_status_computes_sha256_repository_blob_ids_in_process() {
     let _log = common::test_log("e2e_vcs_status_computes_sha256_repository_blob_ids_in_process");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     git_ok(
         &workspace.root,
         &["init", "--initial-branch=main", "--object-format=sha256"],
     );
-    let init = run_br(&workspace, ["init"], "sha256_init");
+    let init = run_obr(&workspace, ["init"], "sha256_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
-    let create = run_br(&workspace, ["create", "SHA-256 VCS issue"], "sha256_create");
+    pin_jsonl(&workspace.root.join(".obr"));
+    let create = run_obr(&workspace, ["create", "SHA-256 VCS issue"], "sha256_create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "sha256_flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "sha256_flush");
     assert!(flush.status.success(), "flush failed: {}", flush.stderr);
-    git_ok(&workspace.root, &["add", JSONL]);
+    git_add_export(&workspace.root, &[JSONL]);
     git_ok(&workspace.root, &["commit", "-m", "track SHA-256 export"]);
 
     let status = vcs_status_json(&workspace, "sha256_status");
@@ -291,7 +330,8 @@ fn e2e_vcs_status_distinguishes_staged_add_delete_recreate_and_unstaged_delete()
     );
 
     let staged_add_workspace = head_then_untracked_export_workspace();
-    git_ok(&staged_add_workspace.root, &["add", JSONL]);
+    unignore_export(&staged_add_workspace.root);
+    git_add_export(&staged_add_workspace.root, &[JSONL]);
     let staged_add = vcs_status_json(&staged_add_workspace, "staged_add");
     assert_common_contract(&staged_add, true);
     assert_eq!(staged_add["tracked"], true, "{staged_add}");
@@ -302,8 +342,9 @@ fn e2e_vcs_status_distinguishes_staged_add_delete_recreate_and_unstaged_delete()
     assert_eq!(staged_add["worktree_clean"], true, "{staged_add}");
 
     let workspace = tracked_workspace();
+    unignore_export(&workspace.root);
     let path = workspace.root.join(JSONL);
-    let retained = workspace.root.join(".beads/retained-export.jsonl");
+    let retained = workspace.root.join(".obr/retained-export.jsonl");
     std::fs::rename(&path, &retained).expect("retain JSONL outside its tracked name");
 
     let unstaged_delete = vcs_status_json(&workspace, "unstaged_delete");
@@ -344,6 +385,7 @@ fn e2e_vcs_status_handles_unborn_ignored_intent_to_add_and_unmerged_index() {
         common::test_log("e2e_vcs_status_handles_unborn_ignored_intent_to_add_and_unmerged_index");
 
     let unborn = export_workspace();
+    unignore_export(&unborn.root);
     let unborn_status = vcs_status_json(&unborn, "unborn_head");
     assert_common_contract(&unborn_status, true);
     assert!(unborn_status.get("head").is_none(), "{unborn_status}");
@@ -354,7 +396,7 @@ fn e2e_vcs_status_handles_unborn_ignored_intent_to_add_and_unmerged_index() {
     );
 
     let ignored = export_workspace();
-    std::fs::write(ignored.root.join(".gitignore"), ".beads/issues.jsonl\n").expect("gitignore");
+    std::fs::write(ignored.root.join(".gitignore"), ".obr/issues.jsonl\n").expect("gitignore");
     git_ok(&ignored.root, &["add", ".gitignore"]);
     git_ok(&ignored.root, &["commit", "-m", "ignore export"]);
     let ignored_status = vcs_status_json(&ignored, "ignored_untracked");
@@ -367,7 +409,7 @@ fn e2e_vcs_status_handles_unborn_ignored_intent_to_add_and_unmerged_index() {
     assert_eq!(ignored_status["worktree_clean"], false, "{ignored_status}");
 
     let intent = head_then_untracked_export_workspace();
-    git_ok(&intent.root, &["add", "--intent-to-add", JSONL]);
+    git_add_export(&intent.root, &["--intent-to-add", JSONL]);
     let intent_status = vcs_status_json(&intent, "intent_to_add");
     assert_common_contract(&intent_status, true);
     assert_eq!(intent_status["tracked"], true, "{intent_status}");
@@ -380,7 +422,7 @@ fn e2e_vcs_status_handles_unborn_ignored_intent_to_add_and_unmerged_index() {
 
     let unmerged = tracked_workspace();
     let head_oid = git_stdout(&unmerged.root, &["rev-parse", &format!("HEAD:{JSONL}")]);
-    let alternate_path = unmerged.root.join(".beads/alternate.jsonl");
+    let alternate_path = unmerged.root.join(".obr/alternate.jsonl");
     std::fs::write(&alternate_path, "{\"id\":\"alternate\"}\n").expect("alternate blob");
     let alternate_text = alternate_path.to_string_lossy();
     let alternate_oid = git_stdout(
@@ -485,7 +527,7 @@ fn e2e_vcs_status_refuses_every_configured_content_transform_without_losing_inde
             TransformFixture::TextEol => {
                 std::fs::write(
                     workspace.root.join(".gitattributes"),
-                    ".beads/issues.jsonl text eol=crlf\n",
+                    ".obr/issues.jsonl text eol=crlf\n",
                 )
                 .expect("text/eol attributes");
                 std::fs::write(workspace.root.join(JSONL), b"{\"id\":\"crlf\"}\r\n")
@@ -494,14 +536,14 @@ fn e2e_vcs_status_refuses_every_configured_content_transform_without_losing_inde
             TransformFixture::WorkingTreeEncoding => {
                 std::fs::write(
                     workspace.root.join(".gitattributes"),
-                    ".beads/issues.jsonl working-tree-encoding=UTF-16\n",
+                    ".obr/issues.jsonl working-tree-encoding=UTF-16\n",
                 )
                 .expect("working-tree-encoding attribute");
             }
             TransformFixture::Ident => {
                 std::fs::write(
                     workspace.root.join(".gitattributes"),
-                    ".beads/issues.jsonl ident\n",
+                    ".obr/issues.jsonl ident\n",
                 )
                 .expect("ident attribute");
             }
@@ -514,7 +556,7 @@ fn e2e_vcs_status_refuses_every_configured_content_transform_without_losing_inde
             TransformFixture::CoreAttributesFile => {
                 std::fs::write(
                     workspace.root.join(".custom-attributes"),
-                    ".beads/issues.jsonl text\n",
+                    ".obr/issues.jsonl text\n",
                 )
                 .expect("custom attributes");
                 git_ok(
@@ -530,7 +572,7 @@ fn e2e_vcs_status_refuses_every_configured_content_transform_without_losing_inde
             TransformFixture::InfoAttributes => {
                 std::fs::write(
                     workspace.root.join(".git/info/attributes"),
-                    ".beads/issues.jsonl text\n",
+                    ".obr/issues.jsonl text\n",
                 )
                 .expect("repository-local info attributes");
             }
@@ -623,7 +665,7 @@ fn e2e_vcs_status_honors_linked_worktree_effective_config() {
     permissions.set_mode(0o755);
     std::fs::set_permissions(&jsonl, permissions).expect("change linked JSONL executable bits");
 
-    let filemode = run_br_smoke_at_root_with_env(
+    let filemode = run_obr_smoke_at_root_with_env(
         &linked,
         ["vcs-status", "--json"],
         hermetic_env,
@@ -644,7 +686,7 @@ fn e2e_vcs_status_honors_linked_worktree_effective_config() {
             ".linked-attributes",
         ],
     );
-    let attributes = run_br_smoke_at_root_with_env(
+    let attributes = run_obr_smoke_at_root_with_env(
         &linked,
         ["vcs-status", "--json"],
         hermetic_env,
@@ -667,7 +709,7 @@ fn e2e_vcs_status_honors_linked_worktree_effective_config() {
         &["config", "--worktree", "--unset", "core.attributesFile"],
     );
     git_ok(&linked, &["config", "--worktree", "core.autocrlf", "true"]);
-    let autocrlf = run_br_smoke_at_root_with_env(
+    let autocrlf = run_obr_smoke_at_root_with_env(
         &linked,
         ["vcs-status", "--json"],
         hermetic_env,
@@ -701,7 +743,7 @@ fn e2e_vcs_status_honors_effective_global_transform_configuration() {
         std::fs::create_dir(&isolated_home).expect("isolated HOME");
         std::fs::write(isolated_home.join(".gitconfig"), config).expect("global config");
 
-        let output = run_br_with_env(
+        let output = run_obr_with_env(
             &workspace,
             ["vcs-status", "--json"],
             [("HOME", isolated_home.as_os_str())],
@@ -767,7 +809,7 @@ fn e2e_vcs_status_never_executes_a_configured_clean_filter() {
     );
     std::fs::write(
         workspace.root.join(".gitattributes"),
-        ".beads/issues.jsonl filter=sentinel\n",
+        ".obr/issues.jsonl filter=sentinel\n",
     )
     .expect("filter attribute");
 
@@ -786,7 +828,7 @@ fn e2e_vcs_status_never_executes_a_configured_clean_filter() {
         "the configured clean filter executed during a read-only diagnostic"
     );
 
-    let human = run_br(&workspace, ["vcs-status"], "hostile_filter_human");
+    let human = run_obr(&workspace, ["vcs-status"], "hostile_filter_human");
     assert!(human.status.success(), "{}", human.stderr);
     assert!(
         human.stdout.contains("Worktree clean: unavailable"),
@@ -831,7 +873,7 @@ fn e2e_vcs_status_detects_executable_changes_and_refuses_index_type_comparison()
     );
 
     let type_change = tracked_workspace();
-    let link_blob = type_change.root.join(".beads/link-target.txt");
+    let link_blob = type_change.root.join(".obr/link-target.txt");
     std::fs::write(&link_blob, "elsewhere.jsonl").expect("symlink blob content");
     let link_blob_text = link_blob.to_string_lossy();
     let oid = git_stdout(
@@ -860,9 +902,10 @@ fn e2e_vcs_status_detects_executable_changes_and_refuses_index_type_comparison()
 #[test]
 fn e2e_vcs_status_reports_non_repo_and_missing_git_without_failing() {
     let _log = common::test_log("e2e_vcs_status_reports_non_repo_and_missing_git_without_failing");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     let outside_repo = vcs_status_json(&workspace, "outside_repo");
     assert_common_contract(&outside_repo, false);
@@ -888,7 +931,7 @@ fn e2e_vcs_status_reports_non_repo_and_missing_git_without_failing() {
 
     let empty_path = workspace.root.join("empty-path");
     std::fs::create_dir(&empty_path).expect("empty PATH directory");
-    let missing = run_br_with_env(
+    let missing = run_obr_with_env(
         &workspace,
         ["vcs-status", "--json"],
         [("PATH", empty_path.as_os_str())],
@@ -902,10 +945,15 @@ fn e2e_vcs_status_reports_non_repo_and_missing_git_without_failing() {
     let missing: Value =
         serde_json::from_str(&extract_json_payload(&missing.stdout)).expect("missing-Git JSON");
     assert_common_contract(&missing, false);
-    // This workspace was never `git init`ed, so the filesystem marker probe
-    // classifies it as not-a-repository before the (absent) git binary is
-    // ever needed — the more truthful diagnosis of the two (#409).
-    assert_eq!(missing["reason"], "not_git_repository", "{missing}");
+    // Upstream 0.3.2 changed this expectation to `not_git_repository`, on the
+    // argument that the filesystem marker probe can answer without git — but
+    // no released `verify_repository`, theirs or ours, reaches that probe when
+    // the binary itself cannot be spawned: `run_named_probe` returns
+    // `GitUnavailable` and the `?` short-circuits before the marker branch.
+    // The expectation is imported only when the code behind it is, so this
+    // keeps the reason the tool actually produces. With git absent, "git is
+    // unavailable" is also the only claim the run has evidence for.
+    assert_eq!(missing["reason"], "git_unavailable", "{missing}");
 }
 
 #[test]
@@ -914,14 +962,9 @@ fn e2e_vcs_status_distinguishes_missing_leaf_parent_and_corrupt_repository() {
         common::test_log("e2e_vcs_status_distinguishes_missing_leaf_parent_and_corrupt_repository");
     let workspace = tracked_workspace();
 
-    let absent = run_br(
+    let absent = run_obr(
         &workspace,
-        [
-            "vcs-status",
-            "--jsonl",
-            ".beads/not-created.jsonl",
-            "--json",
-        ],
+        ["vcs-status", "--jsonl", ".obr/not-created.jsonl", "--json"],
         "missing_leaf",
     );
     assert!(absent.status.success(), "{}", absent.stderr);
@@ -931,12 +974,12 @@ fn e2e_vcs_status_distinguishes_missing_leaf_parent_and_corrupt_repository() {
     assert_eq!(absent["worktree_state"], "absent", "{absent}");
     assert_eq!(absent["worktree_clean"], true, "{absent}");
 
-    let missing_parent = run_br(
+    let missing_parent = run_obr(
         &workspace,
         [
             "vcs-status",
             "--jsonl",
-            ".beads/not-created/issues.jsonl",
+            ".obr/not-created/issues.jsonl",
             "--json",
         ],
         "missing_parent",
@@ -970,7 +1013,7 @@ fn e2e_vcs_status_large_source_capture_honors_probe_deadline() {
     file.set_len(256 * 1024 * 1024)
         .expect("create sparse large-source fixture");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["vcs-status", "--timeout-ms", "25", "--json"],
         "large_source_deadline",
@@ -994,7 +1037,7 @@ fn e2e_vcs_status_enforces_external_opt_in_before_inspecting_the_leaf() {
     let external_directory = workspace.root.join("external-directory.jsonl");
     std::fs::create_dir(&external_directory).expect("non-regular external leaf");
     let external_text = external_directory.to_string_lossy();
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["vcs-status", "--jsonl", external_text.as_ref(), "--json"],
         "external_without_opt_in",
@@ -1023,13 +1066,13 @@ fn e2e_vcs_status_rejects_a_jsonl_leaf_symlink() {
 
     let _log = common::test_log("e2e_vcs_status_rejects_a_jsonl_leaf_symlink");
     let workspace = tracked_workspace();
-    let target = workspace.root.join(".beads/symlink-target.jsonl");
+    let target = workspace.root.join(".obr/symlink-target.jsonl");
     std::fs::write(&target, "{\"protected\":true}\n").expect("symlink target");
-    let leaf = workspace.root.join(".beads/linked.jsonl");
+    let leaf = workspace.root.join(".obr/linked.jsonl");
     symlink(&target, &leaf).expect("JSONL leaf symlink");
-    let output = run_br(
+    let output = run_obr(
         &workspace,
-        ["vcs-status", "--jsonl", ".beads/linked.jsonl", "--json"],
+        ["vcs-status", "--jsonl", ".obr/linked.jsonl", "--json"],
         "symlink_leaf",
     );
     assert!(!output.status.success(), "symlink leaf must be rejected");
@@ -1048,9 +1091,9 @@ fn e2e_vcs_status_rejects_a_jsonl_leaf_symlink() {
 fn e2e_vcs_status_redacts_external_paths_from_machine_and_human_output() {
     let _log =
         common::test_log("e2e_vcs_status_redacts_external_paths_from_machine_and_human_output");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     git_ok(&workspace.root, &["init", "--initial-branch=main"]);
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let secret_name = "tenant-very-secret-export.jsonl";
@@ -1058,7 +1101,7 @@ fn e2e_vcs_status_redacts_external_paths_from_machine_and_human_output() {
     std::fs::write(&external, "{\"id\":\"bd-redacted\"}\n").expect("external JSONL");
     let external_text = external.to_string_lossy().into_owned();
 
-    let machine = run_br(
+    let machine = run_obr(
         &workspace,
         [
             "vcs-status",
@@ -1079,7 +1122,7 @@ fn e2e_vcs_status_redacts_external_paths_from_machine_and_human_output() {
     assert!(label.starts_with("<external-jsonl sha256="), "{value}");
     assert!(label.ends_with('>'), "{value}");
 
-    let human = run_br(
+    let human = run_obr(
         &workspace,
         [
             "vcs-status",
@@ -1105,13 +1148,13 @@ fn e2e_vcs_status_redacts_external_paths_from_machine_and_human_output() {
 }
 
 fn assert_external_capture_failure_is_redacted(
-    workspace: &BrWorkspace,
+    workspace: &ObrWorkspace,
     path: &Path,
     secret_fragment: &str,
     label: &str,
 ) {
     let path_text = path.to_string_lossy().into_owned();
-    let output = run_br(
+    let output = run_obr(
         workspace,
         [
             "vcs-status",

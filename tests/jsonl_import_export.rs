@@ -1,13 +1,13 @@
 mod common;
 
-use beads_rust::model::{Comment, DependencyType, Issue, Priority, Status};
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{
+use chrono::{Duration, TimeZone, Utc};
+use common::fixtures;
+use obr::model::{Comment, DependencyType, Issue, Priority, Status};
+use obr::storage::SqliteStorage;
+use obr::sync::{
     ExportConfig, ImportConfig, export_to_jsonl, finalize_export, import_from_jsonl,
     read_issues_from_jsonl,
 };
-use chrono::{Duration, TimeZone, Utc};
-use common::fixtures;
 use std::fs;
 use tempfile::TempDir;
 
@@ -115,30 +115,33 @@ fn export_sorts_by_id() {
 }
 
 #[test]
-fn export_sorts_comments_canonically_after_loading_relations() {
+fn export_preserves_id_order_for_equal_timestamp_comments() {
     let mut storage = SqliteStorage::open_memory().unwrap();
     let timestamp = Utc.with_ymd_and_hms(2026, 1, 2, 3, 4, 5).unwrap();
     let mut issue = issue_with_id("test-comment-sort", "Comment sort");
     issue.created_at = timestamp;
     issue.updated_at = timestamp;
-    issue.comments = vec![
+    let comments = vec![
         Comment {
-            id: 0,
+            id: 42,
             issue_id: issue.id.clone(),
-            author: "zara".to_string(),
-            body: "second by canonical order".to_string(),
+            author: "alice".to_string(),
+            body: "alphabetically first".to_string(),
             created_at: timestamp,
         },
         Comment {
-            id: 0,
+            id: 7,
             issue_id: issue.id.clone(),
-            author: "alice".to_string(),
-            body: "first by canonical order".to_string(),
+            author: "zara".to_string(),
+            body: "alphabetically last".to_string(),
             created_at: timestamp,
         },
     ];
 
     storage.create_issue(&issue, "tester").unwrap();
+    storage
+        .sync_comments_for_import(&issue.id, &comments)
+        .unwrap();
 
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("issues.jsonl");
@@ -151,7 +154,50 @@ fn export_sorts_comments_canonically_after_loading_relations() {
         .iter()
         .map(|comment| comment.author.as_str())
         .collect();
-    assert_eq!(authors, vec!["alice", "zara"]);
+    let ids: Vec<i64> = issues[0]
+        .comments
+        .iter()
+        .map(|comment| comment.id)
+        .collect();
+    assert_eq!(ids, vec![7, 42]);
+    assert_eq!(authors, vec!["zara", "alice"]);
+
+    let mut imported = SqliteStorage::open_memory().unwrap();
+    let mut existing = issue_with_id(&issue.id, "Older target generation");
+    existing.created_at = timestamp - Duration::hours(1);
+    existing.updated_at = existing.created_at;
+    imported.create_issue(&existing, "tester").unwrap();
+    imported
+        .sync_comments_for_import(
+            &issue.id,
+            &[Comment {
+                id: 100,
+                issue_id: issue.id.clone(),
+                author: "existing".to_string(),
+                body: "advance the retained comment id sequence".to_string(),
+                created_at: existing.created_at,
+            }],
+        )
+        .unwrap();
+    import_from_jsonl(
+        &mut imported,
+        &path,
+        &ImportConfig::default(),
+        Some("test-"),
+    )
+    .unwrap();
+    assert_eq!(
+        imported
+            .get_comments(&issue.id)
+            .unwrap()
+            .iter()
+            .map(|comment| comment.id)
+            .collect::<Vec<_>>(),
+        vec![7, 42]
+    );
+    let replay_path = temp.path().join("replayed-issues.jsonl");
+    export_to_jsonl(&imported, &replay_path, &ExportConfig::default()).unwrap();
+    assert_eq!(fs::read(&replay_path).unwrap(), fs::read(&path).unwrap());
 }
 
 #[test]

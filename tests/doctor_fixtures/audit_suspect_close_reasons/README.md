@@ -8,7 +8,7 @@
   label).
 - **Repair contract**: SAFETY — no auto-fix. The audit policy is intentional:
   operator must either resolve the underlying cycle and reopen the bead, OR
-  apply the dated audit label to acknowledge the historical close. `br doctor
+  apply the dated audit label to acknowledge the historical close. `obr doctor
   --repair` must NEVER silently add the label (that would defeat the audit).
 - **Round-trip**: N/A — detect-only.
 - **Expected exit codes**:

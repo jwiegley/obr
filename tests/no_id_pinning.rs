@@ -33,8 +33,8 @@ use walkdir::WalkDir;
 
 fn id_pinning_pattern() -> Regex {
     // Matches: `assert_eq!(<lhs>, "<prefix>-<suffix>")`
-    // where prefix ∈ {test, tmp, br, bd, proj} and suffix has 4+ alphanumeric chars.
-    Regex::new(r#"assert_(eq|ne)!\([^,]*,\s*"(test|tmp|br|bd|proj)-[a-zA-Z0-9]{4,}""#)
+    // where prefix ∈ {test, tmp, obr, bd, proj} and suffix has 4+ alphanumeric chars.
+    Regex::new(r#"assert_(eq|ne)!\([^,]*,\s*"(test|tmp|obr|bd|proj)-[a-zA-Z0-9]{4,}""#)
         .expect("compile lint regex")
 }
 

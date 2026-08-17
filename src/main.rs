@@ -3050,9 +3050,10 @@ mod tests {
                 .unwrap(),
             );
 
-            let err = inspect_pending_sync_merge_for_no_db_write(&db_path, &authority).expect_err(
-                &format!("{label}: an orphan WAL may hold a committed receipt"),
-            );
+            let err = inspect_pending_sync_merge_for_startup_under_authority(&db_path, &authority)
+                .expect_err(&format!(
+                    "{label}: an orphan WAL may hold a committed receipt"
+                ));
 
             assert!(
                 err.to_string().contains("unknown"),
@@ -3101,7 +3102,7 @@ mod tests {
             );
 
             assert!(
-                inspect_pending_sync_merge_for_no_db_write(&db_path, &authority)
+                inspect_pending_sync_merge_for_startup_under_authority(&db_path, &authority)
                     .unwrap_or_else(|error| panic!("{label} must be inspectable: {error}"))
                     .is_none(),
                 "{label}: no sidecar here can hold a committed receipt"

@@ -15,27 +15,38 @@ set -euo pipefail
 LOG_TS=$(date -u +%Y%m%dT%H%M%SZ)
 SUMMARY="/tmp/markdown_import_witness_${LOG_TS}.summary.txt"
 log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$SUMMARY"; }
-fail() { log "FAIL: $*"; exit 1; }
+fail() {
+	log "FAIL: $*"
+	exit 1
+}
 
 log "=== markdown_import_witness.sh START ts=${LOG_TS} ==="
 
-if [[ -n "${BR_BIN:-}" ]]; then BR="$BR_BIN"
-elif [[ -n "${CARGO_TARGET_DIR:-}" && -x "$CARGO_TARGET_DIR/release/br" ]]; then BR="$CARGO_TARGET_DIR/release/br"
-elif command -v br >/dev/null 2>&1; then BR=$(command -v br)
-else log "ERROR: br not found"; exit 2
+if [[ -n "${OBR_BIN:-${BR_BIN:-}}" ]]; then
+	BR="${OBR_BIN:-$BR_BIN}"
+elif [[ -n "${CARGO_TARGET_DIR:-}" && -x "$CARGO_TARGET_DIR/release/obr" ]]; then
+	BR="$CARGO_TARGET_DIR/release/obr"
+elif command -v obr >/dev/null 2>&1; then
+	BR=$(command -v obr)
+else
+	log "ERROR: obr not found"
+	exit 2
 fi
-command -v jq >/dev/null 2>&1 || { log "ERROR: jq missing"; exit 2; }
+command -v jq >/dev/null 2>&1 || {
+	log "ERROR: jq missing"
+	exit 2
+}
 
 WORK=$(mktemp -d)
 cd "$WORK"
 
 # Phase 1: init
-log "Phase 1: br init --prefix br"
-"$BR" init --prefix br >/dev/null 2>&1 || fail "br init"
+log "Phase 1: obr init --prefix obr"
+"$BR" init --prefix obr >/dev/null 2>&1 || fail "obr init"
 
 # Phase 2: create markdown with 5 issues
 log "Phase 2: prepare issues.md with 5 issues"
-cat > issues.md <<'MD'
+cat >issues.md <<'MD'
 ## Build pipeline
 ### Priority
 1
@@ -76,29 +87,29 @@ auth, frontend
 MD
 
 # Phase 3: import
-log "Phase 3: br create -f issues.md"
-IMPORT_OUT=$("$BR" create -f issues.md 2>&1) || fail "br create -f failed: $IMPORT_OUT"
+log "Phase 3: obr create -f issues.md"
+IMPORT_OUT=$("$BR" create -f issues.md 2>&1) || fail "obr create -f failed: $IMPORT_OUT"
 echo "$IMPORT_OUT" | grep -q "✓ Created 5 issues" || fail "expected '✓ Created 5 issues' in: $IMPORT_OUT"
 log "  [OK] 5 issues imported"
 
 # Phase 4: verify count + titles via list --json
-log "Phase 4: br list --json invariants"
+log "Phase 4: obr list --json invariants"
 LIST_OUT=$("$BR" list --json 2>&1)
 TOTAL=$(echo "$LIST_OUT" | jq '.total')
 [[ "$TOTAL" == "5" ]] || fail "expected total=5, got $TOTAL"
 
 # Verify each title is present (semantic check, format-tolerant)
 for expected_title in "Build pipeline" "Cleanup tests" "Implement v2 API" "Document --slug" "Fix login regression"; do
-    if ! echo "$LIST_OUT" | jq -e --arg t "$expected_title" '.issues[] | select(.title == $t)' >/dev/null 2>&1; then
-        fail "expected title not found: '$expected_title'"
-    fi
+	if ! echo "$LIST_OUT" | jq -e --arg t "$expected_title" '.issues[] | select(.title == $t)' >/dev/null 2>&1; then
+		fail "expected title not found: '$expected_title'"
+	fi
 done
 log "  [OK] all 5 titles present"
 
 # Phase 5: flush + verify JSONL has 5 lines
-log "Phase 5: br sync --flush-only + JSONL count"
+log "Phase 5: obr sync --flush-only + JSONL count"
 "$BR" sync --flush-only >/dev/null 2>&1 || true
-JSONL_COUNT=$(wc -l < .beads/issues.jsonl)
+JSONL_COUNT=$(wc -l <.obr/issues.jsonl)
 [[ "$JSONL_COUNT" -ge 5 ]] || fail "expected JSONL ≥ 5 lines; got $JSONL_COUNT"
 log "  [OK] JSONL has $JSONL_COUNT lines"
 
@@ -111,7 +122,7 @@ TOTAL2=$(echo "$LIST_OUT2" | jq '.total')
 # Acceptable behaviors: (a) skip duplicates → total stays 5, or (b) create new → total = 10
 # We verify total IS one of those two values (not e.g. corrupted)
 if [[ "$TOTAL2" != "5" && "$TOTAL2" != "10" ]]; then
-    fail "after re-import expected total in {5, 10}; got $TOTAL2"
+	fail "after re-import expected total in {5, 10}; got $TOTAL2"
 fi
 log "  [OK] re-import landed at total=$TOTAL2 (deduplication-aware)"
 

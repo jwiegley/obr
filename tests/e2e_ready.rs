@@ -1,6 +1,6 @@
 mod common;
 
-use common::cli::{BrWorkspace, extract_issues_array, extract_json_payload, run_br};
+use common::cli::{ObrWorkspace, extract_issues_array, extract_json_payload, pin_jsonl, run_obr};
 use serde_json::Value;
 use std::fs;
 
@@ -15,8 +15,8 @@ fn parse_created_id(stdout: &str) -> String {
     id_part.trim().to_string()
 }
 
-fn issue_from_jsonl(workspace: &BrWorkspace, issue_id: &str) -> Value {
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+fn issue_from_jsonl(workspace: &ObrWorkspace, issue_id: &str) -> Value {
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     let contents = fs::read_to_string(&jsonl_path).expect("read issues.jsonl");
     contents
         .lines()
@@ -30,8 +30,8 @@ fn issue_from_jsonl(workspace: &BrWorkspace, issue_id: &str) -> Value {
         .expect("issue should exist in issues.jsonl")
 }
 
-fn write_single_issue_jsonl(workspace: &BrWorkspace, issue: &Value) {
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+fn write_single_issue_jsonl(workspace: &ObrWorkspace, issue: &Value) {
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     let serialized = serde_json::to_string(issue).expect("serialize issue jsonl");
     fs::write(&jsonl_path, format!("{serialized}\n")).expect("write issues.jsonl");
 }
@@ -52,23 +52,24 @@ fn set_issue_jsonl_string(issue: &mut Value, field: &str, value: &str) {
     object.insert(field.to_string(), Value::String(value.to_string()));
 }
 
-fn setup_workspace_with_issues() -> (BrWorkspace, Vec<String>) {
-    let workspace = BrWorkspace::new();
+fn setup_workspace_with_issues() -> (ObrWorkspace, Vec<String>) {
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     let mut ids = Vec::new();
 
     // Issue 1: High priority task assigned to alice with "backend" label
-    let issue1 = run_br(
+    let issue1 = run_obr(
         &workspace,
         ["create", "Backend API", "-p", "1", "-t", "task"],
         "create_issue1",
     );
     assert!(issue1.status.success());
     let id1 = parse_created_id(&issue1.stdout);
-    run_br(
+    run_obr(
         &workspace,
         [
             "update",
@@ -83,14 +84,14 @@ fn setup_workspace_with_issues() -> (BrWorkspace, Vec<String>) {
     ids.push(id1);
 
     // Issue 2: Medium priority bug assigned to bob with "frontend" label
-    let issue2 = run_br(
+    let issue2 = run_obr(
         &workspace,
         ["create", "Frontend Bug", "-p", "2", "-t", "bug"],
         "create_issue2",
     );
     assert!(issue2.status.success());
     let id2 = parse_created_id(&issue2.stdout);
-    run_br(
+    run_obr(
         &workspace,
         [
             "update",
@@ -105,14 +106,14 @@ fn setup_workspace_with_issues() -> (BrWorkspace, Vec<String>) {
     ids.push(id2);
 
     // Issue 3: Low priority feature unassigned with "backend" and "api" labels
-    let issue3 = run_br(
+    let issue3 = run_obr(
         &workspace,
         ["create", "New Feature", "-p", "3", "-t", "feature"],
         "create_issue3",
     );
     assert!(issue3.status.success());
     let id3 = parse_created_id(&issue3.stdout);
-    run_br(
+    run_obr(
         &workspace,
         [
             "update",
@@ -127,14 +128,14 @@ fn setup_workspace_with_issues() -> (BrWorkspace, Vec<String>) {
     ids.push(id3);
 
     // Issue 4: Critical task unassigned with "urgent" label
-    let issue4 = run_br(
+    let issue4 = run_obr(
         &workspace,
         ["create", "Critical Fix", "-p", "0", "-t", "task"],
         "create_issue4",
     );
     assert!(issue4.status.success());
     let id4 = parse_created_id(&issue4.stdout);
-    run_br(
+    run_obr(
         &workspace,
         ["update", &id4, "--add-label", "urgent"],
         "update_issue4",
@@ -142,14 +143,14 @@ fn setup_workspace_with_issues() -> (BrWorkspace, Vec<String>) {
     ids.push(id4);
 
     // Issue 5: Backlog task assigned to alice
-    let issue5 = run_br(
+    let issue5 = run_obr(
         &workspace,
         ["create", "Backlog Item", "-p", "4", "-t", "task"],
         "create_issue5",
     );
     assert!(issue5.status.success());
     let id5 = parse_created_id(&issue5.stdout);
-    run_br(
+    run_obr(
         &workspace,
         ["update", &id5, "--assignee", "alice"],
         "update_issue5",
@@ -162,12 +163,13 @@ fn setup_workspace_with_issues() -> (BrWorkspace, Vec<String>) {
 #[test]
 fn ready_cli_excludes_in_progress_issues() {
     let _log = common::test_log("ready_cli_excludes_in_progress_issues");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let open_issue = run_br(&workspace, ["create", "Open issue"], "create_open_issue");
+    let open_issue = run_obr(&workspace, ["create", "Open issue"], "create_open_issue");
     assert!(
         open_issue.status.success(),
         "create open failed: {}",
@@ -175,7 +177,7 @@ fn ready_cli_excludes_in_progress_issues() {
     );
     let open_id = parse_created_id(&open_issue.stdout);
 
-    let claimed_issue = run_br(
+    let claimed_issue = run_obr(
         &workspace,
         ["create", "Claimed issue"],
         "create_claimed_issue",
@@ -187,14 +189,14 @@ fn ready_cli_excludes_in_progress_issues() {
     );
     let claimed_id = parse_created_id(&claimed_issue.stdout);
 
-    let claim = run_br(
+    let claim = run_obr(
         &workspace,
         ["update", &claimed_id, "--status", "in_progress"],
         "claim_issue",
     );
     assert!(claim.status.success(), "claim failed: {}", claim.stderr);
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["ready", "--json"],
         "ready_excludes_in_progress",
@@ -223,12 +225,13 @@ fn ready_cli_excludes_in_progress_issues() {
 #[test]
 fn ready_cli_text_reports_no_ready_issues_when_work_exists() {
     let _log = common::test_log("ready_cli_text_reports_no_ready_issues_when_work_exists");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let claimed_issue = run_br(
+    let claimed_issue = run_obr(
         &workspace,
         ["create", "Claimed issue"],
         "create_claimed_issue_text",
@@ -240,14 +243,14 @@ fn ready_cli_text_reports_no_ready_issues_when_work_exists() {
     );
     let claimed_id = parse_created_id(&claimed_issue.stdout);
 
-    let claim = run_br(
+    let claim = run_obr(
         &workspace,
         ["update", &claimed_id, "--status", "in_progress"],
         "claim_issue_text",
     );
     assert!(claim.status.success(), "claim failed: {}", claim.stderr);
 
-    let result = run_br(&workspace, ["ready"], "ready_empty_text");
+    let result = run_obr(&workspace, ["ready"], "ready_empty_text");
     assert!(result.status.success(), "ready failed: {}", result.stderr);
     assert!(
         result.stdout.contains("No ready issues"),
@@ -264,12 +267,12 @@ fn ready_cli_text_reports_no_ready_issues_when_work_exists() {
 #[test]
 fn ready_cli_text_explains_when_filters_hide_ready_work() {
     let _log = common::test_log("ready_cli_text_explains_when_filters_hide_ready_work");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let completed = run_br(
+    let completed = run_obr(
         &workspace,
         ["ready", "--assignee", "nobody"],
         "ready_filtered_complete",
@@ -280,7 +283,7 @@ fn ready_cli_text_explains_when_filters_hide_ready_work() {
         completed.stdout
     );
 
-    let created = run_br(
+    let created = run_obr(
         &workspace,
         ["create", "Unassigned ready work"],
         "create_ready",
@@ -291,7 +294,7 @@ fn ready_cli_text_explains_when_filters_hide_ready_work() {
         created.stderr
     );
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["ready", "--assignee", "nobody"],
         "ready_filtered_empty",
@@ -314,20 +317,20 @@ fn ready_cli_text_explains_when_filters_hide_ready_work() {
 #[test]
 fn ready_cli_text_does_not_overstate_why_active_work_is_not_ready() {
     let _log = common::test_log("ready_cli_text_does_not_overstate_why_active_work_is_not_ready");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
-    let created = run_br(&workspace, ["create", "Rework queue item"], "create_rework");
+    let created = run_obr(&workspace, ["create", "Rework queue item"], "create_rework");
     let issue_id = parse_created_id(&created.stdout);
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         ["update", &issue_id, "--status", "rework"],
         "mark_rework",
     );
     assert!(update.status.success(), "update failed: {}", update.stderr);
 
-    let result = run_br(&workspace, ["ready"], "ready_non_actionable");
+    let result = run_obr(&workspace, ["ready"], "ready_non_actionable");
     assert!(result.status.success(), "ready failed: {}", result.stderr);
     assert!(
         result.stdout.contains("not currently actionable"),
@@ -346,7 +349,7 @@ fn ready_cli_filters_by_assignee() {
     let _log = common::test_log("ready_cli_filters_by_assignee");
     let (workspace, ids) = setup_workspace_with_issues();
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["ready", "--assignee", "alice", "--json"],
         "ready_assignee",
@@ -377,7 +380,7 @@ fn ready_cli_assignee_flag_without_value_uses_actor() {
     let _log = common::test_log("ready_cli_assignee_flag_without_value_uses_actor");
     let (workspace, ids) = setup_workspace_with_issues();
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["--actor", "alice", "ready", "--assignee", "--json"],
         "ready_assignee_actor_default",
@@ -406,30 +409,31 @@ fn ready_cli_assignee_flag_without_value_uses_actor() {
 #[allow(clippy::too_many_lines)]
 fn ready_respects_external_dependencies() {
     let _log = common::test_log("ready_respects_external_dependencies");
-    let workspace = BrWorkspace::new();
-    let external = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
+    let external = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init_main");
+    let init = run_obr(&workspace, ["init"], "init_main");
     assert!(init.status.success(), "init failed: {}", init.stderr);
-    let init_ext = run_br(&external, ["init"], "init_external");
+    pin_jsonl(&workspace.root.join(".obr"));
+    let init_ext = run_obr(&external, ["init"], "init_external");
     assert!(
         init_ext.status.success(),
         "external init failed: {}",
         init_ext.stderr
     );
 
-    let config_path = workspace.root.join(".beads/config.yaml");
+    let config_path = workspace.root.join(".obr/config.yaml");
     let external_path = external.root.display();
     let config = format!("issue_prefix: bd\nexternal_projects:\n  extproj: \"{external_path}\"\n");
     fs::write(&config_path, config).expect("write config");
-    let external_config_path = external.root.join(".beads/config.yaml");
+    let external_config_path = external.root.join(".obr/config.yaml");
     fs::write(&external_config_path, "issue_prefix: bd\n").expect("write ext config");
 
-    let issue = run_br(&workspace, ["create", "Main issue"], "create_main_issue");
+    let issue = run_obr(&workspace, ["create", "Main issue"], "create_main_issue");
     assert!(issue.status.success(), "create failed: {}", issue.stderr);
     let issue_id = parse_created_id(&issue.stdout);
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &workspace,
         ["dep", "add", &issue_id, "external:extproj:auth"],
         "dep_add_external",
@@ -440,7 +444,7 @@ fn ready_respects_external_dependencies() {
         dep_add.stderr
     );
 
-    let ready_before = run_br(&workspace, ["ready", "--json"], "ready_before");
+    let ready_before = run_obr(&workspace, ["ready", "--json"], "ready_before");
     assert!(
         ready_before.status.success(),
         "ready before failed: {}",
@@ -453,7 +457,7 @@ fn ready_respects_external_dependencies() {
         "issue should be blocked by external dependency"
     );
 
-    let blocked_before = run_br(&workspace, ["blocked", "--json"], "blocked_before");
+    let blocked_before = run_obr(&workspace, ["blocked", "--json"], "blocked_before");
     assert!(
         blocked_before.status.success(),
         "blocked before failed: {}",
@@ -465,7 +469,7 @@ fn ready_respects_external_dependencies() {
         "blocked list should include external-blocked issue"
     );
 
-    let provider = run_br(&external, ["create", "Provide auth"], "ext_create");
+    let provider = run_obr(&external, ["create", "Provide auth"], "ext_create");
     assert!(
         provider.status.success(),
         "external create failed: {}",
@@ -473,7 +477,7 @@ fn ready_respects_external_dependencies() {
     );
     let provider_id = parse_created_id(&provider.stdout);
 
-    let label = run_br(
+    let label = run_obr(
         &external,
         ["update", &provider_id, "--add-label", "provides:auth"],
         "ext_label",
@@ -484,14 +488,14 @@ fn ready_respects_external_dependencies() {
         label.stderr
     );
 
-    let close = run_br(&external, ["close", &provider_id], "ext_close");
+    let close = run_obr(&external, ["close", &provider_id], "ext_close");
     assert!(
         close.status.success(),
         "external close failed: {}",
         close.stderr
     );
 
-    let ready_after = run_br(&workspace, ["ready", "--json"], "ready_after");
+    let ready_after = run_obr(&workspace, ["ready", "--json"], "ready_after");
     assert!(
         ready_after.status.success(),
         "ready after failed: {}",
@@ -504,7 +508,7 @@ fn ready_respects_external_dependencies() {
         "issue should be ready once external dependency is satisfied"
     );
 
-    let blocked_after = run_br(&workspace, ["blocked", "--json"], "blocked_after");
+    let blocked_after = run_obr(&workspace, ["blocked", "--json"], "blocked_after");
     assert!(
         blocked_after.status.success(),
         "blocked after failed: {}",
@@ -521,33 +525,34 @@ fn ready_respects_external_dependencies() {
 #[allow(clippy::too_many_lines)]
 fn ready_imports_stale_external_jsonl_before_status_probe() {
     let _log = common::test_log("ready_imports_stale_external_jsonl_before_status_probe");
-    let workspace = BrWorkspace::new();
-    let external = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
+    let external = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init_main");
+    let init = run_obr(&workspace, ["init"], "init_main");
     assert!(init.status.success(), "init failed: {}", init.stderr);
-    let init_ext = run_br(&external, ["init"], "init_external");
+    pin_jsonl(&workspace.root.join(".obr"));
+    let init_ext = run_obr(&external, ["init"], "init_external");
     assert!(
         init_ext.status.success(),
         "external init failed: {}",
         init_ext.stderr
     );
+    // The stale-JSONL edit below rewrites the external workspace's export
+    // anchor by hand, so pin it to `.obr/issues.jsonl` like the local one.
+    pin_jsonl(&external.root.join(".obr"));
 
-    let config_path = workspace.root.join(".beads/config.yaml");
+    let config_path = workspace.root.join(".obr/config.yaml");
     let external_path = external.root.display();
     let config = format!("issue_prefix: bd\nexternal_projects:\n  extproj: \"{external_path}\"\n");
     fs::write(&config_path, config).expect("write config");
-    fs::write(
-        external.root.join(".beads/config.yaml"),
-        "issue_prefix: bd\n",
-    )
-    .expect("write ext config");
+    fs::write(external.root.join(".obr/config.yaml"), "issue_prefix: bd\n")
+        .expect("write ext config");
 
-    let issue = run_br(&workspace, ["create", "Main issue"], "create_main_issue");
+    let issue = run_obr(&workspace, ["create", "Main issue"], "create_main_issue");
     assert!(issue.status.success(), "create failed: {}", issue.stderr);
     let issue_id = parse_created_id(&issue.stdout);
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &workspace,
         ["dep", "add", &issue_id, "external:extproj:auth"],
         "dep_add_external",
@@ -558,7 +563,7 @@ fn ready_imports_stale_external_jsonl_before_status_probe() {
         dep_add.stderr
     );
 
-    let provider = run_br(&external, ["create", "Provide auth"], "ext_create");
+    let provider = run_obr(&external, ["create", "Provide auth"], "ext_create");
     assert!(
         provider.status.success(),
         "external create failed: {}",
@@ -566,7 +571,7 @@ fn ready_imports_stale_external_jsonl_before_status_probe() {
     );
     let provider_id = parse_created_id(&provider.stdout);
 
-    let label = run_br(
+    let label = run_obr(
         &external,
         ["update", &provider_id, "--add-label", "provides:auth"],
         "ext_label",
@@ -577,7 +582,7 @@ fn ready_imports_stale_external_jsonl_before_status_probe() {
         label.stderr
     );
 
-    let ready_before = run_br(&workspace, ["ready", "--json"], "ready_before");
+    let ready_before = run_obr(&workspace, ["ready", "--json"], "ready_before");
     assert!(
         ready_before.status.success(),
         "ready before failed: {}",
@@ -597,7 +602,7 @@ fn ready_imports_stale_external_jsonl_before_status_probe() {
     set_issue_jsonl_string(&mut provider_jsonl, "close_reason", "stale JSONL closure");
     write_single_issue_jsonl(&external, &provider_jsonl);
 
-    let ready_after = run_br(
+    let ready_after = run_obr(
         &workspace,
         ["ready", "--json"],
         "ready_after_stale_external_jsonl",
@@ -614,7 +619,7 @@ fn ready_imports_stale_external_jsonl_before_status_probe() {
         "ready should import the external JSONL closure before probing dependency status"
     );
 
-    let show_external = run_br(
+    let show_external = run_obr(
         &external,
         ["show", &provider_id, "--json"],
         "show_external_after_ready_import",
@@ -634,7 +639,7 @@ fn ready_cli_filters_unassigned_only() {
     let _log = common::test_log("ready_cli_filters_unassigned_only");
     let (workspace, ids) = setup_workspace_with_issues();
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["ready", "--unassigned", "--json"],
         "ready_unassigned",
@@ -666,7 +671,7 @@ fn ready_cli_filters_by_type() {
     let (workspace, _ids) = setup_workspace_with_issues();
 
     // Filter by task type
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["ready", "--type", "task", "--json"],
         "ready_type_task",
@@ -689,7 +694,7 @@ fn ready_cli_filters_by_multiple_types() {
     let (workspace, _ids) = setup_workspace_with_issues();
 
     // Filter by task and bug types
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["ready", "--type", "task", "--type", "bug", "--json"],
         "ready_type_multi",
@@ -713,7 +718,7 @@ fn ready_cli_filters_by_priority() {
     let (workspace, ids) = setup_workspace_with_issues();
 
     // Filter by priority 0 (critical)
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["ready", "--priority", "0", "--json"],
         "ready_priority",
@@ -734,7 +739,7 @@ fn ready_cli_filters_by_multiple_priorities() {
     let (workspace, _ids) = setup_workspace_with_issues();
 
     // Filter by priority 0 and 1
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["ready", "--priority", "0", "--priority", "1", "--json"],
         "ready_priority_multi",
@@ -758,7 +763,7 @@ fn ready_cli_filters_by_label_and() {
     let (workspace, ids) = setup_workspace_with_issues();
 
     // Filter by "backend" label
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["ready", "--label", "backend", "--json"],
         "ready_label_and",
@@ -790,7 +795,7 @@ fn ready_cli_filters_by_multiple_labels_and() {
     let (workspace, ids) = setup_workspace_with_issues();
 
     // Filter by both "backend" AND "api" labels
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["ready", "--label", "backend", "--label", "api", "--json"],
         "ready_label_and_multi",
@@ -811,7 +816,7 @@ fn ready_cli_filters_by_label_or() {
     let (workspace, _ids) = setup_workspace_with_issues();
 
     // Filter by "backend" OR "frontend" labels
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         [
             "ready",
@@ -837,7 +842,7 @@ fn ready_cli_respects_limit() {
     let _log = common::test_log("ready_cli_respects_limit");
     let (workspace, _ids) = setup_workspace_with_issues();
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["ready", "--limit", "2", "--json"],
         "ready_limit",
@@ -855,7 +860,7 @@ fn ready_cli_limit_zero_returns_all() {
     let _log = common::test_log("ready_cli_limit_zero_returns_all");
     let (workspace, _ids) = setup_workspace_with_issues();
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["ready", "--limit", "0", "--json"],
         "ready_limit_zero",
@@ -874,7 +879,7 @@ fn ready_cli_sort_priority() {
     let _log = common::test_log("ready_cli_sort_priority");
     let (workspace, ids) = setup_workspace_with_issues();
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["ready", "--sort", "priority", "--limit", "0", "--json"],
         "ready_sort_priority",
@@ -896,7 +901,7 @@ fn ready_cli_combined_filters() {
     let (workspace, ids) = setup_workspace_with_issues();
 
     // Filter by assignee "alice" AND type "task"
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["ready", "--assignee", "alice", "--type", "task", "--json"],
         "ready_combined",
@@ -928,11 +933,11 @@ fn ready_cli_excludes_blocked_issues() {
     let (workspace, ids) = setup_workspace_with_issues();
 
     // Create a dependency: issue 3 is blocked by issue 1
-    let dep = run_br(&workspace, ["dep", "add", &ids[2], &ids[0]], "add_dep");
+    let dep = run_obr(&workspace, ["dep", "add", &ids[2], &ids[0]], "add_dep");
     assert!(dep.status.success(), "dep add failed: {}", dep.stderr);
 
     // Ready should NOT include the blocked issue
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["ready", "--limit", "0", "--json"],
         "ready_with_blocked",
@@ -958,7 +963,7 @@ fn ready_cli_excludes_deferred_by_default() {
     let (workspace, ids) = setup_workspace_with_issues();
 
     // Defer issue 3
-    let defer = run_br(
+    let defer = run_obr(
         &workspace,
         [
             "update",
@@ -973,7 +978,7 @@ fn ready_cli_excludes_deferred_by_default() {
     assert!(defer.status.success(), "defer failed: {}", defer.stderr);
 
     // Ready should NOT include deferred by default
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["ready", "--limit", "0", "--json"],
         "ready_no_deferred",
@@ -998,7 +1003,7 @@ fn ready_cli_includes_deferred_with_flag() {
     let (workspace, ids) = setup_workspace_with_issues();
 
     // Defer issue 3
-    let defer = run_br(
+    let defer = run_obr(
         &workspace,
         [
             "update",
@@ -1013,7 +1018,7 @@ fn ready_cli_includes_deferred_with_flag() {
     assert!(defer.status.success(), "defer failed: {}", defer.stderr);
 
     // Ready with --include-deferred should include it
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["ready", "--limit", "0", "--include-deferred", "--json"],
         "ready_with_deferred",
@@ -1037,7 +1042,7 @@ fn ready_cli_text_output_format() {
     let _log = common::test_log("ready_cli_text_output_format");
     let (workspace, _ids) = setup_workspace_with_issues();
 
-    let result = run_br(&workspace, ["ready"], "ready_text");
+    let result = run_obr(&workspace, ["ready"], "ready_text");
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
     // Should have the header (matches bd format)
@@ -1049,12 +1054,13 @@ fn ready_cli_text_output_format() {
 #[test]
 fn ready_cli_empty_result_message() {
     let _log = common::test_log("ready_cli_empty_result_message");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let result = run_br(&workspace, ["ready"], "ready_empty");
+    let result = run_obr(&workspace, ["ready"], "ready_empty");
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
     // Empty workspace shows completion message
@@ -1073,7 +1079,7 @@ fn ready_cli_priority_p_format() {
     let (workspace, _ids) = setup_workspace_with_issues();
 
     // Priority can be specified as P0, P1, etc.
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["ready", "--priority", "P0", "--json"],
         "ready_priority_p_format",
@@ -1094,13 +1100,14 @@ fn ready_cli_priority_p_format() {
 // ============================================================================
 
 /// jsgu AC: full CLI round-trip for the priority-ordering contract. Creates
-/// issues at P0/P1/P2/P3 in REVERSE priority order, runs `br ready --json`,
+/// issues at P0/P1/P2/P3 in REVERSE priority order, runs `obr ready --json`,
 /// asserts hybrid ordering invariant (high-tier P0/P1 before low-tier P2+).
 #[test]
 fn e2e_ready_with_mixed_priority_high_tier_first() {
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     eprintln!("[jsgu TEST] e2e_ready_with_mixed_priority_high_tier_first");
 
@@ -1112,7 +1119,7 @@ fn e2e_ready_with_mixed_priority_high_tier_first() {
         ("Medium", "2"),
         ("High", "1"),
     ] {
-        let create = run_br(
+        let create = run_obr(
             &workspace,
             ["create", title, "-t", "task", "-p", prio, "--no-auto-flush"],
             &format!("create_{title}"),
@@ -1124,8 +1131,8 @@ fn e2e_ready_with_mixed_priority_high_tier_first() {
         );
     }
 
-    let out = run_br(&workspace, ["ready", "--json"], "ready");
-    assert!(out.status.success(), "br ready failed: {}", out.stderr);
+    let out = run_obr(&workspace, ["ready", "--json"], "ready");
+    assert!(out.status.success(), "obr ready failed: {}", out.stderr);
     let issues: Vec<Value> =
         serde_json::from_str(out.stdout.trim()).expect("ready json must parse");
 
@@ -1168,19 +1175,19 @@ fn e2e_ready_with_mixed_priority_high_tier_first() {
     eprintln!("  [PASS] hybrid ordering invariant holds via CLI");
 }
 
-/// jsgu AC: invariant — `br ready --json` MUST NEVER return duplicate IDs,
+/// jsgu AC: invariant — `obr ready --json` MUST NEVER return duplicate IDs,
 /// regardless of how many fixtures share priority/created_at.
 #[test]
 fn e2e_ready_returns_no_duplicate_ids() {
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
 
     eprintln!("[jsgu TEST] e2e_ready_returns_no_duplicate_ids");
 
     // Create 6 issues all at the same priority — id-tiebreak path is exercised
     for i in 0..6 {
         let title = format!("issue {i}");
-        let create = run_br(
+        let create = run_obr(
             &workspace,
             ["create", &title, "-t", "task", "-p", "2", "--no-auto-flush"],
             &format!("c_{i}"),
@@ -1188,8 +1195,8 @@ fn e2e_ready_returns_no_duplicate_ids() {
         assert!(create.status.success(), "create failed");
     }
 
-    let out = run_br(&workspace, ["ready", "--json"], "ready");
-    assert!(out.status.success(), "br ready failed");
+    let out = run_obr(&workspace, ["ready", "--json"], "ready");
+    assert!(out.status.success(), "obr ready failed");
     let issues: Vec<Value> = serde_json::from_str(out.stdout.trim()).expect("must parse");
     assert_eq!(issues.len(), 6, "all 6 should be ready");
 
@@ -1206,29 +1213,30 @@ fn e2e_ready_returns_no_duplicate_ids() {
     eprintln!("  [PASS] all 6 IDs unique");
 }
 
-/// #354: write a `.beads/policy.yaml` ready group and assert `br ready --json`
+/// #354: write a `.obr/policy.yaml` ready group and assert `obr ready --json`
 /// honors it end-to-end (config surface → CLI → query → JSON parity).
-fn write_policy(workspace: &BrWorkspace, yaml: &str) {
-    let policy_path = workspace.root.join(".beads").join("policy.yaml");
+fn write_policy(workspace: &ObrWorkspace, yaml: &str) {
+    let policy_path = workspace.root.join(".obr").join("policy.yaml");
     fs::write(&policy_path, yaml).expect("write policy.yaml");
 }
 
 #[test]
 fn ready_default_group_is_open_only_e2e() {
     let _log = common::test_log("ready_default_group_is_open_only_e2e");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let open = run_br(&workspace, ["create", "Open work", "-t", "task"], "c_open");
+    let open = run_obr(&workspace, ["create", "Open work", "-t", "task"], "c_open");
     let open_id = parse_created_id(&open.stdout);
-    let rework = run_br(
+    let rework = run_obr(
         &workspace,
         ["create", "Rework work", "-t", "task"],
         "c_rework",
     );
     let rework_id = parse_created_id(&rework.stdout);
-    let set = run_br(
+    let set = run_obr(
         &workspace,
         ["update", &rework_id, "--status", "rework"],
         "to_rework",
@@ -1240,7 +1248,7 @@ fn ready_default_group_is_open_only_e2e() {
     );
 
     // No policy configured → default ready group is [open].
-    let result = run_br(&workspace, ["ready", "--json"], "ready_default");
+    let result = run_obr(&workspace, ["ready", "--json"], "ready_default");
     assert!(result.status.success(), "ready failed: {}", result.stderr);
     let payload = extract_json_payload(&result.stdout);
     let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
@@ -1257,19 +1265,20 @@ fn ready_default_group_is_open_only_e2e() {
 #[test]
 fn ready_configured_group_surfaces_rework_e2e() {
     let _log = common::test_log("ready_configured_group_surfaces_rework_e2e");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let open = run_br(&workspace, ["create", "Open work", "-t", "task"], "c_open");
+    let open = run_obr(&workspace, ["create", "Open work", "-t", "task"], "c_open");
     let open_id = parse_created_id(&open.stdout);
-    let rework = run_br(
+    let rework = run_obr(
         &workspace,
         ["create", "Rework work", "-t", "task"],
         "c_rework",
     );
     let rework_id = parse_created_id(&rework.stdout);
-    run_br(
+    run_obr(
         &workspace,
         ["update", &rework_id, "--status", "rework"],
         "to_rework",
@@ -1280,7 +1289,7 @@ fn ready_configured_group_surfaces_rework_e2e() {
         "workflow:\n  status_groups:\n    ready: [open, rework]\n",
     );
 
-    let result = run_br(&workspace, ["ready", "--json"], "ready_configured");
+    let result = run_obr(&workspace, ["ready", "--json"], "ready_configured");
     assert!(result.status.success(), "ready failed: {}", result.stderr);
     let payload = extract_json_payload(&result.stdout);
     let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
@@ -1307,17 +1316,17 @@ fn ready_configured_group_surfaces_rework_e2e() {
 #[test]
 fn ready_custom_only_group_surfaces_rework_e2e() {
     let _log = common::test_log("ready_custom_only_group_surfaces_rework_e2e");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let rework = run_br(
+    let rework = run_obr(
         &workspace,
         ["create", "Only rework candidate", "-t", "task"],
         "c_rework_only",
     );
     let rework_id = parse_created_id(&rework.stdout);
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         ["update", &rework_id, "--status", "rework"],
         "to_rework_only",
@@ -1332,7 +1341,7 @@ fn ready_custom_only_group_surfaces_rework_e2e() {
         "workflow:\n  status_groups:\n    ready: [rework]\n",
     );
 
-    let result = run_br(&workspace, ["ready", "--json"], "ready_custom_only");
+    let result = run_obr(&workspace, ["ready", "--json"], "ready_custom_only");
     assert!(result.status.success(), "ready failed: {}", result.stderr);
     let payload = extract_json_payload(&result.stdout);
     let issues: Vec<Value> = serde_json::from_str(&payload).expect("valid json");
@@ -1344,11 +1353,12 @@ fn ready_custom_only_group_surfaces_rework_e2e() {
 #[test]
 fn ready_strict_rejects_out_of_vocab_group_e2e() {
     let _log = common::test_log("ready_strict_rejects_out_of_vocab_group_e2e");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    run_br(&workspace, ["create", "Open work", "-t", "task"], "c_open");
+    run_obr(&workspace, ["create", "Open work", "-t", "task"], "c_open");
 
     // strict statuses do NOT include `rework`, but the ready group lists it.
     write_policy(
@@ -1356,7 +1366,7 @@ fn ready_strict_rejects_out_of_vocab_group_e2e() {
         "workflow:\n  strict: true\n  statuses: [open, in_progress, closed]\n  status_groups:\n    ready: [open, rework]\n",
     );
 
-    let result = run_br(&workspace, ["ready", "--json"], "ready_strict_reject");
+    let result = run_obr(&workspace, ["ready", "--json"], "ready_strict_reject");
     assert!(
         !result.status.success(),
         "strict out-of-vocab ready group must be rejected; stdout: {} stderr: {}",
@@ -1376,13 +1386,13 @@ fn ready_strict_rejects_out_of_vocab_group_e2e() {
 
 #[test]
 fn ready_cli_text_truncation_emits_showing_note() {
-    // #356: when `br ready --limit N` hides ready rows, the text surface must
+    // #356: when `obr ready --limit N` hides ready rows, the text surface must
     // print a "Showing N of M" note (on stderr) instead of silently truncating
-    // — mirroring `br list` and the MCP ready surface (issue #91).
+    // — mirroring `obr list` and the MCP ready surface (issue #91).
     let _log = common::test_log("ready_cli_text_truncation_emits_showing_note");
     let (workspace, _ids) = setup_workspace_with_issues(); // 5 ready issues
 
-    let result = run_br(&workspace, ["ready", "--limit", "2"], "ready_limit_note");
+    let result = run_obr(&workspace, ["ready", "--limit", "2"], "ready_limit_note");
     assert!(result.status.success(), "ready failed: {}", result.stderr);
 
     // Exactly 2 rows shown on stdout (lines starting with "1." and "2.").
@@ -1408,7 +1418,7 @@ fn ready_cli_no_note_when_limit_covers_all() {
     let _log = common::test_log("ready_cli_no_note_when_limit_covers_all");
     let (workspace, _ids) = setup_workspace_with_issues(); // 5 ready issues
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["ready", "--limit", "10"],
         "ready_limit_no_note",
@@ -1423,11 +1433,11 @@ fn ready_cli_no_note_when_limit_covers_all() {
 
 #[test]
 fn ready_cli_quiet_suppresses_truncation_note() {
-    // `--quiet` must suppress the truncation note, matching `br list`.
+    // `--quiet` must suppress the truncation note, matching `obr list`.
     let _log = common::test_log("ready_cli_quiet_suppresses_truncation_note");
     let (workspace, _ids) = setup_workspace_with_issues(); // 5 ready issues
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["--quiet", "ready", "--limit", "2"],
         "ready_limit_quiet",

@@ -17,7 +17,7 @@ case "$stage" in
       echo "$out" | jq '.checks[] | select(.name == "sync_conflict_markers")' >&2
       exit 1
     }
-    grep -q '<<<<<<< ' .beads/issues.jsonl || {
+    grep -q '<<<<<<< ' .obr/issues.jsonl || {
       echo "ASSERT FAIL[$stage]: planted conflict markers missing" >&2
       exit 1
     }
@@ -27,21 +27,26 @@ case "$stage" in
     # auto-removed (that would risk destroying operator data without consent).
     # Either: the JSONL still contains the markers, OR repair refused with
     # exit 4 and left the file alone.
-    if [ -f .beads/issues.jsonl ]; then
-      # If markers are gone, that's unexpected destructive behavior — fail.
-      if ! grep -q '<<<<<<< ' .beads/issues.jsonl; then
-        # Allow the case where rebuild from JSONL preserved-by-failing kept the file
-        # but rewrote without markers? We treat this as a regression — flag it.
-        echo "ASSERT FAIL[$stage]: conflict markers silently removed by --repair" >&2
-        echo "(safety contract: doctor must refuse to auto-resolve merge conflicts)" >&2
-        exit 1
-      fi
+    # Deleting the export outright is the MAXIMAL case of the destruction this
+    # fixture forbids, so it must fail here — not be skipped. This guard used to
+    # be wrapped in `if [ -f .obr/issues.jsonl ]`, which passed silently in
+    # exactly that case.
+    [ -f .obr/issues.jsonl ] || {
+      echo "ASSERT FAIL[$stage]: --repair deleted the conflicted JSONL outright" >&2
+      echo "(safety contract: doctor must refuse to auto-resolve merge conflicts)" >&2
+      exit 1
+    }
+    # If markers are gone, that's unexpected destructive behavior — fail.
+    if ! grep -q '<<<<<<< ' .obr/issues.jsonl; then
+      echo "ASSERT FAIL[$stage]: conflict markers silently removed by --repair" >&2
+      echo "(safety contract: doctor must refuse to auto-resolve merge conflicts)" >&2
+      exit 1
     fi
     ;;
   post_undo)
     # No-op: this fixture's repair is expected to refuse, so undo has nothing
     # to restore. Just check the workspace wasn't trashed.
-    [ -d .beads ] || { echo "ASSERT FAIL[$stage]: .beads gone after undo" >&2; exit 1; }
+    [ -d .obr ] || { echo "ASSERT FAIL[$stage]: .obr gone after undo" >&2; exit 1; }
     ;;
   *)
     echo "unknown stage: $stage" >&2

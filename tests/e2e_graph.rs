@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, extract_json_payload, run_br, run_br_with_env};
+use common::cli::{ObrWorkspace, extract_json_payload, run_obr, run_obr_with_env};
 use serde_json::Value;
 use toon_rust::try_decode;
 
@@ -30,16 +30,16 @@ fn parse_json_u64(value: &Value) -> Option<u64> {
 #[test]
 fn e2e_graph_single_issue_no_dependents() {
     let _log = common::test_log("e2e_graph_single_issue_no_dependents");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let issue = run_br(&workspace, ["create", "Standalone issue"], "create_issue");
+    let issue = run_obr(&workspace, ["create", "Standalone issue"], "create_issue");
     assert!(issue.status.success(), "create failed: {}", issue.stderr);
     let issue_id = parse_created_id(&issue.stdout);
 
-    let graph = run_br(&workspace, ["graph", &issue_id], "graph_single");
+    let graph = run_obr(&workspace, ["graph", &issue_id], "graph_single");
     assert!(graph.status.success(), "graph failed: {}", graph.stderr);
     assert!(
         graph.stdout.contains("No dependents"),
@@ -51,13 +51,13 @@ fn e2e_graph_single_issue_no_dependents() {
 #[test]
 fn e2e_graph_single_issue_with_dependents() {
     let _log = common::test_log("e2e_graph_single_issue_with_dependents");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create blocking issue (root)
-    let blocker = run_br(&workspace, ["create", "Blocker issue"], "create_blocker");
+    let blocker = run_obr(&workspace, ["create", "Blocker issue"], "create_blocker");
     assert!(
         blocker.status.success(),
         "blocker create failed: {}",
@@ -66,7 +66,7 @@ fn e2e_graph_single_issue_with_dependents() {
     let blocker_id = parse_created_id(&blocker.stdout);
 
     // Create blocked issue (dependent)
-    let blocked = run_br(&workspace, ["create", "Blocked issue"], "create_blocked");
+    let blocked = run_obr(&workspace, ["create", "Blocked issue"], "create_blocked");
     assert!(
         blocked.status.success(),
         "blocked create failed: {}",
@@ -75,7 +75,7 @@ fn e2e_graph_single_issue_with_dependents() {
     let blocked_id = parse_created_id(&blocked.stdout);
 
     // Add dependency: blocked depends on blocker
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &workspace,
         ["dep", "add", &blocked_id, &blocker_id],
         "dep_add",
@@ -87,7 +87,7 @@ fn e2e_graph_single_issue_with_dependents() {
     );
 
     // Graph blocker - should show blocked as dependent
-    let graph = run_br(&workspace, ["graph", &blocker_id], "graph_blocker");
+    let graph = run_obr(&workspace, ["graph", &blocker_id], "graph_blocker");
     assert!(graph.status.success(), "graph failed: {}", graph.stderr);
     assert!(
         graph.stdout.contains("Dependents of"),
@@ -104,12 +104,12 @@ fn e2e_graph_single_issue_with_dependents() {
 #[test]
 fn e2e_graph_single_issue_json() {
     let _log = common::test_log("e2e_graph_single_issue_json");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let blocker = run_br(&workspace, ["create", "Blocker"], "create_blocker");
+    let blocker = run_obr(&workspace, ["create", "Blocker"], "create_blocker");
     assert!(
         blocker.status.success(),
         "blocker create failed: {}",
@@ -117,7 +117,7 @@ fn e2e_graph_single_issue_json() {
     );
     let blocker_id = parse_created_id(&blocker.stdout);
 
-    let blocked = run_br(&workspace, ["create", "Blocked"], "create_blocked");
+    let blocked = run_obr(&workspace, ["create", "Blocked"], "create_blocked");
     assert!(
         blocked.status.success(),
         "blocked create failed: {}",
@@ -125,7 +125,7 @@ fn e2e_graph_single_issue_json() {
     );
     let blocked_id = parse_created_id(&blocked.stdout);
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &workspace,
         ["dep", "add", &blocked_id, &blocker_id],
         "dep_add",
@@ -136,7 +136,7 @@ fn e2e_graph_single_issue_json() {
         dep_add.stderr
     );
 
-    let graph = run_br(&workspace, ["graph", &blocker_id, "--json"], "graph_json");
+    let graph = run_obr(&workspace, ["graph", &blocker_id, "--json"], "graph_json");
     assert!(graph.status.success(), "graph failed: {}", graph.stderr);
 
     let payload = extract_json_payload(&graph.stdout);
@@ -157,12 +157,12 @@ fn e2e_graph_single_issue_json() {
 #[test]
 fn e2e_graph_single_issue_honors_toon_env_mode() {
     let _log = common::test_log("e2e_graph_single_issue_honors_toon_env_mode");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let blocker = run_br(&workspace, ["create", "TOON blocker"], "create_blocker");
+    let blocker = run_obr(&workspace, ["create", "TOON blocker"], "create_blocker");
     assert!(
         blocker.status.success(),
         "blocker create failed: {}",
@@ -170,7 +170,7 @@ fn e2e_graph_single_issue_honors_toon_env_mode() {
     );
     let blocker_id = parse_created_id(&blocker.stdout);
 
-    let blocked = run_br(&workspace, ["create", "TOON blocked"], "create_blocked");
+    let blocked = run_obr(&workspace, ["create", "TOON blocked"], "create_blocked");
     assert!(
         blocked.status.success(),
         "blocked create failed: {}",
@@ -178,7 +178,7 @@ fn e2e_graph_single_issue_honors_toon_env_mode() {
     );
     let blocked_id = parse_created_id(&blocked.stdout);
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &workspace,
         ["dep", "add", &blocked_id, &blocker_id],
         "dep_add",
@@ -189,10 +189,10 @@ fn e2e_graph_single_issue_honors_toon_env_mode() {
         dep_add.stderr
     );
 
-    let graph = run_br_with_env(
+    let graph = run_obr_with_env(
         &workspace,
         ["graph", &blocker_id],
-        [("BR_OUTPUT_FORMAT", "toon")],
+        [("OBR_OUTPUT_FORMAT", "toon")],
         "graph_toon_env",
     );
     assert!(graph.status.success(), "graph failed: {}", graph.stderr);
@@ -210,12 +210,12 @@ fn e2e_graph_single_issue_honors_toon_env_mode() {
 #[test]
 fn e2e_graph_single_issue_compact() {
     let _log = common::test_log("e2e_graph_single_issue_compact");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let blocker = run_br(&workspace, ["create", "Blocker"], "create_blocker");
+    let blocker = run_obr(&workspace, ["create", "Blocker"], "create_blocker");
     assert!(
         blocker.status.success(),
         "blocker create failed: {}",
@@ -223,7 +223,7 @@ fn e2e_graph_single_issue_compact() {
     );
     let blocker_id = parse_created_id(&blocker.stdout);
 
-    let blocked = run_br(&workspace, ["create", "Blocked"], "create_blocked");
+    let blocked = run_obr(&workspace, ["create", "Blocked"], "create_blocked");
     assert!(
         blocked.status.success(),
         "blocked create failed: {}",
@@ -231,7 +231,7 @@ fn e2e_graph_single_issue_compact() {
     );
     let blocked_id = parse_created_id(&blocked.stdout);
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &workspace,
         ["dep", "add", &blocked_id, &blocker_id],
         "dep_add",
@@ -242,7 +242,7 @@ fn e2e_graph_single_issue_compact() {
         dep_add.stderr
     );
 
-    let graph = run_br(
+    let graph = run_obr(
         &workspace,
         ["graph", &blocker_id, "--compact"],
         "graph_compact",
@@ -265,12 +265,12 @@ fn e2e_graph_single_issue_compact() {
 #[test]
 fn e2e_graph_all_no_issues() {
     let _log = common::test_log("e2e_graph_all_no_issues");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let graph = run_br(&workspace, ["graph", "--all"], "graph_all_empty");
+    let graph = run_obr(&workspace, ["graph", "--all"], "graph_all_empty");
     assert!(graph.status.success(), "graph failed: {}", graph.stderr);
     assert!(
         graph.stdout.contains("No active issues found"),
@@ -282,12 +282,12 @@ fn e2e_graph_all_no_issues() {
 #[test]
 fn e2e_graph_all_includes_custom_status_issues() {
     let _log = common::test_log("e2e_graph_all_includes_custom_status_issues");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let review = run_br(&workspace, ["create", "Review issue"], "create_review");
+    let review = run_obr(&workspace, ["create", "Review issue"], "create_review");
     assert!(
         review.status.success(),
         "create review failed: {}",
@@ -295,14 +295,14 @@ fn e2e_graph_all_includes_custom_status_issues() {
     );
     let review_id = parse_created_id(&review.stdout);
 
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         ["update", &review_id, "--status", "review"],
         "set_review_status",
     );
     assert!(update.status.success(), "update failed: {}", update.stderr);
 
-    let graph = run_br(&workspace, ["graph", "--all", "--json"], "graph_all_review");
+    let graph = run_obr(&workspace, ["graph", "--all", "--json"], "graph_all_review");
     assert!(graph.status.success(), "graph failed: {}", graph.stderr);
 
     let payload = extract_json_payload(&graph.stdout);
@@ -322,13 +322,13 @@ fn e2e_graph_all_includes_custom_status_issues() {
 #[test]
 fn e2e_graph_all_with_connected_components() {
     let _log = common::test_log("e2e_graph_all_with_connected_components");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create first connected component: A -> B
-    let issue_a = run_br(&workspace, ["create", "Issue A"], "create_a");
+    let issue_a = run_obr(&workspace, ["create", "Issue A"], "create_a");
     assert!(
         issue_a.status.success(),
         "create a failed: {}",
@@ -336,7 +336,7 @@ fn e2e_graph_all_with_connected_components() {
     );
     let id_a = parse_created_id(&issue_a.stdout);
 
-    let issue_b = run_br(&workspace, ["create", "Issue B"], "create_b");
+    let issue_b = run_obr(&workspace, ["create", "Issue B"], "create_b");
     assert!(
         issue_b.status.success(),
         "create b failed: {}",
@@ -344,11 +344,11 @@ fn e2e_graph_all_with_connected_components() {
     );
     let id_b = parse_created_id(&issue_b.stdout);
 
-    let dep_ab = run_br(&workspace, ["dep", "add", &id_b, &id_a], "dep_ab");
+    let dep_ab = run_obr(&workspace, ["dep", "add", &id_b, &id_a], "dep_ab");
     assert!(dep_ab.status.success(), "dep add failed: {}", dep_ab.stderr);
 
     // Create second isolated issue (separate component)
-    let issue_c = run_br(&workspace, ["create", "Issue C"], "create_c");
+    let issue_c = run_obr(&workspace, ["create", "Issue C"], "create_c");
     assert!(
         issue_c.status.success(),
         "create c failed: {}",
@@ -356,7 +356,7 @@ fn e2e_graph_all_with_connected_components() {
     );
     let id_c = parse_created_id(&issue_c.stdout);
 
-    let graph = run_br(&workspace, ["graph", "--all"], "graph_all");
+    let graph = run_obr(&workspace, ["graph", "--all"], "graph_all");
     assert!(graph.status.success(), "graph failed: {}", graph.stderr);
 
     // Should show both components
@@ -380,12 +380,12 @@ fn e2e_graph_all_with_connected_components() {
 #[test]
 fn e2e_graph_all_json() {
     let _log = common::test_log("e2e_graph_all_json");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let issue_a = run_br(&workspace, ["create", "Issue A"], "create_a");
+    let issue_a = run_obr(&workspace, ["create", "Issue A"], "create_a");
     assert!(
         issue_a.status.success(),
         "create a failed: {}",
@@ -393,7 +393,7 @@ fn e2e_graph_all_json() {
     );
     let id_a = parse_created_id(&issue_a.stdout);
 
-    let issue_b = run_br(&workspace, ["create", "Issue B"], "create_b");
+    let issue_b = run_obr(&workspace, ["create", "Issue B"], "create_b");
     assert!(
         issue_b.status.success(),
         "create b failed: {}",
@@ -401,10 +401,10 @@ fn e2e_graph_all_json() {
     );
     let id_b = parse_created_id(&issue_b.stdout);
 
-    let dep_ab = run_br(&workspace, ["dep", "add", &id_b, &id_a], "dep_ab");
+    let dep_ab = run_obr(&workspace, ["dep", "add", &id_b, &id_a], "dep_ab");
     assert!(dep_ab.status.success(), "dep add failed: {}", dep_ab.stderr);
 
-    let graph = run_br(&workspace, ["graph", "--all", "--json"], "graph_all_json");
+    let graph = run_obr(&workspace, ["graph", "--all", "--json"], "graph_all_json");
     assert!(graph.status.success(), "graph failed: {}", graph.stderr);
 
     let payload = extract_json_payload(&graph.stdout);
@@ -434,12 +434,12 @@ fn e2e_graph_all_json() {
 #[test]
 fn e2e_graph_requires_issue_or_all() {
     let _log = common::test_log("e2e_graph_requires_issue_or_all");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let graph = run_br(&workspace, ["graph"], "graph_no_args");
+    let graph = run_obr(&workspace, ["graph"], "graph_no_args");
     assert!(!graph.status.success(), "graph without args should fail");
     assert!(
         graph.stderr.contains("Issue ID required") || graph.stderr.contains("issue"),
@@ -451,13 +451,13 @@ fn e2e_graph_requires_issue_or_all() {
 #[test]
 fn e2e_graph_chain_depth() {
     let _log = common::test_log("e2e_graph_chain_depth");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create chain: A -> B -> C (C depends on B, B depends on A)
-    let issue_a = run_br(&workspace, ["create", "Root issue A"], "create_a");
+    let issue_a = run_obr(&workspace, ["create", "Root issue A"], "create_a");
     assert!(
         issue_a.status.success(),
         "create a failed: {}",
@@ -465,7 +465,7 @@ fn e2e_graph_chain_depth() {
     );
     let id_a = parse_created_id(&issue_a.stdout);
 
-    let issue_b = run_br(&workspace, ["create", "Middle issue B"], "create_b");
+    let issue_b = run_obr(&workspace, ["create", "Middle issue B"], "create_b");
     assert!(
         issue_b.status.success(),
         "create b failed: {}",
@@ -473,7 +473,7 @@ fn e2e_graph_chain_depth() {
     );
     let id_b = parse_created_id(&issue_b.stdout);
 
-    let issue_c = run_br(&workspace, ["create", "Leaf issue C"], "create_c");
+    let issue_c = run_obr(&workspace, ["create", "Leaf issue C"], "create_c");
     assert!(
         issue_c.status.success(),
         "create c failed: {}",
@@ -482,15 +482,15 @@ fn e2e_graph_chain_depth() {
     let id_c = parse_created_id(&issue_c.stdout);
 
     // B depends on A
-    let dep_ba = run_br(&workspace, ["dep", "add", &id_b, &id_a], "dep_ba");
+    let dep_ba = run_obr(&workspace, ["dep", "add", &id_b, &id_a], "dep_ba");
     assert!(dep_ba.status.success(), "dep add failed: {}", dep_ba.stderr);
 
     // C depends on B
-    let dep_cb = run_br(&workspace, ["dep", "add", &id_c, &id_b], "dep_cb");
+    let dep_cb = run_obr(&workspace, ["dep", "add", &id_c, &id_b], "dep_cb");
     assert!(dep_cb.status.success(), "dep add failed: {}", dep_cb.stderr);
 
     // Graph from A should show B at depth 1, C at depth 2
-    let graph = run_br(&workspace, ["graph", &id_a, "--json"], "graph_chain");
+    let graph = run_obr(&workspace, ["graph", &id_a, "--json"], "graph_chain");
     assert!(graph.status.success(), "graph failed: {}", graph.stderr);
 
     let payload = extract_json_payload(&graph.stdout);

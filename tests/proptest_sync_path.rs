@@ -7,34 +7,32 @@
 //!
 //! Property summary:
 //!   For ANY filename `f` and any path `p` constructed under the workspace,
-//!   `validate_sync_path(p, beads_dir)` MUST return `Allowed` iff
-//!   `p` is `.beads/`-rooted (lexically and after canonicalization) AND
+//!   `validate_sync_path(p, obr_dir)` MUST return `Allowed` iff
+//!   `p` is `.obr/`-rooted (lexically and after canonicalization) AND
 //!   `f` matches the documented allowlist (extension or exact-name).
 //!
 //! The tests below cherry-pick the most-load-bearing properties:
 //!   - prop_validate_rejects_arbitrary_dotgit_descendants (NGI-3)
-//!   - prop_validate_rejects_traversal_outside_beads (PC-3)
+//!   - prop_validate_rejects_traversal_outside_obr (PC-3)
 //!   - prop_validate_accepts_canonical_jsonl (PC-1 happy path)
 //!   - prop_validate_with_external_rejects_dotgit_unconditionally (NGI-3 even with allow_external)
 //!
 //! Note: this is a *test crate* — no production-code dependency on proptest.
 
-use beads_rust::sync::path::{
-    PathValidation, validate_sync_path, validate_sync_path_with_external,
-};
+use obr::sync::path::{PathValidation, validate_sync_path, validate_sync_path_with_external};
 use proptest::prelude::*;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
 fn fresh_workspace() -> (TempDir, PathBuf) {
     let temp = TempDir::new().expect("temp dir");
-    let beads = temp.path().join(".beads");
-    std::fs::create_dir_all(&beads).expect("create .beads");
+    let beads = temp.path().join(".obr");
+    std::fs::create_dir_all(&beads).expect("create .obr");
     (temp, beads)
 }
 
 // PC-3 + NGI-3: any filename whose path component contains `.git` ANYWHERE
-// in the .beads/-rooted ancestor chain MUST be rejected. The invariant is
+// in the .obr/-rooted ancestor chain MUST be rejected. The invariant is
 // hard — even subdirectories whose names *contain* `.git` as a substring
 // are not necessarily git, but exact-match `.git` components are.
 proptest! {
@@ -43,7 +41,7 @@ proptest! {
         ..ProptestConfig::default()
     })]
 
-    // Property: any path of the form .beads/<segment>/.git/<inner> MUST
+    // Property: any path of the form .obr/<segment>/.git/<inner> MUST
     // be rejected. Tests with random alphanumeric segments ensure the
     // rejection is structural, not a special-case for one filename.
     #[test]
@@ -62,18 +60,18 @@ proptest! {
     }
 
     // Property: a path explicitly constructed with `..` traversing outside
-    // .beads/ MUST be rejected, regardless of the suffix.
-    // We use existing `.beads/` and a sibling external dir to make the
+    // .obr/ MUST be rejected, regardless of the suffix.
+    // We use existing `.obr/` and a sibling external dir to make the
     // canonicalization meaningful.
     #[test]
-    fn prop_validate_rejects_traversal_outside_beads(
+    fn prop_validate_rejects_traversal_outside_obr(
         external_seg in "[a-z]{1,6}",
         suffix in "[a-z0-9]{1,6}\\.(jsonl|db|json|txt)",
     ) {
         let (temp, beads) = fresh_workspace();
         let external_dir = temp.path().join(format!("ext_{external_seg}"));
         std::fs::create_dir_all(&external_dir).expect("create external");
-        // Path that lexically is .beads/../ext_<seg>/<suffix>
+        // Path that lexically is .obr/../ext_<seg>/<suffix>
         let escape = beads.join("..").join(format!("ext_{external_seg}")).join(&suffix);
 
         let result = validate_sync_path(&escape, &beads);
@@ -83,7 +81,7 @@ proptest! {
         );
     }
 
-    // Property: a freshly-written `.jsonl` file under .beads/ with any
+    // Property: a freshly-written `.jsonl` file under .obr/ with any
     // well-formed alphanumeric name MUST be accepted.
     #[test]
     fn prop_validate_accepts_canonical_jsonl(

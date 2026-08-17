@@ -1,2 +1,0 @@
-f53eacc77688aac10afb998025cc0b88f40a534f8de0b662a4ae70575f9c62e2  /data/projects/beads_rust/tests/artifacts/perf/beads-perf-20260503T-startup-cache/direct-output.json
-f53eacc77688aac10afb998025cc0b88f40a534f8de0b662a4ae70575f9c62e2  /data/projects/beads_rust/tests/artifacts/perf/beads-perf-20260503T-startup-cache/cached-output.json

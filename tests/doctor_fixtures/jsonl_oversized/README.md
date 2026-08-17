@@ -1,6 +1,6 @@
 # jsonl_oversized
 
-- **FM**: `fm-state_files-jsonl-oversized` (P3) — `.beads/issues.jsonl`
+- **FM**: `fm-state_files-jsonl-oversized` (P3) — `.obr/issues.jsonl`
   exceeds the 100MB `jsonl_size` threshold. At that scale the sync
   engine's full-file read on every flush is slow and the in-memory
   parse pressures low-RAM hosts.

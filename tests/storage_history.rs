@@ -7,16 +7,16 @@
 //! - Rotation by age deletes old backups
 //! - Mixed file stems rotate independently
 //! - list_backups with prefix filter only returns matching files
-//! - Confinement: backup only for files inside .beads/
+//! - Confinement: backup only for files inside .obr/
 //! - Prune with zero keep deletes everything
 //! - Rapid backups with distinct content all preserved
 //!
 //! Related bead: beads_rust-2xbh
 
-use beads_rust::sync::history::{
+use chrono::{Duration, Utc};
+use obr::sync::history::{
     BackupEntry, HistoryConfig, backup_before_export, list_backups, prune_backups,
 };
-use chrono::{Duration, Utc};
 use std::fs::{self, File};
 use std::io::Write;
 use tempfile::TempDir;
@@ -25,18 +25,18 @@ use tempfile::TempDir;
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn setup_beads_dir(temp: &TempDir) -> std::path::PathBuf {
-    let beads_dir = temp.path().join(".beads");
-    fs::create_dir_all(&beads_dir).unwrap();
-    beads_dir
+fn setup_obr_dir(temp: &TempDir) -> std::path::PathBuf {
+    let obr_dir = temp.path().join(".obr");
+    fs::create_dir_all(&obr_dir).unwrap();
+    obr_dir
 }
 
 fn write_file(path: &std::path::Path, content: &[u8]) {
     File::create(path).unwrap().write_all(content).unwrap();
 }
 
-fn history_dir(beads_dir: &std::path::Path) -> std::path::PathBuf {
-    beads_dir.join(".br_history")
+fn history_dir(obr_dir: &std::path::Path) -> std::path::PathBuf {
+    obr_dir.join("history")
 }
 
 // ===========================================================================
@@ -46,8 +46,8 @@ fn history_dir(beads_dir: &std::path::Path) -> std::path::PathBuf {
 #[test]
 fn disabled_config_skips_backup() {
     let temp = TempDir::new().unwrap();
-    let beads_dir = setup_beads_dir(&temp);
-    let target = beads_dir.join("issues.jsonl");
+    let obr_dir = setup_obr_dir(&temp);
+    let target = obr_dir.join("issues.jsonl");
     write_file(&target, b"some content");
 
     let config = HistoryConfig {
@@ -57,11 +57,11 @@ fn disabled_config_skips_backup() {
         min_interval_secs: 0,
     };
 
-    backup_before_export(&beads_dir, &config, &target).unwrap();
+    backup_before_export(&obr_dir, &config, &target).unwrap();
 
     // History directory should not even be created
     assert!(
-        !history_dir(&beads_dir).exists(),
+        !history_dir(&obr_dir).exists(),
         "disabled config should not create history directory"
     );
 }
@@ -73,16 +73,16 @@ fn disabled_config_skips_backup() {
 #[test]
 fn nonexistent_target_skips_backup() {
     let temp = TempDir::new().unwrap();
-    let beads_dir = setup_beads_dir(&temp);
-    let target = beads_dir.join("does_not_exist.jsonl");
+    let obr_dir = setup_obr_dir(&temp);
+    let target = obr_dir.join("does_not_exist.jsonl");
 
     let config = HistoryConfig::default();
 
     // Should succeed without error
-    backup_before_export(&beads_dir, &config, &target).unwrap();
+    backup_before_export(&obr_dir, &config, &target).unwrap();
 
     // No history directory created
-    assert!(!history_dir(&beads_dir).exists());
+    assert!(!history_dir(&obr_dir).exists());
 }
 
 // ===========================================================================
@@ -92,8 +92,8 @@ fn nonexistent_target_skips_backup() {
 #[test]
 fn changed_content_creates_new_backup() {
     let temp = TempDir::new().unwrap();
-    let beads_dir = setup_beads_dir(&temp);
-    let target = beads_dir.join("issues.jsonl");
+    let obr_dir = setup_obr_dir(&temp);
+    let target = obr_dir.join("issues.jsonl");
 
     // Disable the snapshot throttle: this test validates that *changed* content
     // produces a new (non-deduped) backup, independent of the #313 throttle.
@@ -104,16 +104,16 @@ fn changed_content_creates_new_backup() {
 
     // First backup
     write_file(&target, b"version 1");
-    backup_before_export(&beads_dir, &config, &target).unwrap();
+    backup_before_export(&obr_dir, &config, &target).unwrap();
 
     // Change content
     write_file(&target, b"version 2");
 
     // Need a small delay so timestamp differs
     std::thread::sleep(std::time::Duration::from_secs(1));
-    backup_before_export(&beads_dir, &config, &target).unwrap();
+    backup_before_export(&obr_dir, &config, &target).unwrap();
 
-    let backups = list_backups(&history_dir(&beads_dir), None).unwrap();
+    let backups = list_backups(&history_dir(&obr_dir), None).unwrap();
     assert_eq!(
         backups.len(),
         2,
@@ -128,17 +128,17 @@ fn changed_content_creates_new_backup() {
 #[test]
 fn identical_content_is_deduplicated() {
     let temp = TempDir::new().unwrap();
-    let beads_dir = setup_beads_dir(&temp);
-    let target = beads_dir.join("issues.jsonl");
+    let obr_dir = setup_obr_dir(&temp);
+    let target = obr_dir.join("issues.jsonl");
     write_file(&target, b"identical content");
 
     let config = HistoryConfig::default();
 
-    backup_before_export(&beads_dir, &config, &target).unwrap();
-    backup_before_export(&beads_dir, &config, &target).unwrap();
-    backup_before_export(&beads_dir, &config, &target).unwrap();
+    backup_before_export(&obr_dir, &config, &target).unwrap();
+    backup_before_export(&obr_dir, &config, &target).unwrap();
+    backup_before_export(&obr_dir, &config, &target).unwrap();
 
-    let backups = list_backups(&history_dir(&beads_dir), None).unwrap();
+    let backups = list_backups(&history_dir(&obr_dir), None).unwrap();
     assert_eq!(
         backups.len(),
         1,
@@ -153,11 +153,11 @@ fn identical_content_is_deduplicated() {
 #[test]
 fn rotation_by_count_keeps_newest() {
     let temp = TempDir::new().unwrap();
-    let beads_dir = setup_beads_dir(&temp);
-    let hdir = history_dir(&beads_dir);
+    let obr_dir = setup_obr_dir(&temp);
+    let hdir = history_dir(&obr_dir);
     fs::create_dir_all(&hdir).unwrap();
 
-    let target = beads_dir.join("issues.jsonl");
+    let target = obr_dir.join("issues.jsonl");
 
     let config = HistoryConfig {
         enabled: true,
@@ -170,7 +170,7 @@ fn rotation_by_count_keeps_newest() {
     for i in 0..4 {
         write_file(&target, format!("version {i}").as_bytes());
         std::thread::sleep(std::time::Duration::from_secs(1));
-        backup_before_export(&beads_dir, &config, &target).unwrap();
+        backup_before_export(&obr_dir, &config, &target).unwrap();
     }
 
     let backups = list_backups(&hdir, None).unwrap();
@@ -221,8 +221,8 @@ fn rotation_by_age_deletes_old() {
 #[test]
 fn mixed_stems_rotate_independently() {
     let temp = TempDir::new().unwrap();
-    let beads_dir = setup_beads_dir(&temp);
-    let hdir = history_dir(&beads_dir);
+    let obr_dir = setup_obr_dir(&temp);
+    let hdir = history_dir(&obr_dir);
     fs::create_dir_all(&hdir).unwrap();
 
     let config = HistoryConfig {
@@ -233,22 +233,22 @@ fn mixed_stems_rotate_independently() {
     };
 
     // Create backups for "issues" stem
-    let issues_target = beads_dir.join("issues.jsonl");
+    let issues_target = obr_dir.join("issues.jsonl");
     write_file(&issues_target, b"issues v1");
-    backup_before_export(&beads_dir, &config, &issues_target).unwrap();
+    backup_before_export(&obr_dir, &config, &issues_target).unwrap();
 
     std::thread::sleep(std::time::Duration::from_secs(1));
     write_file(&issues_target, b"issues v2");
-    backup_before_export(&beads_dir, &config, &issues_target).unwrap();
+    backup_before_export(&obr_dir, &config, &issues_target).unwrap();
 
     // Create backups for "archive" stem
-    let archive_target = beads_dir.join("archive.jsonl");
+    let archive_target = obr_dir.join("archive.jsonl");
     write_file(&archive_target, b"archive v1");
-    backup_before_export(&beads_dir, &config, &archive_target).unwrap();
+    backup_before_export(&obr_dir, &config, &archive_target).unwrap();
 
     std::thread::sleep(std::time::Duration::from_secs(1));
     write_file(&archive_target, b"archive v2");
-    backup_before_export(&beads_dir, &config, &archive_target).unwrap();
+    backup_before_export(&obr_dir, &config, &archive_target).unwrap();
 
     // Each stem should have max_count=1 backups
     let issues_backups = list_backups(&hdir, Some("issues.")).unwrap();
@@ -384,14 +384,14 @@ fn prune_empty_dir_is_noop() {
 #[test]
 fn backup_entry_fields_populated() {
     let temp = TempDir::new().unwrap();
-    let beads_dir = setup_beads_dir(&temp);
-    let target = beads_dir.join("issues.jsonl");
+    let obr_dir = setup_obr_dir(&temp);
+    let target = obr_dir.join("issues.jsonl");
     write_file(&target, b"hello world");
 
     let config = HistoryConfig::default();
-    backup_before_export(&beads_dir, &config, &target).unwrap();
+    backup_before_export(&obr_dir, &config, &target).unwrap();
 
-    let backups = list_backups(&history_dir(&beads_dir), None).unwrap();
+    let backups = list_backups(&history_dir(&obr_dir), None).unwrap();
     assert_eq!(backups.len(), 1);
 
     let entry: &BackupEntry = &backups[0];
@@ -414,17 +414,17 @@ fn backup_entry_fields_populated() {
 #[test]
 fn backup_preserves_content_exactly() {
     let temp = TempDir::new().unwrap();
-    let beads_dir = setup_beads_dir(&temp);
-    let target = beads_dir.join("issues.jsonl");
+    let obr_dir = setup_obr_dir(&temp);
+    let target = obr_dir.join("issues.jsonl");
 
     let content =
         b"{\"id\":\"test-1\",\"title\":\"Hello\"}\n{\"id\":\"test-2\",\"title\":\"World\"}\n";
     write_file(&target, content);
 
     let config = HistoryConfig::default();
-    backup_before_export(&beads_dir, &config, &target).unwrap();
+    backup_before_export(&obr_dir, &config, &target).unwrap();
 
-    let backups = list_backups(&history_dir(&beads_dir), None).unwrap();
+    let backups = list_backups(&history_dir(&obr_dir), None).unwrap();
     let backup_content = fs::read(&backups[0].path).unwrap();
     assert_eq!(
         backup_content, content,

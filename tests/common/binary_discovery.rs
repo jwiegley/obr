@@ -1,6 +1,6 @@
 //! Binary discovery and version pinning for conformance testing.
 //!
-//! Ensures conformance runs use the correct br/bd binaries and records version metadata.
+//! Ensures conformance runs use the correct obr/bd binaries and records version metadata.
 //! Fails early with actionable errors if bd is missing or unsupported.
 
 #![allow(dead_code)]
@@ -15,21 +15,21 @@ use std::process::{Command, Stdio};
 /// `#[ignore]` ledger in `tests/conformance.rs` and the one
 /// `.github/workflows/conformance.yml` pins. Older releases are missing flags
 /// the tests drive (`bd defer --until`, for one), so they produce failures that
-/// describe bd's history rather than a br defect.
+/// describe bd's history rather than a obr defect.
 ///
 /// This floor used to read `0.5.0`, which admitted the entire 0.4x line: the
 /// comparison is numeric per component, so `0.40.0` compares *greater* than
 /// `0.5.0` (40 > 5) and sailed through.
 const MIN_BD_VERSION: &str = "0.46.0";
 
-/// First bd version that abandoned the "classic" architecture br is frozen against.
+/// First bd version that abandoned the "classic" architecture obr is frozen against.
 ///
-/// br is a port of *classic* beads: SQLite as primary storage with a JSONL export
+/// obr is a port of *classic* beads: SQLite as primary storage with a JSONL export
 /// (see `README.md`). bd v0.50.0 switched its default backend to Dolt and made
 /// `no-db` (JSONL-only, no SQLite) the default for `bd init`. A v0.50+ binary is
 /// therefore not a valid conformance reference:
 ///
-/// - `bd init` writes no `beads.db`, so the schema conformance suite has no
+/// - `bd init` writes no `obr.db`, so the schema conformance suite has no
 ///   database to introspect.
 /// - `config.yaml` changed shape entirely, so `conformance_init_config` compares
 ///   two unrelated documents.
@@ -38,7 +38,7 @@ const MIN_BD_VERSION: &str = "0.46.0";
 ///   text conformance suite diffs advisory noise rather than issue rendering.
 ///
 /// Comparing against such a binary produces dozens of failures that describe
-/// upstream's evolution, not a br defect. The bound is exclusive: bd must satisfy
+/// upstream's evolution, not a obr defect. The bound is exclusive: bd must satisfy
 /// `MIN_BD_VERSION <= version < MAX_BD_VERSION_EXCLUSIVE`.
 const MAX_BD_VERSION_EXCLUSIVE: &str = "0.50.0";
 
@@ -70,7 +70,7 @@ impl BinaryVersion {
 /// Result of binary discovery.
 #[derive(Debug, Clone)]
 pub struct DiscoveredBinaries {
-    pub br: BinaryVersion,
+    pub obr: BinaryVersion,
     pub bd: Option<BinaryVersion>,
 }
 
@@ -83,7 +83,7 @@ impl DiscoveredBinaries {
     /// Get bd or return an error message.
     pub fn require_bd(&self) -> Result<&BinaryVersion, String> {
         self.bd.as_ref().ok_or_else(|| {
-            "bd (Go beads) binary not found. Conformance tests require bd to be installed.\n\
+            "bd (Go obr) binary not found. Conformance tests require bd to be installed.\n\
              Install from: https://github.com/steveyegge/beads\n\
              Or set BD_BINARY env var to the path."
                 .to_string()
@@ -93,43 +93,47 @@ impl DiscoveredBinaries {
     /// Serialize for inclusion in conformance summary.
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
-            "br": self.br.to_json(),
+            "obr": self.obr.to_json(),
             "bd": self.bd.as_ref().map(BinaryVersion::to_json),
             "conformance_ready": self.bd_available(),
         })
     }
 }
 
-/// Discover br binary (from cargo build).
-fn discover_br() -> Result<BinaryVersion, String> {
-    // First check if BR_BINARY env var is set
-    if let Ok(br_path) = std::env::var("BR_BINARY") {
-        let path = PathBuf::from(&br_path);
+/// Discover obr binary (from cargo build).
+fn discover_obr() -> Result<BinaryVersion, String> {
+    // First check if OBR_BINARY (or the legacy BR_BINARY) env var is set
+    if let Some((var, obr_path)) = std::env::var("OBR_BINARY")
+        .map(|value| ("OBR_BINARY", value))
+        .or_else(|_| std::env::var("BR_BINARY").map(|value| ("BR_BINARY", value)))
+        .ok()
+    {
+        let path = PathBuf::from(&obr_path);
         if path.exists() {
-            return probe_binary("br", &path);
+            return probe_binary("obr", &path);
         }
-        return Err(format!("BR_BINARY={br_path} does not exist"));
+        return Err(format!("{var}={obr_path} does not exist"));
     }
 
     // Try cargo-built binary
-    let cargo_bin = assert_cmd::cargo::cargo_bin!("br");
+    let cargo_bin = assert_cmd::cargo::cargo_bin!("obr");
     if cargo_bin.exists() {
-        return probe_binary("br", cargo_bin);
+        return probe_binary("obr", cargo_bin);
     }
 
     // Try release binary
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let release_bin = manifest_dir.join("target/release/br");
+    let release_bin = manifest_dir.join("target/release/obr");
     if release_bin.exists() {
-        return probe_binary("br", &release_bin);
+        return probe_binary("obr", &release_bin);
     }
 
     // Try PATH
-    if let Some(path) = which("br") {
-        return probe_binary("br", &path);
+    if let Some(path) = which("obr") {
+        return probe_binary("obr", &path);
     }
 
-    Err("br binary not found. Build with `cargo build` first.".to_string())
+    Err("obr binary not found. Build with `cargo build` first.".to_string())
 }
 
 /// Discover bd binary (Go beads).
@@ -181,10 +185,10 @@ fn discover_bd() -> Option<BinaryVersion> {
 fn probe_binary(name: &str, path: &Path) -> Result<BinaryVersion, String> {
     if name == "bd"
         && let Some(output) = run_version_command(path, &["version"])
-        && looks_like_br(&output)
+        && looks_like_obr(&output)
     {
         return Err(format!(
-            "bd binary at {} appears to be br; set BD_BINARY to real bd",
+            "bd binary at {} appears to be obr; set BD_BINARY to real bd",
             path.display()
         ));
     }
@@ -237,8 +241,8 @@ fn probe_binary(name: &str, path: &Path) -> Result<BinaryVersion, String> {
     ))
 }
 
-fn looks_like_br(output: &str) -> bool {
-    output.trim_start().starts_with("br ")
+fn looks_like_obr(output: &str) -> bool {
+    output.trim_start().starts_with("obr ")
 }
 
 /// Run a version command and capture output.
@@ -272,7 +276,7 @@ fn parse_json_version(output: &str) -> Result<JsonVersion, serde_json::Error> {
     serde_json::from_str(&output[json_start..])
 }
 
-/// Parse plain text version output (e.g., "br 0.1.0").
+/// Parse plain text version output (e.g., "obr 0.1.0").
 fn parse_plain_version(output: &str) -> String {
     let output = output.trim();
 
@@ -307,14 +311,14 @@ fn which(name: &str) -> Option<PathBuf> {
     })
 }
 
-/// Discover both br and bd binaries.
+/// Discover both obr and bd binaries.
 ///
-/// Returns error only if br is not found (bd is optional for non-conformance tests).
+/// Returns error only if obr is not found (bd is optional for non-conformance tests).
 pub fn discover_binaries() -> Result<DiscoveredBinaries, String> {
-    let br = discover_br()?;
+    let obr = discover_obr()?;
     let bd = discover_bd();
 
-    Ok(DiscoveredBinaries { br, bd })
+    Ok(DiscoveredBinaries { obr, bd })
 }
 
 /// Check if bd version meets minimum requirements for conformance.
@@ -357,10 +361,10 @@ pub fn bd_skip_reason() -> Option<String> {
         ));
     };
 
-    // `bd` aliased or symlinked to `br` would compare br against itself.
-    if looks_like_br(&stdout) {
+    // `bd` aliased or symlinked to `obr` would compare obr against itself.
+    if looks_like_obr(&stdout) {
         return Some(format!(
-            "'{bd_bin}' is br, not Go bd — conformance would compare br against itself. {REMEDY}"
+            "'{bd_bin}' is obr, not Go bd — conformance would compare obr against itself. {REMEDY}"
         ));
     }
 
@@ -390,7 +394,7 @@ pub fn bd_skip_reason() -> Option<String> {
 
     if compare_versions(&version, MAX_BD_VERSION_EXCLUSIVE).is_ge() {
         return Some(format!(
-            "bd {version} at '{bd_bin}' is past the classic architecture br is frozen against \
+            "bd {version} at '{bd_bin}' is past the classic architecture obr is frozen against \
              (requires < {MAX_BD_VERSION_EXCLUSIVE}). bd v0.50+ defaults to Dolt and to \
              JSONL-only `no-db` mode, so it exposes no SQLite schema, writes a different \
              config.yaml, and prints migration banners on every command. {REMEDY}"
@@ -403,7 +407,7 @@ pub fn bd_skip_reason() -> Option<String> {
 /// Operator remedy appended to every conformance skip message.
 const REMEDY: &str = "Point BD_BINARY at a classic Go bd, e.g. \
      `git clone --depth 1 --branch v0.46.0 https://github.com/steveyegge/beads.git \
-     && cd beads && go build -o bd ./cmd/bd`.";
+     && cd obr && go build -o bd ./cmd/bd`.";
 
 /// Whether `bd` is usable as a conformance reference.
 pub fn bd_available() -> bool {
@@ -429,12 +433,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_discover_br() {
-        let result = discover_br();
-        assert!(result.is_ok(), "br should be discoverable: {result:?}");
+    fn test_discover_obr() {
+        let result = discover_obr();
+        assert!(result.is_ok(), "obr should be discoverable: {result:?}");
 
         let version = result.unwrap();
-        assert_eq!(version.binary, "br");
+        assert_eq!(version.binary, "obr");
         assert!(version.path.exists());
     }
 
@@ -444,7 +448,7 @@ mod tests {
         assert!(result.is_ok(), "Binary discovery failed: {result:?}");
 
         let binaries = result.unwrap();
-        assert_eq!(binaries.br.binary, "br");
+        assert_eq!(binaries.obr.binary, "obr");
 
         // bd may or may not be available
         if binaries.bd_available() {
@@ -455,8 +459,8 @@ mod tests {
 
     #[test]
     fn test_parse_plain_version() {
-        assert_eq!(parse_plain_version("br 0.1.0"), "0.1.0");
-        assert_eq!(parse_plain_version("beads 0.5.2"), "0.5.2");
+        assert_eq!(parse_plain_version("obr 0.1.0"), "0.1.0");
+        assert_eq!(parse_plain_version("obr 0.5.2"), "0.5.2");
         assert_eq!(parse_plain_version("0.1.0-dev"), "0.1.0-dev");
         assert_eq!(parse_plain_version("no version"), "unknown");
     }
@@ -470,7 +474,7 @@ mod tests {
         assert_eq!(compare_versions("1.0.0", "0.5.0"), Ordering::Greater);
     }
 
-    /// The classic-architecture window must accept the bd releases br was ported
+    /// The classic-architecture window must accept the bd releases obr was ported
     /// against and reject the Dolt-default line, including the double-digit minor
     /// versions that a naive lexicographic comparison would order wrongly.
     #[test]
@@ -518,7 +522,7 @@ mod tests {
         let binaries = discover_binaries().expect("discovery failed");
         let json = binaries.to_json();
 
-        assert!(json.get("br").is_some());
+        assert!(json.get("obr").is_some());
         assert!(json.get("conformance_ready").is_some());
     }
 }

@@ -1,4 +1,4 @@
-use super::common::cli::run_br;
+use super::common::cli::run_obr;
 use super::init_workspace;
 use insta::assert_snapshot;
 use regex::Regex;
@@ -15,12 +15,13 @@ const TOON_JSONL_FIXTURE: &str = r#"{"id":"bd-blocker","title":"00 Blocking Root
 static TOON_GENERATED_AT_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^generated_at:\s*.+$").expect("toon generated_at regex"));
 
-fn init_toon_workspace() -> super::common::cli::BrWorkspace {
+fn init_toon_workspace() -> super::common::cli::ObrWorkspace {
     let workspace = init_workspace();
-    let jsonl_path = workspace.root.join(".beads/issues.jsonl");
+    super::common::cli::pin_jsonl(&workspace.root.join(".obr"));
+    let jsonl_path = workspace.root.join(".obr/issues.jsonl");
     fs::write(jsonl_path, TOON_JSONL_FIXTURE).expect("write TOON JSONL fixture");
 
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--json"],
         "toon_golden_import",
@@ -46,7 +47,7 @@ fn normalize_toon_output(raw: &str) -> String {
 fn toon_golden_list_output() {
     let workspace = init_toon_workspace();
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["list", "--all", "--sort", "title", "--format", "toon"],
         "toon_golden_list",
@@ -69,7 +70,7 @@ fn toon_golden_list_output() {
 fn toon_golden_show_output() {
     let workspace = init_toon_workspace();
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["show", "bd-ready-p0", "--format", "toon"],
         "toon_golden_show",
@@ -92,7 +93,7 @@ fn toon_golden_show_output() {
 fn toon_golden_ready_output() {
     let workspace = init_toon_workspace();
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         [
             "ready", "--sort", "priority", "--limit", "0", "--format", "toon",

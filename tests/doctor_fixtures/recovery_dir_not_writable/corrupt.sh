@@ -12,8 +12,11 @@ cd "$target_dir"
 
 "$tool_bin" init --quiet 2>&1
 
-mkdir -p .beads/.br_recovery
-printf 'fixture-seed\n' > .beads/.br_recovery/sentinel.txt
-chmod 0555 .beads/.br_recovery
+# Keep the fixture detect-only under the `.obr/` surface.
+printf '*\n' > .obr/.gitignore
 
-echo "fixture corrupt.sh: locked .beads/.br_recovery at mode 0555" >&2
+mkdir -p .obr/recovery
+printf 'fixture-seed\n' > .obr/recovery/sentinel.txt
+chmod 0555 .obr/recovery
+
+echo "fixture corrupt.sh: locked .obr/recovery at mode 0555" >&2

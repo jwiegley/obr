@@ -8,16 +8,16 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, parse_list_issues, run_br, run_br_with_env};
+use common::cli::{ObrWorkspace, parse_list_issues, run_obr, run_obr_with_env};
 
-fn init_workspace_with_long_issues(workspace: &BrWorkspace) {
+fn init_workspace_with_long_issues(workspace: &ObrWorkspace) {
     // Initialize
-    let output = run_br(workspace, ["init", "--prefix", "wrap"], "init");
+    let output = run_obr(workspace, ["init", "--prefix", "wrap"], "init");
     assert!(output.status.success(), "init failed: {}", output.stderr);
 
     // Create issue with a very long title
     let long_title = "This is a very long issue title that should definitely exceed the normal terminal width when displayed in the list view or show view without wrapping enabled";
-    let output = run_br(
+    let output = run_obr(
         workspace,
         [
             "create",
@@ -34,7 +34,7 @@ fn init_workspace_with_long_issues(workspace: &BrWorkspace) {
     assert!(output.status.success(), "create failed: {}", output.stderr);
 
     // Create a shorter issue for comparison
-    let output = run_br(
+    let output = run_obr(
         workspace,
         ["create", "Short issue", "--type", "bug"],
         "create_short",
@@ -48,11 +48,11 @@ fn init_workspace_with_long_issues(workspace: &BrWorkspace) {
 
 #[test]
 fn e2e_list_without_wrap_truncates() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace_with_long_issues(&workspace);
 
     // List without --wrap at narrow width
-    let output = run_br_with_env(&workspace, ["list"], [("COLUMNS", "60")], "list_no_wrap");
+    let output = run_obr_with_env(&workspace, ["list"], [("COLUMNS", "60")], "list_no_wrap");
     assert!(output.status.success(), "list failed");
 
     // Should contain truncation indicator (...)
@@ -64,11 +64,11 @@ fn e2e_list_without_wrap_truncates() {
 
 #[test]
 fn e2e_list_with_wrap_shows_full_content() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace_with_long_issues(&workspace);
 
     // List with --wrap
-    let output = run_br_with_env(
+    let output = run_obr_with_env(
         &workspace,
         ["list", "--wrap"],
         [("COLUMNS", "60")],
@@ -82,18 +82,18 @@ fn e2e_list_with_wrap_shows_full_content() {
 
 #[test]
 fn e2e_list_wrap_json_unchanged() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace_with_long_issues(&workspace);
 
     // --wrap should not affect --json output
-    let output_no_wrap = run_br(&workspace, ["list", "--json"], "list_json");
-    let output_wrap = run_br(&workspace, ["list", "--wrap", "--json"], "list_json_wrap");
+    let output_no_wrap = run_obr(&workspace, ["list", "--json"], "list_json");
+    let output_wrap = run_obr(&workspace, ["list", "--wrap", "--json"], "list_json_wrap");
 
     assert!(output_no_wrap.status.success());
     assert!(output_wrap.status.success());
 
     // JSON output should be identical (wrap is text-only feature).
-    // `br list --json` emits a paginated envelope `{"issues": [...], "total": N, ...}`,
+    // `obr list --json` emits a paginated envelope `{"issues": [...], "total": N, ...}`,
     // so compare the `issues` array from each run rather than treating the whole
     // body as an array.
     let issues_no_wrap = parse_list_issues(&output_no_wrap.stdout);
@@ -107,11 +107,11 @@ fn e2e_list_wrap_json_unchanged() {
 
 #[test]
 fn e2e_show_without_wrap() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace_with_long_issues(&workspace);
 
     // Get the issue ID
-    let list_output = run_br(&workspace, ["list", "--json"], "list_for_show");
+    let list_output = run_obr(&workspace, ["list", "--json"], "list_for_show");
     let issues = parse_list_issues(&list_output.stdout);
     let long_issue_id = issues
         .iter()
@@ -120,7 +120,7 @@ fn e2e_show_without_wrap() {
         .as_str()
         .unwrap();
 
-    let output = run_br_with_env(
+    let output = run_obr_with_env(
         &workspace,
         ["show", long_issue_id],
         [("COLUMNS", "60")],
@@ -132,11 +132,11 @@ fn e2e_show_without_wrap() {
 
 #[test]
 fn e2e_show_with_wrap() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace_with_long_issues(&workspace);
 
     // Get the issue ID
-    let list_output = run_br(&workspace, ["list", "--json"], "list_for_show_wrap");
+    let list_output = run_obr(&workspace, ["list", "--json"], "list_for_show_wrap");
     let issues = parse_list_issues(&list_output.stdout);
     let long_issue_id = issues
         .iter()
@@ -145,7 +145,7 @@ fn e2e_show_with_wrap() {
         .as_str()
         .unwrap();
 
-    let output = run_br_with_env(
+    let output = run_obr_with_env(
         &workspace,
         ["show", long_issue_id, "--wrap"],
         [("COLUMNS", "60")],
@@ -167,19 +167,19 @@ fn e2e_show_with_wrap() {
 
 #[test]
 fn e2e_ready_without_wrap() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace_with_long_issues(&workspace);
 
-    let output = run_br_with_env(&workspace, ["ready"], [("COLUMNS", "60")], "ready_no_wrap");
+    let output = run_obr_with_env(&workspace, ["ready"], [("COLUMNS", "60")], "ready_no_wrap");
     assert!(output.status.success(), "ready failed");
 }
 
 #[test]
 fn e2e_ready_with_wrap() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace_with_long_issues(&workspace);
 
-    let output = run_br_with_env(
+    let output = run_obr_with_env(
         &workspace,
         ["ready", "--wrap"],
         [("COLUMNS", "60")],
@@ -194,10 +194,10 @@ fn e2e_ready_with_wrap() {
 
 #[test]
 fn e2e_search_without_wrap() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace_with_long_issues(&workspace);
 
-    let output = run_br_with_env(
+    let output = run_obr_with_env(
         &workspace,
         ["search", "long"],
         [("COLUMNS", "60")],
@@ -208,10 +208,10 @@ fn e2e_search_without_wrap() {
 
 #[test]
 fn e2e_search_with_wrap() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace_with_long_issues(&workspace);
 
-    let output = run_br_with_env(
+    let output = run_obr_with_env(
         &workspace,
         ["search", "long", "--wrap"],
         [("COLUMNS", "60")],
@@ -226,17 +226,17 @@ fn e2e_search_with_wrap() {
 
 #[test]
 fn e2e_comments_with_wrap() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace_with_long_issues(&workspace);
 
     // Get an issue ID
-    let list_output = run_br(&workspace, ["list", "--json"], "list_for_comments");
+    let list_output = run_obr(&workspace, ["list", "--json"], "list_for_comments");
     let issues = parse_list_issues(&list_output.stdout);
     let issue_id = issues[0]["id"].as_str().unwrap();
 
     // Add a long comment
     let long_comment = "This is a very long comment that contains lots of detailed information about the progress of this issue and should demonstrate the wrapping behavior when the wrap flag is enabled.";
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["comments", "add", issue_id, long_comment],
         "add_comment",
@@ -244,7 +244,7 @@ fn e2e_comments_with_wrap() {
     assert!(output.status.success(), "add comment failed");
 
     // List comments without --wrap
-    let output = run_br_with_env(
+    let output = run_obr_with_env(
         &workspace,
         ["comments", issue_id],
         [("COLUMNS", "60")],
@@ -253,7 +253,7 @@ fn e2e_comments_with_wrap() {
     assert!(output.status.success(), "comments failed");
 
     // List comments with --wrap
-    let output = run_br_with_env(
+    let output = run_obr_with_env(
         &workspace,
         ["comments", issue_id, "--wrap"],
         [("COLUMNS", "60")],
@@ -268,11 +268,11 @@ fn e2e_comments_with_wrap() {
 
 #[test]
 fn e2e_blocked_with_wrap() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace_with_long_issues(&workspace);
 
     // The blocked command should accept --wrap even if there are no blocked issues
-    let output = run_br_with_env(
+    let output = run_obr_with_env(
         &workspace,
         ["blocked", "--wrap"],
         [("COLUMNS", "60")],
@@ -288,11 +288,11 @@ fn e2e_blocked_with_wrap() {
 
 #[test]
 fn e2e_blocked_with_dependencies() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace_with_long_issues(&workspace);
 
     // Get issue IDs
-    let list_output = run_br(&workspace, ["list", "--json"], "list_for_blocked");
+    let list_output = run_obr(&workspace, ["list", "--json"], "list_for_blocked");
     let issues = parse_list_issues(&list_output.stdout);
     if issues.len() < 2 {
         // Skip if not enough issues
@@ -302,11 +302,11 @@ fn e2e_blocked_with_dependencies() {
     let child_id = issues[1]["id"].as_str().unwrap();
 
     // Add dependency (child depends on parent)
-    let output = run_br(&workspace, ["dep", "add", child_id, parent_id], "add_dep");
+    let output = run_obr(&workspace, ["dep", "add", child_id, parent_id], "add_dep");
     assert!(output.status.success(), "dep add failed: {}", output.stderr);
 
     // Test blocked with --wrap
-    let output = run_br_with_env(
+    let output = run_obr_with_env(
         &workspace,
         ["blocked", "--wrap"],
         [("COLUMNS", "60")],
@@ -321,11 +321,11 @@ fn e2e_blocked_with_dependencies() {
 
 #[test]
 fn e2e_wrap_very_narrow_terminal() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace_with_long_issues(&workspace);
 
     // Very narrow terminal (20 columns)
-    let output = run_br_with_env(
+    let output = run_obr_with_env(
         &workspace,
         ["list", "--wrap"],
         [("COLUMNS", "20")],
@@ -336,11 +336,11 @@ fn e2e_wrap_very_narrow_terminal() {
 
 #[test]
 fn e2e_wrap_very_wide_terminal() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_workspace_with_long_issues(&workspace);
 
     // Very wide terminal (200 columns)
-    let output = run_br_with_env(
+    let output = run_obr_with_env(
         &workspace,
         ["list", "--wrap"],
         [("COLUMNS", "200")],
@@ -351,15 +351,15 @@ fn e2e_wrap_very_wide_terminal() {
 
 #[test]
 fn e2e_wrap_with_unicode_content() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize
-    let output = run_br(&workspace, ["init", "--prefix", "uni"], "init_unicode");
+    let output = run_obr(&workspace, ["init", "--prefix", "uni"], "init_unicode");
     assert!(output.status.success());
 
     // Create issue with unicode content (emoji, CJK, etc.)
     let unicode_title = "Fix bug 🐛 with 日本語 characters and emojis 🎉🚀";
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["create", unicode_title, "--type", "bug"],
         "create_unicode",
@@ -367,7 +367,7 @@ fn e2e_wrap_with_unicode_content() {
     assert!(output.status.success(), "create unicode failed");
 
     // Test with --wrap
-    let output = run_br_with_env(
+    let output = run_obr_with_env(
         &workspace,
         ["list", "--wrap"],
         [("COLUMNS", "40")],
@@ -380,23 +380,23 @@ fn e2e_wrap_with_unicode_content() {
 
 #[test]
 fn e2e_wrap_empty_database() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize but don't create any issues
-    let output = run_br(&workspace, ["init"], "init_empty");
+    let output = run_obr(&workspace, ["init"], "init_empty");
     assert!(output.status.success());
 
     // Test all wrap commands on empty database
-    let output = run_br(&workspace, ["list", "--wrap"], "list_empty_wrap");
+    let output = run_obr(&workspace, ["list", "--wrap"], "list_empty_wrap");
     assert!(output.status.success());
 
-    let output = run_br(&workspace, ["ready", "--wrap"], "ready_empty_wrap");
+    let output = run_obr(&workspace, ["ready", "--wrap"], "ready_empty_wrap");
     assert!(output.status.success());
 
-    let output = run_br(&workspace, ["blocked", "--wrap"], "blocked_empty_wrap");
+    let output = run_obr(&workspace, ["blocked", "--wrap"], "blocked_empty_wrap");
     assert!(output.status.success());
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["search", "nothing", "--wrap"],
         "search_empty_wrap",

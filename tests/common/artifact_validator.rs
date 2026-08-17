@@ -1,7 +1,8 @@
 //! Artifact Log Validator
 //!
 //! Validates JSONL event logs, snapshot files, and summaries against the
-//! documented schema in `docs/ARTIFACT_LOG_SCHEMA.md`.
+//! shapes this module defines; the schema is asserted here in code rather than
+//! mirrored in prose.
 //!
 //! Task: beads_rust-r23m
 
@@ -840,12 +841,12 @@ impl ArtifactValidator {
     fn validate_perf_evidence_manifest(manifest: &PerfEvidenceManifest) -> ValidationResult {
         let mut result = ValidationResult::ok();
 
-        if manifest.schema_version != "br.perf-evidence.v1" {
+        if manifest.schema_version != "obr.perf-evidence.v1" {
             result = result.with_error(ValidationError {
                 line: None,
                 field: Some("schema_version".to_string()),
                 message: format!(
-                    "Expected br.perf-evidence.v1, got {}",
+                    "Expected obr.perf-evidence.v1, got {}",
                     manifest.schema_version
                 ),
             });
@@ -1275,7 +1276,7 @@ mod tests {
     #[test]
     fn valid_event_passes() {
         let validator = ArtifactValidator::new();
-        let content = r#"{"timestamp":"2026-01-17T12:34:56.000Z","event_type":"command","label":"init","binary":"br","args":["init"],"cwd":"/tmp/test","exit_code":0,"success":true,"duration_ms":42,"stdout_len":64,"stderr_len":0}"#;
+        let content = r#"{"timestamp":"2026-01-17T12:34:56.000Z","event_type":"command","label":"init","binary":"obr","args":["init"],"cwd":"/tmp/test","exit_code":0,"success":true,"duration_ms":42,"stdout_len":64,"stderr_len":0}"#;
         let result = validator.validate_events_content(content);
         assert!(result.valid, "Errors: {:?}", result.errors);
     }
@@ -1283,7 +1284,7 @@ mod tests {
     #[test]
     fn invalid_timestamp_fails() {
         let validator = ArtifactValidator::new();
-        let content = r#"{"timestamp":"not-a-date","event_type":"command","label":"init","binary":"br","args":[],"cwd":"/tmp","exit_code":0,"success":true,"duration_ms":0,"stdout_len":0,"stderr_len":0}"#;
+        let content = r#"{"timestamp":"not-a-date","event_type":"command","label":"init","binary":"obr","args":[],"cwd":"/tmp","exit_code":0,"success":true,"duration_ms":0,"stdout_len":0,"stderr_len":0}"#;
         let result = validator.validate_events_content(content);
         assert!(!result.valid);
         assert!(
@@ -1297,7 +1298,7 @@ mod tests {
     #[test]
     fn invalid_event_type_fails() {
         let validator = ArtifactValidator::new();
-        let content = r#"{"timestamp":"2026-01-17T12:34:56.000Z","event_type":"invalid","label":"test","binary":"br","args":[],"cwd":"/tmp","exit_code":0,"success":true,"duration_ms":0,"stdout_len":0,"stderr_len":0}"#;
+        let content = r#"{"timestamp":"2026-01-17T12:34:56.000Z","event_type":"invalid","label":"test","binary":"obr","args":[],"cwd":"/tmp","exit_code":0,"success":true,"duration_ms":0,"stdout_len":0,"stderr_len":0}"#;
         let result = validator.validate_events_content(content);
         assert!(!result.valid);
         assert!(
@@ -1311,7 +1312,7 @@ mod tests {
     #[test]
     fn path_traversal_fails() {
         let validator = ArtifactValidator::new();
-        let content = r#"{"timestamp":"2026-01-17T12:34:56.000Z","event_type":"command","label":"test","binary":"br","args":[],"cwd":"/tmp","exit_code":0,"success":true,"duration_ms":0,"stdout_len":0,"stderr_len":0,"stdout_path":"../etc/passwd"}"#;
+        let content = r#"{"timestamp":"2026-01-17T12:34:56.000Z","event_type":"command","label":"test","binary":"obr","args":[],"cwd":"/tmp","exit_code":0,"success":true,"duration_ms":0,"stdout_len":0,"stderr_len":0,"stdout_path":"../etc/passwd"}"#;
         let result = validator.validate_events_content(content);
         assert!(!result.valid);
         assert!(
@@ -1325,7 +1326,7 @@ mod tests {
     #[test]
     fn valid_snapshot_passes() {
         let validator = ArtifactValidator::new();
-        let content = r#"[{"path":".beads","size":0,"is_dir":true},{"path":".beads/beads.db","size":12288,"is_dir":false}]"#;
+        let content = r#"[{"path":".obr","size":0,"is_dir":true},{"path":".obr/obr.db","size":12288,"is_dir":false}]"#;
         let result = validator.validate_snapshot_content(content);
         assert!(result.valid, "Errors: {:?}", result.errors);
     }
@@ -1365,7 +1366,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            r#"{{"schema_version":"br.startup-matrix.v1","matrix_name":"smoke","generated_at":"2026-05-03T01:00:00Z","states":[{states}],"aggregation":{{"status":"{status}","raw_evidence_preserved":{raw_preserved}}}}}"#
+            r#"{{"schema_version":"obr.startup-matrix.v1","matrix_name":"smoke","generated_at":"2026-05-03T01:00:00Z","states":[{states}],"aggregation":{{"status":"{status}","raw_evidence_preserved":{raw_preserved}}}}}"#
         )
     }
 
@@ -1463,13 +1464,13 @@ mod tests {
     ) -> String {
         format!(
             r#"{{
-                "schema_version":"br.perf-evidence.v1",
+                "schema_version":"obr.perf-evidence.v1",
                 "generated_at":"2026-05-03T02:00:00Z",
                 "valid_until":"{valid_until}",
                 "command":{{"label":"list_json","args":["list","--json"]}},
                 "dataset":{{"name":"tiny-smoke","issue_count":3,"content_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
                 "git":{{"revision":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","dirty":false}},
-                "binary":{{"path":"target/debug/br","version":"br 0.2.5"}},
+                "binary":{{"path":"target/debug/obr","version":"obr 0.2.5"}},
                 "environment":{{"os":"linux","rustc":"rustc 1.91.0-nightly","env":[{{"name":"NO_COLOR","value_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}]}},
                 "timing":{{"sample_count":3,"min_ms":1.0,"p50_ms":2.0,"p95_ms":3.0,"p99_ms":3.0,"max_ms":3.0,"summary_path":"timing/list.json","raw_samples_path":"timing/list-samples.jsonl"}},
                 "resources":{{"syscall_summary_path":"syscalls/list.json","io_summary_path":"io/list.json","rss_summary_path":"rss/list.json"}},

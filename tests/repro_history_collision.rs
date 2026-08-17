@@ -1,4 +1,4 @@
-use beads_rust::sync::history::{HistoryConfig, backup_before_export, list_backups};
+use obr::sync::history::{HistoryConfig, backup_before_export, list_backups};
 use std::fs::File;
 use std::io::Write;
 use tempfile::TempDir;
@@ -6,8 +6,8 @@ use tempfile::TempDir;
 #[test]
 fn test_backup_stem_collision() {
     let temp = TempDir::new().unwrap();
-    let beads_dir = temp.path().join(".beads");
-    std::fs::create_dir_all(&beads_dir).unwrap();
+    let obr_dir = temp.path().join(".obr");
+    std::fs::create_dir_all(&obr_dir).unwrap();
 
     let config = HistoryConfig {
         enabled: true,
@@ -17,14 +17,14 @@ fn test_backup_stem_collision() {
     };
 
     // 1. Create "issues_archive.jsonl" and back it up
-    let archive_path = beads_dir.join("issues_archive.jsonl");
+    let archive_path = obr_dir.join("issues_archive.jsonl");
     let mut f = File::create(&archive_path).unwrap();
     f.write_all(b"archive data").unwrap();
 
-    backup_before_export(&beads_dir, &config, &archive_path).unwrap();
+    backup_before_export(&obr_dir, &config, &archive_path).unwrap();
 
     // Verify we have 1 backup
-    let history_dir = beads_dir.join(".br_history");
+    let history_dir = obr_dir.join("history");
     let backups = list_backups(&history_dir, None).unwrap();
     assert_eq!(backups.len(), 1);
     assert!(backups[0].path.to_string_lossy().contains("issues_archive"));
@@ -33,11 +33,11 @@ fn test_backup_stem_collision() {
     // Wait a second to ensure different timestamp if needed, or just rely on name
     std::thread::sleep(std::time::Duration::from_secs(1));
 
-    let issues_path = beads_dir.join("issues.jsonl");
+    let issues_path = obr_dir.join("issues.jsonl");
     let mut f = File::create(&issues_path).unwrap();
     f.write_all(b"current data").unwrap();
 
-    backup_before_export(&beads_dir, &config, &issues_path).unwrap();
+    backup_before_export(&obr_dir, &config, &issues_path).unwrap();
 
     // We should now have 2 backups: one for archive, one for issues
     let backups = list_backups(&history_dir, None).unwrap();
@@ -80,13 +80,13 @@ fn test_backup_stem_collision() {
     std::fs::create_dir_all(&history_dir).unwrap();
 
     // Backup archive
-    backup_before_export(&beads_dir, &config_strict, &archive_path).unwrap();
+    backup_before_export(&obr_dir, &config_strict, &archive_path).unwrap();
     assert_eq!(list_backups(&history_dir, None).unwrap().len(), 1);
 
     std::thread::sleep(std::time::Duration::from_secs(1));
 
     // Backup issues
-    backup_before_export(&beads_dir, &config_strict, &issues_path).unwrap();
+    backup_before_export(&obr_dir, &config_strict, &issues_path).unwrap();
 
     // If rotation is global, we have 1 file (the issues backup). Archive backup is gone.
     // If rotation is per-file (as it should be?), we should have 2 files (1 for each).

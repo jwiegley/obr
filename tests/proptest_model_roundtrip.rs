@@ -7,11 +7,11 @@
 use proptest::prelude::*;
 use serde::de::DeserializeOwned;
 
-use beads_rust::model::{DependencyType, EventType, Issue, IssueType, Priority, Status};
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{ExportConfig, ImportConfig, export_to_jsonl, import_from_jsonl};
-use beads_rust::util::{content_hash, content_hash_from_parts};
 use chrono::{TimeZone, Utc};
+use obr::model::{DependencyType, EventType, Issue, IssueType, Priority, Status};
+use obr::storage::SqliteStorage;
+use obr::sync::{ExportConfig, ImportConfig, export_to_jsonl, import_from_jsonl};
+use obr::util::{content_hash, content_hash_from_parts};
 use std::fs;
 use tempfile::TempDir;
 
@@ -293,7 +293,7 @@ proptest! {
     ) {
         let reference_hash = content_hash_from_parts(
             &title, None, None, None, None,
-            &expected, &beads_rust::model::Priority::MEDIUM,
+            &expected, &obr::model::Priority::MEDIUM,
             &IssueType::Task, None, None, None, None, None, false, false,
         );
         for variant in case_variants(canonical) {
@@ -301,7 +301,7 @@ proptest! {
             let status: Status = serde_json::from_str(&json).unwrap();
             let hash = content_hash_from_parts(
                 &title, None, None, None, None,
-                &status, &beads_rust::model::Priority::MEDIUM,
+                &status, &obr::model::Priority::MEDIUM,
                 &IssueType::Task, None, None, None, None, None, false, false,
             );
             prop_assert_eq!(
@@ -319,7 +319,7 @@ proptest! {
     ) {
         let reference_hash = content_hash_from_parts(
             &title, None, None, None, None,
-            &Status::Open, &beads_rust::model::Priority::MEDIUM,
+            &Status::Open, &obr::model::Priority::MEDIUM,
             &expected, None, None, None, None, None, false, false,
         );
         for variant in case_variants(canonical) {
@@ -327,7 +327,7 @@ proptest! {
             let issue_type: IssueType = serde_json::from_str(&json).unwrap();
             let hash = content_hash_from_parts(
                 &title, None, None, None, None,
-                &Status::Open, &beads_rust::model::Priority::MEDIUM,
+                &Status::Open, &obr::model::Priority::MEDIUM,
                 &issue_type, None, None, None, None, None, false, false,
             );
             prop_assert_eq!(

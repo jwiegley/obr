@@ -4,7 +4,7 @@
   informational) — issue #329's `--no-db` (JSONL-only) mode marker.
 - **Subsystem**: state_files
 - **Detect**: nothing is corrupt. The contract under test is that a
-  reduced JSONL-only run (`br doctor --no-db --json`) announces its
+  reduced JSONL-only run (`obr doctor --no-db --json`) announces its
   reduced scope explicitly: the `db.no_db_mode` check is present with
   status `ok`, the FM id inline, and the skipped DB-backed checks
   enumerated — while a full run carries no such marker.

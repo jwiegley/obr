@@ -17,10 +17,10 @@ cd "$target_dir"
 "$tool_bin" init >/dev/null 2>&1
 
 # Plant the suspect-closed bead directly via SQL. We don't go through
-# `br create` + `br close` because the close-policy path may reject the
+# `obr create` + `obr close` because the close-policy path may reject the
 # forbidden reason — the audit check exists precisely to catch beads
 # that bypassed that policy (e.g., via JSONL import from another tool).
-sqlite_db=".beads/beads.db"
+sqlite_db=".obr/obr.db"
 python3 <<PY
 import sqlite3
 conn = sqlite3.connect("$sqlite_db")
@@ -56,8 +56,8 @@ conn.close()
 PY
 
 if [ -e .fixture_baseline ]; then
-  echo "fixture baseline already exists; expected a fresh workspace" >&2
-  exit 1
+	echo "fixture baseline already exists; expected a fresh workspace" >&2
+	exit 1
 fi
 mkdir -p .fixture_baseline
 tar --exclude=.fixture_baseline -cf .fixture_baseline/state.tar .

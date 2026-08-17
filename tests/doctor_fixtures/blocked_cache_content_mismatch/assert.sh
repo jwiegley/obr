@@ -30,15 +30,15 @@ case "$stage" in
         ;;
     esac
     ghost=$(printf '%s\n' "SELECT COUNT(*) FROM blocked_issues_cache WHERE issue_id='br-9999';" \
-              | sqlite3 .beads/beads.db 2>/dev/null || echo "")
+              | sqlite3 .obr/obr.db 2>/dev/null || echo "")
     if [ "$ghost" != "0" ]; then
       echo "ASSERT FAIL[$stage]: ghost cache row 'br-9999' still present (count=$ghost)" >&2
       exit 1
     fi
     ;;
   post_undo)
-    [ -f .beads/beads.db ] || {
-      echo "ASSERT FAIL[$stage]: beads.db gone after undo" >&2
+    [ -f .obr/obr.db ] || {
+      echo "ASSERT FAIL[$stage]: obr.db gone after undo" >&2
       exit 1
     }
     ;;

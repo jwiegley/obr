@@ -8,7 +8,7 @@ tool_bin="${TOOL_BIN:-br}"
 cd "$target_dir"
 
 dirty_count() {
-  sqlite3 .beads/beads.db "SELECT COUNT(*) FROM dirty_issues"
+  sqlite3 .obr/obr.db "SELECT COUNT(*) FROM dirty_issues"
 }
 
 assert_sync_metadata_warns() {
@@ -37,7 +37,7 @@ assert_dirty_row_preserved() {
 
 assert_jsonl_preserved() {
   local current expected
-  current="$(sha256sum .beads/issues.jsonl | awk '{print $1}')"
+  current="$(sha256sum .obr/issues.jsonl | awk '{print $1}')"
   expected="$(cat .fixture_jsonl_sha256)"
   if [ "$current" != "$expected" ]; then
     echo "ASSERT FAIL[$stage]: issues.jsonl changed" >&2

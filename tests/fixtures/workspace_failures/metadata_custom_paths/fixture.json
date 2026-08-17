@@ -1,7 +1,7 @@
 {
   "name": "metadata_custom_paths",
   "family": "path_discovery",
-  "description": "metadata.json redirects both the database and JSONL export to non-default filenames inside .beads.",
+  "description": "metadata.json redirects both the database and JSONL export to non-default filenames inside .obr.",
   "expected_classification": "usable",
   "expected_command_outcomes": [
     {

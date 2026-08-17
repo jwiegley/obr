@@ -10,7 +10,7 @@ use chrono::{DateTime, Datelike, Duration, Timelike, Utc};
 use proptest::prelude::*;
 use tracing::info;
 
-use beads_rust::util::time::{parse_flexible_timestamp, parse_relative_time};
+use obr::util::time::{parse_flexible_timestamp, parse_relative_time};
 
 /// Initialize test logging for proptest
 fn init_test_logging() {

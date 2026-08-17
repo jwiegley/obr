@@ -1,13 +1,13 @@
 mod common;
-use common::cli::{BrWorkspace, run_br, run_br_with_stdin};
+use common::cli::{ObrWorkspace, run_obr, run_obr_with_stdin};
 
 #[test]
 fn test_comments_add_from_stdin() {
     let _log = common::test_log("test_comments_add_from_stdin");
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
 
-    let create = run_br(&workspace, ["create", "Issue"], "create");
+    let create = run_obr(&workspace, ["create", "Issue"], "create");
     // Extract ID from "✓ Created bd-1: Issue"
     // Word 0: "✓", Word 1: "Created", Word 2: "bd-1:"
     let id = create
@@ -18,7 +18,7 @@ fn test_comments_add_from_stdin() {
         .trim_end_matches(':');
 
     // Add comment via stdin using '-'
-    let add = run_br_with_stdin(
+    let add = run_obr_with_stdin(
         &workspace,
         ["comments", "add", id, "--file", "-"],
         "This is a comment from stdin",
@@ -31,6 +31,6 @@ fn test_comments_add_from_stdin() {
     assert!(add.status.success());
 
     // Verify comment
-    let list = run_br(&workspace, ["comments", "list", id], "list");
+    let list = run_obr(&workspace, ["comments", "list", id], "list");
     assert!(list.stdout.contains("This is a comment from stdin"));
 }

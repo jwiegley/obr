@@ -1,15 +1,17 @@
 //! End-to-end coverage for multi-agent capacity scopes (GitHub #384
 //! phase 5, bead beads_rust-8nbk.5).
 //!
-//! Drives the real `br` binary: actor-scoped limits partition admission per
-//! `--actor`, harness/session scopes key on `BR_HARNESS`/`BR_SESSION`
+//! Drives the real `obr` binary: actor-scoped limits partition admission per
+//! `--actor`, harness/session scopes key on `OBR_HARNESS`/`OBR_SESSION`
 //! attribution and are inapplicable without it, structured errors carry
 //! `scope`/`scope_key` evidence, soft scoped limits warn without rejecting,
 //! and rejected transitions leave issue state untouched.
 
 mod common;
 
-use common::cli::{BrWorkspace, extract_json_payload, parse_created_id, run_br, run_br_with_env};
+use common::cli::{
+    ObrWorkspace, extract_json_payload, parse_created_id, run_obr, run_obr_with_env,
+};
 use serde_json::Value;
 use std::fs;
 
@@ -22,9 +24,9 @@ fn parse_error_json(text: &str) -> Option<Value> {
     serde_json::from_str(&text[start..]).ok()
 }
 
-fn write_scope_policy(workspace: &BrWorkspace, scope: &str, threshold_line: &str) {
+fn write_scope_policy(workspace: &ObrWorkspace, scope: &str, threshold_line: &str) {
     fs::write(
-        workspace.root.join(".beads").join("policy.yaml"),
+        workspace.root.join(".obr").join("policy.yaml"),
         format!(
             r"
 workflow:
@@ -41,8 +43,8 @@ workflow:
     .expect("write scope policy");
 }
 
-fn create_issue(workspace: &BrWorkspace, title: &str, label: &str) -> String {
-    let created = run_br(workspace, ["create", title], label);
+fn create_issue(workspace: &ObrWorkspace, title: &str, label: &str) -> String {
+    let created = run_obr(workspace, ["create", title], label);
     assert!(
         created.status.success(),
         "create failed: {}",
@@ -51,8 +53,8 @@ fn create_issue(workspace: &BrWorkspace, title: &str, label: &str) -> String {
     parse_created_id(&created.stdout)
 }
 
-fn issue_status(workspace: &BrWorkspace, id: &str, label: &str) -> String {
-    let show = run_br(workspace, ["show", id, "--json"], label);
+fn issue_status(workspace: &ObrWorkspace, id: &str, label: &str) -> String {
+    let show = run_obr(workspace, ["show", id, "--json"], label);
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let json: Value = serde_json::from_str(&extract_json_payload(&show.stdout)).expect("show JSON");
     json.get(0)
@@ -64,15 +66,15 @@ fn issue_status(workspace: &BrWorkspace, id: &str, label: &str) -> String {
 
 #[test]
 fn e2e_capacity_scope_actor_partitions_admission_with_structured_evidence() {
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "scope_actor_init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "scope_actor_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let first = create_issue(&workspace, "First claim", "scope_actor_create_1");
     let second = create_issue(&workspace, "Second claim", "scope_actor_create_2");
     write_scope_policy(&workspace, "actor", "hard: 1");
 
-    let claim = run_br(
+    let claim = run_obr(
         &workspace,
         [
             "--actor",
@@ -91,7 +93,7 @@ fn e2e_capacity_scope_actor_partitions_admission_with_structured_evidence() {
     );
 
     // Alice's partition is full: the rejection is structured and atomic.
-    let rejected = run_br(
+    let rejected = run_obr(
         &workspace,
         [
             "--actor",
@@ -138,7 +140,7 @@ fn e2e_capacity_scope_actor_partitions_admission_with_structured_evidence() {
     );
 
     // A different actor's partition is empty.
-    let other = run_br(
+    let other = run_obr(
         &workspace,
         [
             "--actor",
@@ -159,8 +161,8 @@ fn e2e_capacity_scope_actor_partitions_admission_with_structured_evidence() {
 
 #[test]
 fn e2e_capacity_scope_harness_and_session_key_on_env_attribution() {
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "scope_env_init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "scope_env_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let first = create_issue(&workspace, "Harness one", "scope_env_create_1");
@@ -168,7 +170,7 @@ fn e2e_capacity_scope_harness_and_session_key_on_env_attribution() {
     let third = create_issue(&workspace, "Harness free", "scope_env_create_3");
     write_scope_policy(&workspace, "harness", "hard: 1");
 
-    let claim = run_br(
+    let claim = run_obr(
         &workspace,
         [
             "update",
@@ -186,7 +188,7 @@ fn e2e_capacity_scope_harness_and_session_key_on_env_attribution() {
         claim.stderr
     );
 
-    let rejected = run_br(
+    let rejected = run_obr(
         &workspace,
         [
             "--json",
@@ -212,7 +214,7 @@ fn e2e_capacity_scope_harness_and_session_key_on_env_attribution() {
     );
 
     // No harness attribution → the harness scope is inapplicable.
-    let unkeyed = run_br(
+    let unkeyed = run_obr(
         &workspace,
         ["update", &third, "--status", "in_progress"],
         "scope_env_claim_free",
@@ -223,18 +225,18 @@ fn e2e_capacity_scope_harness_and_session_key_on_env_attribution() {
         unkeyed.stderr
     );
 
-    // Session scope: keyed via the BR_SESSION environment variable.
-    let ws2 = BrWorkspace::new();
-    let init = run_br(&ws2, ["init"], "scope_sess_init");
+    // Session scope: keyed via the OBR_SESSION environment variable.
+    let ws2 = ObrWorkspace::new();
+    let init = run_obr(&ws2, ["init"], "scope_sess_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
     let s1 = create_issue(&ws2, "Session one", "scope_sess_create_1");
     let s2 = create_issue(&ws2, "Session two", "scope_sess_create_2");
     write_scope_policy(&ws2, "session", "hard: 1");
 
-    let claim = run_br_with_env(
+    let claim = run_obr_with_env(
         &ws2,
         ["update", &s1, "--status", "in_progress"],
-        [("BR_SESSION", "sess-9")],
+        [("OBR_SESSION", "sess-9")],
         "scope_sess_claim_1",
     );
     assert!(
@@ -242,10 +244,10 @@ fn e2e_capacity_scope_harness_and_session_key_on_env_attribution() {
         "first session claim failed: {}",
         claim.stderr
     );
-    let rejected = run_br_with_env(
+    let rejected = run_obr_with_env(
         &ws2,
         ["--json", "update", &s2, "--status", "in_progress"],
-        [("BR_SESSION", "sess-9")],
+        [("OBR_SESSION", "sess-9")],
         "scope_sess_claim_2",
     );
     assert!(
@@ -282,7 +284,7 @@ fn gh384_acceptance_matrix_names_real_tests() {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '_')
             && segment.contains('_')
-            && !segment.starts_with("beads_rust-")
+            && !segment.starts_with("obr-")
         {
             names.push(segment.to_string());
         }
@@ -327,13 +329,13 @@ fn gh384_acceptance_matrix_names_real_tests() {
 #[test]
 #[allow(clippy::too_many_lines)]
 fn e2e_capacity_observability_in_stats_and_coordination() {
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "obs_init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "obs_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Before any capacity is configured, the stats payload keeps its
     // pre-capacity shape (no `capacity` key at all).
-    let bare = run_br(&workspace, ["stats", "--json"], "obs_stats_bare");
+    let bare = run_obr(&workspace, ["stats", "--json"], "obs_stats_bare");
     assert!(bare.status.success(), "stats failed: {}", bare.stderr);
     let bare_json: Value =
         serde_json::from_str(&extract_json_payload(&bare.stdout)).expect("stats JSON");
@@ -346,7 +348,7 @@ fn e2e_capacity_observability_in_stats_and_coordination() {
     let first = create_issue(&workspace, "Occupied slot", "obs_create_1");
     let _second = create_issue(&workspace, "Waiting slot", "obs_create_2");
     fs::write(
-        workspace.root.join(".beads").join("policy.yaml"),
+        workspace.root.join(".obr").join("policy.yaml"),
         r"
 workflow:
   statuses: [open, in_progress, closed]
@@ -363,7 +365,7 @@ workflow:
 ",
     )
     .expect("write policy");
-    let claim = run_br(
+    let claim = run_obr(
         &workspace,
         [
             "--actor",
@@ -377,8 +379,8 @@ workflow:
     );
     assert!(claim.status.success(), "claim failed: {}", claim.stderr);
 
-    // `br stats --json` reports the GH-384 table fields.
-    let stats = run_br(&workspace, ["stats", "--json"], "obs_stats");
+    // `obr stats --json` reports the GH-384 table fields.
+    let stats = run_obr(&workspace, ["stats", "--json"], "obs_stats");
     assert!(stats.status.success(), "stats failed: {}", stats.stderr);
     let stats_json: Value =
         serde_json::from_str(&extract_json_payload(&stats.stdout)).expect("stats JSON");
@@ -408,7 +410,7 @@ workflow:
     assert_eq!(actor_row["state"].as_str(), Some("healthy"), "{actor_row}");
 
     // The human table renders when configured.
-    let text = run_br(&workspace, ["stats", "--no-color"], "obs_stats_text");
+    let text = run_obr(&workspace, ["stats", "--no-color"], "obs_stats_text");
     assert!(text.status.success(), "stats text failed: {}", text.stderr);
     assert!(
         text.stdout.contains("Capacity:") && text.stdout.contains("REMAINING"),
@@ -416,8 +418,8 @@ workflow:
         text.stdout
     );
 
-    // `br coordination status --json` carries the same block.
-    let coordination = run_br(
+    // `obr coordination status --json` carries the same block.
+    let coordination = run_obr(
         &workspace,
         ["coordination", "status", "--json"],
         "obs_coordination",
@@ -432,7 +434,7 @@ workflow:
             .expect("coordination JSON");
     assert_eq!(
         coordination_json["schema_version"].as_str(),
-        Some("br.coordination.v1"),
+        Some("obr.coordination.v1"),
         "{coordination_json}"
     );
     let coordination_capacity = coordination_json["capacity"]
@@ -448,14 +450,14 @@ workflow:
 
 #[test]
 fn e2e_capacity_scope_soft_limit_warns_in_json_without_rejecting() {
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "scope_soft_init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "scope_soft_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let id = create_issue(&workspace, "Soft scoped", "scope_soft_create");
     write_scope_policy(&workspace, "actor", "soft: 1");
 
-    let updated = run_br(
+    let updated = run_obr(
         &workspace,
         [
             "--actor",

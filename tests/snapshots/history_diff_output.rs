@@ -1,4 +1,4 @@
-use super::common::cli::{BrWorkspace, run_br};
+use super::common::cli::{ObrWorkspace, run_obr};
 use super::init_workspace;
 use insta::assert_snapshot;
 use serde_json::Value;
@@ -27,13 +27,14 @@ const HISTORY_CURRENT_JSONL: &str = r#"{"id":"bd-history-alpha","title":"Impleme
 {"id":"bd-history-new","title":"Add merge audit output","description":"New issue introduced after v0.1.0","status":"open","priority":1,"issue_type":"task","created_at":"2026-04-02T01:00:00Z","created_by":"fixture","updated_at":"2026-04-02T01:00:00Z","source_repo":".","labels":["audit"],"compaction_level":0,"original_size":0}
 "#;
 
-fn init_history_diff_workspace() -> BrWorkspace {
+fn init_history_diff_workspace() -> ObrWorkspace {
     let workspace = init_workspace();
-    let beads_dir = workspace.root.join(".beads");
-    let history_dir = beads_dir.join(".br_history");
+    super::common::cli::pin_jsonl(&workspace.root.join(".obr"));
+    let obr_dir = workspace.root.join(".obr");
+    let history_dir = obr_dir.join("history");
     fs::create_dir_all(&history_dir).expect("create history directory");
 
-    fs::write(beads_dir.join("issues.jsonl"), HISTORY_CURRENT_JSONL)
+    fs::write(obr_dir.join("issues.jsonl"), HISTORY_CURRENT_JSONL)
         .expect("write current version JSONL");
     let backup_path = history_dir.join(HISTORY_BACKUP_NAME);
     fs::write(&backup_path, HISTORY_BACKUP_JSONL).expect("write backup version JSONL");
@@ -46,11 +47,17 @@ fn init_history_diff_workspace() -> BrWorkspace {
     workspace
 }
 
-fn normalize_history_output(raw: &str, workspace: &BrWorkspace) -> String {
-    let workspace_root = workspace.root.to_string_lossy().replace('\\', "/");
-    raw.trim_end()
-        .replace('\\', "/")
-        .replace(&workspace_root, "$WORKSPACE")
+fn normalize_history_output(raw: &str, workspace: &ObrWorkspace) -> String {
+    // `obr` canonicalizes the workspace path, which on macOS resolves
+    // /var/folders/... to /private/var/folders/.... Substituting only the
+    // uncanonicalized root would leave a platform-specific `/private` prefix
+    // baked into the snapshot, so replace the canonical form first.
+    let mut normalized = raw.trim_end().replace('\\', "/");
+    let canonical = dunce::canonicalize(&workspace.root).unwrap_or_else(|_| workspace.root.clone());
+    for root in [canonical, workspace.root.clone()] {
+        normalized = normalized.replace(&root.to_string_lossy().replace('\\', "/"), "$WORKSPACE");
+    }
+    normalized
 }
 
 fn assert_valid_json(raw: &str, context: &str) {
@@ -64,7 +71,7 @@ fn assert_valid_json(raw: &str, context: &str) {
 fn history_diff_golden_text_v0_1_0_to_v0_1_1() {
     let workspace = init_history_diff_workspace();
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["history", "diff", HISTORY_BACKUP_NAME],
         "history_diff_text_golden",
@@ -85,7 +92,7 @@ fn history_diff_golden_text_v0_1_0_to_v0_1_1() {
 fn history_diff_golden_json_summary_v0_1_0_to_v0_1_1() {
     let workspace = init_history_diff_workspace();
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["--json", "history", "diff", HISTORY_BACKUP_NAME],
         "history_diff_json_golden",

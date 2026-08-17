@@ -13,7 +13,7 @@ tool_bin="${TOOL_BIN:-br}"
 cd "$target_dir"
 
 cur_mode() {
-  python3 - .beads/config.yaml <<'PY'
+  python3 - .obr/config.yaml <<'PY'
 import os
 import sys
 
@@ -63,7 +63,7 @@ case "$stage" in
     fi
     # SACRED INVARIANT: config.yaml bytes byte-identical. Op::Chmod
     # only touches mode, never content.
-    cfg_now=$(sha256sum .beads/config.yaml | awk '{print $1}')
+    cfg_now=$(sha256sum .obr/config.yaml | awk '{print $1}')
     cfg_pre=$(cat .fixture_config_pre_sha256)
     if [ "$cfg_now" != "$cfg_pre" ]; then
       echo "ASSERT FAIL[$stage]: config.yaml bytes mutated by --repair (Op::Chmod must not touch content)" >&2
@@ -97,7 +97,7 @@ case "$stage" in
       echo "ASSERT FAIL[$stage]: undo did not restore mode; got '$mode', expected '$expected'" >&2
       exit 1
     fi
-    cfg_now=$(sha256sum .beads/config.yaml | awk '{print $1}')
+    cfg_now=$(sha256sum .obr/config.yaml | awk '{print $1}')
     cfg_pre=$(cat .fixture_config_pre_sha256)
     if [ "$cfg_now" != "$cfg_pre" ]; then
       echo "ASSERT FAIL[$stage]: config.yaml bytes drifted across undo" >&2

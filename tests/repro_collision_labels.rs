@@ -1,7 +1,7 @@
-use beads_rust::model::{Issue, IssueType, Priority, Status};
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{ImportConfig, import_from_jsonl};
 use chrono::Utc;
+use obr::model::{Issue, IssueType, Priority, Status};
+use obr::storage::SqliteStorage;
+use obr::sync::{ImportConfig, import_from_jsonl};
 use std::fs;
 use tempfile::TempDir;
 

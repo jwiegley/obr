@@ -1,4 +1,4 @@
-//! E2E tests for `br dep tree --format=mermaid` command.
+//! E2E tests for `obr dep tree --format=mermaid` command.
 //!
 //! Coverage:
 //! - Basic mermaid output format validation
@@ -13,7 +13,7 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, extract_json_payload, run_br};
+use common::cli::{ObrWorkspace, extract_json_payload, run_obr};
 use serde_json::Value;
 use tracing::info;
 
@@ -77,16 +77,16 @@ fn validate_mermaid_syntax(output: &str) -> (Vec<String>, Vec<(String, String)>)
 fn e2e_dep_tree_mermaid_single_node_no_deps() {
     common::init_test_logging();
     info!("e2e_dep_tree_mermaid_single_node_no_deps: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Single issue"], "create");
+    let create = run_obr(&workspace, ["create", "Single issue"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue_id = parse_created_id(&create.stdout);
 
-    let tree = run_br(
+    let tree = run_obr(
         &workspace,
         ["dep", "tree", &issue_id, "--format=mermaid"],
         "tree_mermaid",
@@ -112,29 +112,29 @@ fn e2e_dep_tree_mermaid_single_node_no_deps() {
 fn e2e_dep_tree_mermaid_linear_chain() {
     common::init_test_logging();
     info!("e2e_dep_tree_mermaid_linear_chain: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create chain: A -> B -> C (A depends on B, B depends on C)
-    let a = run_br(&workspace, ["create", "Issue A"], "create_a");
-    let b = run_br(&workspace, ["create", "Issue B"], "create_b");
-    let c = run_br(&workspace, ["create", "Issue C"], "create_c");
+    let a = run_obr(&workspace, ["create", "Issue A"], "create_a");
+    let b = run_obr(&workspace, ["create", "Issue B"], "create_b");
+    let c = run_obr(&workspace, ["create", "Issue C"], "create_c");
 
     let id_a = parse_created_id(&a.stdout);
     let id_b = parse_created_id(&b.stdout);
     let id_c = parse_created_id(&c.stdout);
 
     // A depends on B
-    let dep_ab = run_br(&workspace, ["dep", "add", &id_a, &id_b], "dep_ab");
+    let dep_ab = run_obr(&workspace, ["dep", "add", &id_a, &id_b], "dep_ab");
     assert!(dep_ab.status.success(), "dep add A->B failed");
 
     // B depends on C
-    let dep_bc = run_br(&workspace, ["dep", "add", &id_b, &id_c], "dep_bc");
+    let dep_bc = run_obr(&workspace, ["dep", "add", &id_b, &id_c], "dep_bc");
     assert!(dep_bc.status.success(), "dep add B->C failed");
 
-    let tree = run_br(
+    let tree = run_obr(
         &workspace,
         ["dep", "tree", &id_a, "--format=mermaid"],
         "tree_mermaid",
@@ -174,27 +174,27 @@ fn e2e_dep_tree_mermaid_linear_chain() {
 fn e2e_dep_tree_mermaid_branching_deps() {
     common::init_test_logging();
     info!("e2e_dep_tree_mermaid_branching_deps: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create: A -> B and A -> C (A depends on both B and C)
-    let a = run_br(&workspace, ["create", "Root A"], "create_a");
-    let b = run_br(&workspace, ["create", "Branch B"], "create_b");
-    let c = run_br(&workspace, ["create", "Branch C"], "create_c");
+    let a = run_obr(&workspace, ["create", "Root A"], "create_a");
+    let b = run_obr(&workspace, ["create", "Branch B"], "create_b");
+    let c = run_obr(&workspace, ["create", "Branch C"], "create_c");
 
     let id_a = parse_created_id(&a.stdout);
     let id_b = parse_created_id(&b.stdout);
     let id_c = parse_created_id(&c.stdout);
 
-    let dep_ab = run_br(&workspace, ["dep", "add", &id_a, &id_b], "dep_ab");
+    let dep_ab = run_obr(&workspace, ["dep", "add", &id_a, &id_b], "dep_ab");
     assert!(dep_ab.status.success(), "dep add A->B failed");
 
-    let dep_ac = run_br(&workspace, ["dep", "add", &id_a, &id_c], "dep_ac");
+    let dep_ac = run_obr(&workspace, ["dep", "add", &id_a, &id_c], "dep_ac");
     assert!(dep_ac.status.success(), "dep add A->C failed");
 
-    let tree = run_br(
+    let tree = run_obr(
         &workspace,
         ["dep", "tree", &id_a, "--format=mermaid"],
         "tree_mermaid",
@@ -213,28 +213,28 @@ fn e2e_dep_tree_mermaid_branching_deps() {
 fn e2e_dep_tree_mermaid_diamond_shape() {
     common::init_test_logging();
     info!("e2e_dep_tree_mermaid_diamond_shape: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Diamond: A -> B -> D and A -> C -> D
-    let a = run_br(&workspace, ["create", "Top A"], "create_a");
-    let b = run_br(&workspace, ["create", "Left B"], "create_b");
-    let c = run_br(&workspace, ["create", "Right C"], "create_c");
-    let d = run_br(&workspace, ["create", "Bottom D"], "create_d");
+    let a = run_obr(&workspace, ["create", "Top A"], "create_a");
+    let b = run_obr(&workspace, ["create", "Left B"], "create_b");
+    let c = run_obr(&workspace, ["create", "Right C"], "create_c");
+    let d = run_obr(&workspace, ["create", "Bottom D"], "create_d");
 
     let id_a = parse_created_id(&a.stdout);
     let id_b = parse_created_id(&b.stdout);
     let id_c = parse_created_id(&c.stdout);
     let id_d = parse_created_id(&d.stdout);
 
-    run_br(&workspace, ["dep", "add", &id_a, &id_b], "dep_ab");
-    run_br(&workspace, ["dep", "add", &id_a, &id_c], "dep_ac");
-    run_br(&workspace, ["dep", "add", &id_b, &id_d], "dep_bd");
-    run_br(&workspace, ["dep", "add", &id_c, &id_d], "dep_cd");
+    run_obr(&workspace, ["dep", "add", &id_a, &id_b], "dep_ab");
+    run_obr(&workspace, ["dep", "add", &id_a, &id_c], "dep_ac");
+    run_obr(&workspace, ["dep", "add", &id_b, &id_d], "dep_bd");
+    run_obr(&workspace, ["dep", "add", &id_c, &id_d], "dep_cd");
 
-    let tree = run_br(
+    let tree = run_obr(
         &workspace,
         ["dep", "tree", &id_a, "--format=mermaid"],
         "tree_mermaid",
@@ -268,17 +268,17 @@ fn e2e_dep_tree_mermaid_diamond_shape() {
 fn e2e_dep_tree_mermaid_max_depth_truncation() {
     common::init_test_logging();
     info!("e2e_dep_tree_mermaid_max_depth_truncation: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create deep chain: A -> B -> C -> D -> E
-    let a = run_br(&workspace, ["create", "Level 0"], "create_a");
-    let b = run_br(&workspace, ["create", "Level 1"], "create_b");
-    let c = run_br(&workspace, ["create", "Level 2"], "create_c");
-    let d = run_br(&workspace, ["create", "Level 3"], "create_d");
-    let e = run_br(&workspace, ["create", "Level 4"], "create_e");
+    let a = run_obr(&workspace, ["create", "Level 0"], "create_a");
+    let b = run_obr(&workspace, ["create", "Level 1"], "create_b");
+    let c = run_obr(&workspace, ["create", "Level 2"], "create_c");
+    let d = run_obr(&workspace, ["create", "Level 3"], "create_d");
+    let e = run_obr(&workspace, ["create", "Level 4"], "create_e");
 
     let id_a = parse_created_id(&a.stdout);
     let id_b = parse_created_id(&b.stdout);
@@ -286,13 +286,13 @@ fn e2e_dep_tree_mermaid_max_depth_truncation() {
     let id_d = parse_created_id(&d.stdout);
     let id_e = parse_created_id(&e.stdout);
 
-    run_br(&workspace, ["dep", "add", &id_a, &id_b], "dep_ab");
-    run_br(&workspace, ["dep", "add", &id_b, &id_c], "dep_bc");
-    run_br(&workspace, ["dep", "add", &id_c, &id_d], "dep_cd");
-    run_br(&workspace, ["dep", "add", &id_d, &id_e], "dep_de");
+    run_obr(&workspace, ["dep", "add", &id_a, &id_b], "dep_ab");
+    run_obr(&workspace, ["dep", "add", &id_b, &id_c], "dep_bc");
+    run_obr(&workspace, ["dep", "add", &id_c, &id_d], "dep_cd");
+    run_obr(&workspace, ["dep", "add", &id_d, &id_e], "dep_de");
 
     // With max-depth=2, should only show A, B, C
-    let tree = run_br(
+    let tree = run_obr(
         &workspace,
         ["dep", "tree", &id_a, "--format=mermaid", "--max-depth=2"],
         "tree_mermaid_depth2",
@@ -341,13 +341,13 @@ fn e2e_dep_tree_mermaid_max_depth_truncation() {
 fn e2e_dep_tree_mermaid_title_with_quotes() {
     common::init_test_logging();
     info!("e2e_dep_tree_mermaid_title_with_quotes: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create issue with quotes in title that need escaping
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Issue with \"quotes\" in title"],
         "create",
@@ -355,7 +355,7 @@ fn e2e_dep_tree_mermaid_title_with_quotes() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue_id = parse_created_id(&create.stdout);
 
-    let tree = run_br(
+    let tree = run_obr(
         &workspace,
         ["dep", "tree", &issue_id, "--format=mermaid"],
         "tree_mermaid",
@@ -379,16 +379,16 @@ fn e2e_dep_tree_mermaid_title_with_quotes() {
 fn e2e_dep_tree_mermaid_external_dependency_uses_safe_node_ids() {
     common::init_test_logging();
     info!("e2e_dep_tree_mermaid_external_dependency_uses_safe_node_ids: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Root issue"], "create");
+    let create = run_obr(&workspace, ["create", "Root issue"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue_id = parse_created_id(&create.stdout);
 
-    let dep = run_br(
+    let dep = run_obr(
         &workspace,
         ["dep", "add", &issue_id, "external:proj:cap"],
         "dep_external",
@@ -399,7 +399,7 @@ fn e2e_dep_tree_mermaid_external_dependency_uses_safe_node_ids() {
         dep.stderr
     );
 
-    let tree = run_br(
+    let tree = run_obr(
         &workspace,
         ["dep", "tree", &issue_id, "--format=mermaid"],
         "tree_mermaid_external",
@@ -441,28 +441,28 @@ fn e2e_dep_tree_mermaid_external_dependency_uses_safe_node_ids() {
 fn e2e_dep_tree_mermaid_vs_json_consistency() {
     common::init_test_logging();
     info!("e2e_dep_tree_mermaid_vs_json_consistency: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create simple tree
-    let a = run_br(&workspace, ["create", "Root"], "create_a");
-    let b = run_br(&workspace, ["create", "Child"], "create_b");
+    let a = run_obr(&workspace, ["create", "Root"], "create_a");
+    let b = run_obr(&workspace, ["create", "Child"], "create_b");
 
     let id_a = parse_created_id(&a.stdout);
     let id_b = parse_created_id(&b.stdout);
 
-    run_br(&workspace, ["dep", "add", &id_a, &id_b], "dep_ab");
+    run_obr(&workspace, ["dep", "add", &id_a, &id_b], "dep_ab");
 
     // Get JSON output
-    let tree_json = run_br(&workspace, ["dep", "tree", &id_a, "--json"], "tree_json");
+    let tree_json = run_obr(&workspace, ["dep", "tree", &id_a, "--json"], "tree_json");
     assert!(tree_json.status.success(), "JSON tree failed");
     let json_payload = extract_json_payload(&tree_json.stdout);
     let json_nodes: Vec<Value> = serde_json::from_str(&json_payload).expect("parse json");
 
     // Get Mermaid output
-    let tree_mermaid = run_br(
+    let tree_mermaid = run_obr(
         &workspace,
         ["dep", "tree", &id_a, "--format=mermaid"],
         "tree_mermaid",
@@ -496,17 +496,17 @@ fn e2e_dep_tree_mermaid_vs_json_consistency() {
 fn e2e_dep_tree_mermaid_format_case_insensitive() {
     common::init_test_logging();
     info!("e2e_dep_tree_mermaid_format_case_insensitive: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    let create = run_obr(&workspace, ["create", "Test issue"], "create");
     let issue_id = parse_created_id(&create.stdout);
 
     // Test different cases
     for format_arg in &["--format=mermaid", "--format=MERMAID", "--format=Mermaid"] {
-        let tree = run_br(
+        let tree = run_obr(
             &workspace,
             ["dep", "tree", &issue_id, *format_arg],
             &format!("tree_{}", format_arg),
@@ -526,31 +526,31 @@ fn e2e_dep_tree_mermaid_format_case_insensitive() {
 fn e2e_dep_tree_mermaid_output_valid_mermaid_diagram() {
     common::init_test_logging();
     info!("e2e_dep_tree_mermaid_output_valid_mermaid_diagram: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create a non-trivial tree
-    let epic = run_br(&workspace, ["create", "Epic"], "create_epic");
-    let task1 = run_br(&workspace, ["create", "Task 1"], "create_task1");
-    let task2 = run_br(&workspace, ["create", "Task 2"], "create_task2");
-    let subtask = run_br(&workspace, ["create", "Subtask"], "create_subtask");
+    let epic = run_obr(&workspace, ["create", "Epic"], "create_epic");
+    let task1 = run_obr(&workspace, ["create", "Task 1"], "create_task1");
+    let task2 = run_obr(&workspace, ["create", "Task 2"], "create_task2");
+    let subtask = run_obr(&workspace, ["create", "Subtask"], "create_subtask");
 
     let id_epic = parse_created_id(&epic.stdout);
     let id_task1 = parse_created_id(&task1.stdout);
     let id_task2 = parse_created_id(&task2.stdout);
     let id_subtask = parse_created_id(&subtask.stdout);
 
-    run_br(&workspace, ["dep", "add", &id_epic, &id_task1], "dep_e_t1");
-    run_br(&workspace, ["dep", "add", &id_epic, &id_task2], "dep_e_t2");
-    run_br(
+    run_obr(&workspace, ["dep", "add", &id_epic, &id_task1], "dep_e_t1");
+    run_obr(&workspace, ["dep", "add", &id_epic, &id_task2], "dep_e_t2");
+    run_obr(
         &workspace,
         ["dep", "add", &id_task1, &id_subtask],
         "dep_t1_s",
     );
 
-    let tree = run_br(
+    let tree = run_obr(
         &workspace,
         ["dep", "tree", &id_epic, "--format=mermaid"],
         "tree_mermaid",
@@ -601,25 +601,25 @@ fn e2e_dep_tree_mermaid_output_valid_mermaid_diagram() {
 fn e2e_dep_tree_mermaid_text_vs_mermaid_format() {
     common::init_test_logging();
     info!("e2e_dep_tree_mermaid_text_vs_mermaid_format: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let a = run_br(&workspace, ["create", "Root"], "create_a");
-    let b = run_br(&workspace, ["create", "Child"], "create_b");
+    let a = run_obr(&workspace, ["create", "Root"], "create_a");
+    let b = run_obr(&workspace, ["create", "Child"], "create_b");
 
     let id_a = parse_created_id(&a.stdout);
     let id_b = parse_created_id(&b.stdout);
 
-    run_br(&workspace, ["dep", "add", &id_a, &id_b], "dep_ab");
+    run_obr(&workspace, ["dep", "add", &id_a, &id_b], "dep_ab");
 
     // Get text output (default)
-    let tree_text = run_br(&workspace, ["dep", "tree", &id_a], "tree_text");
+    let tree_text = run_obr(&workspace, ["dep", "tree", &id_a], "tree_text");
     assert!(tree_text.status.success(), "Text tree failed");
 
     // Get mermaid output
-    let tree_mermaid = run_br(
+    let tree_mermaid = run_obr(
         &workspace,
         ["dep", "tree", &id_a, "--format=mermaid"],
         "tree_mermaid",
@@ -645,20 +645,20 @@ fn e2e_dep_tree_mermaid_text_vs_mermaid_format() {
 fn e2e_dep_tree_mermaid_with_different_priorities() {
     common::init_test_logging();
     info!("e2e_dep_tree_mermaid_with_different_priorities: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create issues with different priorities (0-4 or P0-P4 format)
     // P1 = high priority, P4 = low priority
-    let high = run_br(
+    let high = run_obr(
         &workspace,
         ["create", "High Priority", "--priority", "1"],
         "create_high",
     );
     assert!(high.status.success(), "create high failed: {}", high.stderr);
-    let low = run_br(
+    let low = run_obr(
         &workspace,
         ["create", "Low Priority", "--priority", "4"],
         "create_low",
@@ -668,9 +668,9 @@ fn e2e_dep_tree_mermaid_with_different_priorities() {
     let id_high = parse_created_id(&high.stdout);
     let id_low = parse_created_id(&low.stdout);
 
-    run_br(&workspace, ["dep", "add", &id_high, &id_low], "dep");
+    run_obr(&workspace, ["dep", "add", &id_high, &id_low], "dep");
 
-    let tree = run_br(
+    let tree = run_obr(
         &workspace,
         ["dep", "tree", &id_high, "--format=mermaid"],
         "tree_mermaid",
@@ -695,16 +695,16 @@ fn e2e_dep_tree_mermaid_with_different_priorities() {
 fn e2e_dep_tree_mermaid_quiet_mode() {
     common::init_test_logging();
     info!("e2e_dep_tree_mermaid_quiet_mode: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    let create = run_obr(&workspace, ["create", "Test issue"], "create");
     let issue_id = parse_created_id(&create.stdout);
 
     // Quiet mode should suppress output
-    let tree = run_br(
+    let tree = run_obr(
         &workspace,
         ["dep", "tree", &issue_id, "--format=mermaid", "--quiet"],
         "tree_mermaid_quiet",
@@ -725,13 +725,13 @@ fn e2e_dep_tree_mermaid_quiet_mode() {
 fn e2e_dep_tree_mermaid_issue_not_found() {
     common::init_test_logging();
     info!("e2e_dep_tree_mermaid_issue_not_found: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Try to get mermaid tree for non-existent issue
-    let tree = run_br(
+    let tree = run_obr(
         &workspace,
         ["dep", "tree", "bd-nonexistent", "--format=mermaid"],
         "tree_mermaid_notfound",

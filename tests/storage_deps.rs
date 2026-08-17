@@ -8,14 +8,14 @@
 
 mod common;
 
-use beads_rust::model::{Dependency, DependencyType, EventType, Status};
-use beads_rust::storage::{ReadyFilters, ReadySortPolicy, SqliteStorage};
 #[allow(unused_imports)]
 use common::ordering::{
     assert_contains_exactly_one, assert_hybrid_ordered, assert_no_duplicate_ids,
     assert_oldest_first, assert_ordered_by, assert_priority_ordered,
 };
 use common::{fixtures, test_db};
+use obr::model::{Dependency, DependencyType, EventType, Status};
+use obr::storage::{ReadyFilters, ReadySortPolicy, SqliteStorage};
 
 /// Import one blocking edge through the lossless import surface.
 ///
@@ -1055,7 +1055,7 @@ fn blocked_cache_reflects_status_changes() {
     assert!(blocked_ids.contains(&blocked.id));
 
     // Close the blocker
-    let update = beads_rust::storage::IssueUpdate {
+    let update = obr::storage::IssueUpdate {
         status: Some(Status::Closed),
         ..Default::default()
     };
@@ -1405,7 +1405,7 @@ fn test_dep_add_each_supported_type_against_full_matrix() {
 // DIRECTIONAL BATCH QUERIES (beads_rust-mf72)
 // ============================================================================
 
-/// `get_blocking_dependencies_for_issue_ids` backs `br graph --dependencies`
+/// `get_blocking_dependencies_for_issue_ids` backs `obr graph --dependencies`
 /// and must be the exact inverse of the dependents query that backs the
 /// default walk. Asserting the inverse relation — rather than each query's
 /// rows independently — is what keeps the two graph directions consistent.
@@ -1435,19 +1435,17 @@ fn blocking_dependencies_batch_is_the_inverse_of_blocking_dependents() {
         .get_blocking_dependencies_for_issue_ids(&ids)
         .unwrap();
 
-    let neighbours = |map: &std::collections::HashMap<
-        String,
-        Vec<beads_rust::format::IssueWithDependencyMetadata>,
-    >,
-                      id: &str|
-     -> Vec<String> {
-        let mut out: Vec<String> = map
-            .get(id)
-            .map(|v| v.iter().map(|m| m.id.clone()).collect())
-            .unwrap_or_default();
-        out.sort();
-        out
-    };
+    let neighbours =
+        |map: &std::collections::HashMap<String, Vec<obr::format::IssueWithDependencyMetadata>>,
+         id: &str|
+         -> Vec<String> {
+            let mut out: Vec<String> = map
+                .get(id)
+                .map(|v| v.iter().map(|m| m.id.clone()).collect())
+                .unwrap_or_default();
+            out.sort();
+            out
+        };
 
     // Dependents: who is blocked by me.
     assert_eq!(neighbours(&dependents, &c.id), vec![b.id.clone()]);

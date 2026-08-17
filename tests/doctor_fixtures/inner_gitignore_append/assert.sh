@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Fixture assertions: inner_gitignore_append
 #
-# Pass-5 cycle 27: fm-configs-gitignore-leaking-beads (inner subset)
+# Pass-5 cycle 27: fm-configs-gitignore-leaking-obr (inner subset)
 # graduates from detect-only (Tier B from cycle 13) to auto-fixed
-# (Tier A). --repair appends the missing canonical pattern(s) via
+# (Tier A). --repair appends the missing self-ignore line via
 # Op::AppendFile while preserving every operator-written line.
 
 set -euo pipefail
@@ -30,7 +30,7 @@ def normalize_gitignore_line(line):
     return line
 
 try:
-    with open(".beads/.gitignore", "r", encoding="utf-8") as f:
+    with open(".obr/.gitignore", "r", encoding="utf-8") as f:
         present = any(normalize_gitignore_line(line) == needle for line in f)
 except FileNotFoundError:
     present = False
@@ -42,25 +42,21 @@ case "$stage" in
   detect)
     out=$("$tool_bin" doctor --json 2>/dev/null) || true
     echo "$out" | jq -e '
-      .checks[] | select(.name == "gitignore.beads_inner_present")
+      .checks[] | select(.name == "gitignore.obr_inner_present")
       | select(.status == "warn" or .status == "error")
     ' >/dev/null || {
-      echo "ASSERT FAIL[$stage]: gitignore.beads_inner_present not flagged" >&2
-      echo "$out" | jq '.checks[] | select(.name == "gitignore.beads_inner_present")' >&2
+      echo "ASSERT FAIL[$stage]: gitignore.obr_inner_present not flagged" >&2
+      echo "$out" | jq '.checks[] | select(.name == "gitignore.obr_inner_present")' >&2
       exit 1
     }
-    # The pre-fix state effectively covers .write.lock through *.lock, while
-    # the temp-file class is genuinely missing.
+    # The pre-fix state enumerates artifacts but never ignores the directory
+    # wholesale, which is exactly what the new model requires.
     if [ "$(has_pattern '*.lock')" != "1" ]; then
       echo "ASSERT FAIL[$stage]: expected *.lock in pre-fix state" >&2
       exit 1
     fi
-    if [ "$(has_pattern '*.tmp')" != "0" ]; then
-      echo "ASSERT FAIL[$stage]: expected *.tmp to be missing in pre-fix state" >&2
-      exit 1
-    fi
-    if [ "$(has_pattern '.write.lock')" != "0" ]; then
-      echo "ASSERT FAIL[$stage]: fixture unexpectedly contains redundant .write.lock" >&2
+    if [ "$(has_pattern '*')" != "0" ]; then
+      echo "ASSERT FAIL[$stage]: expected the self-ignore line to be missing pre-fix" >&2
       exit 1
     fi
     # Operator-custom line preserved through the corrupt stage.
@@ -70,17 +66,13 @@ case "$stage" in
     fi
     ;;
   post_repair)
-    # The broad lock rule stays authoritative; repair adds only *.tmp.
+    # Repair adds the wholesale ignore; the operator's narrower rules survive.
     if [ "$(has_pattern '*.lock')" != "1" ]; then
       echo "ASSERT FAIL[$stage]: *.lock missing after repair" >&2
       exit 1
     fi
-    if [ "$(has_pattern '*.tmp')" != "1" ]; then
-      echo "ASSERT FAIL[$stage]: *.tmp missing after repair" >&2
-      exit 1
-    fi
-    if [ "$(has_pattern '.write.lock')" != "0" ]; then
-      echo "ASSERT FAIL[$stage]: repair appended redundant .write.lock" >&2
+    if [ "$(has_pattern '*')" != "1" ]; then
+      echo "ASSERT FAIL[$stage]: self-ignore line missing after repair" >&2
       exit 1
     fi
     # Operator-custom line MUST be preserved verbatim.
@@ -98,18 +90,18 @@ case "$stage" in
         exit 1
       }
     fi
-    # SACRED INVARIANT: JSONL byte-identical — touching the gitignore
-    # must NEVER affect the JSONL export.
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    # SACRED INVARIANT: the export stays byte-identical — touching the
+    # gitignore must NEVER affect the tracked surface.
+    jsonl_now=$(sha256sum PLAN.org | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: JSONL bytes mutated by inner-gitignore repair" >&2
       exit 1
     fi
     redetect=$("$tool_bin" doctor --json 2>/dev/null) || true
-    status=$(echo "$redetect" | jq -r '.checks[] | select(.name == "gitignore.beads_inner_present") | .status' 2>/dev/null || echo "")
+    status=$(echo "$redetect" | jq -r '.checks[] | select(.name == "gitignore.obr_inner_present") | .status' 2>/dev/null || echo "")
     if [ "$status" != "ok" ] && [ -n "$status" ]; then
-      echo "ASSERT FAIL[$stage]: gitignore.beads_inner_present still '$status' after repair" >&2
+      echo "ASSERT FAIL[$stage]: gitignore.obr_inner_present still '$status' after repair" >&2
       exit 1
     fi
     runs_root="$target_dir/.doctor/runs"
@@ -129,19 +121,19 @@ case "$stage" in
     ;;
   post_undo)
     # The incomplete state restores byte-deterministically.
-    gi_now=$(sha256sum .beads/.gitignore | awk '{print $1}')
+    gi_now=$(sha256sum .obr/.gitignore | awk '{print $1}')
     gi_pre=$(cat .fixture_inner_gitignore_pre_sha256)
     if [ "$gi_now" != "$gi_pre" ]; then
-      echo "ASSERT FAIL[$stage]: undo didn't byte-restore the incomplete .beads/.gitignore" >&2
+      echo "ASSERT FAIL[$stage]: undo didn't byte-restore the incomplete .obr/.gitignore" >&2
       echo "  pre: $gi_pre" >&2
       echo "  now: $gi_now" >&2
-      diff -u .fixture_inner_gitignore_pre.txt .beads/.gitignore >&2 || true
+      diff -u .fixture_inner_gitignore_pre.txt .obr/.gitignore >&2 || true
       exit 1
     fi
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum PLAN.org | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
-      echo "ASSERT FAIL[$stage]: JSONL bytes drifted across undo" >&2
+      echo "ASSERT FAIL[$stage]: surface bytes drifted across undo" >&2
       exit 1
     fi
     ;;

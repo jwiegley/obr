@@ -17,26 +17,26 @@ case "$stage" in
       echo "$out" | jq '.checks[] | select(.name == "db.recovery_artifacts")' >&2
       exit 1
     }
-    [ -d .beads/.br_recovery ] || {
-      echo "ASSERT FAIL[$stage]: .br_recovery missing" >&2; exit 1
+    [ -d .obr/recovery ] || {
+      echo "ASSERT FAIL[$stage]: recovery missing" >&2; exit 1
     }
     ;;
   post_repair)
     # P3: no auto-prune. Artifacts must still exist (doctor must not silently
     # delete user-visible recovery backups).
-    [ -d .beads/.br_recovery ] || {
-      echo "ASSERT FAIL[$stage]: .br_recovery vanished after --repair" >&2
+    [ -d .obr/recovery ] || {
+      echo "ASSERT FAIL[$stage]: recovery vanished after --repair" >&2
       exit 1
     }
     # At least one of the planted files should still be there.
-    n=$(find .beads/.br_recovery -type f | wc -l)
+    n=$(find .obr/recovery -type f | wc -l)
     if [ "$n" -lt 1 ]; then
       echo "ASSERT FAIL[$stage]: recovery artifacts auto-deleted (unsafe)" >&2
       exit 1
     fi
     ;;
   post_undo)
-    [ -d .beads ] || { echo "ASSERT FAIL[$stage]: .beads gone after undo" >&2; exit 1; }
+    [ -d .obr ] || { echo "ASSERT FAIL[$stage]: .obr gone after undo" >&2; exit 1; }
     ;;
   *)
     echo "unknown stage: $stage" >&2

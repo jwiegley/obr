@@ -1,6 +1,6 @@
 //! E2E Tests for install.sh - Multi-Platform Binary Installer
 //!
-//! Tests the br installer script for platform detection, version resolution,
+//! Tests the obr installer script for platform detection, version resolution,
 //! checksum verification, and various installation scenarios.
 //!
 //! Related bead: beads_rust-1g0q (Installer script: multi-platform binary downloader)
@@ -65,7 +65,7 @@ fn run_installer(temp_dir: &TempDir, args: &[&str], env_vars: HashMap<&str, &str
     cmd.current_dir(temp_dir.path());
 
     // Clear potentially interfering variables
-    cmd.env_remove("BR_INSTALL_DIR");
+    cmd.env_remove("OBR_INSTALL_DIR");
     cmd.env_remove("VERSION");
 
     // Add custom environment variables
@@ -258,10 +258,10 @@ fn e2e_installer_version_resolution_explicit() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Help output should mention br installer
+    // Help output should mention obr installer
     assert!(
-        stdout.contains("br installer") || stdout.contains("install") || stderr.contains("br"),
-        "Help output should mention br installer"
+        stdout.contains("obr installer") || stdout.contains("install") || stderr.contains("obr"),
+        "Help output should mention obr installer"
     );
 }
 
@@ -281,6 +281,10 @@ fn e2e_installer_uses_tagless_release_asset_names() {
         printf 'asset_from_plain=%s\n' "$(release_asset_version "0.2.10")"
         printf 'tag_from_tag=%s\n' "$(release_download_tag "v0.2.10")"
         printf 'tag_from_plain=%s\n' "$(release_download_tag "0.2.10")"
+        printf 'asset_from_metadata=%s\n' "$(release_asset_version "v0.2.22+1")"
+        printf 'tag_from_metadata=%s\n' "$(release_download_tag "v0.2.22+1")"
+        printf 'tag_from_bare_metadata=%s\n' "$(release_download_tag "0.2.22+1")"
+        printf 'asset_keeps_prerelease=%s\n' "$(release_asset_version "v1.2.3-rc.1")"
         trap - EXIT
         exit 0
         "#,
@@ -299,14 +303,38 @@ fn e2e_installer_uses_tagless_release_asset_names() {
     assert!(stdout.contains("tag_from_tag=v0.2.10"));
     assert!(stdout.contains("tag_from_plain=v0.2.10"));
 
+    // obr's version carries semver build metadata (`0.2.22+1` = tracked
+    // upstream release + fork generation). The two helpers must disagree about
+    // it, in exactly one direction: the release TAG keeps the `+`, the asset
+    // FILE NAME flattens it to `.`, because GitHub's upload API rewrites a `+`
+    // in an asset name and .github/workflows/release.yml publishes the
+    // flattened form. Reconstructing the `+` form here downloads nothing.
+    assert!(
+        stdout.contains("asset_from_metadata=0.2.22.1"),
+        "asset name must flatten build metadata: {stdout}"
+    );
+    assert!(
+        stdout.contains("tag_from_metadata=v0.2.22+1"),
+        "release tag must keep build metadata verbatim: {stdout}"
+    );
+    assert!(
+        stdout.contains("tag_from_bare_metadata=v0.2.22+1"),
+        "a version without the leading v must still tag verbatim: {stdout}"
+    );
+    // Only `+` is a problem; a pre-release identifier is a legal file name.
+    assert!(
+        stdout.contains("asset_keeps_prerelease=1.2.3-rc.1"),
+        "pre-release identifiers must survive unchanged: {stdout}"
+    );
+
     let script = install_script_contents();
     let download_release = shell_function_section(&script, "download_release");
     assert!(
         download_release
-            .contains(r#"archive_name="br-${asset_version}-${platform}.${archive_ext}""#)
+            .contains(r#"archive_name="obr-${asset_version}-${platform}.${archive_ext}""#)
     );
     assert!(download_release.contains(r"/releases/download/${release_tag}/${archive_name}"));
-    assert!(!download_release.contains(r#"archive_name="br-${VERSION}-${platform}"#));
+    assert!(!download_release.contains(r#"archive_name="obr-${VERSION}-${platform}"#));
 }
 
 #[test]
@@ -441,7 +469,6 @@ fn e2e_installer_checksum_mismatch_fails() {
             "--checksum",
             bad_checksum,
             "--quiet",
-            "--skip-skills",
         ],
         HashMap::new(),
     );
@@ -462,7 +489,7 @@ fn e2e_installer_checksum_mismatch_fails() {
         "stderr should not fall back to source build after verification failure; stdout={stdout}, stderr={stderr}"
     );
 
-    let binary_path = temp.path().join("bin").join("br");
+    let binary_path = temp.path().join("bin").join("obr");
     assert!(
         !binary_path.exists(),
         "checksum mismatch must not install a binary"
@@ -484,9 +511,9 @@ fn e2e_installer_idempotent_runs_twice() {
     let dest = temp.path().join("bin");
     fs::create_dir_all(&dest).expect("create dest");
 
-    // Create a fake "br" binary to simulate existing installation
-    let fake_binary = dest.join("br");
-    fs::write(&fake_binary, "#!/bin/sh\necho 'br 0.0.1'").expect("write fake");
+    // Create a fake "obr" binary to simulate existing installation
+    let fake_binary = dest.join("obr");
+    fs::write(&fake_binary, "#!/bin/sh\necho 'obr 0.0.1'").expect("write fake");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -546,7 +573,20 @@ fn e2e_installer_lock_prevents_concurrent() {
     // (run_installer points TMPDIR at the temp dir, and install.sh derives
     // its lock from TMPDIR), so parallel installer tests cannot race the
     // deliberately planted stale lock.
-    let lock_dir = temp.path().join("br-install.lock.d");
+    //
+    // The name is derived exactly the way `acquire_lock` derives it —
+    // `${TMPDIR}/obr-install.<DEST with every non-alphanumeric byte mapped to
+    // '_'>.lock.d`. A hand-spelled name here plants the lock somewhere the
+    // installer never looks, which is how this test passed for months while
+    // asserting nothing about locking at all.
+    let dest_dir = temp.path().join("bin");
+    let dest_key: String = dest_dir
+        .to_str()
+        .expect("temp dest path is UTF-8")
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    let lock_dir = temp.path().join(format!("obr-install.{dest_key}.lock.d"));
 
     // Create lock with a PID that doesn't exist
     fs::create_dir_all(&lock_dir).expect("create lock dir");
@@ -561,7 +601,7 @@ fn e2e_installer_lock_prevents_concurrent() {
     // Should have printed help (lock was stale and recovered)
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("br installer") || stdout.contains("--version"),
+        stdout.contains("obr installer") || stdout.contains("--version"),
         "Should print help after recovering stale lock"
     );
 }
@@ -582,8 +622,8 @@ fn e2e_installer_uninstall_removes_binary() {
     fs::create_dir_all(&dest).expect("create dest");
 
     // Create a fake binary
-    let binary_path = dest.join("br");
-    fs::write(&binary_path, "#!/bin/sh\necho 'br 0.0.1'").expect("write fake");
+    let binary_path = dest.join("obr");
+    fs::write(&binary_path, "#!/bin/sh\necho 'obr 0.0.1'").expect("write fake");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -617,8 +657,18 @@ fn e2e_installer_uninstall_removes_binary() {
 // Environment Variable Tests
 // ============================================================================
 
+/// `OBR_INSTALL_DIR` must actually override the install destination.
+///
+/// This test used to run the installer and assert nothing at all — its only
+/// content was a comment claiming the directory "should be created" — so it
+/// stayed green while the script read `OOBR_INSTALL_DIR` (doubled O) and the
+/// documented override did nothing.
+///
+/// `--uninstall` is what makes the override observable without a network
+/// fetch: it names `$DEST` in its own output, and the environment override is
+/// applied before it runs.
 #[test]
-fn e2e_installer_respects_br_install_dir() {
+fn e2e_installer_respects_obr_install_dir() {
     if !has_bash() {
         eprintln!("Skipping test: bash not available");
         return;
@@ -626,14 +676,23 @@ fn e2e_installer_respects_br_install_dir() {
 
     let temp = TempDir::new().expect("temp dir");
     let custom_dir = temp.path().join("custom_install_location");
+    fs::create_dir_all(&custom_dir).expect("custom dir");
 
     let mut env = HashMap::new();
-    env.insert("BR_INSTALL_DIR", custom_dir.to_str().unwrap());
+    env.insert("OBR_INSTALL_DIR", custom_dir.to_str().unwrap());
 
-    let _output = run_installer(&temp, &["--quiet"], env);
+    // `run_installer` sets DEST to <temp>/bin; the env override must win.
+    let output = run_installer(&temp, &["--uninstall"], env);
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 
-    // The directory should be created (mkdir -p in script)
-    // Even if download fails, the setup should prepare the directory
+    assert!(
+        combined.contains(custom_dir.to_str().expect("utf-8 path")),
+        "OBR_INSTALL_DIR did not override the install destination: {combined}"
+    );
 }
 
 #[test]
@@ -654,7 +713,7 @@ fn e2e_installer_no_gum_disables_fancy_output() {
     // With NO_GUM, should use plain text output (no gum style boxes)
     // The fallback output uses simpler formatting
     assert!(
-        stdout.contains("br installer") || stdout.contains("Usage"),
+        stdout.contains("obr installer") || stdout.contains("Usage"),
         "Should print help in plain format"
     );
 }
@@ -679,7 +738,7 @@ fn e2e_installer_from_source_flag_accepted() {
     // Should print help (flag was accepted)
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("br installer") || stdout.contains("--from-source"),
+        stdout.contains("obr installer") || stdout.contains("--from-source"),
         "Should accept --from-source flag"
     );
 }
@@ -731,14 +790,14 @@ fn e2e_installer_full_install_and_verify() {
 
     if output.status.success() {
         // Verify binary exists and works
-        let binary_path = dest.join("br");
+        let binary_path = dest.join("obr");
         assert!(binary_path.exists(), "Binary should exist after install");
 
         // Run the installed binary
         let version_output = Command::new(&binary_path)
             .arg("--version")
             .output()
-            .expect("run installed br");
+            .expect("run installed obr");
 
         assert!(
             version_output.status.success(),
@@ -748,7 +807,7 @@ fn e2e_installer_full_install_and_verify() {
 
         let version_str = String::from_utf8_lossy(&version_output.stdout);
         assert!(
-            version_str.contains("br") || version_str.contains("0."),
+            version_str.contains("obr") || version_str.contains("0."),
             "Should report version: {version_str}"
         );
     } else {
@@ -781,7 +840,7 @@ fn e2e_installer_proxy_env_vars_accepted() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let _stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stdout.contains("br installer") || stdout.contains("HTTPS_PROXY"),
+        stdout.contains("obr installer") || stdout.contains("HTTPS_PROXY"),
         "Should mention HTTPS_PROXY in help. stdout={stdout}"
     );
 }
@@ -840,94 +899,4 @@ fn e2e_installer_shows_supported_platforms() {
         stdout.contains("macOS") || stdout.contains("darwin") || stdout.contains("Mac"),
         "Help should mention macOS support"
     );
-}
-
-// ---------------------------------------------------------------------------
-// Claude Code plugin distribution (GitHub #400)
-//
-// `install.sh` is one distribution path for the official `br` skill; the
-// `.claude-plugin/` marketplace pair is the other. These tests keep the two
-// manifests honest: the plugin's literal version has to track the crate, and
-// the marketplace entry has to keep pointing at a skill directory that exists.
-// ---------------------------------------------------------------------------
-
-fn read_plugin_manifest(name: &str) -> serde_json::Value {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join(".claude-plugin")
-        .join(name);
-    let raw = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    serde_json::from_str(&raw)
-        .unwrap_or_else(|e| panic!("{} must be valid JSON: {e}", path.display()))
-}
-
-/// The plugin manifest carries a literal version string (the schema has no way
-/// to derive it), so a release that bumps `Cargo.toml` without bumping
-/// `.claude-plugin/plugin.json` would publish a plugin advertising a stale
-/// version. Fail the build instead.
-#[test]
-fn plugin_manifest_version_tracks_the_crate_version() {
-    let plugin = read_plugin_manifest("plugin.json");
-    assert_eq!(
-        plugin["version"].as_str(),
-        Some(env!("CARGO_PKG_VERSION")),
-        "bump `version` in .claude-plugin/plugin.json to match Cargo.toml"
-    );
-}
-
-/// Shape gate for the marketplace pair: the fields Claude Code requires must be
-/// present, the plugin entry must resolve to this repository, and the declared
-/// skill directory must actually contain the `br` skill. The marketplace entry
-/// declares `skills` explicitly because its source is the marketplace root —
-/// that is what keeps the opt-in `skills/bd-to-br-migration` skill out of the
-/// published plugin.
-#[test]
-fn plugin_marketplace_publishes_only_the_br_skill() {
-    let marketplace = read_plugin_manifest("marketplace.json");
-    assert_eq!(marketplace["name"].as_str(), Some("beads-rust"));
-    assert!(
-        marketplace["owner"]["name"].as_str().is_some(),
-        "marketplace.json requires an owner with a name"
-    );
-
-    let plugins = marketplace["plugins"]
-        .as_array()
-        .expect("marketplace.json requires a plugins array");
-    assert_eq!(plugins.len(), 1, "expected exactly one published plugin");
-    let entry = &plugins[0];
-
-    let plugin = read_plugin_manifest("plugin.json");
-    assert_eq!(
-        entry["name"].as_str(),
-        plugin["name"].as_str(),
-        "marketplace entry name must match the plugin manifest name"
-    );
-    assert_eq!(entry["source"].as_str(), Some("./"));
-
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for manifest in [&plugin, entry] {
-        let skills = manifest["skills"]
-            .as_array()
-            .expect("both manifests declare skill directories");
-        assert_eq!(
-            skills.len(),
-            1,
-            "only the official `br` skill is published; \
-             bd-to-br-migration stays opt-in via install.sh"
-        );
-        let declared = skills[0].as_str().expect("skill path is a string");
-        assert!(
-            declared.starts_with("./"),
-            "plugin paths must be relative to the plugin root: {declared}"
-        );
-        let skill_dir = root.join(declared.trim_start_matches("./"));
-        assert!(
-            skill_dir.join("br").join("SKILL.md").is_file(),
-            "declared skill directory {} must contain br/SKILL.md",
-            skill_dir.display()
-        );
-        assert!(
-            !skill_dir.join("bd-to-br-migration").exists(),
-            "the published skill directory must not carry the opt-in migration skill"
-        );
-    }
 }

@@ -5,14 +5,11 @@ use tempfile::TempDir;
 #[test]
 fn test_create_parent_standin() {
     let temp = TempDir::new().unwrap();
-    let beads_dir = temp.path().join(".beads");
+    let obr_dir = temp.path().join(".obr");
 
     // Initialize the beads directory
-    let mut cmd = Command::cargo_bin("br").unwrap();
-    cmd.arg("init")
-        .env("BEADS_DIR", &beads_dir)
-        .assert()
-        .success();
+    let mut cmd = Command::cargo_bin("obr").unwrap();
+    cmd.arg("init").env("OBR_DIR", &obr_dir).assert().success();
 
     let file_path = temp.path().join("issues.md");
     std::fs::write(
@@ -31,13 +28,13 @@ epic1
     )
     .unwrap();
 
-    let mut cmd = Command::cargo_bin("br").unwrap();
+    let mut cmd = Command::cargo_bin("obr").unwrap();
     let imported = cmd
         .arg("create")
         .arg("-f")
         .arg(&file_path)
         .arg("--json")
-        .env("BEADS_DIR", &beads_dir)
+        .env("OBR_DIR", &obr_dir)
         .output()
         .unwrap();
     assert!(
@@ -73,13 +70,10 @@ epic1
 #[test]
 fn test_create_parent_standin_forward_reference() {
     let temp = TempDir::new().unwrap();
-    let beads_dir = temp.path().join(".beads");
+    let obr_dir = temp.path().join(".obr");
 
-    let mut cmd = Command::cargo_bin("br").unwrap();
-    cmd.arg("init")
-        .env("BEADS_DIR", &beads_dir)
-        .assert()
-        .success();
+    let mut cmd = Command::cargo_bin("obr").unwrap();
+    cmd.arg("init").env("OBR_DIR", &obr_dir).assert().success();
 
     let file_path = temp.path().join("issues.md");
     std::fs::write(
@@ -98,13 +92,13 @@ epic
     )
     .unwrap();
 
-    let mut cmd = Command::cargo_bin("br").unwrap();
+    let mut cmd = Command::cargo_bin("obr").unwrap();
     let imported = cmd
         .arg("create")
         .arg("-f")
         .arg(&file_path)
         .arg("--json")
-        .env("BEADS_DIR", &beads_dir)
+        .env("OBR_DIR", &obr_dir)
         .output()
         .unwrap();
     assert!(

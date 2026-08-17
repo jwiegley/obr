@@ -5257,14 +5257,13 @@ fn execute_source_repo_path_migration(
         note_witnesses: Vec::new(),
         database_before: plan.database_before,
     };
-    let pending_receipt =
-        storage.apply_sync_merge_atomically_with_format(
-            &plan.changed_kept,
-            &[],
-            &[],
-            &intent,
-            crate::sync::org_bridge::ExportFormat::for_path(jsonl_path),
-        )?;
+    let pending_receipt = storage.apply_sync_merge_atomically_with_format(
+        &plan.changed_kept,
+        &[],
+        &[],
+        &intent,
+        crate::sync::org_bridge::ExportFormat::for_path(jsonl_path),
+    )?;
     plan.receipt
         .warnings
         .clone_from(&pending_receipt.capacity_warnings);

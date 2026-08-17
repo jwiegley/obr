@@ -48,7 +48,7 @@ case "$stage" in
     fi
     ;;
   post_undo)
-    [ -d .beads ] || { echo "ASSERT FAIL[$stage]: .beads gone after undo" >&2; exit 1; }
+    [ -d .obr ] || { echo "ASSERT FAIL[$stage]: .obr gone after undo" >&2; exit 1; }
     [ -f Cargo.toml ] || { echo "ASSERT FAIL[$stage]: Cargo.toml gone after undo" >&2; exit 1; }
     ;;
   *)

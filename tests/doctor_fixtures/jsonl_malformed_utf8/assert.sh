@@ -22,23 +22,27 @@ case "$stage" in
   post_repair)
     # Safety gate: the malformed bytes MUST still be present (doctor refuses
     # to silently destroy operator data). The check status may remain error.
-    sz=$(wc -c < .beads/issues.jsonl 2>/dev/null || echo 0)
-    if [ "$sz" -le 100 ]; then
-      # File got rewritten to a small canonical export — that's the failure
-      # we explicitly guard against (silent data destruction).
-      # Inspect more precisely: was the planted invalid-UTF8 sequence preserved?
-      if ! python3 -c '
+    # The planted bytes must survive, and that is asserted unconditionally. This
+    # was previously nested inside `if [ "$sz" -le 100 ]`, but the fixture plants
+    # 461 bytes — so a rewrite to anything larger than 100 bytes, which is exactly
+    # the silent canonical re-export the fixture exists to forbid, skipped the
+    # check and passed. Size is not the contract; byte preservation is.
+    [ -f .obr/issues.jsonl ] || {
+      echo "ASSERT FAIL[$stage]: --repair deleted the malformed JSONL outright" >&2
+      exit 1
+    }
+    if ! python3 -c '
 import sys
-data = open(".beads/issues.jsonl", "rb").read()
+data = open(".obr/issues.jsonl", "rb").read()
 sys.exit(0 if b"\xff\xfe\xfdInvalid bytes follow" in data else 1)
 ' 2>/dev/null; then
-        echo "ASSERT FAIL[$stage]: --repair silently rewrote malformed JSONL (data destruction)" >&2
-        exit 1
-      fi
+      echo "ASSERT FAIL[$stage]: --repair silently rewrote malformed JSONL (data destruction)" >&2
+      echo "(planted invalid-UTF8 sequence is no longer present; size was $(wc -c < .obr/issues.jsonl) bytes)" >&2
+      exit 1
     fi
     ;;
   post_undo)
-    [ -f .beads/issues.jsonl ] || {
+    [ -f .obr/issues.jsonl ] || {
       echo "ASSERT FAIL[$stage]: issues.jsonl gone after undo" >&2
       exit 1
     }

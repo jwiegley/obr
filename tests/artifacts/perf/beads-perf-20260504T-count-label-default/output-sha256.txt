@@ -1,2 +1,0 @@
-f893044d40ff4cf9c5aa354897c9c4fdd6ab69cd860e85c7a5d8c3f713a1c2de  /data/projects/beads_rust/tests/artifacts/perf/beads-perf-20260504T-count-label-default/count-label-baseline.json
-f893044d40ff4cf9c5aa354897c9c4fdd6ab69cd860e85c7a5d8c3f713a1c2de  /data/projects/beads_rust/tests/artifacts/perf/beads-perf-20260504T-count-label-default/count-label-candidate.json

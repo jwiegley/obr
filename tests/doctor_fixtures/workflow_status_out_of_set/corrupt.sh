@@ -7,7 +7,7 @@
 #
 # Plants a strict workflow policy AND a pre-existing offender row whose
 # status the policy does not allow. The offender is written directly to
-# the DB (bypassing `br update`, which would reject it under the strict
+# the DB (bypassing `obr update`, which would reject it under the strict
 # policy — exactly how real offenders predate their policy).
 
 set -euo pipefail
@@ -22,9 +22,10 @@ cd "$target_dir"
 "$tool_bin" create --title "conforming issue" --type task --priority 2 >/dev/null 2>&1
 "$tool_bin" sync --flush-only >/dev/null 2>&1
 
-offender_id=$(python3 <<'PY'
+offender_id=$(
+	python3 <<'PY'
 import json
-with open(".beads/issues.jsonl", "r", encoding="utf-8") as f:
+with open(".obr/issues.jsonl", "r", encoding="utf-8") as f:
     for line in f:
         line = line.strip()
         if not line:
@@ -39,13 +40,13 @@ with open(".beads/issues.jsonl", "r", encoding="utf-8") as f:
 PY
 )
 if [ -z "$offender_id" ]; then
-  echo "corrupt: could not resolve offender id from JSONL" >&2
-  exit 1
+	echo "corrupt: could not resolve offender id from JSONL" >&2
+	exit 1
 fi
-echo "$offender_id" > .fixture_offender_id
+echo "$offender_id" >.fixture_offender_id
 
 # Strict workflow policy that does NOT include the offender's status.
-cat > .beads/policy.yaml <<'YAML'
+cat >.obr/policy.yaml <<'YAML'
 workflow:
   strict: true
   statuses: [open, in_progress, blocked, deferred, closed]
@@ -56,7 +57,7 @@ YAML
 python3 - "$offender_id" <<'PY'
 import sqlite3, sys
 offender_id = sys.argv[1]
-conn = sqlite3.connect(".beads/beads.db")
+conn = sqlite3.connect(".obr/obr.db")
 cur = conn.cursor()
 cur.execute("UPDATE issues SET status = 'limbo' WHERE id = ?", (offender_id,))
 assert cur.rowcount == 1, f"expected 1 row updated, got {cur.rowcount}"
@@ -65,8 +66,8 @@ conn.close()
 PY
 
 if [ -e .fixture_baseline ]; then
-  echo "fixture baseline already exists; expected a fresh workspace" >&2
-  exit 1
+	echo "fixture baseline already exists; expected a fresh workspace" >&2
+	exit 1
 fi
 mkdir -p .fixture_baseline
 tar --exclude=.fixture_baseline -cf .fixture_baseline/state.tar .

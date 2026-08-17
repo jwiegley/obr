@@ -1,7 +1,0 @@
-Command:
-/data/tmp/br-baseline-single-label-page-20260504-before-72yf23 search payload --json --label export >/dev/null
-
-Observation:
-- First combined hyperfine run reached this command and produced no result after >90s.
-- Direct bounded runs at 20s did not complete; the wrapper failed to reap the child cleanly, so the process group was terminated manually after observing it still running past the bound.
-- Treat as baseline >20s for the same workload where the current binary completes in ~3.09s.

@@ -2,8 +2,8 @@
 
 - **FM**: `fm-permissions-recovery-dir-not-writable`
 - **Detector**: `permissions.recovery_dir`
-- **Detect**: creates `.beads/.br_recovery` as an owner-read/execute-only
-  directory. `br doctor --json` must warn with `mode_octal == "555"` and the
+- **Detect**: creates `.obr/recovery` as an owner-read/execute-only
+  directory. `obr doctor --json` must warn with `mode_octal == "555"` and the
   recovery-dir FM identifier in `details.finding_id`.
 - **Repair contract**: detect-only. Doctor must not chmod or move the recovery
   directory because operators may intentionally lock recovery evidence for

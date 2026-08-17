@@ -1,6 +1,5 @@
 ---
 source: tests/snapshots/json_output.rs
-assertion_line: 696
 expression: normalized
 ---
 [

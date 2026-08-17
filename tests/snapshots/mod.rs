@@ -3,22 +3,22 @@
 #[path = "../common/mod.rs"]
 mod common;
 
-use common::cli::{BrWorkspace, run_br};
+use common::cli::{ObrWorkspace, run_obr};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt::{self, Write};
 use std::sync::LazyLock;
 
-pub fn init_workspace() -> BrWorkspace {
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init", "--prefix", "bd"], "init");
+pub fn init_workspace() -> ObrWorkspace {
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init", "--prefix", "bd"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
     workspace
 }
 
-pub fn create_issue(workspace: &BrWorkspace, title: &str, label: &str) -> String {
-    let output = run_br(workspace, ["create", title], label);
+pub fn create_issue(workspace: &ObrWorkspace, title: &str, label: &str) -> String {
+    let output = run_obr(workspace, ["create", title], label);
     assert!(output.status.success(), "create failed: {}", output.stderr);
     parse_created_id(&output.stdout)
 }
@@ -56,25 +56,38 @@ static DATE_RE: LazyLock<Regex> =
 static VERSION_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\s+\((?:HEAD|[A-Za-z0-9._/-]+)@[a-f0-9]+\)").expect("version regex")
 });
-/// The build profile label embedded in `br --version` output, e.g., `(dev)`
+/// The build profile label embedded in `obr --version` output, e.g., `(dev)`
 /// or `(release)`.  Snapshot tests may run under either profile depending on
 /// `cargo test` vs `cargo test --release`, so mask to a stable placeholder.
 static BUILD_PROFILE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\((dev|release)\)").expect("build profile regex"));
 static OWNER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"Owner: [a-zA-Z0-9_-]+").expect("owner regex"));
+/// The optional semver tail that may follow `MAJOR.MINOR.PATCH`: a
+/// pre-release (`-rc.1`), build metadata (`+1`), or both.
+///
+/// obr's own version carries build metadata. `0.2.22+1` reads as "the
+/// upstream beads_rust release this fork tracks, plus the first fork
+/// generation since it" (README, "Status"). A mask that stopped at the patch
+/// digit would leave `+1` sitting in every golden, which is the same
+/// change-detector trap the bare `\d+\.\d+\.\d+` mask was written to avoid:
+/// the fork generation increments far more often than the upstream version
+/// does, so each bump would rewrite goldens that have nothing to do with the
+/// change. Both forms must land on the same `X.Y.Z` placeholder.
+const SEMVER_TAIL: &str = r"(?:-[A-Za-z0-9.]+)?(?:\+[A-Za-z0-9.]+)?";
 /// Version numbers in human-readable output.
 ///
-/// Covers both the `version 0.1.7` form and the bare `br 0.2.19` form that
-/// `br doctor`'s `binary_version` check prints. Without the latter the doctor
+/// Covers both the `version 0.1.7` form and the bare `obr 0.2.19` form that
+/// `obr doctor`'s `binary_version` check prints. Without the latter the doctor
 /// snapshot carries the crate version verbatim and breaks on every release.
 static VERSION_NUM_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\b(version|br) \d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?").expect("version number regex")
+    Regex::new(&format!(r"\b(version|obr) \d+\.\d+\.\d+{SEMVER_TAIL}"))
+        .expect("version number regex")
 });
 static LINE_NUM_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\.rs:\d+:").expect("line number regex"));
 /// `tracing` source-location annotation that appears in dev builds after the
-/// target-and-colon, e.g., `beads_rust::sync::path: src/sync/path.rs:123:`.
+/// target-and-colon, e.g., `obr::sync::path: src/sync/path.rs:123:`.
 /// Release builds omit it.  Normalize by deleting the segment entirely so the
 /// dev-vs-release formatter delta does not cause snapshot drift.
 static TRACING_SRC_LOC_RE: LazyLock<Regex> =
@@ -89,9 +102,19 @@ static HOME_PATH_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"/home/[a-zA-Z0-9_-]+").expect("home path regex"));
 static USERS_PATH_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"/Users/[a-zA-Z0-9_-]+").expect("users path regex"));
+/// Temp roots, masked to `/TMP` so a per-run directory name cannot reach a
+/// snapshot.
+///
+/// The leading `(?:/private)?` and the trailing `.tmpXXXX` on the
+/// `/var/folders` arm are what make this work on macOS. There, `/tmp` and
+/// `/var/folders` are symlinks into `/private/`, and `TempDir` reports the
+/// resolved path — so without them a Darwin run masked
+/// `/private/var/folders/../T/.tmpS8NBLZ` to `/private/TMP.tmpS8NBLZ` and any
+/// snapshot carrying a temp path failed on Darwin only. Nothing hid that until
+/// a doctor check started naming an absolute sidecar path in its message.
 static TMP_PATH_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?:/data)?/tmp(?:/[A-Za-z0-9._-]+)*/\.tmp[a-zA-Z0-9]+|(?:/[A-Za-z0-9._-]+)+/\.rch-target-[A-Za-z0-9._-]+/\.tmp[a-zA-Z0-9]+|/var/folders/[a-zA-Z0-9/_-]+",
+        r"(?:/private)?(?:(?:/data)?/tmp(?:/[A-Za-z0-9._-]+)*/\.tmp[a-zA-Z0-9]+|(?:/[A-Za-z0-9._-]+)+/\.rch-target-[A-Za-z0-9._-]+/\.tmp[a-zA-Z0-9]+|/var/folders/[a-zA-Z0-9/_-]+(?:/\.tmp[a-zA-Z0-9]+)?)",
     )
     .expect("tmp path regex")
 });
@@ -106,26 +129,42 @@ static TMP_PID_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(\.jsonl|\.db)\.\d+\.tmp").expect("pid tmp file regex"));
 static DURATION_MS_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\d+(\.\d+)?\s*(ms|µs|ns|s)").expect("duration regex"));
-/// `br doctor` checks whose result is determined by the machine the test runs
-/// on rather than by anything br did (`beads_rust-alur`). Both made the doctor
-/// golden pass on a developer box and fail on an rch remote worker:
+/// `obr doctor` checks whose *status* is determined by the machine the test
+/// runs on rather than by anything obr did (`beads_rust-alur`).
 ///
-/// - `sqlite3.integrity_check` shells out to the system `sqlite3` binary and
-///   degrades to a WARN when it is absent. Workers have no `sqlite3`.
-/// - `binary_version` reports either "matches (or is ahead of) Cargo.toml at
-///   <path> (<version>)" or "no beads_rust Cargo.toml reachable from .beads/ —
-///   not flagging", depending on whether a `beads_rust` manifest happens to sit
-///   above the temp workspace. rch sets `TMPDIR` *inside* the synced repo, so
-///   the worker takes the first branch and a developer box the second. It also
-///   leaks a bare version number that `VERSION_NUM_RE` does not catch, since
-///   that pattern requires a `version `/`br ` prefix.
+/// Only `sqlite3.integrity_check` qualifies: it shells out to the system
+/// `sqlite3` binary and degrades from OK to WARN when it is absent, so neither
+/// the status word nor the message can be compared. rch workers have no
+/// `sqlite3`; a developer box does.
 ///
-/// Masking the whole result line — rather than skipping the test — keeps the
-/// other ~50 doctor checks under exact comparison everywhere. The check name is
-/// preserved, so the snapshot still fails if a check disappears or is renamed.
+/// This pattern used to cover `binary_version` too, and that is precisely how
+/// the doctor shipped `no obr Cargo.toml reachable from .beads/` to operators
+/// through four rename passes: the mask ends in `.*$`, so it swallowed the
+/// prose nouns along with the volatile version and path, and the golden could
+/// never see the stale `.beads`. `binary_version` is now handled by
+/// [`BINARY_VERSION_TREE_RE`], which masks only the host-dependent manifest
+/// path and version and leaves every noun under exact comparison.
 static HOST_DEPENDENT_CHECK_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?m)^(\s*)(?:OK|WARN|ERROR)\s+(sqlite3\.integrity_check|binary_version)\b.*$")
+    Regex::new(r"(?m)^(\s*)(?:OK|WARN|ERROR)\s+(sqlite3\.integrity_check)\b.*$")
         .expect("host-dependent check regex")
+});
+/// The two host-dependent values inside `binary_version`'s in-tree message:
+/// the absolute path of the `obr` manifest that happened to sit above the temp
+/// workspace, and the version it declares.
+///
+/// A bare `(0.2.19)` in parentheses is invisible to `VERSION_NUM_RE`, which
+/// requires a `version `/`obr ` prefix, so it is masked here.
+///
+/// Nothing else on the line is touched. The doctor golden pins the *other*
+/// branch (see `snapshot_doctor_output`, which plants a non-obr `Cargo.toml`
+/// so the upward walk always stops before any real checkout), and that
+/// branch's message — including the workspace directory it names — is compared
+/// verbatim.
+static BINARY_VERSION_TREE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r"(matches \(or is ahead of\) Cargo\.toml at )\S+ \(\d+\.\d+\.\d+{SEMVER_TAIL}\)",
+    ))
+    .expect("binary_version in-tree regex")
 });
 
 /// Configuration for text normalization.
@@ -165,7 +204,7 @@ pub struct TextNormConfig {
     /// Mask version numbers (e.g., "version 0.1.7" → "version X.Y.Z")
     pub mask_version_numbers: bool,
     /// Mask check results whose status depends on optional tooling being
-    /// installed on the host rather than on anything br did
+    /// installed on the host rather than on anything obr did
     /// (`beads_rust-alur`).
     pub mask_host_tooling: bool,
 }
@@ -527,9 +566,7 @@ fn normalize_text_with_log(text: &str, config: &TextNormConfig) -> (String, Vec<
         log.push("usernames".to_string());
     }
 
-    // 13. Mask version numbers. (Whole doctor `binary_version` result lines
-    // are replaced outright by the host-tooling rule in step 13b, which
-    // subsumes the older OK-line version mask that lived here.)
+    // 13. Mask version numbers.
     if config.mask_version_numbers && VERSION_NUM_RE.is_match(&normalized) {
         normalized = VERSION_NUM_RE
             .replace_all(&normalized, "$1 X.Y.Z")
@@ -537,12 +574,25 @@ fn normalize_text_with_log(text: &str, config: &TextNormConfig) -> (String, Vec<
         log.push("version_numbers".to_string());
     }
 
-    // 13b. Mask check results determined by the host rather than by br.
+    // 13b. Mask check results whose STATUS is decided by the host rather than
+    // by obr. Whole-line, because the OK/WARN word itself varies.
     if config.mask_host_tooling && HOST_DEPENDENT_CHECK_RE.is_match(&normalized) {
         normalized = HOST_DEPENDENT_CHECK_RE
             .replace_all(&normalized, "${1}HOST-DEPENDENT ${2}")
             .to_string();
         log.push("host_tooling".to_string());
+    }
+
+    // 13c. Mask ONLY the host-dependent manifest path and version inside
+    // `binary_version`'s in-tree message. The prose — every noun the doctor
+    // prints, including the workspace directory name — stays under exact
+    // comparison, which is the whole point: the previous whole-line mask is
+    // what let `.beads/` survive the rename in shipped output.
+    if config.mask_host_tooling && BINARY_VERSION_TREE_RE.is_match(&normalized) {
+        normalized = BINARY_VERSION_TREE_RE
+            .replace_all(&normalized, "${1}MANIFEST-PATH (X.Y.Z)")
+            .to_string();
+        log.push("binary_version_manifest".to_string());
     }
 
     // 14. Strip trailing whitespace (per line)
@@ -657,7 +707,7 @@ pub fn normalize_json(json: &Value) -> Value {
                         Value::String("TIMESTAMP".to_string())
                     }
                     "content_hash" => Value::String("HASH".to_string()),
-                    // Normalize source_repo/source_repo_path: br resolves "." to the absolute
+                    // Normalize source_repo/source_repo_path: obr resolves "." to the absolute
                     // path of the workspace; under tempdir-based tests this is
                     // a randomly-named ".tmpXXXXXX" path, so the snapshot must
                     // collapse it back to a stable token. (Issue surfaced by
@@ -815,14 +865,14 @@ mod golden_snapshot_tests {
 
     #[test]
     fn test_normalize_paths_windows_to_unix() {
-        let input = r"C:\Users\test\project\.beads\issues.jsonl";
+        let input = r"C:\Users\test\project\.obr\issues.jsonl";
         let config = TextNormConfig {
             normalize_paths: true,
             mask_home_paths: false,
             ..Default::default()
         };
         let (normalized, _) = normalize_text_with_log(input, &config);
-        assert_eq!(normalized, "C:/Users/test/project/.beads/issues.jsonl");
+        assert_eq!(normalized, "C:/Users/test/project/.obr/issues.jsonl");
     }
 
     #[test]
@@ -844,55 +894,102 @@ mod golden_snapshot_tests {
 
     #[test]
     fn test_mask_git_hash() {
-        let input = "br version 0.1.0 (dev) (main@abc1234)";
+        let input = "obr version 0.1.0 (dev) (main@abc1234)";
         let snapshot = TextSnapshot::golden(input);
-        assert_eq!(snapshot.normalized, "br version X.Y.Z (BUILD)");
+        assert_eq!(snapshot.normalized, "obr version X.Y.Z (BUILD)");
         assert!(!snapshot.normalized.contains("abc1234"));
     }
 
-    /// `br doctor`'s `binary_version` check prints the bare `br <semver>` form
+    /// `obr doctor`'s `binary_version` check prints the bare `obr <semver>` form
     /// rather than `version <semver>`. Leaving it unmasked pins the crate
     /// version into the doctor golden and breaks it on every release.
     ///
-    /// The whole `binary_version` result line is now replaced outright, because
-    /// its *message* is host-dependent too and not just its version number
-    /// (`beads_rust-alur`) — which subsumes the original concern: no version can
-    /// survive if the line does not. Both properties are asserted here.
+    /// The version is masked; nothing else on the line is. `beads_rust-alur`
+    /// once masked the entire result line, which also erased the prose and let
+    /// a stale `.beads/` noun ride along in shipped output for four rename
+    /// passes. Both properties — version gone, prose intact — are asserted here.
     #[test]
-    fn test_mask_bare_br_version() {
-        let input = "OK binary_version: Running br 0.2.19; no beads_rust Cargo.toml reachable";
+    fn test_mask_bare_obr_version() {
+        let input = "OK binary_version: Running obr 0.2.19; no obr Cargo.toml reachable";
         let snapshot = TextSnapshot::golden(input);
-        assert_eq!(snapshot.normalized, "HOST-DEPENDENT binary_version");
+        assert_eq!(
+            snapshot.normalized,
+            "OK binary_version: Running obr X.Y.Z; no obr Cargo.toml reachable"
+        );
         assert!(!snapshot.normalized.contains("0.2.19"));
 
-        // The bare `br <semver>` form is still masked wherever it appears
+        // The bare `obr <semver>` form is still masked wherever it appears
         // outside a check-result line, which is what VERSION_NUM_RE is for.
-        let loose = TextSnapshot::golden("Running br 0.2.19 from /usr/local/bin");
-        assert_eq!(loose.normalized, "Running br X.Y.Z from /usr/local/bin");
+        let loose = TextSnapshot::golden("Running obr 0.2.19 from /usr/local/bin");
+        assert_eq!(loose.normalized, "Running obr X.Y.Z from /usr/local/bin");
     }
 
     /// Prerelease suffixes must be masked with the version they belong to,
     /// otherwise a `-rc.1` build leaves a dangling fragment in the golden.
     #[test]
     fn test_mask_prerelease_version() {
-        let input = "br version 0.2.19-rc.1";
+        let input = "obr version 0.2.19-rc.1";
         let snapshot = TextSnapshot::golden(input);
-        assert_eq!(snapshot.normalized, "br version X.Y.Z");
+        assert_eq!(snapshot.normalized, "obr version X.Y.Z");
+    }
+
+    /// Build metadata must mask to the same placeholder as a bare version.
+    ///
+    /// obr's shipped version is `0.2.22+1` — an upstream release plus a fork
+    /// generation. If `+1` survived the mask, every golden that shows a
+    /// version would have to be rewritten on each fork bump, and the goldens
+    /// would be asserting the version number rather than the output.
+    #[test]
+    fn test_mask_build_metadata_version() {
+        let plain = TextSnapshot::golden("obr version 1.2.3 (dev)");
+        let metadata = TextSnapshot::golden("obr version 0.2.22+1 (dev)");
+        assert_eq!(metadata.normalized, plain.normalized);
+        assert_eq!(metadata.normalized, "obr version X.Y.Z (BUILD)");
+
+        // The superseded `+obr.N` spelling must mask too: goldens recorded
+        // before the rename, and any stray literal, still normalize away.
+        let legacy = TextSnapshot::golden("obr version 0.2.22+obr.1 (dev)");
+        assert_eq!(legacy.normalized, plain.normalized);
+
+        // The bare `obr <semver>` form the doctor prints, and the parenthesized
+        // manifest version that only BINARY_VERSION_TREE_RE can see, both carry
+        // metadata too — and must reach the same placeholders.
+        let doctor = TextSnapshot::golden(
+            "OK binary_version: Running obr 0.2.22+1; matches (or is ahead of) \
+             Cargo.toml at /repo/Cargo.toml (0.2.22+1)",
+        );
+        assert_eq!(
+            doctor.normalized,
+            "OK binary_version: Running obr X.Y.Z; matches (or is ahead of) \
+             Cargo.toml at MANIFEST-PATH (X.Y.Z)"
+        );
+        // No `+` at all: the whole point is that no build metadata, in any
+        // spelling, reaches a golden. A `contains("+1")` check would pass
+        // vacuously the moment the fork generation stopped being 1.
+        assert!(!doctor.normalized.contains('+'));
     }
 
     #[test]
     fn test_mask_home_paths_linux() {
-        let input = "Config at /home/testuser/.config/br/config.yaml";
+        let input = "Config at /home/testuser/.config/obr/config.yaml";
         let snapshot = TextSnapshot::golden(input);
-        assert!(snapshot.normalized.contains("/HOME/.config/br/config.yaml"));
+        assert!(
+            snapshot
+                .normalized
+                .contains("/HOME/.config/obr/config.yaml")
+        );
         assert!(!snapshot.normalized.contains("testuser"));
     }
 
     #[test]
     fn test_mask_home_paths_macos() {
-        let input = "Config at /Users/testuser/.config/br/config.yaml";
+        let input = "Config at /Users/testuser/.config/obr/config.yaml";
         let snapshot = TextSnapshot::golden(input);
-        assert!(snapshot.normalized.contains("/HOME/.config/br/config.yaml"));
+        assert!(
+            snapshot
+                .normalized
+                .contains("/HOME/.config/obr/config.yaml")
+        );
         assert!(!snapshot.normalized.contains("testuser"));
     }
 
@@ -905,10 +1002,9 @@ mod golden_snapshot_tests {
 
     #[test]
     fn test_mask_nested_temp_paths() {
-        let input =
-            "Temp file at /data/projects/beads_rust/.rch-target-worker/.tmpABC123XYZ/.beads";
+        let input = "Temp file at /data/projects/obr/.rch-target-worker/.tmpABC123XYZ/.obr";
         let snapshot = TextSnapshot::golden(input);
-        assert_eq!(snapshot.normalized, "Temp file at /TMP/.beads");
+        assert_eq!(snapshot.normalized, "Temp file at /TMP/.obr");
     }
 
     #[test]
@@ -918,21 +1014,33 @@ mod golden_snapshot_tests {
         assert_eq!(snapshot.normalized, input);
     }
 
+    /// Both OK-line variants keep every word of their prose — including the
+    /// workspace directory the doctor names — and lose only the two values a
+    /// developer box and an rch worker genuinely disagree about: the crate
+    /// version and the manifest path.
     #[test]
     fn test_mask_doctor_binary_version_ok_variants() {
-        // Both OK-line variants collapse to the same host-independent form
-        // (the whole check-result line is host-dependent, so step 13b
-        // replaces it outright); no version number may survive.
         let outside_tree = TextSnapshot::golden(
-            "OK binary_version: Running br 0.2.15; no beads_rust Cargo.toml reachable from .beads/ — not flagging",
+            "OK binary_version: Running obr 0.2.15; no obr Cargo.toml reachable from .obr/ — not flagging",
         );
         let inside_tree = TextSnapshot::golden(
-            "OK binary_version: Running br 0.2.19; matches (or is ahead of) Cargo.toml at /data/projects/beads_rust/Cargo.toml (0.2.19)",
+            "OK binary_version: Running obr 0.2.19; matches (or is ahead of) Cargo.toml at /data/projects/obr/Cargo.toml (0.2.19)",
         );
-        assert_eq!(outside_tree.normalized, "HOST-DEPENDENT binary_version");
-        assert_eq!(inside_tree.normalized, outside_tree.normalized);
+        assert_eq!(
+            outside_tree.normalized,
+            "OK binary_version: Running obr X.Y.Z; no obr Cargo.toml reachable from .obr/ — not flagging",
+        );
+        assert_eq!(
+            inside_tree.normalized,
+            "OK binary_version: Running obr X.Y.Z; matches (or is ahead of) Cargo.toml at MANIFEST-PATH (X.Y.Z)",
+        );
         assert!(!outside_tree.normalized.contains("0.2.15"));
         assert!(!inside_tree.normalized.contains("0.2.19"));
+        assert!(!inside_tree.normalized.contains("/data/projects"));
+        // The regression this file exists to catch: a stale workspace noun
+        // must reach the golden comparison instead of being masked away.
+        assert!(outside_tree.normalized.contains(".obr/"));
+        assert!(!outside_tree.normalized.contains(".beads"));
     }
 
     #[test]
@@ -1084,9 +1192,9 @@ mod golden_snapshot_tests {
     fn test_comprehensive_normalization() {
         let input = r"
 Issue bd-abc123 created
-  Path: C:\Users\developer\project\.beads\issues.jsonl
+  Path: C:\Users\developer\project\.obr\issues.jsonl
   Created: 2026-01-17T15:30:45.123Z
-  Version: br 0.1.0 (main@deadbeef)
+  Version: obr 0.1.0 (main@deadbeef)
   Log: src/cli/create.rs:42: success
   Temp: /tmp/.tmpABC123
 ";
@@ -1127,24 +1235,47 @@ mod host_tooling_masking_tests {
         assert!(normalize_output(with_sqlite3).contains("HOST-DEPENDENT sqlite3.integrity_check"));
     }
 
-    /// `beads_rust-alur`: `binary_version`'s message depends on whether a
-    /// `beads_rust` Cargo.toml sits above the temp workspace — true on rch
-    /// workers, which put `TMPDIR` inside the synced repo, false on a developer
-    /// box. Both forms must normalize to the same text.
+    /// `binary_version`'s in-tree message names the `obr` manifest that
+    /// happened to sit above the temp workspace — a real path on an rch
+    /// worker, which puts `TMPDIR` inside the synced repo, and absent on a
+    /// developer box. That path and its version are masked; nothing else is.
+    ///
+    /// Which of the two branches gets taken is pinned by the doctor golden
+    /// itself (`snapshot_doctor_output` plants a non-obr `Cargo.toml` so the
+    /// upward walk always stops immediately), so normalization does NOT have
+    /// to collapse the two forms together — and must not, because collapsing
+    /// them is what hid a stale `.beads/` noun from the golden.
     #[test]
-    fn binary_version_message_is_host_independent() {
-        let in_repo = "OK binary_version: Running br 0.2.19; matches (or is ahead of) Cargo.toml at /data/projects/beads_rust/Cargo.toml (0.2.19)\n";
-        let outside_repo = "OK binary_version: Running br 0.2.19; no beads_rust Cargo.toml reachable from .beads/ — not flagging\n";
+    fn binary_version_manifest_path_is_masked_but_prose_is_not() {
+        let in_repo = "OK binary_version: Running obr 0.2.19; matches (or is ahead of) Cargo.toml at /data/projects/obr/Cargo.toml (0.2.19)\n";
 
+        let normalized = normalize_output(in_repo);
         assert_eq!(
-            normalize_output(in_repo),
-            normalize_output(outside_repo),
-            "the golden must not encode where the temp workspace happened to live"
+            normalized,
+            "OK binary_version: Running obr X.Y.Z; matches (or is ahead of) Cargo.toml at MANIFEST-PATH (X.Y.Z)",
         );
-        assert!(normalize_output(in_repo).contains("HOST-DEPENDENT binary_version"));
-        // The bare trailing version that VERSION_NUM_RE cannot catch must not
-        // survive into the golden.
-        assert!(!normalize_output(in_repo).contains("0.2.19"));
+        // Neither the host's checkout location nor any version number may
+        // reach the golden.
+        assert!(!normalized.contains("/data/projects"));
+        assert!(!normalized.contains("0.2.19"));
+    }
+
+    /// The workspace directory `binary_version` names is obr's own output, not
+    /// a property of the host, so it must survive normalization and be
+    /// compared. This is the assertion whose absence let
+    /// `no obr Cargo.toml reachable from .beads/` ship.
+    #[test]
+    fn binary_version_workspace_noun_survives_normalization() {
+        let stale = "OK binary_version: Running obr 0.2.19; no obr Cargo.toml reachable from .beads/ — not flagging\n";
+        let current = "OK binary_version: Running obr 0.2.19; no obr Cargo.toml reachable from .obr/ — not flagging\n";
+
+        assert_ne!(
+            normalize_output(stale),
+            normalize_output(current),
+            "normalization must not make a stale workspace noun indistinguishable from the real one"
+        );
+        assert!(normalize_output(current).contains(".obr/"));
+        assert!(!normalize_output(current).contains("0.2.19"));
     }
 
     #[test]

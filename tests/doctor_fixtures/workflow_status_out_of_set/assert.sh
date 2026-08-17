@@ -30,7 +30,7 @@ assert_offender_flagged() {
 offender_status() {
   python3 - "$offender_id" <<'PY'
 import sqlite3, sys
-conn = sqlite3.connect(".beads/beads.db")
+conn = sqlite3.connect(".obr/obr.db")
 row = conn.execute("SELECT status FROM issues WHERE id = ?", (sys.argv[1],)).fetchone()
 print(row[0] if row else "MISSING")
 PY
@@ -53,8 +53,8 @@ case "$stage" in
     assert_offender_flagged "$out" || exit 1
     ;;
   post_undo)
-    [ -d .beads ] || { echo "ASSERT FAIL[$stage]: .beads gone after undo" >&2; exit 1; }
-    [ -f .beads/policy.yaml ] || { echo "ASSERT FAIL[$stage]: policy.yaml gone after undo" >&2; exit 1; }
+    [ -d .obr ] || { echo "ASSERT FAIL[$stage]: .obr gone after undo" >&2; exit 1; }
+    [ -f .obr/policy.yaml ] || { echo "ASSERT FAIL[$stage]: policy.yaml gone after undo" >&2; exit 1; }
     ;;
   *)
     echo "unknown stage: $stage" >&2

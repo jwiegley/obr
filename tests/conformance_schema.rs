@@ -1,5 +1,5 @@
 #![allow(clippy::all, clippy::pedantic, clippy::nursery, dead_code)]
-//! Schema Conformance Tests: Validate br (Rust) and bd (Go) have identical DB structure
+//! Schema Conformance Tests: Validate obr (Rust) and bd (Go) have identical DB structure
 //!
 //! This harness compares:
 //! - SQLite schema (tables, columns, types, constraints, indexes)
@@ -29,10 +29,10 @@ pub struct CmdOutput {
     pub duration: Duration,
 }
 
-/// Schema workspace for paired br/bd comparisons
+/// Schema workspace for paired obr/bd comparisons
 pub struct SchemaWorkspace {
     pub temp_dir: TempDir,
-    pub br_root: PathBuf,
+    pub obr_root: PathBuf,
     pub bd_root: PathBuf,
 }
 
@@ -40,31 +40,31 @@ impl SchemaWorkspace {
     pub fn new() -> Self {
         let temp_dir = TempDir::new().expect("create temp dir");
         let root = temp_dir.path().to_path_buf();
-        let br_root = root.join("br_workspace");
+        let obr_root = root.join("br_workspace");
         let bd_root = root.join("bd_workspace");
 
-        fs::create_dir_all(&br_root).expect("create br workspace");
+        fs::create_dir_all(&obr_root).expect("create obr workspace");
         fs::create_dir_all(&bd_root).expect("create bd workspace");
 
         Self {
             temp_dir,
-            br_root,
+            obr_root,
             bd_root,
         }
     }
 
     /// Initialize both workspaces
     pub fn init_both(&self) {
-        let br_out = self.run_br(&["init"]);
-        assert!(br_out.success, "br init failed: {}", br_out.stderr);
+        let obr_out = self.run_obr(&["init"]);
+        assert!(obr_out.success, "obr init failed: {}", obr_out.stderr);
 
         let bd_out = self.run_bd(&["init"]);
         assert!(bd_out.success, "bd init failed: {}", bd_out.stderr);
     }
 
-    /// Run br command
-    pub fn run_br(&self, args: &[&str]) -> CmdOutput {
-        run_binary("br", &self.br_root, args)
+    /// Run obr command
+    pub fn run_obr(&self, args: &[&str]) -> CmdOutput {
+        run_binary("obr", &self.obr_root, args)
     }
 
     /// Run bd command
@@ -72,34 +72,34 @@ impl SchemaWorkspace {
         run_binary("bd", &self.bd_root, args)
     }
 
-    /// Get path to br database
-    pub fn br_db_path(&self) -> PathBuf {
-        self.br_root.join(".beads").join("beads.db")
+    /// Get path to obr database
+    pub fn obr_db_path(&self) -> PathBuf {
+        self.obr_root.join(".obr").join("obr.db")
     }
 
     /// Get path to bd database
     pub fn bd_db_path(&self) -> PathBuf {
-        self.bd_root.join(".beads").join("beads.db")
+        self.bd_root.join(".obr").join("obr.db")
     }
 
-    /// Get path to br metadata.json
-    pub fn br_metadata_path(&self) -> PathBuf {
-        self.br_root.join(".beads").join("metadata.json")
+    /// Get path to obr metadata.json
+    pub fn obr_metadata_path(&self) -> PathBuf {
+        self.obr_root.join(".obr").join("metadata.json")
     }
 
     /// Get path to bd metadata.json
     pub fn bd_metadata_path(&self) -> PathBuf {
-        self.bd_root.join(".beads").join("metadata.json")
+        self.bd_root.join(".obr").join("metadata.json")
     }
 
-    /// Get path to br JSONL export
-    pub fn br_jsonl_path(&self) -> PathBuf {
-        self.br_root.join(".beads").join("issues.jsonl")
+    /// Get path to obr JSONL export
+    pub fn obr_jsonl_path(&self) -> PathBuf {
+        self.obr_root.join(".obr").join("issues.jsonl")
     }
 
     /// Get path to bd JSONL export
     pub fn bd_jsonl_path(&self) -> PathBuf {
-        self.bd_root.join(".beads").join("issues.jsonl")
+        self.bd_root.join(".obr").join("issues.jsonl")
     }
 
     /// Run SQLite PRAGMA command and return results
@@ -114,16 +114,16 @@ impl SchemaWorkspace {
 
 /// Why schema comparison cannot run, if it cannot.
 ///
-/// Schema conformance additionally needs the cargo-built `br`, because it opens
-/// the database `br init` produced.
+/// Schema conformance additionally needs the cargo-built `obr`, because it opens
+/// the database `obr init` produced.
 fn schema_comparison_skip_reason() -> Option<String> {
-    if !assert_cmd::cargo::cargo_bin!("br").exists() {
-        return Some("cargo-built 'br' binary not found; run `cargo build` first.".to_string());
+    if !assert_cmd::cargo::cargo_bin!("obr").exists() {
+        return Some("cargo-built 'obr' binary not found; run `cargo build` first.".to_string());
     }
     common::bd_skip_reason()
 }
 
-/// Skip test if br release binary or a classic bd is not available.
+/// Skip test if obr release binary or a classic bd is not available.
 macro_rules! skip_if_no_binaries {
     () => {
         if let Some(reason) = schema_comparison_skip_reason() {
@@ -134,9 +134,9 @@ macro_rules! skip_if_no_binaries {
 }
 
 fn run_binary(binary: &str, cwd: &PathBuf, args: &[&str]) -> CmdOutput {
-    let cmd_path: PathBuf = if binary == "br" {
+    let cmd_path: PathBuf = if binary == "obr" {
         // Use cargo-built binary
-        assert_cmd::cargo::cargo_bin!("br").to_path_buf()
+        assert_cmd::cargo::cargo_bin!("obr").to_path_buf()
     } else {
         // Use system bd
         PathBuf::from(binary)
@@ -205,7 +205,7 @@ pub struct IndexInfo {
 /// Schema comparison result
 #[derive(Debug, Default)]
 pub struct SchemaComparison {
-    pub tables_br_only: Vec<String>,
+    pub tables_obr_only: Vec<String>,
     pub tables_bd_only: Vec<String>,
     pub tables_common: Vec<String>,
     pub column_diffs: Vec<ColumnDiff>,
@@ -217,7 +217,7 @@ pub struct ColumnDiff {
     pub table: String,
     pub column: String,
     pub diff_type: String,
-    pub br_value: String,
+    pub obr_value: String,
     pub bd_value: String,
 }
 
@@ -226,35 +226,35 @@ pub struct IndexDiff {
     pub table: String,
     pub index: String,
     pub diff_type: String,
-    pub br_value: String,
+    pub obr_value: String,
     pub bd_value: String,
 }
 
 impl SchemaComparison {
     pub fn is_compatible(&self) -> bool {
-        // Allow br to have additional tables (internal use)
-        // but bd should not have tables br lacks (feature parity)
+        // Allow obr to have additional tables (internal use)
+        // but bd should not have tables obr lacks (feature parity)
         self.tables_bd_only.is_empty() && self.column_diffs.is_empty()
     }
 
     pub fn summary(&self) -> String {
         let mut lines = Vec::new();
-        if !self.tables_br_only.is_empty() {
-            lines.push(format!("Tables in br only: {:?}", self.tables_br_only));
+        if !self.tables_obr_only.is_empty() {
+            lines.push(format!("Tables in obr only: {:?}", self.tables_obr_only));
         }
         if !self.tables_bd_only.is_empty() {
             lines.push(format!("Tables in bd only: {:?}", self.tables_bd_only));
         }
         for diff in &self.column_diffs {
             lines.push(format!(
-                "Column diff in {}.{}: {} (br: {}, bd: {})",
-                diff.table, diff.column, diff.diff_type, diff.br_value, diff.bd_value
+                "Column diff in {}.{}: {} (obr: {}, bd: {})",
+                diff.table, diff.column, diff.diff_type, diff.obr_value, diff.bd_value
             ));
         }
         for diff in &self.index_diffs {
             lines.push(format!(
-                "Index diff in {}.{}: {} (br: {}, bd: {})",
-                diff.table, diff.index, diff.diff_type, diff.br_value, diff.bd_value
+                "Index diff in {}.{}: {} (obr: {}, bd: {})",
+                diff.table, diff.index, diff.diff_type, diff.obr_value, diff.bd_value
             ));
         }
         if lines.is_empty() {
@@ -332,20 +332,20 @@ fn get_table_indexes(
     indexes
 }
 
-/// Compare schemas between br and bd databases
+/// Compare schemas between obr and bd databases
 fn compare_schemas(workspace: &SchemaWorkspace) -> SchemaComparison {
-    let br_db = workspace.br_db_path();
+    let obr_db = workspace.obr_db_path();
     let bd_db = workspace.bd_db_path();
 
-    let br_tables: BTreeSet<String> = get_table_list(workspace, &br_db).into_iter().collect();
+    let obr_tables: BTreeSet<String> = get_table_list(workspace, &obr_db).into_iter().collect();
     let bd_tables: BTreeSet<String> = get_table_list(workspace, &bd_db).into_iter().collect();
 
     let mut result = SchemaComparison::default();
 
     // Find table differences
-    result.tables_br_only = br_tables.difference(&bd_tables).cloned().collect();
-    result.tables_bd_only = bd_tables.difference(&br_tables).cloned().collect();
-    result.tables_common = br_tables.intersection(&bd_tables).cloned().collect();
+    result.tables_obr_only = obr_tables.difference(&bd_tables).cloned().collect();
+    result.tables_bd_only = bd_tables.difference(&obr_tables).cloned().collect();
+    result.tables_common = obr_tables.intersection(&bd_tables).cloned().collect();
 
     // Compare columns in common tables
     for table in &result.tables_common {
@@ -354,10 +354,10 @@ fn compare_schemas(workspace: &SchemaWorkspace) -> SchemaComparison {
             continue;
         }
 
-        let br_columns = get_table_columns(workspace, &br_db, table);
+        let obr_columns = get_table_columns(workspace, &obr_db, table);
         let bd_columns = get_table_columns(workspace, &bd_db, table);
 
-        let br_col_map: BTreeMap<String, ColumnInfo> = br_columns
+        let obr_col_map: BTreeMap<String, ColumnInfo> = obr_columns
             .into_iter()
             .map(|c| (c.name.clone(), c))
             .collect();
@@ -366,78 +366,78 @@ fn compare_schemas(workspace: &SchemaWorkspace) -> SchemaComparison {
             .map(|c| (c.name.clone(), c))
             .collect();
 
-        let br_names: BTreeSet<String> = br_col_map.keys().cloned().collect();
+        let obr_names: BTreeSet<String> = obr_col_map.keys().cloned().collect();
         let bd_names: BTreeSet<String> = bd_col_map.keys().cloned().collect();
 
-        // Columns only in br
-        for name in br_names.difference(&bd_names) {
+        // Columns only in obr
+        for name in obr_names.difference(&bd_names) {
             result.column_diffs.push(ColumnDiff {
                 table: table.clone(),
                 column: name.clone(),
                 diff_type: "missing_in_bd".to_string(),
-                br_value: format!("{:?}", br_col_map.get(name)),
+                obr_value: format!("{:?}", obr_col_map.get(name)),
                 bd_value: "None".to_string(),
             });
         }
 
         // Columns only in bd
-        for name in bd_names.difference(&br_names) {
+        for name in bd_names.difference(&obr_names) {
             result.column_diffs.push(ColumnDiff {
                 table: table.clone(),
                 column: name.clone(),
-                diff_type: "missing_in_br".to_string(),
-                br_value: "None".to_string(),
+                diff_type: "missing_in_obr".to_string(),
+                obr_value: "None".to_string(),
                 bd_value: format!("{:?}", bd_col_map.get(name)),
             });
         }
 
         // Compare common columns (type mismatch is important)
-        for name in br_names.intersection(&bd_names) {
-            let br_col = br_col_map.get(name).unwrap();
+        for name in obr_names.intersection(&bd_names) {
+            let obr_col = obr_col_map.get(name).unwrap();
             let bd_col = bd_col_map.get(name).unwrap();
 
             // Normalize types for comparison (SQLite is flexible with type names)
-            let br_type = normalize_sqlite_type(&br_col.col_type);
+            let obr_type = normalize_sqlite_type(&obr_col.col_type);
             let bd_type = normalize_sqlite_type(&bd_col.col_type);
 
-            if br_type != bd_type {
+            if obr_type != bd_type {
                 result.column_diffs.push(ColumnDiff {
                     table: table.clone(),
                     column: name.clone(),
                     diff_type: "type_mismatch".to_string(),
-                    br_value: br_col.col_type.clone(),
+                    obr_value: obr_col.col_type.clone(),
                     bd_value: bd_col.col_type.clone(),
                 });
             }
 
             // Check NOT NULL constraint
-            if br_col.notnull != bd_col.notnull {
+            if obr_col.notnull != bd_col.notnull {
                 result.column_diffs.push(ColumnDiff {
                     table: table.clone(),
                     column: name.clone(),
                     diff_type: "notnull_mismatch".to_string(),
-                    br_value: br_col.notnull.to_string(),
+                    obr_value: obr_col.notnull.to_string(),
                     bd_value: bd_col.notnull.to_string(),
                 });
             }
 
             // Check PRIMARY KEY
-            if br_col.pk != bd_col.pk {
+            if obr_col.pk != bd_col.pk {
                 result.column_diffs.push(ColumnDiff {
                     table: table.clone(),
                     column: name.clone(),
                     diff_type: "pk_mismatch".to_string(),
-                    br_value: br_col.pk.to_string(),
+                    obr_value: obr_col.pk.to_string(),
                     bd_value: bd_col.pk.to_string(),
                 });
             }
         }
 
         // Compare indexes
-        let br_indexes = get_table_indexes(workspace, &br_db, table);
+        let obr_indexes = get_table_indexes(workspace, &obr_db, table);
         let bd_indexes = get_table_indexes(workspace, &bd_db, table);
 
-        let br_idx_map: BTreeMap<String, IndexInfo> = br_indexes
+        let obr_idx_map: BTreeMap<String, IndexInfo> = obr_indexes
             .into_iter()
             .map(|i| (i.name.clone(), i))
             .collect();
@@ -448,27 +448,27 @@ fn compare_schemas(workspace: &SchemaWorkspace) -> SchemaComparison {
 
         // Note: Index name differences are expected (auto-generated names differ)
         // Compare by column set instead
-        let br_idx_by_cols: BTreeSet<Vec<String>> =
-            br_idx_map.values().map(|i| i.columns.clone()).collect();
+        let obr_idx_by_cols: BTreeSet<Vec<String>> =
+            obr_idx_map.values().map(|i| i.columns.clone()).collect();
         let bd_idx_by_cols: BTreeSet<Vec<String>> =
             bd_idx_map.values().map(|i| i.columns.clone()).collect();
 
-        for cols in br_idx_by_cols.difference(&bd_idx_by_cols) {
+        for cols in obr_idx_by_cols.difference(&bd_idx_by_cols) {
             result.index_diffs.push(IndexDiff {
                 table: table.clone(),
                 index: cols.join(","),
                 diff_type: "index_missing_in_bd".to_string(),
-                br_value: format!("{:?}", cols),
+                obr_value: format!("{:?}", cols),
                 bd_value: "None".to_string(),
             });
         }
 
-        for cols in bd_idx_by_cols.difference(&br_idx_by_cols) {
+        for cols in bd_idx_by_cols.difference(&obr_idx_by_cols) {
             result.index_diffs.push(IndexDiff {
                 table: table.clone(),
                 index: cols.join(","),
-                diff_type: "index_missing_in_br".to_string(),
-                br_value: "None".to_string(),
+                diff_type: "index_missing_in_obr".to_string(),
+                obr_value: "None".to_string(),
                 bd_value: format!("{:?}", cols),
             });
         }
@@ -491,54 +491,54 @@ fn normalize_sqlite_type(t: &str) -> String {
     }
 }
 
-/// Compare metadata.json between br and bd
+/// Compare metadata.json between obr and bd
 fn compare_metadata(workspace: &SchemaWorkspace) -> Result<(), String> {
-    let br_meta = workspace.br_metadata_path();
+    let obr_meta = workspace.obr_metadata_path();
     let bd_meta = workspace.bd_metadata_path();
 
-    let br_content = fs::read_to_string(&br_meta)
-        .map_err(|e| format!("Failed to read br metadata.json: {e}"))?;
+    let obr_content = fs::read_to_string(&obr_meta)
+        .map_err(|e| format!("Failed to read obr metadata.json: {e}"))?;
     let bd_content = fs::read_to_string(&bd_meta)
         .map_err(|e| format!("Failed to read bd metadata.json: {e}"))?;
 
-    let br_json: Value =
-        serde_json::from_str(&br_content).map_err(|e| format!("br metadata.json invalid: {e}"))?;
+    let obr_json: Value = serde_json::from_str(&obr_content)
+        .map_err(|e| format!("obr metadata.json invalid: {e}"))?;
     let bd_json: Value =
         serde_json::from_str(&bd_content).map_err(|e| format!("bd metadata.json invalid: {e}"))?;
 
     // Compare required fields
     let required_fields = ["database", "jsonl_export"];
     for field in required_fields {
-        let br_val = br_json.get(field);
+        let obr_val = obr_json.get(field);
         let bd_val = bd_json.get(field);
 
-        if br_val.is_none() && bd_val.is_some() {
+        if obr_val.is_none() && bd_val.is_some() {
             return Err(format!(
-                "metadata.json field '{}' missing in br but present in bd",
+                "metadata.json field '{}' missing in obr but present in bd",
                 field
             ));
         }
-        if br_val.is_some() && bd_val.is_none() {
-            // br may have additional fields, that's acceptable
+        if obr_val.is_some() && bd_val.is_none() {
+            // obr may have additional fields, that's acceptable
             continue;
         }
-        if br_val != bd_val {
+        if obr_val != bd_val {
             return Err(format!(
-                "metadata.json field '{}' differs: br={:?}, bd={:?}",
-                field, br_val, bd_val
+                "metadata.json field '{}' differs: obr={:?}, bd={:?}",
+                field, obr_val, bd_val
             ));
         }
     }
 
-    // Check that bd has no fields br doesn't know about
-    if let (Value::Object(br_obj), Value::Object(bd_obj)) = (&br_json, &bd_json) {
-        let br_keys: HashSet<&String> = br_obj.keys().collect();
+    // Check that bd has no fields obr doesn't know about
+    if let (Value::Object(obr_obj), Value::Object(bd_obj)) = (&obr_json, &bd_json) {
+        let obr_keys: HashSet<&String> = obr_obj.keys().collect();
         let bd_keys: HashSet<&String> = bd_obj.keys().collect();
 
-        let bd_only: Vec<&&String> = bd_keys.difference(&br_keys).collect();
+        let bd_only: Vec<&&String> = bd_keys.difference(&obr_keys).collect();
         if !bd_only.is_empty() {
             return Err(format!(
-                "metadata.json has fields in bd not in br: {:?}",
+                "metadata.json has fields in bd not in obr: {:?}",
                 bd_only
             ));
         }
@@ -547,51 +547,51 @@ fn compare_metadata(workspace: &SchemaWorkspace) -> Result<(), String> {
     Ok(())
 }
 
-/// JSONL fields that bd always serializes but br skips when empty.
-/// This is acceptable - br uses skip_serializing_if = "is_empty" for these.
+/// JSONL fields that bd always serializes but obr skips when empty.
+/// This is acceptable - obr uses skip_serializing_if = "is_empty" for these.
 const KNOWN_JSONL_BD_ONLY_FIELDS: &[&str] = &[
-    "created_by", // br skips when empty, bd always includes
+    "created_by", // obr skips when empty, bd always includes
                   // Add more fields here as needed
 ];
 
 /// Compare JSONL field presence for an issue
 fn compare_jsonl_fields(workspace: &SchemaWorkspace) -> Result<(), String> {
-    let br_jsonl = workspace.br_jsonl_path();
+    let obr_jsonl = workspace.obr_jsonl_path();
     let bd_jsonl = workspace.bd_jsonl_path();
 
     // Read first line from each (they should have at least one issue after creation)
-    let br_content = fs::read_to_string(&br_jsonl)
-        .map_err(|e| format!("Failed to read br issues.jsonl: {e}"))?;
+    let obr_content = fs::read_to_string(&obr_jsonl)
+        .map_err(|e| format!("Failed to read obr issues.jsonl: {e}"))?;
     let bd_content = fs::read_to_string(&bd_jsonl)
         .map_err(|e| format!("Failed to read bd issues.jsonl: {e}"))?;
 
-    let br_line = br_content
+    let obr_line = obr_content
         .lines()
         .next()
-        .ok_or("br issues.jsonl is empty")?;
+        .ok_or("obr issues.jsonl is empty")?;
     let bd_line = bd_content
         .lines()
         .next()
         .ok_or("bd issues.jsonl is empty")?;
 
-    let br_issue: Value =
-        serde_json::from_str(br_line).map_err(|e| format!("br JSONL line invalid: {e}"))?;
+    let obr_issue: Value =
+        serde_json::from_str(obr_line).map_err(|e| format!("obr JSONL line invalid: {e}"))?;
     let bd_issue: Value =
         serde_json::from_str(bd_line).map_err(|e| format!("bd JSONL line invalid: {e}"))?;
 
     // Compare field presence (not values - those can differ)
-    if let (Value::Object(br_obj), Value::Object(bd_obj)) = (&br_issue, &bd_issue) {
-        let br_keys: BTreeSet<&String> = br_obj.keys().collect();
+    if let (Value::Object(obr_obj), Value::Object(bd_obj)) = (&obr_issue, &bd_issue) {
+        let obr_keys: BTreeSet<&String> = obr_obj.keys().collect();
         let bd_keys: BTreeSet<&String> = bd_obj.keys().collect();
 
-        // Fields only in br (acceptable - we may add fields)
-        let br_only: Vec<&&String> = br_keys.difference(&bd_keys).collect();
-        if !br_only.is_empty() {
-            info!("JSONL fields in br but not bd: {:?}", br_only);
+        // Fields only in obr (acceptable - we may add fields)
+        let obr_only: Vec<&&String> = obr_keys.difference(&bd_keys).collect();
+        if !obr_only.is_empty() {
+            info!("JSONL fields in obr but not bd: {:?}", obr_only);
         }
 
         // Fields only in bd (filter out known differences)
-        let bd_only: Vec<&&String> = bd_keys.difference(&br_keys).collect();
+        let bd_only: Vec<&&String> = bd_keys.difference(&obr_keys).collect();
         let unexpected_bd_only: Vec<&&&String> = bd_only
             .iter()
             .filter(|f| !KNOWN_JSONL_BD_ONLY_FIELDS.contains(&f.as_str()))
@@ -601,7 +601,7 @@ fn compare_jsonl_fields(workspace: &SchemaWorkspace) -> Result<(), String> {
         for field in &bd_only {
             if KNOWN_JSONL_BD_ONLY_FIELDS.contains(&field.as_str()) {
                 info!(
-                    "Known JSONL difference: field '{}' in bd but not br (skip_serializing_if)",
+                    "Known JSONL difference: field '{}' in bd but not obr (skip_serializing_if)",
                     field
                 );
             }
@@ -609,22 +609,22 @@ fn compare_jsonl_fields(workspace: &SchemaWorkspace) -> Result<(), String> {
 
         if !unexpected_bd_only.is_empty() {
             return Err(format!(
-                "JSONL fields in bd but not br (feature parity issue): {:?}",
+                "JSONL fields in bd but not obr (feature parity issue): {:?}",
                 unexpected_bd_only
             ));
         }
 
         // Check value type compatibility for common fields
-        for key in br_keys.intersection(&bd_keys) {
-            let br_val = br_obj.get(*key).unwrap();
+        for key in obr_keys.intersection(&bd_keys) {
+            let obr_val = obr_obj.get(*key).unwrap();
             let bd_val = bd_obj.get(*key).unwrap();
 
             // Check structural compatibility (same type or both null-ish)
-            if !values_structurally_compatible(br_val, bd_val) {
+            if !values_structurally_compatible(obr_val, bd_val) {
                 return Err(format!(
-                    "JSONL field '{}' has incompatible types: br={}, bd={}",
+                    "JSONL field '{}' has incompatible types: obr={}, bd={}",
                     key,
-                    value_type_name(br_val),
+                    value_type_name(obr_val),
                     value_type_name(bd_val)
                 ));
             }
@@ -662,20 +662,20 @@ fn value_type_name(v: &Value) -> &'static str {
 // TESTS
 // ============================================================================
 
-/// Tables that bd has but br intentionally doesn't implement (yet)
+/// Tables that bd has but obr intentionally doesn't implement (yet)
 /// These are tracked as known differences for documentation purposes.
-/// When br implements these, remove them from this list.
+/// When obr implements these, remove them from this list.
 const KNOWN_BD_ONLY_TABLES: &[&str] = &[
     "compaction_snapshots", // Used for compaction history tracking
     "issue_snapshots",      // Used for issue history/versioning
     "repo_mtimes",          // Used for repo modification time tracking
 ];
 
-/// Columns in the issues table that bd has but br intentionally doesn't implement.
-/// These are Gastown/advanced features excluded from the br port per AGENTS.md.
-/// When br implements these, remove them from this list.
+/// Columns in the issues table that bd has but obr intentionally doesn't implement.
+/// These are Gastown/advanced features excluded from the obr port per AGENTS.md.
+/// When obr implements these, remove them from this list.
 const KNOWN_BD_ONLY_COLUMNS: &[&str] = &[
-    // Gastown/agent features in bd that br hasn't ported
+    // Gastown/agent features in bd that obr hasn't ported
     "actor",           // Actor reference for agent coordination
     "crystallizes",    // Crystallization flag
     "event_kind",      // Event kind classification
@@ -704,19 +704,19 @@ const KNOWN_BD_ONLY_COLUMNS: &[&str] = &[
     "work_type",       // Work type classification (mutex, etc.)
 ];
 
-/// Columns in the issues table that br has but bd doesn't have.
+/// Columns in the issues table that obr has but bd doesn't have.
 /// Keep this list minimal; unexpected extras should fail conformance.
 const KNOWN_BR_ONLY_COLUMNS: &[&str] = &[
-    // source_repo: br has this for multi-repo tracking
+    // source_repo: obr has this for multi-repo tracking
     "source_repo",
-    // source_repo_path: br tracks the absolute canonical workspace path
+    // source_repo_path: obr tracks the absolute canonical workspace path
     "source_repo_path",
 ];
 
-/// Known type differences between br and bd that are acceptable.
+/// Known type differences between obr and bd that are acceptable.
 /// SQLite is flexible with types; these differences don't affect functionality.
 const KNOWN_TYPE_DIFFERENCES: &[&str] = &[
-    // br uses TEXT for timestamps (ISO8601 strings), bd uses DATETIME (still TEXT internally)
+    // obr uses TEXT for timestamps (ISO8601 strings), bd uses DATETIME (still TEXT internally)
     "closed_at",
     "compacted_at",
     "created_at",
@@ -727,7 +727,7 @@ const KNOWN_TYPE_DIFFERENCES: &[&str] = &[
 ];
 
 /// Known NOT NULL differences that are acceptable.
-/// br is stricter with NOT NULL (empty string default), bd allows NULL.
+/// obr is stricter with NOT NULL (empty string default), bd allows NULL.
 const KNOWN_NOTNULL_DIFFERENCES: &[&str] = &[
     "close_reason",
     "closed_by_session",
@@ -753,7 +753,7 @@ fn conformance_schema_tables_present() {
 
     // Log findings
     info!("Schema comparison: {}", comparison.summary());
-    info!("Tables in br only: {:?}", comparison.tables_br_only);
+    info!("Tables in obr only: {:?}", comparison.tables_obr_only);
     info!("Tables in bd only: {:?}", comparison.tables_bd_only);
 
     // Check for unexpected bd-only tables (not in our known list)
@@ -765,7 +765,7 @@ fn conformance_schema_tables_present() {
 
     assert!(
         unexpected_bd_tables.is_empty(),
-        "bd has unexpected tables not in br (not in known list): {:?}\nKnown differences: {:?}",
+        "bd has unexpected tables not in obr (not in known list): {:?}\nKnown differences: {:?}",
         unexpected_bd_tables,
         KNOWN_BD_ONLY_TABLES
     );
@@ -774,7 +774,7 @@ fn conformance_schema_tables_present() {
     for known in KNOWN_BD_ONLY_TABLES {
         if comparison.tables_bd_only.contains(&known.to_string()) {
             info!(
-                "Known schema difference: table '{}' in bd but not br (tracked)",
+                "Known schema difference: table '{}' in bd but not obr (tracked)",
                 known
             );
         }
@@ -794,7 +794,7 @@ fn conformance_schema_tables_present() {
     for table in required_tables {
         assert!(
             comparison.tables_common.contains(&table.to_string()),
-            "Required table '{}' not in both br and bd",
+            "Required table '{}' not in both obr and bd",
             table
         );
     }
@@ -809,10 +809,10 @@ fn conformance_schema_issues_columns() {
     let workspace = SchemaWorkspace::new();
     workspace.init_both();
 
-    let br_db = workspace.br_db_path();
+    let obr_db = workspace.obr_db_path();
     let bd_db = workspace.bd_db_path();
 
-    let br_cols = get_table_columns(&workspace, &br_db, "issues");
+    let obr_cols = get_table_columns(&workspace, &obr_db, "issues");
     let bd_cols = get_table_columns(&workspace, &bd_db, "issues");
 
     // Core columns that must match
@@ -830,13 +830,13 @@ fn conformance_schema_issues_columns() {
         "closed_at",
     ];
 
-    let br_names: HashSet<String> = br_cols.iter().map(|c| c.name.clone()).collect();
+    let obr_names: HashSet<String> = obr_cols.iter().map(|c| c.name.clone()).collect();
     let bd_names: HashSet<String> = bd_cols.iter().map(|c| c.name.clone()).collect();
 
     for col in core_columns {
         assert!(
-            br_names.contains(col),
-            "Core column '{}' missing in br issues table",
+            obr_names.contains(col),
+            "Core column '{}' missing in obr issues table",
             col
         );
         assert!(
@@ -846,9 +846,9 @@ fn conformance_schema_issues_columns() {
         );
     }
 
-    // bd should not have unexpected columns br doesn't have (feature parity)
+    // bd should not have unexpected columns obr doesn't have (feature parity)
     // Filter out known bd-only columns (Gastown features intentionally not ported)
-    let bd_only: Vec<&String> = bd_names.difference(&br_names).collect();
+    let bd_only: Vec<&String> = bd_names.difference(&obr_names).collect();
     let unexpected_bd_cols: Vec<&&String> = bd_only
         .iter()
         .filter(|c| !KNOWN_BD_ONLY_COLUMNS.contains(&c.as_str()))
@@ -858,7 +858,7 @@ fn conformance_schema_issues_columns() {
     for col in &bd_only {
         if KNOWN_BD_ONLY_COLUMNS.contains(&col.as_str()) {
             info!(
-                "Known schema difference: column '{}' in bd but not br (Gastown feature)",
+                "Known schema difference: column '{}' in bd but not obr (Gastown feature)",
                 col
             );
         }
@@ -866,7 +866,7 @@ fn conformance_schema_issues_columns() {
 
     assert!(
         unexpected_bd_cols.is_empty(),
-        "bd issues table has unexpected columns not in br (not in known list): {:?}\nKnown differences: {:?}",
+        "bd issues table has unexpected columns not in obr (not in known list): {:?}\nKnown differences: {:?}",
         unexpected_bd_cols,
         KNOWN_BD_ONLY_COLUMNS
     );
@@ -881,22 +881,22 @@ fn conformance_schema_dependencies_structure() {
     let workspace = SchemaWorkspace::new();
     workspace.init_both();
 
-    let br_db = workspace.br_db_path();
+    let obr_db = workspace.obr_db_path();
     let bd_db = workspace.bd_db_path();
 
-    let br_cols = get_table_columns(&workspace, &br_db, "dependencies");
+    let obr_cols = get_table_columns(&workspace, &obr_db, "dependencies");
     let bd_cols = get_table_columns(&workspace, &bd_db, "dependencies");
 
     // Required columns for dependencies
     let required = ["issue_id", "depends_on_id", "type", "created_at"];
 
-    let br_names: HashSet<String> = br_cols.iter().map(|c| c.name.clone()).collect();
+    let obr_names: HashSet<String> = obr_cols.iter().map(|c| c.name.clone()).collect();
     let bd_names: HashSet<String> = bd_cols.iter().map(|c| c.name.clone()).collect();
 
     for col in required {
         assert!(
-            br_names.contains(col),
-            "Column '{}' missing in br dependencies table",
+            obr_names.contains(col),
+            "Column '{}' missing in obr dependencies table",
             col
         );
         assert!(
@@ -916,23 +916,23 @@ fn conformance_schema_labels_comments() {
     let workspace = SchemaWorkspace::new();
     workspace.init_both();
 
-    let br_db = workspace.br_db_path();
+    let obr_db = workspace.obr_db_path();
     let bd_db = workspace.bd_db_path();
 
     // Check labels table
-    let br_labels = get_table_columns(&workspace, &br_db, "labels");
+    let obr_labels = get_table_columns(&workspace, &obr_db, "labels");
     let bd_labels = get_table_columns(&workspace, &bd_db, "labels");
 
-    let br_label_names: HashSet<String> = br_labels.iter().map(|c| c.name.clone()).collect();
+    let obr_label_names: HashSet<String> = obr_labels.iter().map(|c| c.name.clone()).collect();
     let bd_label_names: HashSet<String> = bd_labels.iter().map(|c| c.name.clone()).collect();
 
     assert!(
-        br_label_names.contains("issue_id"),
-        "labels.issue_id missing in br"
+        obr_label_names.contains("issue_id"),
+        "labels.issue_id missing in obr"
     );
     assert!(
-        br_label_names.contains("label"),
-        "labels.label missing in br"
+        obr_label_names.contains("label"),
+        "labels.label missing in obr"
     );
     assert!(
         bd_label_names.contains("issue_id"),
@@ -944,17 +944,17 @@ fn conformance_schema_labels_comments() {
     );
 
     // Check comments table
-    let br_comments = get_table_columns(&workspace, &br_db, "comments");
+    let obr_comments = get_table_columns(&workspace, &obr_db, "comments");
     let bd_comments = get_table_columns(&workspace, &bd_db, "comments");
 
-    let br_comment_names: HashSet<String> = br_comments.iter().map(|c| c.name.clone()).collect();
+    let obr_comment_names: HashSet<String> = obr_comments.iter().map(|c| c.name.clone()).collect();
     let bd_comment_names: HashSet<String> = bd_comments.iter().map(|c| c.name.clone()).collect();
 
     let comment_required = ["id", "issue_id", "author", "text", "created_at"];
     for col in comment_required {
         assert!(
-            br_comment_names.contains(col),
-            "comments.{} missing in br",
+            obr_comment_names.contains(col),
+            "comments.{} missing in obr",
             col
         );
         assert!(
@@ -985,14 +985,14 @@ fn conformance_schema_indexes() {
     }
 
     // Critical indexes that should exist in both
-    let br_db = workspace.br_db_path();
+    let obr_db = workspace.obr_db_path();
     let bd_db = workspace.bd_db_path();
 
-    let br_issues_idx = get_table_indexes(&workspace, &br_db, "issues");
+    let obr_issues_idx = get_table_indexes(&workspace, &obr_db, "issues");
     let bd_issues_idx = get_table_indexes(&workspace, &bd_db, "issues");
 
     // Check for status index (commonly used)
-    let br_has_status_idx = br_issues_idx
+    let obr_has_status_idx = obr_issues_idx
         .iter()
         .any(|i| i.columns.contains(&"status".to_string()));
     let bd_has_status_idx = bd_issues_idx
@@ -1001,8 +1001,8 @@ fn conformance_schema_indexes() {
 
     // Both should have a status index for ready/blocked queries
     assert!(
-        br_has_status_idx,
-        "br should have an index on issues.status"
+        obr_has_status_idx,
+        "obr should have an index on issues.status"
     );
     assert!(
         bd_has_status_idx,
@@ -1037,14 +1037,18 @@ fn conformance_jsonl_field_parity() {
     workspace.init_both();
 
     // Create an issue to have something in JSONL
-    let br_create = workspace.run_br(&["create", "Test issue for JSONL parity", "--json"]);
-    assert!(br_create.success, "br create failed: {}", br_create.stderr);
+    let obr_create = workspace.run_obr(&["create", "Test issue for JSONL parity", "--json"]);
+    assert!(
+        obr_create.success,
+        "obr create failed: {}",
+        obr_create.stderr
+    );
 
     let bd_create = workspace.run_bd(&["create", "Test issue for JSONL parity", "--json"]);
     assert!(bd_create.success, "bd create failed: {}", bd_create.stderr);
 
     // Force flush to JSONL
-    let _ = workspace.run_br(&["sync", "--flush-only"]);
+    let _ = workspace.run_obr(&["sync", "--flush-only"]);
     let _ = workspace.run_bd(&["sync", "--flush-only"]);
 
     let result = compare_jsonl_fields(&workspace);
@@ -1065,22 +1069,26 @@ fn conformance_jsonl_compaction_level_serialization() {
     workspace.init_both();
 
     // Create and close an issue to test compaction_level
-    let br_create = workspace.run_br(&["create", "Test compaction", "--json"]);
-    assert!(br_create.success, "br create failed: {}", br_create.stderr);
+    let obr_create = workspace.run_obr(&["create", "Test compaction", "--json"]);
+    assert!(
+        obr_create.success,
+        "obr create failed: {}",
+        obr_create.stderr
+    );
 
-    let br_json: Value = serde_json::from_str(&br_create.stdout).unwrap_or_default();
-    let br_id = br_json
+    let obr_json: Value = serde_json::from_str(&obr_create.stdout).unwrap_or_default();
+    let obr_id = obr_json
         .get("id")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
 
     // Close the issue
-    let _ = workspace.run_br(&["close", br_id, "--reason", "Testing"]);
-    let _ = workspace.run_br(&["sync", "--flush-only"]);
+    let _ = workspace.run_obr(&["close", obr_id, "--reason", "Testing"]);
+    let _ = workspace.run_obr(&["sync", "--flush-only"]);
 
     // Read JSONL and check compaction_level serialization
-    let br_jsonl = workspace.br_jsonl_path();
-    let content = fs::read_to_string(&br_jsonl).expect("read br jsonl");
+    let obr_jsonl = workspace.obr_jsonl_path();
+    let content = fs::read_to_string(&obr_jsonl).expect("read obr jsonl");
 
     for line in content.lines() {
         if let Ok(issue) = serde_json::from_str::<Value>(line) {
@@ -1097,23 +1105,23 @@ fn conformance_jsonl_compaction_level_serialization() {
 }
 
 /// Known schema differences in tables other than issues.
-/// These are implementation differences between br and bd that are acceptable.
+/// These are implementation differences between obr and bd that are acceptable.
 /// Format: (table, column, diff_type)
 const KNOWN_OTHER_TABLE_DIFFS: &[(&str, &str, &str)] = &[
-    // blocked_issues_cache: br uses different column names than bd
+    // blocked_issues_cache: obr uses different column names than bd
     ("blocked_issues_cache", "blocked_at", "missing_in_bd"),
     ("blocked_issues_cache", "blocked_by", "missing_in_bd"),
-    ("blocked_issues_cache", "blocked_by_json", "missing_in_br"),
-    // child_counters: br uses last_child, bd uses next_child_number
+    ("blocked_issues_cache", "blocked_by_json", "missing_in_obr"),
+    // child_counters: obr uses last_child, bd uses next_child_number
     ("child_counters", "last_child", "missing_in_bd"),
-    ("child_counters", "next_child_number", "missing_in_br"),
-    // Type mismatches: br uses DATETIME, bd uses TEXT (both work the same in SQLite)
+    ("child_counters", "next_child_number", "missing_in_obr"),
+    // Type mismatches: obr uses DATETIME, bd uses TEXT (both work the same in SQLite)
     ("comments", "created_at", "type_mismatch"),
     ("dependencies", "created_at", "type_mismatch"),
     ("dirty_issues", "marked_at", "type_mismatch"),
     ("events", "created_at", "type_mismatch"),
     ("export_hashes", "exported_at", "type_mismatch"),
-    // NOT NULL differences: br is stricter than bd
+    // NOT NULL differences: obr is stricter than bd
     ("dependencies", "created_by", "notnull_mismatch"),
 ];
 
@@ -1122,7 +1130,7 @@ fn is_known_column_diff(diff: &ColumnDiff) -> bool {
     // Check issues table for known issues-specific differences
     if diff.table == "issues" {
         return match diff.diff_type.as_str() {
-            "missing_in_br" => KNOWN_BD_ONLY_COLUMNS.contains(&diff.column.as_str()),
+            "missing_in_obr" => KNOWN_BD_ONLY_COLUMNS.contains(&diff.column.as_str()),
             "missing_in_bd" => KNOWN_BR_ONLY_COLUMNS.contains(&diff.column.as_str()),
             "type_mismatch" => KNOWN_TYPE_DIFFERENCES.contains(&diff.column.as_str()),
             "notnull_mismatch" => KNOWN_NOTNULL_DIFFERENCES.contains(&diff.column.as_str()),
@@ -1152,7 +1160,7 @@ fn conformance_schema_full_comparison() {
     // Print detailed summary for debugging
     println!("Schema Comparison Summary:");
     println!("  Common tables: {:?}", comparison.tables_common);
-    println!("  Tables in br only: {:?}", comparison.tables_br_only);
+    println!("  Tables in obr only: {:?}", comparison.tables_obr_only);
     println!("  Tables in bd only: {:?}", comparison.tables_bd_only);
     println!("  Column diffs: {}", comparison.column_diffs.len());
     for diff in &comparison.column_diffs {
@@ -1162,8 +1170,8 @@ fn conformance_schema_full_comparison() {
             ""
         };
         println!(
-            "    {}.{}: {} (br: {}, bd: {}){}",
-            diff.table, diff.column, diff.diff_type, diff.br_value, diff.bd_value, known
+            "    {}.{}: {} (obr: {}, bd: {}){}",
+            diff.table, diff.column, diff.diff_type, diff.obr_value, diff.bd_value, known
         );
     }
     println!("  Index diffs: {}", comparison.index_diffs.len());
@@ -1200,7 +1208,7 @@ fn conformance_schema_full_comparison() {
     // Assert no unexpected differences
     assert!(
         unexpected_table_diffs.is_empty(),
-        "Unexpected tables in bd not in br: {:?}",
+        "Unexpected tables in bd not in obr: {:?}",
         unexpected_table_diffs
     );
 
@@ -1210,8 +1218,8 @@ fn conformance_schema_full_comparison() {
         unexpected_column_diffs
             .iter()
             .map(|d| format!(
-                "  {}.{}: {} (br: {}, bd: {})",
-                d.table, d.column, d.diff_type, d.br_value, d.bd_value
+                "  {}.{}: {} (obr: {}, bd: {})",
+                d.table, d.column, d.diff_type, d.obr_value, d.bd_value
             ))
             .collect::<Vec<_>>()
             .join("\n")

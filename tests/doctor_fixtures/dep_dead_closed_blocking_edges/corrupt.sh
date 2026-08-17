@@ -29,7 +29,7 @@ cd "$target_dir"
 ids=$(python3 <<'PY'
 import json
 by_title = {}
-with open(".beads/issues.jsonl", "r", encoding="utf-8") as f:
+with open(".obr/issues.jsonl", "r", encoding="utf-8") as f:
     for line in f:
         line = line.strip()
         if not line:
@@ -63,7 +63,7 @@ fi
   echo "$blocker_id"
   echo "$blocked_id"
 } > .fixture_ids
-sha256sum .beads/issues.jsonl | awk '{print $1}' > .fixture_jsonl_pre_sha256
+sha256sum .obr/issues.jsonl | awk '{print $1}' > .fixture_jsonl_pre_sha256
 
 if [ -e .fixture_baseline ]; then
   echo "fixture baseline already exists; expected a fresh workspace" >&2

@@ -6,14 +6,14 @@
 
 mod common;
 
-use beads_rust::model::{DependencyType, Issue, IssueType, Priority, Status};
-use beads_rust::storage::{ReadyFilters, ReadySortPolicy, SqliteStorage};
 #[allow(unused_imports)]
 use common::ordering::{
     assert_contains_exactly_one, assert_hybrid_ordered, assert_no_duplicate_ids,
     assert_oldest_first, assert_priority_ordered,
 };
 use common::{fixtures, test_db};
+use obr::model::{DependencyType, Issue, IssueType, Priority, Status};
+use obr::storage::{ReadyFilters, ReadySortPolicy, SqliteStorage};
 
 // ============================================================================
 // HELPER FUNCTIONS

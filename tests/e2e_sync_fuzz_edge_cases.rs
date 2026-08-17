@@ -17,8 +17,8 @@
 
 mod common;
 
-use beads_rust::storage::SqliteStorage;
-use common::cli::{BrWorkspace, run_br};
+use common::cli::{ObrWorkspace, pin_jsonl, run_obr};
+use obr::storage::SqliteStorage;
 use serde_json::Value;
 use std::fs;
 #[cfg(unix)]
@@ -28,32 +28,37 @@ use std::os::unix::fs::symlink;
 // Helper: Create a basic beads workspace with some issues
 // ============================================================================
 
-fn setup_workspace_with_issues() -> BrWorkspace {
-    let workspace = BrWorkspace::new();
+fn setup_workspace_with_issues() -> ObrWorkspace {
+    let workspace = ObrWorkspace::new();
 
     // Initialize beads
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
+    // Every consumer of this helper hand-authors adversarial `issues.jsonl`
+    // bytes and asserts how the JSONL reader rejects them, so pin the
+    // workspace to the legacy JSONL export instead of the default Org one.
+    pin_jsonl(&workspace.root.join(".obr"));
+
     // Create a few issues for export
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["create", "Test issue 1", "-t", "task"],
         "create1",
     );
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["create", "Test issue 2", "-t", "bug"],
         "create2",
     );
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["create", "Test issue 3", "-t", "feature"],
         "create3",
     );
 
     // Export to JSONL
-    let export = run_br(&workspace, ["sync", "--flush-only"], "export");
+    let export = run_obr(&workspace, ["sync", "--flush-only"], "export");
     assert!(export.status.success(), "export failed: {}", export.stderr);
 
     workspace
@@ -68,7 +73,7 @@ fn setup_workspace_with_issues() -> BrWorkspace {
 fn edge_case_import_rejects_partial_lines() {
     let _log = common::test_log("edge_case_import_rejects_partial_lines");
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
 
     // Read original and truncate a line mid-way
     let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
@@ -82,7 +87,7 @@ fn edge_case_import_rejects_partial_lines() {
     fs::write(&jsonl_path, &malformed).expect("write malformed jsonl");
 
     // Attempt import - should fail
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--force"],
         "import_partial",
@@ -132,9 +137,9 @@ fn edge_case_rename_prefix_rejects_malformed_jsonl_before_config_write() {
     let _log =
         common::test_log("edge_case_rename_prefix_rejects_malformed_jsonl_before_config_write");
     let workspace = setup_workspace_with_issues();
-    let beads_dir = workspace.root.join(".beads");
-    let db_path = beads_dir.join("beads.db");
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = workspace.root.join(".obr");
+    let db_path = obr_dir.join("obr.db");
+    let jsonl_path = obr_dir.join("issues.jsonl");
 
     {
         let mut storage = SqliteStorage::open(&db_path).expect("open storage");
@@ -157,7 +162,7 @@ fn edge_case_rename_prefix_rejects_malformed_jsonl_before_config_write() {
     let foreign_line = serde_json::to_string(&foreign_issue).expect("serialize foreign issue");
     fs::write(&jsonl_path, format!("{{not-json\n{foreign_line}\n")).expect("write malformed jsonl");
 
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--force", "--rename-prefix"],
         "import_malformed_rename_prefix",
@@ -187,7 +192,7 @@ fn edge_case_rename_prefix_rejects_malformed_jsonl_before_config_write() {
 fn edge_case_import_rejects_invalid_json() {
     let _log = common::test_log("edge_case_import_rejects_invalid_json");
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
 
     // Create various invalid JSON payloads
     let invalid_json_cases = [
@@ -206,7 +211,7 @@ fn edge_case_import_rejects_invalid_json() {
         fs::write(&jsonl_path, format!("{invalid_line}\n")).expect("write invalid jsonl");
 
         // Attempt import
-        let import = run_br(
+        let import = run_obr(
             &workspace,
             ["sync", "--import-only", "--force"],
             &format!("import_{}", description.replace(' ', "_")),
@@ -250,7 +255,7 @@ fn edge_case_import_rejects_invalid_json() {
 fn edge_case_import_handles_empty_lines() {
     let _log = common::test_log("edge_case_import_handles_empty_lines");
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
 
     // Read original and add empty lines
     let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
@@ -258,7 +263,7 @@ fn edge_case_import_handles_empty_lines() {
     fs::write(&jsonl_path, &with_empty).expect("write with empty lines");
 
     // Attempt import - should succeed (empty lines are skipped)
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--force"],
         "import_empty_lines",
@@ -295,7 +300,7 @@ fn edge_case_import_handles_empty_lines() {
 fn edge_case_import_rejects_conflict_markers() {
     let _log = common::test_log("edge_case_import_rejects_conflict_markers");
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
 
     // Read original JSONL
     let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
@@ -332,7 +337,7 @@ fn edge_case_import_rejects_conflict_markers() {
         fs::write(&jsonl_path, &malformed).expect("write conflicted jsonl");
 
         // Attempt import
-        let import = run_br(
+        let import = run_obr(
             &workspace,
             ["sync", "--import-only", "--force"],
             &format!("import_conflict_{}", description.replace(' ', "_")),
@@ -394,32 +399,32 @@ fn edge_case_import_rejects_conflict_markers() {
 #[test]
 fn edge_case_path_traversal_blocked() {
     let _log = common::test_log("edge_case_path_traversal_blocked");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize beads
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed");
 
     // Create an issue
-    let _ = run_br(&workspace, ["create", "Test issue"], "create");
+    let _ = run_obr(&workspace, ["create", "Test issue"], "create");
 
-    // Create a file outside .beads that we'll try to access
+    // Create a file outside .obr that we'll try to access
     let outside_file = workspace.root.join("secret.txt");
     fs::write(&outside_file, "SECRET DATA").expect("write secret file");
 
     // Try to export to a path with traversal
     let traversal_paths = [
-        workspace.root.join(".beads").join("..").join("secret.txt"),
+        workspace.root.join(".obr").join("..").join("secret.txt"),
         workspace
             .root
-            .join(".beads")
+            .join(".obr")
             .join("..")
             .join("..")
             .join("etc")
             .join("passwd"),
         workspace
             .root
-            .join(".beads")
+            .join(".obr")
             .join("foo")
             .join("..")
             .join("..")
@@ -436,13 +441,13 @@ fn edge_case_path_traversal_blocked() {
     }
 
     // Test that the secret file is untouched after sync operations
-    let export = run_br(&workspace, ["sync", "--flush-only"], "export");
+    let export = run_obr(&workspace, ["sync", "--flush-only"], "export");
     assert!(export.status.success(), "export failed");
 
     let secret_content = fs::read_to_string(&outside_file).expect("read secret");
     assert_eq!(
         secret_content, "SECRET DATA",
-        "SAFETY VIOLATION: sync modified file outside .beads!"
+        "SAFETY VIOLATION: sync modified file outside .obr!"
     );
 
     eprintln!("[PASS] Path traversal protection verified - secret file untouched");
@@ -453,22 +458,22 @@ fn edge_case_path_traversal_blocked() {
 #[cfg(unix)]
 fn edge_case_symlink_escape_blocked() {
     let _log = common::test_log("edge_case_symlink_escape_blocked");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize beads
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed");
 
     // Create an issue
-    let _ = run_br(&workspace, ["create", "Test issue"], "create");
+    let _ = run_obr(&workspace, ["create", "Test issue"], "create");
 
-    // Create a file outside .beads
+    // Create a file outside .obr
     let outside_file = workspace.root.join("outside_secret.txt");
     fs::write(&outside_file, "OUTSIDE SECRET").expect("write outside file");
 
-    // Create a symlink inside .beads pointing outside
-    let beads_dir = workspace.root.join(".beads");
-    let symlink_path = beads_dir.join("escape_link");
+    // Create a symlink inside .obr pointing outside
+    let obr_dir = workspace.root.join(".obr");
+    let symlink_path = obr_dir.join("escape_link");
 
     // Try to create a symlink (may fail on some systems)
     if symlink(&outside_file, &symlink_path).is_ok() {
@@ -482,7 +487,7 @@ fn edge_case_symlink_escape_blocked() {
         assert!(symlink_path.exists() || symlink_path.is_symlink());
 
         // Run sync operations
-        let export = run_br(&workspace, ["sync", "--flush-only"], "export_with_symlink");
+        let export = run_obr(&workspace, ["sync", "--flush-only"], "export_with_symlink");
 
         // Log for postmortem
         let log = format!(
@@ -504,7 +509,7 @@ fn edge_case_symlink_escape_blocked() {
         let outside_content = fs::read_to_string(&outside_file).expect("read outside file");
         assert_eq!(
             outside_content, "OUTSIDE SECRET",
-            "SAFETY VIOLATION: Symlink escape modified file outside .beads!"
+            "SAFETY VIOLATION: Symlink escape modified file outside .obr!"
         );
 
         eprintln!("[PASS] Symlink escape attempt did not modify outside file");
@@ -522,7 +527,7 @@ fn edge_case_symlink_escape_blocked() {
 fn edge_case_huge_line() {
     let _log = common::test_log("edge_case_huge_line");
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
 
     // Read original to get a valid issue structure
     let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
@@ -541,7 +546,7 @@ fn edge_case_huge_line() {
     fs::write(&jsonl_path, format!("{huge_line}\n")).expect("write huge line");
 
     // Attempt import
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--force"],
         "import_huge",
@@ -573,7 +578,7 @@ fn edge_case_huge_line() {
 
     // Verify no partial/corrupted state by checking we can still list issues
     // Use --no-auto-import --allow-stale to verify DB state despite corrupt/newer JSONL
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--no-auto-import", "--allow-stale"],
         "list_after_huge",
@@ -596,7 +601,7 @@ fn edge_case_huge_line() {
 fn edge_case_invalid_utf8() {
     let _log = common::test_log("edge_case_invalid_utf8");
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
 
     // Read original as bytes
     let original = fs::read(&jsonl_path).expect("read jsonl bytes");
@@ -610,7 +615,7 @@ fn edge_case_invalid_utf8() {
     fs::write(&jsonl_path, &invalid_bytes).expect("write invalid utf8");
 
     // Attempt import
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--force"],
         "import_invalid_utf8",
@@ -657,13 +662,13 @@ fn edge_case_invalid_utf8() {
 fn edge_case_whitespace_only() {
     let _log = common::test_log("edge_case_whitespace_only");
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
 
     // Write whitespace-only content
     fs::write(&jsonl_path, "   \n\t\n   \n\n").expect("write whitespace");
 
     // Attempt import - should succeed with 0 issues imported
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--force"],
         "import_whitespace",
@@ -695,13 +700,13 @@ fn edge_case_whitespace_only() {
 fn edge_case_empty_file() {
     let _log = common::test_log("edge_case_empty_file");
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
 
     // Write empty file
     fs::write(&jsonl_path, "").expect("write empty file");
 
     // Attempt import
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--force"],
         "import_empty",
@@ -734,7 +739,7 @@ fn edge_case_empty_file() {
 fn edge_case_deeply_nested_json() {
     let _log = common::test_log("edge_case_deeply_nested_json");
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
 
     // Create deeply nested JSON (100 levels)
     // This might be valid but tests parser limits
@@ -756,7 +761,7 @@ fn edge_case_deeply_nested_json() {
     fs::write(&jsonl_path, format!("{deep_json}\n")).expect("write deeply nested");
 
     // Attempt import
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--force"],
         "import_nested",
@@ -781,7 +786,7 @@ fn edge_case_deeply_nested_json() {
 
     // The important thing is no crash/panic
     // Use --no-auto-import --allow-stale to verify DB state despite corrupt/newer JSONL
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--no-auto-import", "--allow-stale"],
         "list_after_nested",
@@ -798,10 +803,10 @@ fn edge_case_deeply_nested_json() {
 #[test]
 fn edge_case_no_partial_writes_on_failure() {
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
 
     // First, get the current state
-    let list_before = run_br(&workspace, ["list", "--json"], "list_before");
+    let list_before = run_obr(&workspace, ["list", "--json"], "list_before");
     let count_before = list_before.stdout.matches("\"id\"").count();
 
     // Create malformed JSONL with valid issues followed by invalid
@@ -813,7 +818,7 @@ fn edge_case_no_partial_writes_on_failure() {
     fs::write(&jsonl_path, &malformed).expect("write malformed");
 
     // Attempt import - should fail
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--force"],
         "import_partial_fail",
@@ -821,7 +826,7 @@ fn edge_case_no_partial_writes_on_failure() {
 
     // Check final state
     // Use --no-auto-import --allow-stale to verify DB state despite corrupt/newer JSONL
-    let list_after = run_br(
+    let list_after = run_obr(
         &workspace,
         ["list", "--json", "--no-auto-import", "--allow-stale"],
         "list_after",
@@ -855,7 +860,7 @@ fn edge_case_no_partial_writes_on_failure() {
 
     // At minimum, the system should be in a consistent state
     // Use --no-auto-import --allow-stale to verify DB state despite corrupt/newer JSONL
-    let list_final = run_br(
+    let list_final = run_obr(
         &workspace,
         ["list", "--no-auto-import", "--allow-stale"],
         "list_final",

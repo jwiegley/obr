@@ -1,7 +1,7 @@
 //! Edge Case & Stress Conformance Tests
 //!
 //! Tests for edge cases, stress scenarios, error recovery, and cross-platform behavior.
-//! Validates that br (Rust) and bd (Go) handle these cases consistently.
+//! Validates that obr (Rust) and bd (Go) handle these cases consistently.
 //!
 //! Test categories:
 //! - Input Validation: boundary conditions, special characters, injection attempts
@@ -49,31 +49,31 @@ fn conformance_title_very_long() {
     let workspace = ConformanceWorkspace::new();
     workspace.init_both();
 
-    // Create a title that's at the limit (500 chars is the limit in br)
+    // Create a title that's at the limit (500 chars is the limit in obr)
     let long_title: String = "A".repeat(500);
 
-    let br_out = workspace.run_br(["create", &long_title, "--json"], "create_long");
+    let obr_out = workspace.run_obr(["create", &long_title, "--json"], "create_long");
     let bd_out = workspace.run_bd(["create", &long_title, "--json"], "create_long");
 
     info!(
         "conformance_title_very_long: br_exit={} bd_exit={}",
-        br_out.status.code().unwrap_or(-1),
+        obr_out.status.code().unwrap_or(-1),
         bd_out.status.code().unwrap_or(-1)
     );
 
     // Both should succeed (or both fail if too long)
     assert_eq!(
-        br_out.status.success(),
+        obr_out.status.success(),
         bd_out.status.success(),
-        "br and bd should have same success/failure for long title"
+        "obr and bd should have same success/failure for long title"
     );
 
-    if br_out.status.success() {
-        let br_json = extract_json_payload(&br_out.stdout);
+    if obr_out.status.success() {
+        let obr_json = extract_json_payload(&obr_out.stdout);
         let bd_json = extract_json_payload(&bd_out.stdout);
 
         let result = compare_json(
-            &br_json,
+            &obr_json,
             &bd_json,
             &CompareMode::ContainsFields(vec!["title".to_string()]),
         );
@@ -94,17 +94,17 @@ fn conformance_title_empty() {
     workspace.init_both();
 
     // Empty title should fail
-    let br_out = workspace.run_br(["create", "", "--json"], "create_empty");
+    let obr_out = workspace.run_obr(["create", "", "--json"], "create_empty");
     let bd_out = workspace.run_bd(["create", "", "--json"], "create_empty");
 
     info!(
         "conformance_title_empty: br_exit={} bd_exit={}",
-        br_out.status.code().unwrap_or(-1),
+        obr_out.status.code().unwrap_or(-1),
         bd_out.status.code().unwrap_or(-1)
     );
 
     // Both should fail for empty title
-    assert!(!br_out.status.success(), "br should reject empty title");
+    assert!(!obr_out.status.success(), "obr should reject empty title");
     assert!(!bd_out.status.success(), "bd should reject empty title");
 
     info!("conformance_title_empty: PASS");
@@ -123,20 +123,20 @@ fn conformance_sql_injection_title() {
     // SQL injection attempt
     let sqli_title = "Test'; DROP TABLE issues; --";
 
-    let br_out = workspace.run_br(["create", sqli_title, "--json"], "create_sqli");
+    let obr_out = workspace.run_obr(["create", sqli_title, "--json"], "create_sqli");
     let bd_out = workspace.run_bd(["create", sqli_title, "--json"], "create_sqli");
 
     info!(
         "conformance_sql_injection_title: br_exit={} bd_exit={}",
-        br_out.status.code().unwrap_or(-1),
+        obr_out.status.code().unwrap_or(-1),
         bd_out.status.code().unwrap_or(-1)
     );
 
     // Both should succeed - the SQLi attempt should be stored as literal text
     assert!(
-        br_out.status.success(),
-        "br should accept SQLi as literal: {}",
-        br_out.stderr
+        obr_out.status.success(),
+        "obr should accept SQLi as literal: {}",
+        obr_out.stderr
     );
     assert!(
         bd_out.status.success(),
@@ -145,19 +145,19 @@ fn conformance_sql_injection_title() {
     );
 
     // Verify the title is stored literally
-    let br_json = extract_json_payload(&br_out.stdout);
-    let br_value: Value = serde_json::from_str(&br_json).expect("parse br json");
+    let obr_json = extract_json_payload(&obr_out.stdout);
+    let obr_value: Value = serde_json::from_str(&obr_json).expect("parse obr json");
     assert_eq!(
-        br_value.get("title").and_then(|v| v.as_str()),
+        obr_value.get("title").and_then(|v| v.as_str()),
         Some(sqli_title),
         "Title should be stored literally"
     );
 
     // List issues to verify database wasn't corrupted
-    let br_list = workspace.run_br(["list", "--json"], "list_after_sqli");
+    let obr_list = workspace.run_obr(["list", "--json"], "list_after_sqli");
     assert!(
-        br_list.status.success(),
-        "br list should work after SQLi attempt"
+        obr_list.status.success(),
+        "obr list should work after SQLi attempt"
     );
 
     info!("conformance_sql_injection_title: PASS");
@@ -176,7 +176,7 @@ fn conformance_sql_injection_desc() {
     // SQL injection in description
     let sqli_desc = "Test'; DELETE FROM issues WHERE 1=1; --";
 
-    let br_out = workspace.run_br(
+    let obr_out = workspace.run_obr(
         [
             "create",
             "Normal Title",
@@ -199,9 +199,9 @@ fn conformance_sql_injection_desc() {
 
     // Both should succeed
     assert!(
-        br_out.status.success(),
-        "br should handle SQLi in desc: {}",
-        br_out.stderr
+        obr_out.status.success(),
+        "obr should handle SQLi in desc: {}",
+        obr_out.stderr
     );
     assert!(
         bd_out.status.success(),
@@ -222,7 +222,7 @@ fn conformance_priority_boundary_0() {
     let workspace = ConformanceWorkspace::new();
     workspace.init_both();
 
-    let br_out = workspace.run_br(
+    let obr_out = workspace.run_obr(
         ["create", "Critical issue", "--priority", "0", "--json"],
         "create_p0",
     );
@@ -232,9 +232,9 @@ fn conformance_priority_boundary_0() {
     );
 
     assert!(
-        br_out.status.success(),
-        "br should accept priority 0: {}",
-        br_out.stderr
+        obr_out.status.success(),
+        "obr should accept priority 0: {}",
+        obr_out.stderr
     );
     assert!(
         bd_out.status.success(),
@@ -242,11 +242,11 @@ fn conformance_priority_boundary_0() {
         bd_out.stderr
     );
 
-    let br_json = extract_json_payload(&br_out.stdout);
+    let obr_json = extract_json_payload(&obr_out.stdout);
     let bd_json = extract_json_payload(&bd_out.stdout);
 
     let result = compare_json(
-        &br_json,
+        &obr_json,
         &bd_json,
         &CompareMode::ContainsFields(vec!["priority".to_string()]),
     );
@@ -269,7 +269,7 @@ fn conformance_priority_boundary_4() {
     let workspace = ConformanceWorkspace::new();
     workspace.init_both();
 
-    let br_out = workspace.run_br(
+    let obr_out = workspace.run_obr(
         ["create", "Backlog issue", "--priority", "4", "--json"],
         "create_p4",
     );
@@ -279,9 +279,9 @@ fn conformance_priority_boundary_4() {
     );
 
     assert!(
-        br_out.status.success(),
-        "br should accept priority 4: {}",
-        br_out.stderr
+        obr_out.status.success(),
+        "obr should accept priority 4: {}",
+        obr_out.stderr
     );
     assert!(
         bd_out.status.success(),
@@ -289,11 +289,11 @@ fn conformance_priority_boundary_4() {
         bd_out.stderr
     );
 
-    let br_json = extract_json_payload(&br_out.stdout);
+    let obr_json = extract_json_payload(&obr_out.stdout);
     let bd_json = extract_json_payload(&bd_out.stdout);
 
     let result = compare_json(
-        &br_json,
+        &obr_json,
         &bd_json,
         &CompareMode::ContainsFields(vec!["priority".to_string()]),
     );
@@ -316,7 +316,7 @@ fn conformance_priority_invalid_5() {
     let workspace = ConformanceWorkspace::new();
     workspace.init_both();
 
-    let br_out = workspace.run_br(
+    let obr_out = workspace.run_obr(
         [
             "create",
             "Invalid priority issue",
@@ -339,12 +339,12 @@ fn conformance_priority_invalid_5() {
 
     info!(
         "conformance_priority_invalid_5: br_exit={} bd_exit={}",
-        br_out.status.code().unwrap_or(-1),
+        obr_out.status.code().unwrap_or(-1),
         bd_out.status.code().unwrap_or(-1)
     );
 
     // Both should reject priority 5
-    assert!(!br_out.status.success(), "br should reject priority 5");
+    assert!(!obr_out.status.success(), "obr should reject priority 5");
     assert!(!bd_out.status.success(), "bd should reject priority 5");
 
     info!("conformance_priority_invalid_5: PASS");
@@ -360,7 +360,7 @@ fn conformance_priority_invalid_neg() {
     let workspace = ConformanceWorkspace::new();
     workspace.init_both();
 
-    let br_out = workspace.run_br(
+    let obr_out = workspace.run_obr(
         ["create", "Negative priority", "--priority", "-1", "--json"],
         "create_neg",
     );
@@ -371,14 +371,14 @@ fn conformance_priority_invalid_neg() {
 
     info!(
         "conformance_priority_invalid_neg: br_exit={} bd_exit={}",
-        br_out.status.code().unwrap_or(-1),
+        obr_out.status.code().unwrap_or(-1),
         bd_out.status.code().unwrap_or(-1)
     );
 
     // Both should reject negative priority
     assert!(
-        !br_out.status.success(),
-        "br should reject negative priority"
+        !obr_out.status.success(),
+        "obr should reject negative priority"
     );
     assert!(
         !bd_out.status.success(),
@@ -399,14 +399,14 @@ fn conformance_id_format_validation() {
     workspace.init_both();
 
     // Create a valid issue first
-    let _ = workspace.run_br(["create", "Test issue", "--json"], "create");
+    let _ = workspace.run_obr(["create", "Test issue", "--json"], "create");
     let _ = workspace.run_bd(["create", "Test issue", "--json"], "create");
 
     // Try to show an invalid ID format
     let invalid_ids = ["not-a-valid-id", "123", "", "bd-", "-abc"];
 
     for invalid_id in invalid_ids {
-        let br_out = workspace.run_br(
+        let obr_out = workspace.run_obr(
             ["show", invalid_id, "--json"],
             &format!("show_invalid_{}", invalid_id.replace('-', "_")),
         );
@@ -415,12 +415,12 @@ fn conformance_id_format_validation() {
             &format!("show_invalid_{}", invalid_id.replace('-', "_")),
         );
 
-        // br should reject invalid IDs (strict validation)
+        // obr should reject invalid IDs (strict validation)
         assert!(
-            !br_out.status.success(),
-            "br should reject invalid id '{}': {}",
+            !obr_out.status.success(),
+            "obr should reject invalid id '{}': {}",
             invalid_id,
-            br_out.stderr
+            obr_out.stderr
         );
 
         // bd behavior is legacy/inconsistent; log but don't assert
@@ -455,14 +455,14 @@ fn conformance_unicode_handling() {
     for (i, title) in unicode_titles.iter().enumerate() {
         let label = format!("unicode_{}", i);
 
-        let br_out = workspace.run_br(["create", title, "--json"], &label);
+        let obr_out = workspace.run_obr(["create", title, "--json"], &label);
         let bd_out = workspace.run_bd(["create", title, "--json"], &label);
 
         assert!(
-            br_out.status.success(),
-            "br should handle unicode '{}': {}",
+            obr_out.status.success(),
+            "obr should handle unicode '{}': {}",
             title,
-            br_out.stderr
+            obr_out.stderr
         );
         assert!(
             bd_out.status.success(),
@@ -472,10 +472,10 @@ fn conformance_unicode_handling() {
         );
 
         // Verify title is preserved
-        let br_json: Value =
-            serde_json::from_str(&extract_json_payload(&br_out.stdout)).expect("parse br json");
+        let obr_json: Value =
+            serde_json::from_str(&extract_json_payload(&obr_out.stdout)).expect("parse obr json");
         assert_eq!(
-            br_json.get("title").and_then(|v| v.as_str()),
+            obr_json.get("title").and_then(|v| v.as_str()),
             Some(*title),
             "Unicode title should be preserved"
         );
@@ -506,12 +506,12 @@ fn conformance_rapid_creates_50() {
         let title = format!("Rapid issue {}", i);
         let label = format!("rapid_{}", i);
 
-        let br_out = workspace.run_br(["create", &title, "--json"], &label);
+        let obr_out = workspace.run_obr(["create", &title, "--json"], &label);
         assert!(
-            br_out.status.success(),
-            "br create {} failed: {}",
+            obr_out.status.success(),
+            "obr create {} failed: {}",
             i,
-            br_out.stderr
+            obr_out.stderr
         );
 
         let bd_out = workspace.run_bd(["create", &title, "--json"], &label);
@@ -534,21 +534,21 @@ fn conformance_rapid_creates_50() {
     info!("conformance_rapid_creates_50: total_time={:?}", elapsed);
 
     // List all and compare counts
-    let br_list = workspace.run_br(["list", "--json"], "list_final");
+    let obr_list = workspace.run_obr(["list", "--json"], "list_final");
     let bd_list = workspace.run_bd(["list", "--json"], "list_final");
 
-    assert!(br_list.status.success(), "br list failed");
+    assert!(obr_list.status.success(), "obr list failed");
     assert!(bd_list.status.success(), "bd list failed");
 
-    let br_json: Value =
-        serde_json::from_str(&extract_json_payload(&br_list.stdout)).expect("parse br list");
+    let obr_json: Value =
+        serde_json::from_str(&extract_json_payload(&obr_list.stdout)).expect("parse obr list");
     let bd_json: Value =
         serde_json::from_str(&extract_json_payload(&bd_list.stdout)).expect("parse bd list");
 
-    let br_count = br_json.as_array().map(|a| a.len()).unwrap_or(0);
+    let obr_count = obr_json.as_array().map(|a| a.len()).unwrap_or(0);
     let bd_count = bd_json.as_array().map(|a| a.len()).unwrap_or(0);
 
-    assert_eq!(br_count, count, "br should have {} issues", count);
+    assert_eq!(obr_count, count, "obr should have {} issues", count);
     assert_eq!(bd_count, count, "bd should have {} issues", count);
 
     info!("conformance_rapid_creates_50: PASS");
@@ -565,17 +565,17 @@ fn conformance_rapid_updates_100() {
     workspace.init_both();
 
     // Create a single issue to update
-    let br_create = workspace.run_br(["create", "Update target", "--json"], "create");
+    let obr_create = workspace.run_obr(["create", "Update target", "--json"], "create");
     let bd_create = workspace.run_bd(["create", "Update target", "--json"], "create");
 
-    assert!(br_create.status.success());
+    assert!(obr_create.status.success());
     assert!(bd_create.status.success());
 
     // Extract IDs
-    let br_json: Value = serde_json::from_str(&extract_json_payload(&br_create.stdout)).unwrap();
+    let obr_json: Value = serde_json::from_str(&extract_json_payload(&obr_create.stdout)).unwrap();
     let bd_json: Value = serde_json::from_str(&extract_json_payload(&bd_create.stdout)).unwrap();
 
-    let br_id = br_json.get("id").and_then(|v| v.as_str()).expect("br id");
+    let obr_id = obr_json.get("id").and_then(|v| v.as_str()).expect("obr id");
     let bd_id = bd_json.get("id").and_then(|v| v.as_str()).expect("bd id");
 
     let start = Instant::now();
@@ -585,14 +585,14 @@ fn conformance_rapid_updates_100() {
         let status = statuses[i % statuses.len()];
         let label = format!("update_{}", i);
 
-        let br_out = workspace.run_br(["update", br_id, "--status", status, "--json"], &label);
+        let obr_out = workspace.run_obr(["update", obr_id, "--status", status, "--json"], &label);
         let bd_out = workspace.run_bd(["update", bd_id, "--status", status, "--json"], &label);
 
         assert!(
-            br_out.status.success(),
-            "br update {} failed: {}",
+            obr_out.status.success(),
+            "obr update {} failed: {}",
             i,
-            br_out.stderr
+            obr_out.stderr
         );
         assert!(
             bd_out.status.success(),
@@ -627,7 +627,7 @@ fn conformance_large_dep_graph_100() {
     workspace.init_both();
 
     let count = 20; // Reduced for faster tests, can increase to 100
-    let mut br_ids: Vec<String> = Vec::with_capacity(count);
+    let mut obr_ids: Vec<String> = Vec::with_capacity(count);
     let mut bd_ids: Vec<String> = Vec::with_capacity(count);
 
     // Create all issues first
@@ -635,17 +635,17 @@ fn conformance_large_dep_graph_100() {
         let title = format!("Node {}", i);
         let label = format!("node_{}", i);
 
-        let br_out = workspace.run_br(["create", &title, "--json"], &label);
+        let obr_out = workspace.run_obr(["create", &title, "--json"], &label);
         let bd_out = workspace.run_bd(["create", &title, "--json"], &label);
 
-        assert!(br_out.status.success());
+        assert!(obr_out.status.success());
         assert!(bd_out.status.success());
 
-        let br_json: Value = serde_json::from_str(&extract_json_payload(&br_out.stdout)).unwrap();
+        let obr_json: Value = serde_json::from_str(&extract_json_payload(&obr_out.stdout)).unwrap();
         let bd_json: Value = serde_json::from_str(&extract_json_payload(&bd_out.stdout)).unwrap();
 
-        br_ids.push(
-            br_json
+        obr_ids.push(
+            obr_json
                 .get("id")
                 .and_then(|v| v.as_str())
                 .unwrap()
@@ -666,15 +666,15 @@ fn conformance_large_dep_graph_100() {
     for i in 1..count {
         let label = format!("dep_{}", i);
 
-        let br_out = workspace.run_br(["dep", "add", &br_ids[i], &br_ids[i - 1]], &label);
+        let obr_out = workspace.run_obr(["dep", "add", &obr_ids[i], &obr_ids[i - 1]], &label);
         let bd_out = workspace.run_bd(["dep", "add", &bd_ids[i], &bd_ids[i - 1]], &label);
 
         assert!(
-            br_out.status.success(),
-            "br dep add {} -> {} failed: {}",
-            br_ids[i],
-            br_ids[i - 1],
-            br_out.stderr
+            obr_out.status.success(),
+            "obr dep add {} -> {} failed: {}",
+            obr_ids[i],
+            obr_ids[i - 1],
+            obr_out.stderr
         );
         assert!(
             bd_out.status.success(),
@@ -691,25 +691,25 @@ fn conformance_large_dep_graph_100() {
     );
 
     // Check blocked status - only first node should be unblocked
-    let br_ready = workspace.run_br(["ready", "--json"], "ready");
+    let obr_ready = workspace.run_obr(["ready", "--json"], "ready");
     let bd_ready = workspace.run_bd(["ready", "--json"], "ready");
 
-    assert!(br_ready.status.success());
+    assert!(obr_ready.status.success());
     assert!(bd_ready.status.success());
 
     // Both should have same number of ready issues (just 1)
-    let br_json: Value = serde_json::from_str(&extract_json_payload(&br_ready.stdout))
+    let obr_json: Value = serde_json::from_str(&extract_json_payload(&obr_ready.stdout))
         .unwrap_or(Value::Array(vec![]));
     let bd_json: Value = serde_json::from_str(&extract_json_payload(&bd_ready.stdout))
         .unwrap_or(Value::Array(vec![]));
 
-    let br_count = br_json.as_array().map(|a| a.len()).unwrap_or(0);
+    let obr_count = obr_json.as_array().map(|a| a.len()).unwrap_or(0);
     let bd_count = bd_json.as_array().map(|a| a.len()).unwrap_or(0);
 
     assert_eq!(
-        br_count, bd_count,
-        "br and bd should have same ready count: br={} bd={}",
-        br_count, bd_count
+        obr_count, bd_count,
+        "obr and bd should have same ready count: obr={} bd={}",
+        obr_count, bd_count
     );
 
     info!("conformance_large_dep_graph_100: PASS");
@@ -726,7 +726,7 @@ fn conformance_deep_deps_10_levels() {
     workspace.init_both();
 
     let depth = 10;
-    let mut br_ids: Vec<String> = Vec::with_capacity(depth);
+    let mut obr_ids: Vec<String> = Vec::with_capacity(depth);
     let mut bd_ids: Vec<String> = Vec::with_capacity(depth);
 
     // Create chain: 0 <- 1 <- 2 <- ... <- 9
@@ -734,16 +734,16 @@ fn conformance_deep_deps_10_levels() {
         let title = format!("Level {} task", level);
         let label = format!("level_{}", level);
 
-        let br_out = workspace.run_br(["create", &title, "--json"], &label);
+        let obr_out = workspace.run_obr(["create", &title, "--json"], &label);
         let bd_out = workspace.run_bd(["create", &title, "--json"], &label);
 
-        assert!(br_out.status.success());
+        assert!(obr_out.status.success());
         assert!(bd_out.status.success());
 
-        let br_json: Value = serde_json::from_str(&extract_json_payload(&br_out.stdout)).unwrap();
+        let obr_json: Value = serde_json::from_str(&extract_json_payload(&obr_out.stdout)).unwrap();
         let bd_json: Value = serde_json::from_str(&extract_json_payload(&bd_out.stdout)).unwrap();
 
-        let br_id = br_json
+        let obr_id = obr_json
             .get("id")
             .and_then(|v| v.as_str())
             .unwrap()
@@ -756,8 +756,8 @@ fn conformance_deep_deps_10_levels() {
 
         // Add dependency on previous level
         if level > 0 {
-            let br_dep = workspace.run_br(
-                ["dep", "add", &br_id, &br_ids[level - 1]],
+            let obr_dep = workspace.run_obr(
+                ["dep", "add", &obr_id, &obr_ids[level - 1]],
                 &format!("dep_{}", level),
             );
             let bd_dep = workspace.run_bd(
@@ -765,11 +765,11 @@ fn conformance_deep_deps_10_levels() {
                 &format!("dep_{}", level),
             );
 
-            assert!(br_dep.status.success());
+            assert!(obr_dep.status.success());
             assert!(bd_dep.status.success());
         }
 
-        br_ids.push(br_id);
+        obr_ids.push(obr_id);
         bd_ids.push(bd_id);
     }
 
@@ -779,10 +779,10 @@ fn conformance_deep_deps_10_levels() {
     );
 
     // Show the deepest node - should have all dependencies listed
-    let br_show = workspace.run_br(["show", &br_ids[depth - 1], "--json"], "show_deep");
+    let obr_show = workspace.run_obr(["show", &obr_ids[depth - 1], "--json"], "show_deep");
     let bd_show = workspace.run_bd(["show", &bd_ids[depth - 1], "--json"], "show_deep");
 
-    assert!(br_show.status.success());
+    assert!(obr_show.status.success());
     assert!(bd_show.status.success());
 
     info!("conformance_deep_deps_10_levels: PASS");
@@ -799,16 +799,16 @@ fn conformance_many_labels_20() {
     workspace.init_both();
 
     // Create issue first
-    let br_create = workspace.run_br(["create", "Multi-label issue", "--json"], "create");
+    let obr_create = workspace.run_obr(["create", "Multi-label issue", "--json"], "create");
     let bd_create = workspace.run_bd(["create", "Multi-label issue", "--json"], "create");
 
-    assert!(br_create.status.success());
+    assert!(obr_create.status.success());
     assert!(bd_create.status.success());
 
-    let br_json: Value = serde_json::from_str(&extract_json_payload(&br_create.stdout)).unwrap();
+    let obr_json: Value = serde_json::from_str(&extract_json_payload(&obr_create.stdout)).unwrap();
     let bd_json: Value = serde_json::from_str(&extract_json_payload(&bd_create.stdout)).unwrap();
 
-    let br_id = br_json.get("id").and_then(|v| v.as_str()).expect("br id");
+    let obr_id = obr_json.get("id").and_then(|v| v.as_str()).expect("obr id");
     let bd_id = bd_json.get("id").and_then(|v| v.as_str()).expect("bd id");
 
     let label_count = 20;
@@ -818,13 +818,13 @@ fn conformance_many_labels_20() {
         let label = format!("label-{}", i);
         let cmd_label = format!("add_label_{}", i);
 
-        let br_out = workspace.run_br(["label", "add", br_id, &label], &cmd_label);
+        let obr_out = workspace.run_obr(["label", "add", obr_id, &label], &cmd_label);
         let bd_out = workspace.run_bd(["label", "add", bd_id, &label], &cmd_label);
 
         assert!(
-            br_out.status.success(),
-            "br label add failed: {}",
-            br_out.stderr
+            obr_out.status.success(),
+            "obr label add failed: {}",
+            obr_out.stderr
         );
         assert!(
             bd_out.status.success(),
@@ -836,20 +836,20 @@ fn conformance_many_labels_20() {
     info!("conformance_many_labels_20: added {} labels", label_count);
 
     // Show issue and verify labels
-    let br_show = workspace.run_br(["show", br_id, "--json"], "show");
+    let obr_show = workspace.run_obr(["show", obr_id, "--json"], "show");
     let bd_show = workspace.run_bd(["show", bd_id, "--json"], "show");
 
-    assert!(br_show.status.success());
+    assert!(obr_show.status.success());
     assert!(bd_show.status.success());
 
     // Compare label counts (handle show output as array or object)
-    let br_json: Value = serde_json::from_str(&extract_json_payload(&br_show.stdout)).unwrap();
+    let obr_json: Value = serde_json::from_str(&extract_json_payload(&obr_show.stdout)).unwrap();
     let bd_json: Value = serde_json::from_str(&extract_json_payload(&bd_show.stdout)).unwrap();
 
-    let br_issue = if br_json.is_array() {
-        br_json.get(0).unwrap_or(&br_json)
+    let obr_issue = if obr_json.is_array() {
+        obr_json.get(0).unwrap_or(&obr_json)
     } else {
-        &br_json
+        &obr_json
     };
     let bd_issue = if bd_json.is_array() {
         bd_json.get(0).unwrap_or(&bd_json)
@@ -857,7 +857,7 @@ fn conformance_many_labels_20() {
         &bd_json
     };
 
-    let br_labels = br_issue
+    let obr_labels = obr_issue
         .get("labels")
         .and_then(|v| v.as_array())
         .map(|a| a.len())
@@ -869,8 +869,8 @@ fn conformance_many_labels_20() {
         .unwrap_or(0);
 
     assert_eq!(
-        br_labels, label_count,
-        "br should have {} labels",
+        obr_labels, label_count,
+        "obr should have {} labels",
         label_count
     );
     assert_eq!(
@@ -893,16 +893,16 @@ fn conformance_many_comments_20() {
     workspace.init_both();
 
     // Create issue
-    let br_create = workspace.run_br(["create", "Commented issue", "--json"], "create");
+    let obr_create = workspace.run_obr(["create", "Commented issue", "--json"], "create");
     let bd_create = workspace.run_bd(["create", "Commented issue", "--json"], "create");
 
-    assert!(br_create.status.success());
+    assert!(obr_create.status.success());
     assert!(bd_create.status.success());
 
-    let br_json: Value = serde_json::from_str(&extract_json_payload(&br_create.stdout)).unwrap();
+    let obr_json: Value = serde_json::from_str(&extract_json_payload(&obr_create.stdout)).unwrap();
     let bd_json: Value = serde_json::from_str(&extract_json_payload(&bd_create.stdout)).unwrap();
 
-    let br_id = br_json.get("id").and_then(|v| v.as_str()).expect("br id");
+    let obr_id = obr_json.get("id").and_then(|v| v.as_str()).expect("obr id");
     let bd_id = bd_json.get("id").and_then(|v| v.as_str()).expect("bd id");
 
     let comment_count = 20;
@@ -912,14 +912,14 @@ fn conformance_many_comments_20() {
         let comment = format!("Comment number {}", i);
         let cmd_label = format!("add_comment_{}", i);
 
-        let br_out = workspace.run_br(["comments", "add", br_id, &comment], &cmd_label);
+        let obr_out = workspace.run_obr(["comments", "add", obr_id, &comment], &cmd_label);
         let bd_out = workspace.run_bd(["comments", "add", bd_id, &comment], &cmd_label);
 
         assert!(
-            br_out.status.success(),
-            "br comment add {} failed: {}",
+            obr_out.status.success(),
+            "obr comment add {} failed: {}",
             i,
-            br_out.stderr
+            obr_out.stderr
         );
         assert!(
             bd_out.status.success(),
@@ -935,23 +935,23 @@ fn conformance_many_comments_20() {
     );
 
     // List comments (bd uses positional issue-id, no "list" subcommand)
-    let br_comments = workspace.run_br(["comments", br_id, "--json"], "list_comments");
+    let obr_comments = workspace.run_obr(["comments", obr_id, "--json"], "list_comments");
     let bd_comments = workspace.run_bd(["comments", bd_id, "--json"], "list_comments");
 
-    assert!(br_comments.status.success());
+    assert!(obr_comments.status.success());
     assert!(bd_comments.status.success());
 
-    let br_json: Value = serde_json::from_str(&extract_json_payload(&br_comments.stdout))
+    let obr_json: Value = serde_json::from_str(&extract_json_payload(&obr_comments.stdout))
         .unwrap_or(Value::Array(vec![]));
     let bd_json: Value = serde_json::from_str(&extract_json_payload(&bd_comments.stdout))
         .unwrap_or(Value::Array(vec![]));
 
-    let br_count = br_json.as_array().map(|a| a.len()).unwrap_or(0);
+    let obr_count = obr_json.as_array().map(|a| a.len()).unwrap_or(0);
     let bd_count = bd_json.as_array().map(|a| a.len()).unwrap_or(0);
 
     assert_eq!(
-        br_count, comment_count,
-        "br should have {} comments",
+        obr_count, comment_count,
+        "obr should have {} comments",
         comment_count
     );
     assert_eq!(
@@ -976,17 +976,17 @@ fn conformance_concurrent_reads() {
     // Create some issues
     for i in 0..10 {
         let title = format!("Issue {}", i);
-        workspace.run_br(["create", &title], &format!("create_{}", i));
+        workspace.run_obr(["create", &title], &format!("create_{}", i));
         workspace.run_bd(["create", &title], &format!("create_{}", i));
     }
 
     // Run multiple list operations in sequence (simulating concurrent reads)
     let start = Instant::now();
     for i in 0..20 {
-        let br_out = workspace.run_br(["list", "--json"], &format!("list_{}", i));
+        let obr_out = workspace.run_obr(["list", "--json"], &format!("list_{}", i));
         let bd_out = workspace.run_bd(["list", "--json"], &format!("list_{}", i));
 
-        assert!(br_out.status.success());
+        assert!(obr_out.status.success());
         assert!(bd_out.status.success());
     }
 
@@ -1017,7 +1017,7 @@ fn conformance_workspace_max_issues() {
         let title = format!("Issue {} with some extra text for variety", i);
         let desc = format!("Description for issue {}", i);
 
-        let br_out = workspace.run_br(
+        let obr_out = workspace.run_obr(
             ["create", &title, "--description", &desc, "--json"],
             &format!("create_{}", i),
         );
@@ -1026,7 +1026,7 @@ fn conformance_workspace_max_issues() {
             &format!("create_{}", i),
         );
 
-        assert!(br_out.status.success());
+        assert!(obr_out.status.success());
         assert!(bd_out.status.success());
 
         if i % 25 == 0 {
@@ -1042,11 +1042,11 @@ fn conformance_workspace_max_issues() {
 
     // Test listing performance
     let list_start = Instant::now();
-    let br_list = workspace.run_br(["list", "--json"], "list");
+    let obr_list = workspace.run_obr(["list", "--json"], "list");
     let bd_list = workspace.run_bd(["list", "--json"], "list");
     let list_elapsed = list_start.elapsed();
 
-    assert!(br_list.status.success());
+    assert!(obr_list.status.success());
     assert!(bd_list.status.success());
 
     info!(
@@ -1056,11 +1056,11 @@ fn conformance_workspace_max_issues() {
 
     // Test search performance
     let search_start = Instant::now();
-    let br_search = workspace.run_br(["search", "Issue 50", "--json"], "search");
+    let obr_search = workspace.run_obr(["search", "Issue 50", "--json"], "search");
     let bd_search = workspace.run_bd(["search", "Issue 50", "--json"], "search");
     let search_elapsed = search_start.elapsed();
 
-    assert!(br_search.status.success());
+    assert!(obr_search.status.success());
     assert!(bd_search.status.success());
 
     info!(
@@ -1075,28 +1075,28 @@ fn conformance_workspace_max_issues() {
 // ERROR RECOVERY TESTS (6 tests)
 // ============================================================================
 
-/// Test: Graceful handling of missing .beads directory
+/// Test: Graceful handling of missing .obr directory
 #[test]
-fn conformance_missing_beads_dir() {
+fn conformance_missing_obr_dir() {
     skip_if_no_bd!();
     common::init_test_logging();
     info!("conformance_missing_beads_dir: BEGIN");
 
     let workspace = ConformanceWorkspace::new();
-    // Don't init - no .beads directory
+    // Don't init - no .obr directory
 
     // Try to list (should fail gracefully)
-    let br_out = workspace.run_br(["list", "--json"], "list_no_init");
+    let obr_out = workspace.run_obr(["list", "--json"], "list_no_init");
     let bd_out = workspace.run_bd(["list", "--json"], "list_no_init");
 
     info!(
         "conformance_missing_beads_dir: br_exit={} bd_exit={}",
-        br_out.status.code().unwrap_or(-1),
+        obr_out.status.code().unwrap_or(-1),
         bd_out.status.code().unwrap_or(-1)
     );
 
     // Both should fail (no workspace)
-    assert!(!br_out.status.success(), "br should fail without init");
+    assert!(!obr_out.status.success(), "obr should fail without init");
     assert!(!bd_out.status.success(), "bd should fail without init");
 
     info!("conformance_missing_beads_dir: PASS");
@@ -1112,36 +1112,36 @@ fn conformance_invalid_jsonl_import() {
     let workspace = ConformanceWorkspace::new();
     workspace.init_both();
 
-    // Write malformed JSONL to br workspace
-    let br_jsonl = workspace.br_root.join(".beads").join("issues.jsonl");
-    fs::write(&br_jsonl, "{ invalid json missing close brace\n").expect("write malformed jsonl");
+    // Write malformed JSONL to obr workspace
+    let obr_jsonl = workspace.obr_root.join(".obr").join("issues.jsonl");
+    fs::write(&obr_jsonl, "{ invalid json missing close brace\n").expect("write malformed jsonl");
 
     // Write same malformed JSONL to bd workspace
-    let bd_jsonl = workspace.bd_root.join(".beads").join("issues.jsonl");
+    let bd_jsonl = workspace.bd_root.join(".obr").join("issues.jsonl");
     fs::write(&bd_jsonl, "{ invalid json missing close brace\n").expect("write malformed jsonl");
 
     // Try to import
-    let br_out = workspace.run_br(["sync", "--import-only"], "import_bad");
+    let obr_out = workspace.run_obr(["sync", "--import-only"], "import_bad");
     let bd_out = workspace.run_bd(["sync", "--import-only"], "import_bad");
 
     info!(
         "conformance_invalid_jsonl_import: br_exit={} bd_exit={}",
-        br_out.status.code().unwrap_or(-1),
+        obr_out.status.code().unwrap_or(-1),
         bd_out.status.code().unwrap_or(-1)
     );
 
     // Both should handle invalid JSONL (either fail or skip with warning)
     // Check stderr contains some indication of parse error
-    let br_mentions_error = br_out.stderr.to_lowercase().contains("error")
-        || br_out.stderr.to_lowercase().contains("invalid")
-        || br_out.stderr.to_lowercase().contains("parse");
+    let obr_mentions_error = obr_out.stderr.to_lowercase().contains("error")
+        || obr_out.stderr.to_lowercase().contains("invalid")
+        || obr_out.stderr.to_lowercase().contains("parse");
     let bd_mentions_error = bd_out.stderr.to_lowercase().contains("error")
         || bd_out.stderr.to_lowercase().contains("invalid")
         || bd_out.stderr.to_lowercase().contains("parse");
 
     info!(
         "conformance_invalid_jsonl_import: br_error_mention={} bd_error_mention={}",
-        br_mentions_error, bd_mentions_error
+        obr_mentions_error, bd_mentions_error
     );
 
     info!("conformance_invalid_jsonl_import: PASS");
@@ -1158,33 +1158,33 @@ fn conformance_utf8_bom_handling() {
     workspace.init_both();
 
     // Create an issue first via normal means
-    let br_create = workspace.run_br(["create", "BOM test issue", "--json"], "create");
+    let obr_create = workspace.run_obr(["create", "BOM test issue", "--json"], "create");
     let bd_create = workspace.run_bd(["create", "BOM test issue", "--json"], "create");
 
-    assert!(br_create.status.success());
+    assert!(obr_create.status.success());
     assert!(bd_create.status.success());
 
     // Flush to JSONL
-    let _ = workspace.run_br(["sync", "--flush-only"], "flush");
+    let _ = workspace.run_obr(["sync", "--flush-only"], "flush");
     let _ = workspace.run_bd(["sync", "--flush-only"], "flush");
 
     // Read, add BOM, write back
-    let br_jsonl_path = workspace.br_root.join(".beads").join("issues.jsonl");
-    if br_jsonl_path.exists() {
-        let content = fs::read(&br_jsonl_path).expect("read jsonl");
+    let obr_jsonl_path = workspace.obr_root.join(".obr").join("issues.jsonl");
+    if obr_jsonl_path.exists() {
+        let content = fs::read(&obr_jsonl_path).expect("read jsonl");
         let bom: [u8; 3] = [0xEF, 0xBB, 0xBF]; // UTF-8 BOM
         let mut with_bom = Vec::with_capacity(bom.len() + content.len());
         with_bom.extend_from_slice(&bom);
         with_bom.extend_from_slice(&content);
-        fs::write(&br_jsonl_path, with_bom).expect("write bom jsonl");
+        fs::write(&obr_jsonl_path, with_bom).expect("write bom jsonl");
 
         // Try to import - should handle BOM gracefully
-        let br_import = workspace.run_br(["sync", "--import-only"], "import_bom");
+        let obr_import = workspace.run_obr(["sync", "--import-only"], "import_bom");
 
         // Should either succeed or fail gracefully
         info!(
             "conformance_utf8_bom_handling: br_import_exit={}",
-            br_import.status.code().unwrap_or(-1)
+            obr_import.status.code().unwrap_or(-1)
         );
     }
 
@@ -1202,18 +1202,18 @@ fn conformance_schema_version() {
     workspace.init_both();
 
     // Create an issue
-    let br_create = workspace.run_br(["create", "Schema test", "--json"], "create");
-    assert!(br_create.status.success());
+    let obr_create = workspace.run_obr(["create", "Schema test", "--json"], "create");
+    assert!(obr_create.status.success());
 
     // Doctor should check schema
-    let br_doctor = workspace.run_br(["doctor"], "doctor");
+    let obr_doctor = workspace.run_obr(["doctor"], "doctor");
     let bd_doctor = workspace.run_bd(["doctor"], "doctor");
 
     // Both should pass doctor (schema should be valid)
     assert!(
-        br_doctor.status.success(),
-        "br doctor failed: {}",
-        br_doctor.stderr
+        obr_doctor.status.success(),
+        "obr doctor failed: {}",
+        obr_doctor.stderr
     );
     if !bd_doctor.status.success() {
         info!(
@@ -1236,25 +1236,25 @@ fn conformance_double_init() {
     let workspace = ConformanceWorkspace::new();
 
     // First init
-    let (br_init1, bd_init1) = workspace.init_both();
-    assert!(br_init1.status.success());
+    let (obr_init1, bd_init1) = workspace.init_both();
+    assert!(obr_init1.status.success());
     assert!(bd_init1.status.success());
 
     // Second init - should handle gracefully
-    let br_init2 = workspace.run_br(["init"], "init2");
+    let obr_init2 = workspace.run_obr(["init"], "init2");
     let bd_init2 = workspace.run_bd(["init"], "init2");
 
     info!(
         "conformance_double_init: br_init2_exit={} bd_init2_exit={}",
-        br_init2.status.code().unwrap_or(-1),
+        obr_init2.status.code().unwrap_or(-1),
         bd_init2.status.code().unwrap_or(-1)
     );
 
     // Both should either succeed (idempotent) or fail consistently
     assert_eq!(
-        br_init2.status.success(),
+        obr_init2.status.success(),
         bd_init2.status.success(),
-        "br and bd should handle double init the same way"
+        "obr and bd should handle double init the same way"
     );
 
     info!("conformance_double_init: PASS");
@@ -1271,33 +1271,33 @@ fn conformance_sync_after_delete() {
     workspace.init_both();
 
     // Create
-    let br_create = workspace.run_br(["create", "Delete me", "--json"], "create");
+    let obr_create = workspace.run_obr(["create", "Delete me", "--json"], "create");
     let bd_create = workspace.run_bd(["create", "Delete me", "--json"], "create");
 
-    assert!(br_create.status.success());
+    assert!(obr_create.status.success());
     assert!(bd_create.status.success());
 
-    let br_json: Value = serde_json::from_str(&extract_json_payload(&br_create.stdout)).unwrap();
+    let obr_json: Value = serde_json::from_str(&extract_json_payload(&obr_create.stdout)).unwrap();
     let bd_json: Value = serde_json::from_str(&extract_json_payload(&bd_create.stdout)).unwrap();
 
-    let br_id = br_json.get("id").and_then(|v| v.as_str()).unwrap();
+    let obr_id = obr_json.get("id").and_then(|v| v.as_str()).unwrap();
     let bd_id = bd_json.get("id").and_then(|v| v.as_str()).unwrap();
 
     // Delete
-    let br_delete = workspace.run_br(["delete", br_id], "delete");
+    let obr_delete = workspace.run_obr(["delete", obr_id], "delete");
     let bd_delete = workspace.run_bd(["delete", bd_id], "delete");
 
-    assert!(br_delete.status.success());
+    assert!(obr_delete.status.success());
     assert!(bd_delete.status.success());
 
     // Sync - should handle tombstones
-    let br_sync = workspace.run_br(["sync", "--flush-only"], "sync_flush");
+    let obr_sync = workspace.run_obr(["sync", "--flush-only"], "sync_flush");
     let bd_sync = workspace.run_bd(["sync", "--flush-only"], "sync_flush");
 
     assert!(
-        br_sync.status.success(),
-        "br sync after delete failed: {}",
-        br_sync.stderr
+        obr_sync.status.success(),
+        "obr sync after delete failed: {}",
+        obr_sync.stderr
     );
     assert!(
         bd_sync.status.success(),
@@ -1309,7 +1309,7 @@ fn conformance_sync_after_delete() {
 }
 
 // ============================================================================
-// CROSS-PLATFORM TESTS (4 tests) - Note: These primarily verify br behavior
+// CROSS-PLATFORM TESTS (4 tests) - Note: These primarily verify obr behavior
 // ============================================================================
 
 /// Test: UTF-8 file encoding consistency
@@ -1325,18 +1325,18 @@ fn conformance_encoding_utf8() {
     // Create with UTF-8 content
     let utf8_title = "Tëst wîth spëcïäl çhàrâctërs";
 
-    let br_create = workspace.run_br(["create", utf8_title, "--json"], "create_utf8");
+    let obr_create = workspace.run_obr(["create", utf8_title, "--json"], "create_utf8");
     let bd_create = workspace.run_bd(["create", utf8_title, "--json"], "create_utf8");
 
-    assert!(br_create.status.success());
+    assert!(obr_create.status.success());
     assert!(bd_create.status.success());
 
     // Flush and verify JSONL is valid UTF-8
-    let _ = workspace.run_br(["sync", "--flush-only"], "flush");
+    let _ = workspace.run_obr(["sync", "--flush-only"], "flush");
 
-    let br_jsonl_path = workspace.br_root.join(".beads").join("issues.jsonl");
-    if br_jsonl_path.exists() {
-        let content = fs::read_to_string(&br_jsonl_path).expect("should read as valid UTF-8");
+    let obr_jsonl_path = workspace.obr_root.join(".obr").join("issues.jsonl");
+    if obr_jsonl_path.exists() {
+        let content = fs::read_to_string(&obr_jsonl_path).expect("should read as valid UTF-8");
         assert!(
             content.contains(utf8_title),
             "UTF-8 content should be preserved"
@@ -1359,7 +1359,7 @@ fn conformance_line_endings() {
     // Create issue with multiline description (has embedded newlines)
     let multiline_desc = "Line 1\nLine 2\nLine 3";
 
-    let br_create = workspace.run_br(
+    let obr_create = workspace.run_obr(
         [
             "create",
             "Multiline test",
@@ -1380,16 +1380,16 @@ fn conformance_line_endings() {
         "create_multiline",
     );
 
-    assert!(br_create.status.success());
+    assert!(obr_create.status.success());
     assert!(bd_create.status.success());
 
     // Flush
-    let _ = workspace.run_br(["sync", "--flush-only"], "flush");
+    let _ = workspace.run_obr(["sync", "--flush-only"], "flush");
 
     // Read and check - content should preserve line structure
-    let br_jsonl_path = workspace.br_root.join(".beads").join("issues.jsonl");
-    if br_jsonl_path.exists() {
-        let content = fs::read_to_string(&br_jsonl_path).expect("read jsonl");
+    let obr_jsonl_path = workspace.obr_root.join(".obr").join("issues.jsonl");
+    if obr_jsonl_path.exists() {
+        let content = fs::read_to_string(&obr_jsonl_path).expect("read jsonl");
         // JSONL escapes newlines as \n in the JSON string value
         assert!(
             content.contains("Line 1") || content.contains("Line 2"),
@@ -1413,16 +1413,16 @@ fn conformance_path_separators_in_content() {
     // Title with characters that look like path separators
     let tricky_title = "Fix src/module/file.rs and tests\\unit\\test.rs";
 
-    let br_create = workspace.run_br(["create", tricky_title, "--json"], "create_paths");
+    let obr_create = workspace.run_obr(["create", tricky_title, "--json"], "create_paths");
     let bd_create = workspace.run_bd(["create", tricky_title, "--json"], "create_paths");
 
-    assert!(br_create.status.success());
+    assert!(obr_create.status.success());
     assert!(bd_create.status.success());
 
     // Verify title preserved exactly
-    let br_json: Value = serde_json::from_str(&extract_json_payload(&br_create.stdout)).unwrap();
+    let obr_json: Value = serde_json::from_str(&extract_json_payload(&obr_create.stdout)).unwrap();
     assert_eq!(
-        br_json.get("title").and_then(|v| v.as_str()),
+        obr_json.get("title").and_then(|v| v.as_str()),
         Some(tricky_title),
         "Path-like characters should be preserved in title"
     );
@@ -1448,12 +1448,12 @@ fn conformance_null_bytes() {
         return;
     }
 
-    let br_out = workspace.run_br(["create", null_title, "--json"], "create_null");
+    let obr_out = workspace.run_obr(["create", null_title, "--json"], "create_null");
     let bd_out = workspace.run_bd(["create", null_title, "--json"], "create_null");
 
     info!(
         "conformance_null_bytes: br_exit={} bd_exit={}",
-        br_out.status.code().unwrap_or(-1),
+        obr_out.status.code().unwrap_or(-1),
         bd_out.status.code().unwrap_or(-1)
     );
 

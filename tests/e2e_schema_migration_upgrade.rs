@@ -1,4 +1,4 @@
-//! E2E regression tests for issue #398: `br doctor migrate-schema` must be
+//! E2E regression tests for issue #398: `obr doctor migrate-schema` must be
 //! able to upgrade every schema actually shipped since v13 to the current
 //! schema — in particular schema 15 (the #388 gate-history schema from the
 //! v0.2.19-era line) and schema 16 (created by the released v0.2.19 binary),
@@ -7,12 +7,12 @@
 //!
 //! Fixture provenance (NOT synthesized `PRAGMA user_version` stamps):
 //! - `tests/fixtures/schema_migration/schema15_pre384_era.db.gz` was created
-//!   by a br binary built from commit `7c4af2a6~1` (`d1b90640`), the last
+//!   by a obr binary built from commit `7c4af2a6~1` (`d1b90640`), the last
 //!   commit with `CURRENT_SCHEMA_VERSION = 15`, by running real `init` /
 //!   `create` / `dep add` / `label add` / `comment add` / `close` / `sync
 //!   --flush-only` commands.
 //! - `tests/fixtures/schema_migration/schema16_v0219_release.db.gz` was
-//!   created the same way by the actual released `br 0.2.19` binary
+//!   created the same way by the actual released `obr 0.2.19` binary
 //!   (linux_x86_64 GitHub release asset), which stamps schema 16.
 //!
 //! Each test follows exactly the remediation the SCHEMA_MISMATCH error
@@ -21,7 +21,7 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, extract_json_payload, run_br};
+use common::cli::{ObrWorkspace, extract_json_payload, run_obr};
 use flate2::read::GzDecoder;
 use serde_json::Value;
 use std::fs;
@@ -35,18 +35,18 @@ fn fixture_dir() -> PathBuf {
         .join("schema_migration")
 }
 
-fn install_fixture_workspace(workspace: &BrWorkspace, db_gz: &str, issues: &str, config: &str) {
-    let beads_dir = workspace.root.join(".beads");
-    fs::create_dir_all(&beads_dir).expect("create .beads");
+fn install_fixture_workspace(workspace: &ObrWorkspace, db_gz: &str, issues: &str, config: &str) {
+    let obr_dir = workspace.root.join(".obr");
+    fs::create_dir_all(&obr_dir).expect("create .obr");
 
     let mut decoder = GzDecoder::new(fs::File::open(fixture_dir().join(db_gz)).expect("open gz"));
     let mut db_bytes = Vec::new();
     decoder
         .read_to_end(&mut db_bytes)
         .expect("gunzip fixture db");
-    fs::write(beads_dir.join("beads.db"), &db_bytes).expect("write beads.db");
-    fs::copy(fixture_dir().join(issues), beads_dir.join("issues.jsonl")).expect("copy jsonl");
-    fs::copy(fixture_dir().join(config), beads_dir.join("config.yaml")).expect("copy config");
+    fs::write(obr_dir.join("obr.db"), &db_bytes).expect("write obr.db");
+    fs::copy(fixture_dir().join(issues), obr_dir.join("issues.jsonl")).expect("copy jsonl");
+    fs::copy(fixture_dir().join(config), obr_dir.join("config.yaml")).expect("copy config");
 }
 
 fn header_user_version(db_path: &Path) -> u32 {
@@ -80,9 +80,9 @@ fn upgrade_fixture_end_to_end(
     expected_from: u64,
     expected_issue_total: u64,
 ) {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     install_fixture_workspace(&workspace, db_gz, issues, config);
-    let db_path = workspace.root.join(".beads").join("beads.db");
+    let db_path = workspace.root.join(".obr").join("obr.db");
     assert_eq!(
         u64::from(header_user_version(&db_path)),
         expected_from,
@@ -90,7 +90,7 @@ fn upgrade_fixture_end_to_end(
     );
 
     // 1. Ordinary commands refuse and print the reviewed-migration remediation.
-    let stats = run_br(
+    let stats = run_obr(
         &workspace,
         ["stats", "--json", "--no-auto-flush", "--no-auto-import"],
         "stats_schema_mismatch",
@@ -103,11 +103,11 @@ fn upgrade_fixture_end_to_end(
     let refusal = format!("{}{}", stats.stdout, stats.stderr);
     assert!(
         refusal.contains("migrate-schema plan"),
-        "{label}: SCHEMA_MISMATCH remediation must name `br doctor migrate-schema plan`; got: {refusal}"
+        "{label}: SCHEMA_MISMATCH remediation must name `obr doctor migrate-schema plan`; got: {refusal}"
     );
 
     // 2. Follow the remediation: plan must accept the fixture.
-    let plan = run_br(
+    let plan = run_obr(
         &workspace,
         [
             "doctor",
@@ -140,7 +140,7 @@ fn upgrade_fixture_end_to_end(
         .to_string();
 
     // 3. Apply migrates atomically to schema 17.
-    let apply = run_br(
+    let apply = run_obr(
         &workspace,
         [
             "doctor",
@@ -181,7 +181,7 @@ fn upgrade_fixture_end_to_end(
     }
 
     // 4. Tracker data survives and ordinary commands work again.
-    let stats_after = run_br(
+    let stats_after = run_obr(
         &workspace,
         ["stats", "--json", "--no-auto-flush", "--no-auto-import"],
         "stats_after_apply",
@@ -199,7 +199,7 @@ fn upgrade_fixture_end_to_end(
         "{label}: issue count must survive the migration"
     );
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         [
             "list",
@@ -218,7 +218,7 @@ fn upgrade_fixture_end_to_end(
 
     // 5. The consumed receipt is stale: re-plan reports nothing to do, and
     //    re-applying the old token must be rejected without mutating.
-    let replan = run_br(
+    let replan = run_obr(
         &workspace,
         [
             "doctor",
@@ -243,7 +243,7 @@ fn upgrade_fixture_end_to_end(
         "{label}: second plan must be a no-op"
     );
 
-    let stale_apply = run_br(
+    let stale_apply = run_obr(
         &workspace,
         [
             "doctor",
@@ -270,7 +270,7 @@ fn upgrade_fixture_end_to_end(
 
     // 6. Undo restores the exact pre-migration family, and the migration can
     //    be re-planned and re-applied afterwards.
-    let undo = run_br(
+    let undo = run_obr(
         &workspace,
         [
             "doctor",
@@ -295,7 +295,7 @@ fn upgrade_fixture_end_to_end(
         "{label}: undo must restore the pre-migration schema version"
     );
 
-    let plan2 = run_br(
+    let plan2 = run_obr(
         &workspace,
         [
             "doctor",
@@ -319,7 +319,7 @@ fn upgrade_fixture_end_to_end(
         .as_str()
         .expect("token2")
         .to_string();
-    let apply2 = run_br(
+    let apply2 = run_obr(
         &workspace,
         [
             "doctor",

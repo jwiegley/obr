@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-use beads_rust::model::{Dependency, DependencyType, Issue, IssueType, Priority, Status};
 use chrono::{Duration, TimeZone, Utc};
+use obr::model::{Dependency, DependencyType, Issue, IssueType, Priority, Status};
 
 /// Base time for test fixtures - set in the past to allow tests to manipulate
 /// `updated_at` without violating the `created_at` <= `updated_at` constraint.
@@ -61,7 +61,7 @@ fn hash_title(title: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(title.as_bytes());
-    beads_rust::util::hex_encode(&hasher.finalize())[..8].to_string()
+    obr::util::hex_encode(&hasher.finalize())[..8].to_string()
 }
 
 pub struct IssueBuilder {

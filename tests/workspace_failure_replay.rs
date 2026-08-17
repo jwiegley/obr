@@ -1,6 +1,6 @@
 mod common;
 
-use common::cli::{BrRun, BrWorkspace, extract_json_payload, run_br};
+use common::cli::{ObrRun, ObrWorkspace, extract_json_payload, run_obr};
 use common::{
     WorkspaceFailureCommandOutcome, WorkspaceFailureFixtureMetadata,
     isolated_workspace_failure_fixture, list_workspace_failure_fixtures,
@@ -11,22 +11,22 @@ use std::path::{Path, PathBuf};
 
 struct FixtureWorkspace {
     metadata: WorkspaceFailureFixtureMetadata,
-    beads_dir: PathBuf,
-    workspace: BrWorkspace,
+    obr_dir: PathBuf,
+    workspace: ObrWorkspace,
 }
 
 fn fixture_workspace(name: &str) -> FixtureWorkspace {
     let isolated = isolated_workspace_failure_fixture(name).expect("isolated fixture");
     let metadata = isolated.fixture.metadata.clone();
     let root = isolated.root.clone();
-    let beads_dir = isolated.beads_dir.clone();
+    let obr_dir = isolated.obr_dir.clone();
     let log_dir = root.join("logs");
     fs::create_dir_all(&log_dir).expect("log dir");
 
     let fixture = FixtureWorkspace {
         metadata,
-        beads_dir,
-        workspace: BrWorkspace {
+        obr_dir,
+        workspace: ObrWorkspace {
             temp_dir: isolated.temp_dir,
             root,
             log_dir,
@@ -61,11 +61,11 @@ fn prepare_current_corrupt_db_text(fixture: &FixtureWorkspace) {
 
 fn prepare_current_interrupted_rebuild_leftovers(fixture: &FixtureWorkspace) {
     let db_path = current_database_path(fixture);
-    let backup_path = fixture.beads_dir.join("beads.db.bad_20260312T000000Z");
+    let backup_path = fixture.obr_dir.join("obr.db.bad_20260312T000000Z");
     let marker_path = fixture
-        .beads_dir
-        .join(".br_recovery")
-        .join("beads.db.20260312T000000Z.rebuild-failed");
+        .obr_dir
+        .join(".obr_recovery")
+        .join("obr.db.20260312T000000Z.rebuild-failed");
     let db_bytes = fs::read(&db_path).expect("read interrupted-rebuild live database");
     let backup_bytes = fs::read(&backup_path).expect("read interrupted-rebuild backup");
     let marker_bytes = fs::read(&marker_path).expect("read interrupted-rebuild marker");
@@ -116,7 +116,7 @@ fn preserve_unowned_malformed_primary_wal(fixture: &FixtureWorkspace) {
     preserve_generated_artifact(fixture, &wal_path);
 
     let archived_wal = fixture
-        .beads_dir
+        .obr_dir
         .join(".fixture_current_import_artifacts")
         .join("beads.db-wal");
     assert!(!wal_path.exists(), "fixture WAL should not remain active");
@@ -133,7 +133,7 @@ fn preserve_unowned_malformed_primary_wal(fixture: &FixtureWorkspace) {
 }
 
 fn prepare_current_db_jsonl_disagreement(fixture: &FixtureWorkspace) {
-    let jsonl_path = fixture.beads_dir.join("issues.jsonl");
+    let jsonl_path = fixture.obr_dir.join("issues.jsonl");
     let full_jsonl = fs::read_to_string(&jsonl_path).expect("read drift fixture JSONL");
     let seed_record = full_jsonl
         .lines()
@@ -148,13 +148,13 @@ fn prepare_current_db_jsonl_disagreement(fixture: &FixtureWorkspace) {
     // the exact DB/JSONL disagreement this fixture exists to exercise.
     preserve_legacy_database_family(fixture, &current_database_path(fixture));
 
-    let full_backup = fixture.beads_dir.join("issues.fixture-full.jsonl");
+    let full_backup = fixture.obr_dir.join("issues.fixture-full.jsonl");
     fs::rename(&jsonl_path, &full_backup).expect("preserve full fixture JSONL");
     fs::write(&jsonl_path, format!("{seed_record}\n")).expect("write seed-only fixture JSONL");
 
     import_current_database(fixture, "db_jsonl_disagreement_current_schema_import");
 
-    let seed_backup = fixture.beads_dir.join("issues.fixture-seed.jsonl");
+    let seed_backup = fixture.obr_dir.join("issues.fixture-seed.jsonl");
     fs::rename(&jsonl_path, seed_backup).expect("preserve seed-only fixture JSONL");
     fs::rename(full_backup, &jsonl_path).expect("restore full drift fixture JSONL");
     // `sync --status` distinguishes this one-sided disagreement using the
@@ -172,8 +172,8 @@ fn prepare_current_duplicate_config_rows(fixture: &FixtureWorkspace) {
     preserve_legacy_database_family(fixture, &current_database_path(fixture));
     import_current_database(fixture, "duplicate_config_rows_current_schema_import");
 
-    let db_path = fixture.beads_dir.join("beads.db");
-    let connection = beads_rust::franken_sync::Connection::open(db_path.display().to_string())
+    let db_path = fixture.obr_dir.join("obr.db");
+    let connection = obr::franken_sync::Connection::open(db_path.display().to_string())
         .expect("open current duplicate-config fixture database");
     connection
         .execute("DELETE FROM config WHERE key = 'issue_prefix'")
@@ -212,7 +212,7 @@ fn prepare_current_journal_sidecar_leftover(fixture: &FixtureWorkspace) {
 }
 
 fn prepare_current_jsonl_conflict_markers(fixture: &FixtureWorkspace) {
-    let jsonl_path = fixture.beads_dir.join("issues.jsonl");
+    let jsonl_path = fixture.obr_dir.join("issues.jsonl");
     let conflict_jsonl = fs::read_to_string(&jsonl_path).expect("read conflict fixture JSONL");
     let seed_record = conflict_jsonl
         .lines()
@@ -220,13 +220,13 @@ fn prepare_current_jsonl_conflict_markers(fixture: &FixtureWorkspace) {
         .expect("conflict fixture should retain a valid seed record");
 
     preserve_legacy_database_family(fixture, &current_database_path(fixture));
-    let conflict_backup = fixture.beads_dir.join("issues.fixture-conflict.jsonl");
+    let conflict_backup = fixture.obr_dir.join("issues.fixture-conflict.jsonl");
     fs::rename(&jsonl_path, &conflict_backup).expect("preserve conflict fixture JSONL");
     fs::write(&jsonl_path, format!("{seed_record}\n")).expect("write conflict seed JSONL");
     import_current_database(fixture, "jsonl_conflict_current_schema_import");
     mark_database_needs_flush(&current_database_path(fixture));
 
-    let seed_backup = fixture.beads_dir.join("issues.fixture-seed.jsonl");
+    let seed_backup = fixture.obr_dir.join("issues.fixture-seed.jsonl");
     fs::rename(&jsonl_path, seed_backup).expect("preserve conflict seed JSONL");
     fs::rename(conflict_backup, &jsonl_path).expect("restore conflict fixture JSONL");
     fs::write(jsonl_path, conflict_jsonl).expect("refresh conflict fixture timestamp");
@@ -259,7 +259,7 @@ fn prepare_current_wal_without_shm(fixture: &FixtureWorkspace) {
     let wal_path = PathBuf::from(format!("{}-wal", db_path.display()));
     let shm_path = PathBuf::from(format!("{}-shm", db_path.display()));
     let historical_wal = fs::read(&wal_path).expect("read historical WAL-only fixture");
-    let import_recovery = fixture.beads_dir.join(".br_recovery");
+    let import_recovery = fixture.obr_dir.join(".obr_recovery");
     match fs::symlink_metadata(&import_recovery) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Ok(_) => panic!("checked-in WAL-only fixture must not own recovery artifacts"),
@@ -268,7 +268,7 @@ fn prepare_current_wal_without_shm(fixture: &FixtureWorkspace) {
 
     prepare_current_database(fixture, "wal_without_shm_current_schema_import");
     let archived_historical_wal = fixture
-        .beads_dir
+        .obr_dir
         .join(".fixture_legacy_database_family")
         .join("beads.db-wal");
     assert_eq!(
@@ -313,7 +313,7 @@ fn prepare_current_wal_without_shm(fixture: &FixtureWorkspace) {
     };
     preserve_generated_artifact(fixture, &shm_path);
     let archived_shm = fixture
-        .beads_dir
+        .obr_dir
         .join(".fixture_current_import_artifacts")
         .join("beads.db-shm");
     assert!(!shm_path.exists(), "fixture SHM should not remain active");
@@ -350,9 +350,9 @@ fn prepare_current_wal_without_shm(fixture: &FixtureWorkspace) {
     };
     preserve_generated_artifact(fixture, &import_recovery);
     let archived_recovery = fixture
-        .beads_dir
+        .obr_dir
         .join(".fixture_current_import_artifacts")
-        .join(".br_recovery");
+        .join(".obr_recovery");
     match fs::symlink_metadata(&import_recovery) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Ok(_) => panic!("fixture import recovery artifacts should not remain active"),
@@ -388,21 +388,21 @@ fn prepare_current_database(fixture: &FixtureWorkspace, label: &str) {
 
 fn current_database_path(fixture: &FixtureWorkspace) -> PathBuf {
     if fixture.metadata.name == "metadata_custom_paths" {
-        fixture.beads_dir.join("custom.db")
+        fixture.obr_dir.join("custom.db")
     } else {
-        fixture.beads_dir.join("beads.db")
+        fixture.obr_dir.join("obr.db")
     }
 }
 
 fn preserve_legacy_database_family(fixture: &FixtureWorkspace, db_path: &Path) {
-    let legacy_dir = fixture.beads_dir.join(".fixture_legacy_database_family");
+    let legacy_dir = fixture.obr_dir.join(".fixture_legacy_database_family");
     fs::create_dir_all(&legacy_dir).expect("create legacy fixture directory");
     let db_name = db_path
         .file_name()
         .and_then(|name| name.to_str())
         .expect("fixture database path should have a UTF-8 file name");
     let sidecar_prefix = format!("{db_name}-");
-    let mut database_family = fs::read_dir(&fixture.beads_dir)
+    let mut database_family = fs::read_dir(&fixture.obr_dir)
         .expect("read fixture directory")
         .filter_map(std::result::Result::ok)
         .filter(|entry| {
@@ -423,7 +423,7 @@ fn preserve_generated_artifact(fixture: &FixtureWorkspace, path: &Path) {
     if fs::symlink_metadata(path).is_err() {
         return;
     }
-    let archive = fixture.beads_dir.join(".fixture_current_import_artifacts");
+    let archive = fixture.obr_dir.join(".fixture_current_import_artifacts");
     fs::create_dir_all(&archive).expect("create current-import artifact archive");
     let file_name = path
         .file_name()
@@ -445,7 +445,7 @@ fn sorted_directory_entry_names(path: &Path, context: &str) -> Vec<std::ffi::OsS
 }
 
 fn mark_database_needs_flush(db_path: &Path) {
-    let connection = beads_rust::franken_sync::Connection::open(db_path.display().to_string())
+    let connection = obr::franken_sync::Connection::open(db_path.display().to_string())
         .expect("open current fixture database for DB-newer witness");
     connection
         .execute("DELETE FROM metadata WHERE key = 'needs_flush'")
@@ -457,7 +457,7 @@ fn mark_database_needs_flush(db_path: &Path) {
 }
 
 fn import_current_database(fixture: &FixtureWorkspace, label: &str) {
-    let import = run_br(
+    let import = run_obr(
         &fixture.workspace,
         ["sync", "--import-only", "--json"],
         label,
@@ -470,7 +470,7 @@ fn import_current_database(fixture: &FixtureWorkspace, label: &str) {
     );
 }
 
-fn parse_stdout_json(run: &BrRun, context: &str) -> Value {
+fn parse_stdout_json(run: &ObrRun, context: &str) -> Value {
     let payload = extract_json_payload(&run.stdout);
     match serde_json::from_str(&payload) {
         Ok(value) => value,
@@ -508,33 +508,33 @@ fn surface_label(name: &str, surface: &str) -> String {
     format!("{name}_{slug}")
 }
 
-fn run_surface(fixture: &FixtureWorkspace, surface: &str) -> BrRun {
+fn run_surface(fixture: &FixtureWorkspace, surface: &str) -> ObrRun {
     let label = surface_label(&fixture.metadata.name, surface);
     match surface {
-        "startup/open" => run_br(&fixture.workspace, ["list", "--json"], &label),
-        "create" => run_br(
+        "startup/open" => run_obr(&fixture.workspace, ["list", "--json"], &label),
+        "create" => run_obr(
             &fixture.workspace,
             ["create", "Replay harness probe", "--json"],
             &label,
         ),
-        "doctor" => run_br(&fixture.workspace, ["doctor", "--json"], &label),
-        "doctor --repair" => run_br(&fixture.workspace, ["doctor", "--repair", "--json"], &label),
-        "sync --status" => run_br(&fixture.workspace, ["sync", "--status", "--json"], &label),
-        "sync --import-only" => run_br(
+        "doctor" => run_obr(&fixture.workspace, ["doctor", "--json"], &label),
+        "doctor --repair" => run_obr(&fixture.workspace, ["doctor", "--repair", "--json"], &label),
+        "sync --status" => run_obr(&fixture.workspace, ["sync", "--status", "--json"], &label),
+        "sync --import-only" => run_obr(
             &fixture.workspace,
             ["sync", "--import-only", "--json"],
             &label,
         ),
-        "list --no-db" => run_br(&fixture.workspace, ["--no-db", "list", "--json"], &label),
-        "config get" => run_br(
+        "list --no-db" => run_obr(&fixture.workspace, ["--no-db", "list", "--json"], &label),
+        "config get" => run_obr(
             &fixture.workspace,
             ["config", "get", "issue_prefix", "--json"],
             &label,
         ),
-        "config list" => run_br(&fixture.workspace, ["config", "list", "--json"], &label),
-        "history" => run_br(&fixture.workspace, ["history", "list", "--json"], &label),
-        "where" => run_br(&fixture.workspace, ["where", "--json"], &label),
-        "info" => run_br(&fixture.workspace, ["info", "--json"], &label),
+        "config list" => run_obr(&fixture.workspace, ["config", "list", "--json"], &label),
+        "history" => run_obr(&fixture.workspace, ["history", "list", "--json"], &label),
+        "where" => run_obr(&fixture.workspace, ["where", "--json"], &label),
+        "info" => run_obr(&fixture.workspace, ["info", "--json"], &label),
         other => unreachable!("unsupported replay surface '{other}'"),
     }
 }
@@ -559,7 +559,7 @@ fn assert_sqlite_header(db_path: &Path, context: &str) {
 }
 
 fn resolved_database_path(fixture: &FixtureWorkspace, surface: &str) -> PathBuf {
-    let where_run = run_br(
+    let where_run = run_obr(
         &fixture.workspace,
         ["where", "--json"],
         &surface_label(&fixture.metadata.name, surface),
@@ -577,7 +577,7 @@ fn resolved_database_path(fixture: &FixtureWorkspace, surface: &str) -> PathBuf 
         .expect("where output should include database_path")
 }
 
-fn assert_config_error(run: &BrRun, needle: &str, context: &str) {
+fn assert_config_error(run: &ObrRun, needle: &str, context: &str) {
     assert!(
         !run.status.success(),
         "{context} should fail\nstdout={}\nstderr={}",
@@ -637,8 +637,8 @@ fn assert_custom_path_resolution(fixture: &FixtureWorkspace, surface: &str, json
         return;
     }
 
-    let expected_db_path = fixture.beads_dir.join("custom.db");
-    let expected_jsonl_path = fixture.beads_dir.join("custom.jsonl");
+    let expected_db_path = fixture.obr_dir.join("custom.db");
+    let expected_jsonl_path = fixture.obr_dir.join("custom.jsonl");
     let surface_name = match surface {
         "where" => "where",
         "info" => "info",
@@ -936,7 +936,7 @@ fn assert_surface_outcome(
 
 fn assert_core_read_success(fixture: &FixtureWorkspace) {
     let list_workspace = fixture_workspace(&fixture.metadata.name);
-    let list = run_br(
+    let list = run_obr(
         &list_workspace.workspace,
         ["list", "--json"],
         &surface_label(&fixture.metadata.name, "core_list"),
@@ -951,7 +951,7 @@ fn assert_core_read_success(fixture: &FixtureWorkspace) {
     let issue_id = first_issue_id(&list_json);
 
     let ready_workspace = fixture_workspace(&fixture.metadata.name);
-    let ready = run_br(
+    let ready = run_obr(
         &ready_workspace.workspace,
         ["ready", "--json"],
         &surface_label(&fixture.metadata.name, "core_ready"),
@@ -965,7 +965,7 @@ fn assert_core_read_success(fixture: &FixtureWorkspace) {
     let _ready_json = parse_stdout_json(&ready, &format!("{} core ready", fixture.metadata.name));
 
     let show_workspace = fixture_workspace(&fixture.metadata.name);
-    let show = run_br(
+    let show = run_obr(
         &show_workspace.workspace,
         ["show", &issue_id, "--json"],
         &surface_label(&fixture.metadata.name, "core_show"),
@@ -999,7 +999,7 @@ fn assert_core_read_failure(
     assert_surface_outcome(&list_workspace, "startup/open", failure);
 
     let ready_workspace = fixture_workspace(&fixture.metadata.name);
-    let ready = run_br(
+    let ready = run_obr(
         &ready_workspace.workspace,
         ["ready", "--json"],
         &surface_label(&fixture.metadata.name, "core_ready_fail"),
@@ -1028,7 +1028,7 @@ fn assert_core_read_failure(
         .expect("where jsonl_path");
     let issue_id = first_issue_id_from_jsonl(&jsonl_path);
     let show_workspace = fixture_workspace(&fixture.metadata.name);
-    let show = run_br(
+    let show = run_obr(
         &show_workspace.workspace,
         ["show", &issue_id, "--json"],
         &surface_label(&fixture.metadata.name, "core_show_fail"),
@@ -1054,7 +1054,7 @@ fn assert_core_read_failure(
 
 fn assert_core_write_success(
     fixture: &FixtureWorkspace,
-    create: &BrRun,
+    create: &ObrRun,
     expected_create: WorkspaceFailureCommandOutcome,
 ) {
     let create_json = parse_stdout_json(create, &format!("{} core create", fixture.metadata.name));
@@ -1066,7 +1066,7 @@ fn assert_core_write_success(
         );
     }
 
-    let show = run_br(
+    let show = run_obr(
         &fixture.workspace,
         ["show", &issue_id, "--json"],
         &surface_label(&fixture.metadata.name, "core_show_created"),
@@ -1082,7 +1082,7 @@ fn assert_core_write_success(
         &format!("{} core show after create", fixture.metadata.name),
     );
 
-    let update = run_br(
+    let update = run_obr(
         &fixture.workspace,
         ["update", &issue_id, "--status", "in_progress", "--json"],
         &surface_label(&fixture.metadata.name, "core_update"),
@@ -1094,7 +1094,7 @@ fn assert_core_write_success(
         update.stderr
     );
 
-    let label_add = run_br(
+    let label_add = run_obr(
         &fixture.workspace,
         ["label", "add", &issue_id, "replay-probe", "--json"],
         &surface_label(&fixture.metadata.name, "core_label"),
@@ -1106,7 +1106,7 @@ fn assert_core_write_success(
         label_add.stderr
     );
 
-    let comment = run_br(
+    let comment = run_obr(
         &fixture.workspace,
         ["comments", "add", &issue_id, "Replay note", "--json"],
         &surface_label(&fixture.metadata.name, "core_comment"),
@@ -1118,7 +1118,7 @@ fn assert_core_write_success(
         comment.stderr
     );
 
-    let close = run_br(
+    let close = run_obr(
         &fixture.workspace,
         ["close", &issue_id, "--reason", "Replay close", "--json"],
         &surface_label(&fixture.metadata.name, "core_close"),
@@ -1130,7 +1130,7 @@ fn assert_core_write_success(
         close.stderr
     );
 
-    let reopen = run_br(
+    let reopen = run_obr(
         &fixture.workspace,
         ["reopen", &issue_id, "--json"],
         &surface_label(&fixture.metadata.name, "core_reopen"),
@@ -1142,7 +1142,7 @@ fn assert_core_write_success(
         reopen.stderr
     );
 
-    let delete = run_br(
+    let delete = run_obr(
         &fixture.workspace,
         ["delete", &issue_id, "--json"],
         &surface_label(&fixture.metadata.name, "core_delete"),
@@ -1157,7 +1157,7 @@ fn assert_core_write_success(
 
 fn assert_core_write_failure(
     fixture: &FixtureWorkspace,
-    create: &BrRun,
+    create: &ObrRun,
     expected_create: WorkspaceFailureCommandOutcome,
 ) {
     match expected_create {
@@ -1227,7 +1227,7 @@ fn workspace_failure_replay_core_read_surfaces_match_expected_posture() {
 
     for fixture in fixtures {
         let where_workspace = fixture_workspace(&fixture.metadata.name);
-        let where_run = run_br(
+        let where_run = run_obr(
             &where_workspace.workspace,
             ["where", "--json"],
             &surface_label(&fixture.metadata.name, "core_where"),
@@ -1242,7 +1242,7 @@ fn workspace_failure_replay_core_read_surfaces_match_expected_posture() {
             parse_stdout_json(&where_run, &format!("{} core where", fixture.metadata.name));
 
         let info_workspace = fixture_workspace(&fixture.metadata.name);
-        let info = run_br(
+        let info = run_obr(
             &info_workspace.workspace,
             ["info", "--json"],
             &surface_label(&fixture.metadata.name, "core_info"),
@@ -1293,7 +1293,7 @@ fn workspace_failure_replay_core_write_surfaces_match_expected_posture() {
             .outcome_for("create")
             .expect("create expectation");
         let workspace = fixture_workspace(&fixture.metadata.name);
-        let create = run_br(
+        let create = run_obr(
             &workspace.workspace,
             ["create", "Replay write probe", "--json"],
             &surface_label(&fixture.metadata.name, "core_create"),
@@ -1426,4 +1426,57 @@ fn workspace_failure_replay_classification_coherence() {
         "fixture corpus should cover at least 3 distinct classification levels, got: {:?}",
         families
     );
+}
+
+/// A fixture must declare every database sidecar it ships.
+///
+/// `corrupt_db_text` says "the primary database file is plain text". It shipped
+/// a 650992-byte `obr.db-wal` beside those 22 bytes and said nothing about it,
+/// and that sidecar decided the fixture's fate: the sync-merge gate asks
+/// `database_sidecars_may_hold_committed_bytes_at`, which treats any WAL over
+/// its 32-byte header as possibly holding committed pages, so the family could
+/// never be declared receipt-free and the fixture could never reach the
+/// recovery path it names. Four other fixtures carried the identical blob.
+/// None came from a fixture author: `e6206750` force-added whatever `.db-wal`
+/// happened to be in the working tree, and later commits propagated it.
+///
+/// Note for anyone re-deriving this with the `sqlite3` binary: C SQLite applies
+/// that WAL and reports a valid `user_version` 4 database over the 22 bytes.
+/// fsqlite, the engine obr actually uses, does not — it reports a non-database
+/// either way. The sidecar mattered through the gate's size check, not through
+/// reconstitution.
+///
+/// So the rule is simply that a sidecar has to be declared, which is cheap to
+/// satisfy and exact: `sidecar_wal_without_shm` needs one, says so, and passes.
+#[test]
+fn every_sidecar_a_fixture_ships_is_declared_in_its_manifest() {
+    let fixtures = list_workspace_failure_fixtures().expect("fixture catalog");
+    assert!(!fixtures.is_empty(), "fixture catalog should not be empty");
+
+    for fixture in fixtures {
+        let name = &fixture.metadata.name;
+        let prose = format!(
+            "{} {} {}",
+            fixture.metadata.description,
+            fixture.metadata.notes.join(" "),
+            fixture.metadata.family
+        )
+        .to_lowercase();
+        let declares_sidecar =
+            prose.contains("wal") || prose.contains("journal") || prose.contains("sidecar");
+
+        let isolated = isolated_workspace_failure_fixture(name).expect("isolated fixture");
+        let mut shipped = Vec::new();
+        for suffix in ["-wal", "-shm", "-journal"] {
+            let sidecar = isolated.obr_dir.join(format!("obr.db{suffix}"));
+            if sidecar.exists() {
+                shipped.push(suffix);
+            }
+        }
+
+        assert!(
+            shipped.is_empty() || declares_sidecar,
+            "fixture '{name}' ships {shipped:?} but its manifest never mentions a wal, journal              or sidecar. Either say so — the way sidecar_wal_without_shm does — or delete it.              An undeclared sidecar silently decides what the fixture tests: the sync-merge gate              treats a WAL over 32 bytes as possibly holding committed pages, which is how five              fixtures came to carry an accidental 650992-byte blob that stopped three of them              from reaching the states their manifests describe."
+        );
+    }
 }

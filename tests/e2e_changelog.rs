@@ -9,7 +9,7 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, extract_json_payload, run_br};
+use common::cli::{ObrWorkspace, extract_json_payload, run_obr};
 use serde_json::Value;
 use std::thread::sleep;
 use std::time::Duration;
@@ -36,28 +36,28 @@ fn changelog_with_closed_issues() {
     common::init_test_logging();
     info!("Starting changelog_with_closed_issues test");
 
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
 
     // Create and close some issues
-    let create1 = run_br(
+    let create1 = run_obr(
         &workspace,
         ["create", "Fix login bug", "--type", "bug"],
         "create1",
     );
     let id1 = parse_created_id(&create1.stdout);
-    run_br(&workspace, ["close", &id1], "close1");
+    run_obr(&workspace, ["close", &id1], "close1");
 
-    let create2 = run_br(
+    let create2 = run_obr(
         &workspace,
         ["create", "Add dark mode", "--type", "feature"],
         "create2",
     );
     let id2 = parse_created_id(&create2.stdout);
-    run_br(&workspace, ["close", &id2], "close2");
+    run_obr(&workspace, ["close", &id2], "close2");
 
     // Generate changelog
-    let changelog = run_br(&workspace, ["changelog", "--json"], "changelog");
+    let changelog = run_obr(&workspace, ["changelog", "--json"], "changelog");
     assert!(
         changelog.status.success(),
         "changelog failed: {}",
@@ -80,27 +80,27 @@ fn changelog_groups_by_type() {
     common::init_test_logging();
     info!("Starting changelog_groups_by_type test");
 
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
 
     // Create issues of different types
-    let create1 = run_br(&workspace, ["create", "Bug fix 1", "--type", "bug"], "c1");
+    let create1 = run_obr(&workspace, ["create", "Bug fix 1", "--type", "bug"], "c1");
     let id1 = parse_created_id(&create1.stdout);
-    run_br(&workspace, ["close", &id1], "close1");
+    run_obr(&workspace, ["close", &id1], "close1");
 
-    let create2 = run_br(&workspace, ["create", "Bug fix 2", "--type", "bug"], "c2");
+    let create2 = run_obr(&workspace, ["create", "Bug fix 2", "--type", "bug"], "c2");
     let id2 = parse_created_id(&create2.stdout);
-    run_br(&workspace, ["close", &id2], "close2");
+    run_obr(&workspace, ["close", &id2], "close2");
 
-    let create3 = run_br(
+    let create3 = run_obr(
         &workspace,
         ["create", "New feature", "--type", "feature"],
         "c3",
     );
     let id3 = parse_created_id(&create3.stdout);
-    run_br(&workspace, ["close", &id3], "close3");
+    run_obr(&workspace, ["close", &id3], "close3");
 
-    let changelog = run_br(&workspace, ["changelog", "--json"], "changelog");
+    let changelog = run_obr(&workspace, ["changelog", "--json"], "changelog");
     assert!(changelog.status.success());
 
     let payload = extract_json_payload(&changelog.stdout);
@@ -129,11 +129,11 @@ fn changelog_sorts_by_priority() {
     common::init_test_logging();
     info!("Starting changelog_sorts_by_priority test");
 
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
 
     // Create bugs with different priorities
-    let create1 = run_br(
+    let create1 = run_obr(
         &workspace,
         [
             "create",
@@ -146,9 +146,9 @@ fn changelog_sorts_by_priority() {
         "c1",
     );
     let id1 = parse_created_id(&create1.stdout);
-    run_br(&workspace, ["close", &id1], "close1");
+    run_obr(&workspace, ["close", &id1], "close1");
 
-    let create2 = run_br(
+    let create2 = run_obr(
         &workspace,
         [
             "create",
@@ -161,17 +161,17 @@ fn changelog_sorts_by_priority() {
         "c2",
     );
     let id2 = parse_created_id(&create2.stdout);
-    run_br(&workspace, ["close", &id2], "close2");
+    run_obr(&workspace, ["close", &id2], "close2");
 
-    let create3 = run_br(
+    let create3 = run_obr(
         &workspace,
         ["create", "Critical bug", "--type", "bug", "--priority", "0"],
         "c3",
     );
     let id3 = parse_created_id(&create3.stdout);
-    run_br(&workspace, ["close", &id3], "close3");
+    run_obr(&workspace, ["close", &id3], "close3");
 
-    let changelog = run_br(&workspace, ["changelog", "--json"], "changelog");
+    let changelog = run_obr(&workspace, ["changelog", "--json"], "changelog");
     assert!(changelog.status.success());
 
     let payload = extract_json_payload(&changelog.stdout);
@@ -194,14 +194,14 @@ fn changelog_text_output() {
     common::init_test_logging();
     info!("Starting changelog_text_output test");
 
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
 
-    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    let create = run_obr(&workspace, ["create", "Test issue"], "create");
     let id = parse_created_id(&create.stdout);
-    run_br(&workspace, ["close", &id], "close");
+    run_obr(&workspace, ["close", &id], "close");
 
-    let changelog = run_br(&workspace, ["changelog"], "changelog");
+    let changelog = run_obr(&workspace, ["changelog"], "changelog");
     assert!(
         changelog.status.success(),
         "changelog failed: {}",
@@ -226,15 +226,15 @@ fn changelog_robot_mode() {
     common::init_test_logging();
     info!("Starting changelog_robot_mode test");
 
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
 
-    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    let create = run_obr(&workspace, ["create", "Test issue"], "create");
     let id = parse_created_id(&create.stdout);
-    run_br(&workspace, ["close", &id], "close");
+    run_obr(&workspace, ["close", &id], "close");
 
     // --robot should produce JSON output
-    let changelog = run_br(&workspace, ["changelog", "--robot"], "changelog");
+    let changelog = run_obr(&workspace, ["changelog", "--robot"], "changelog");
     assert!(changelog.status.success());
 
     let payload = extract_json_payload(&changelog.stdout);
@@ -253,17 +253,17 @@ fn changelog_since_date() {
     common::init_test_logging();
     info!("Starting changelog_since_date test");
 
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
 
     // Create and close an issue
-    let create = run_br(&workspace, ["create", "Recent issue"], "create");
+    let create = run_obr(&workspace, ["create", "Recent issue"], "create");
     let id = parse_created_id(&create.stdout);
-    run_br(&workspace, ["close", &id], "close");
+    run_obr(&workspace, ["close", &id], "close");
 
     // Use --since with yesterday to include the issue
     // Note: Use --since=-1d format to avoid clap treating -1d as a flag
-    let changelog = run_br(
+    let changelog = run_obr(
         &workspace,
         ["changelog", "--since=-1d", "--json"],
         "changelog",
@@ -286,15 +286,15 @@ fn changelog_since_future_date() {
     common::init_test_logging();
     info!("Starting changelog_since_future_date test");
 
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
 
-    let create = run_br(&workspace, ["create", "Old issue"], "create");
+    let create = run_obr(&workspace, ["create", "Old issue"], "create");
     let id = parse_created_id(&create.stdout);
-    run_br(&workspace, ["close", &id], "close");
+    run_obr(&workspace, ["close", &id], "close");
 
     // Use --since with a future date - should find no issues
-    let changelog = run_br(
+    let changelog = run_obr(
         &workspace,
         ["changelog", "--since", "2099-01-01T00:00:00Z", "--json"],
         "changelog",
@@ -313,15 +313,15 @@ fn changelog_all_time() {
     common::init_test_logging();
     info!("Starting changelog_all_time test");
 
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
 
-    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    let create = run_obr(&workspace, ["create", "Test issue"], "create");
     let id = parse_created_id(&create.stdout);
-    run_br(&workspace, ["close", &id], "close");
+    run_obr(&workspace, ["close", &id], "close");
 
     // No --since should return all closed issues
-    let changelog = run_br(&workspace, ["changelog", "--json"], "changelog");
+    let changelog = run_obr(&workspace, ["changelog", "--json"], "changelog");
     assert!(changelog.status.success());
 
     let payload = extract_json_payload(&changelog.stdout);
@@ -341,10 +341,10 @@ fn changelog_before_init_fails() {
     common::init_test_logging();
     info!("Starting changelog_before_init_fails test");
 
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     // Don't run init
 
-    let changelog = run_br(&workspace, ["changelog"], "changelog");
+    let changelog = run_obr(&workspace, ["changelog"], "changelog");
     assert!(
         !changelog.status.success(),
         "changelog should fail before init"
@@ -352,7 +352,7 @@ fn changelog_before_init_fails() {
     assert!(
         changelog.stderr.contains("not initialized")
             || changelog.stderr.contains("NotInitialized")
-            || changelog.stderr.contains("No beads"),
+            || changelog.stderr.contains("No obr"),
         "error should mention not initialized: {}",
         changelog.stderr
     );
@@ -365,13 +365,13 @@ fn changelog_no_closed_issues() {
     common::init_test_logging();
     info!("Starting changelog_no_closed_issues test");
 
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
 
     // Create issue but don't close it
-    run_br(&workspace, ["create", "Open issue"], "create");
+    run_obr(&workspace, ["create", "Open issue"], "create");
 
-    let changelog = run_br(&workspace, ["changelog", "--json"], "changelog");
+    let changelog = run_obr(&workspace, ["changelog", "--json"], "changelog");
     assert!(
         changelog.status.success(),
         "changelog should succeed with no closed issues"
@@ -395,18 +395,18 @@ fn changelog_many_closed_issues() {
     common::init_test_logging();
     info!("Starting changelog_many_closed_issues test");
 
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
 
     // Create and close 20 issues
     for i in 0..20 {
         let title = format!("Issue number {i}");
-        let create = run_br(&workspace, ["create", &title], &format!("create_{i}"));
+        let create = run_obr(&workspace, ["create", &title], &format!("create_{i}"));
         let id = parse_created_id(&create.stdout);
-        run_br(&workspace, ["close", &id], &format!("close_{i}"));
+        run_obr(&workspace, ["close", &id], &format!("close_{i}"));
     }
 
-    let changelog = run_br(&workspace, ["changelog", "--json"], "changelog");
+    let changelog = run_obr(&workspace, ["changelog", "--json"], "changelog");
     assert!(
         changelog.status.success(),
         "changelog failed: {}",
@@ -425,18 +425,18 @@ fn changelog_with_close_reasons() {
     common::init_test_logging();
     info!("Starting changelog_with_close_reasons test");
 
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
 
-    let create = run_br(&workspace, ["create", "Bug with reason"], "create");
+    let create = run_obr(&workspace, ["create", "Bug with reason"], "create");
     let id = parse_created_id(&create.stdout);
-    run_br(
+    run_obr(
         &workspace,
         ["close", &id, "--reason", "Fixed in v1.2.3"],
         "close",
     );
 
-    let changelog = run_br(&workspace, ["changelog", "--json"], "changelog");
+    let changelog = run_obr(&workspace, ["changelog", "--json"], "changelog");
     assert!(changelog.status.success());
 
     let payload = extract_json_payload(&changelog.stdout);
@@ -455,22 +455,22 @@ fn changelog_reopen_then_close() {
     common::init_test_logging();
     info!("Starting changelog_reopen_then_close test");
 
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
 
     // Create, close, reopen, close again
-    let create = run_br(&workspace, ["create", "Reopened issue"], "create");
+    let create = run_obr(&workspace, ["create", "Reopened issue"], "create");
     let id = parse_created_id(&create.stdout);
 
-    run_br(&workspace, ["close", &id], "close1");
+    run_obr(&workspace, ["close", &id], "close1");
 
     // Small delay to ensure different timestamp
     sleep(Duration::from_millis(100));
 
-    run_br(&workspace, ["reopen", &id], "reopen");
-    run_br(&workspace, ["close", &id], "close2");
+    run_obr(&workspace, ["reopen", &id], "reopen");
+    run_obr(&workspace, ["close", &id], "close2");
 
-    let changelog = run_br(&workspace, ["changelog", "--json"], "changelog");
+    let changelog = run_obr(&workspace, ["changelog", "--json"], "changelog");
     assert!(
         changelog.status.success(),
         "changelog failed: {}",
@@ -491,27 +491,27 @@ fn changelog_mixed_statuses() {
     common::init_test_logging();
     info!("Starting changelog_mixed_statuses test");
 
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
 
     // Create issues in different states
-    let c1 = run_br(&workspace, ["create", "Closed issue"], "c1");
+    let c1 = run_obr(&workspace, ["create", "Closed issue"], "c1");
     let id1 = parse_created_id(&c1.stdout);
-    run_br(&workspace, ["close", &id1], "close1");
+    run_obr(&workspace, ["close", &id1], "close1");
 
-    let c2 = run_br(&workspace, ["create", "Open issue"], "c2");
+    let c2 = run_obr(&workspace, ["create", "Open issue"], "c2");
     let _id2 = parse_created_id(&c2.stdout);
     // Don't close this one
 
-    let c3 = run_br(&workspace, ["create", "In progress issue"], "c3");
+    let c3 = run_obr(&workspace, ["create", "In progress issue"], "c3");
     let id3 = parse_created_id(&c3.stdout);
-    run_br(
+    run_obr(
         &workspace,
         ["update", &id3, "--status", "in_progress"],
         "update3",
     );
 
-    let changelog = run_br(&workspace, ["changelog", "--json"], "changelog");
+    let changelog = run_obr(&workspace, ["changelog", "--json"], "changelog");
     assert!(changelog.status.success());
 
     let payload = extract_json_payload(&changelog.stdout);
@@ -528,19 +528,19 @@ fn changelog_since_relative_time() {
     common::init_test_logging();
     info!("Starting changelog_since_relative_time test");
 
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
 
-    let create = run_br(&workspace, ["create", "Recent fix"], "create");
+    let create = run_obr(&workspace, ["create", "Recent fix"], "create");
     let id = parse_created_id(&create.stdout);
-    run_br(&workspace, ["close", &id], "close");
+    run_obr(&workspace, ["close", &id], "close");
 
     // Test various relative time formats
     // Note: Use --since=VALUE format to avoid clap treating -Xd as a flag
     let formats = ["-1h", "-24h", "-7d"];
     for format in formats {
         let since_arg = format!("--since={format}");
-        let changelog = run_br(
+        let changelog = run_obr(
             &workspace,
             ["changelog", &since_arg, "--json"],
             &format!("changelog_{format}"),

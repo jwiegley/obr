@@ -3,7 +3,7 @@
 #
 # Pass-5 cycle 5: fm-state_files-base-jsonl-missing-or-stale (SYMLINK
 # subset) graduates from detect-only to auto-fixed. The fixer renames
-# the symlinked anchor into <run-dir>/quarantine/.beads/beads.base.jsonl
+# the symlinked anchor into <run-dir>/quarantine/.obr/merge.base.jsonl
 # via Op::Rename. fs::rename operates on the link bytes (not its
 # target), so the operation is byte-deterministic and reversible by
 # `doctor undo`.
@@ -21,37 +21,37 @@ case "$stage" in
       .checks[] | select(.name == "base_jsonl")
       | select(.status == "warn")
       | select(.details.kind == "symlink")
-      | select(.details.path | endswith(".beads/beads.base.jsonl"))
+      | select(.details.path | endswith(".obr/merge.base.jsonl"))
     ' >/dev/null || {
       echo "ASSERT FAIL[$stage]: base_jsonl did not fire warn with kind=symlink" >&2
       echo "$out" | jq '.checks[] | select(.name == "base_jsonl")' >&2
       exit 1
     }
     # Symlink must still be present on disk after detect.
-    [ -L .beads/beads.base.jsonl ] || {
+    [ -L .obr/merge.base.jsonl ] || {
       echo "ASSERT FAIL[$stage]: planted symlink missing after detect" >&2
       exit 1
     }
     ;;
 
   post_repair)
-    # Symlink must be GONE from .beads/ (quarantined under run-dir).
-    if [ -e .beads/beads.base.jsonl ] || [ -L .beads/beads.base.jsonl ]; then
-      echo "ASSERT FAIL[$stage]: symlink still present at .beads/beads.base.jsonl after --repair" >&2
+    # Symlink must be GONE from .obr/ (quarantined under run-dir).
+    if [ -e .obr/merge.base.jsonl ] || [ -L .obr/merge.base.jsonl ]; then
+      echo "ASSERT FAIL[$stage]: symlink still present at .obr/merge.base.jsonl after --repair" >&2
       exit 1
     fi
 
     # Quarantine destination must contain the (renamed) symlink.
     quarantined=""
     for run_dir in $(find .doctor/runs -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort); do
-      q="$run_dir/quarantine/.beads/beads.base.jsonl"
+      q="$run_dir/quarantine/.obr/merge.base.jsonl"
       if [ -L "$q" ] || [ -e "$q" ]; then
         quarantined="$q"
         break
       fi
     done
     if [ -z "$quarantined" ]; then
-      echo "ASSERT FAIL[$stage]: quarantined anchor not found under any .doctor/runs/*/quarantine/.beads/" >&2
+      echo "ASSERT FAIL[$stage]: quarantined anchor not found under any .doctor/runs/*/quarantine/.obr/" >&2
       find .doctor/runs -type d -maxdepth 4 2>/dev/null | sed 's/^/  /' >&2
       exit 1
     fi
@@ -106,15 +106,15 @@ case "$stage" in
     # resolve under the run-dir) and finds it missing, so undo
     # falls back to the byte backup and writes it via Op::WriteFile.
     # See README for the full architectural finding.
-    [ -e .beads/beads.base.jsonl ] || {
-      echo "ASSERT FAIL[$stage]: nothing restored at .beads/beads.base.jsonl after undo" >&2
+    [ -e .obr/merge.base.jsonl ] || {
+      echo "ASSERT FAIL[$stage]: nothing restored at .obr/merge.base.jsonl after undo" >&2
       exit 1
     }
     # If the implementation is ever upgraded to preserve symlinks
     # through backup+undo, accept that too — the fixture should not
     # block the improvement.
-    if [ -L .beads/beads.base.jsonl ]; then
-      target=$(readlink .beads/beads.base.jsonl)
+    if [ -L .obr/merge.base.jsonl ]; then
+      target=$(readlink .obr/merge.base.jsonl)
       if [ "$target" != "issues.jsonl" ]; then
         echo "ASSERT FAIL[$stage]: symlink target changed (got '$target', expected 'issues.jsonl')" >&2
         exit 1
@@ -122,9 +122,9 @@ case "$stage" in
     else
       # Regular-file fallback path — verify content matches the link's
       # original target content (issues.jsonl).
-      if ! cmp -s .beads/beads.base.jsonl .beads/issues.jsonl; then
+      if ! cmp -s .obr/merge.base.jsonl .obr/issues.jsonl; then
         echo "ASSERT FAIL[$stage]: restored regular-file content does not match issues.jsonl" >&2
-        diff .beads/beads.base.jsonl .beads/issues.jsonl | head -5 >&2 || true
+        diff .obr/merge.base.jsonl .obr/issues.jsonl | head -5 >&2 || true
         exit 1
       fi
     fi

@@ -1,11 +1,11 @@
-//! Phase 9 — Real-world fixture suite for `br doctor`.
+//! Phase 9 — Real-world fixture suite for `obr doctor`.
 //!
-//! Drives `tests/doctor_fixtures/run_all.sh` against the compiled `br` binary
+//! Drives `tests/doctor_fixtures/run_all.sh` against the compiled `obr` binary
 //! and asserts exit 0. The bash driver iterates each fixture directory,
-//! plants the failure with `corrupt.sh`, runs `br doctor --json`, validates
-//! detection via `assert.sh DIR detect`, runs `br doctor --repair --json`,
+//! plants the failure with `corrupt.sh`, runs `obr doctor --json`, validates
+//! detection via `assert.sh DIR detect`, runs `obr doctor --repair --json`,
 //! validates the post-repair invariants via `assert.sh DIR post_repair`,
-//! then runs `br doctor undo latest --json` and validates the post-undo
+//! then runs `obr doctor undo latest --json` and validates the post-undo
 //! state.
 //!
 //! This file is intentionally thin: the heavy lifting is in `run_all.sh` so
@@ -43,7 +43,7 @@ fn doctor_fixture_suite_passes() {
         script.display()
     );
 
-    let bin = env!("CARGO_BIN_EXE_br");
+    let bin = env!("CARGO_BIN_EXE_obr");
 
     let output = Command::new("bash")
         .arg(&script)
@@ -51,23 +51,23 @@ fn doctor_fixture_suite_passes() {
         // run all fixtures even if one fails so the diagnostic shows the
         // full failure inventory.
         .env("FAIL_FAST", "0")
-        // A host with `br` installed in more than one $PATH directory (the
+        // A host with `obr` installed in more than one $PATH directory (the
         // documented `~/.local/bin` vs `~/.cargo/bin` split) makes every
-        // fixture's `br doctor` emit a `br_path_dupes` WARN, which fails
+        // fixture's `obr doctor` emit a `obr_path_dupes` WARN, which fails
         // `healthy_workspace_baseline` for a reason that has nothing to do
-        // with the workspace under test. Drop only the later `br` directories,
+        // with the workspace under test. Drop only the later `obr` directories,
         // so `sqlite3`, `jq`, and `bash` stay reachable — several fixtures
-        // shell out to them. The `multiple_br_in_path` fixture builds its own
+        // shell out to them. The `multiple_obr_in_path` fixture builds its own
         // $PATH, so duplicate detection is still exercised deliberately.
-        .env("PATH", common::cli::deduplicated_br_path())
-        // Strip developer env that might confuse `br doctor` discovery.
-        .env_remove("BD_DB")
-        .env_remove("BD_DATABASE")
-        .env_remove("BEADS_DB")
-        .env_remove("BEADS_CACHE_DIR")
-        .env_remove("BEADS_DIR")
-        .env_remove("BEADS_JSONL")
-        .env_remove("BR_STARTUP_CACHE")
+        .env("PATH", common::cli::deduplicated_obr_path())
+        // Strip developer env that might confuse `obr doctor` discovery.
+        .env_remove("OBR_DB")
+        .env_remove("OBR_DATABASE")
+        .env_remove("OBR_DB")
+        .env_remove("OBR_CACHE_DIR")
+        .env_remove("OBR_DIR")
+        .env_remove("OBR_JSONL")
+        .env_remove("OBR_STARTUP_CACHE")
         .output()
         .expect("spawn run_all.sh");
 
@@ -114,7 +114,7 @@ fn which(cmd: &str) -> Option<PathBuf> {
 /// maps every declared `fm-` finding id to the fixture(s) exercising it.
 /// This test keeps the manifest honest in three directions:
 ///
-/// 1. every `fm-` id in the `br doctor capabilities` envelope has a
+/// 1. every `fm-` id in the `obr doctor capabilities` envelope has a
 ///    manifest row (a new finding id without coverage bookkeeping fails);
 /// 2. every fixture a row names exists on disk with `corrupt.sh` +
 ///    `assert.sh` (a renamed/deleted fixture fails);
@@ -133,11 +133,11 @@ fn fixture_coverage_manifest_is_complete() {
         .unwrap_or_else(|e| panic!("read {}: {e}", coverage_path.display()));
 
     // Declared set: every quoted fm- string in the capabilities envelope.
-    let out = Command::new(env!("CARGO_BIN_EXE_br"))
+    let out = Command::new(env!("CARGO_BIN_EXE_obr"))
         .args(["doctor", "capabilities", "--format", "json"])
         .current_dir(&manifest_dir)
         .output()
-        .expect("spawn br doctor capabilities");
+        .expect("spawn obr doctor capabilities");
     assert!(
         out.status.success(),
         "capabilities failed: {}",

@@ -3,7 +3,7 @@
 #
 # Pass-5 cycle 6: fm-state_files-base-jsonl-missing-or-stale (STALE
 # subset) graduates from detect-only to auto-fixed. The fixer rewrites
-# .beads/beads.base.jsonl with the current .beads/issues.jsonl bytes
+# .obr/merge.base.jsonl with the current .obr/issues.jsonl bytes
 # via Op::WriteFile. doctor undo restores the pre-fix anchor
 # byte-deterministically from the chokepoint snapshot.
 
@@ -20,8 +20,8 @@ case "$stage" in
       .checks[] | select(.name == "base_jsonl")
       | select(.status == "warn")
       | select(.details.kind == "stale")
-      | select(.details.path | endswith(".beads/beads.base.jsonl"))
-      | select(.details.live_jsonl | endswith(".beads/issues.jsonl"))
+      | select(.details.path | endswith(".obr/merge.base.jsonl"))
+      | select(.details.live_jsonl | endswith(".obr/issues.jsonl"))
     ' >/dev/null || {
       echo "ASSERT FAIL[$stage]: base_jsonl did not fire warn with kind=stale" >&2
       echo "$out" | jq '.checks[] | select(.name == "base_jsonl")' >&2
@@ -30,15 +30,15 @@ case "$stage" in
 
     # Stale anchor must still be on disk (regular file, not symlink),
     # and its content must match the planted stale placeholder.
-    [ -f .beads/beads.base.jsonl ] || {
+    [ -f .obr/merge.base.jsonl ] || {
       echo "ASSERT FAIL[$stage]: anchor missing after detect" >&2
       exit 1
     }
-    [ -L .beads/beads.base.jsonl ] && {
+    [ -L .obr/merge.base.jsonl ] && {
       echo "ASSERT FAIL[$stage]: anchor became a symlink during detect" >&2
       exit 1
     }
-    if ! cmp -s .beads/beads.base.jsonl .fixture_baseline_stale; then
+    if ! cmp -s .obr/merge.base.jsonl .fixture_baseline_stale; then
       echo "ASSERT FAIL[$stage]: planted stale anchor content drifted during detect" >&2
       exit 1
     fi
@@ -46,19 +46,19 @@ case "$stage" in
 
   post_repair)
     # Anchor still exists at its canonical path.
-    [ -f .beads/beads.base.jsonl ] || {
+    [ -f .obr/merge.base.jsonl ] || {
       echo "ASSERT FAIL[$stage]: anchor missing after --repair" >&2
       exit 1
     }
     # Anchor content is byte-equal to the live JSONL (the fixer reads
     # issues.jsonl bytes and Op::WriteFile-writes them to the anchor).
-    if ! cmp -s .beads/beads.base.jsonl .beads/issues.jsonl; then
+    if ! cmp -s .obr/merge.base.jsonl .obr/issues.jsonl; then
       echo "ASSERT FAIL[$stage]: regenerated anchor does not match issues.jsonl" >&2
-      diff .beads/beads.base.jsonl .beads/issues.jsonl | head -10 >&2 || true
+      diff .obr/merge.base.jsonl .obr/issues.jsonl | head -10 >&2 || true
       exit 1
     fi
     # The planted stale content must be GONE.
-    if cmp -s .beads/beads.base.jsonl .fixture_baseline_stale; then
+    if cmp -s .obr/merge.base.jsonl .fixture_baseline_stale; then
       echo "ASSERT FAIL[$stage]: anchor still has the planted stale content" >&2
       exit 1
     fi
@@ -100,13 +100,13 @@ case "$stage" in
     # chokepoint backup. Unlike the symlink cycle (54), this fixture
     # has no follow-the-link complication — the source was always a
     # regular file, so backup+restore round-trips byte-deterministically.
-    [ -f .beads/beads.base.jsonl ] || {
+    [ -f .obr/merge.base.jsonl ] || {
       echo "ASSERT FAIL[$stage]: anchor missing after undo" >&2
       exit 1
     }
-    if ! cmp -s .beads/beads.base.jsonl .fixture_baseline_stale; then
+    if ! cmp -s .obr/merge.base.jsonl .fixture_baseline_stale; then
       echo "ASSERT FAIL[$stage]: undo did not restore planted stale anchor bytes" >&2
-      diff .beads/beads.base.jsonl .fixture_baseline_stale | head -10 >&2 || true
+      diff .obr/merge.base.jsonl .fixture_baseline_stale | head -10 >&2 || true
       exit 1
     fi
     ;;

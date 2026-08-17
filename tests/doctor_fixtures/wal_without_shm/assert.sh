@@ -22,17 +22,17 @@ case "$stage" in
     ;;
   post_repair)
     # Repair either no-ops or checkpoints the WAL into the DB. Either is
-    # acceptable as long as data is preserved: beads.db must remain a real
+    # acceptable as long as data is preserved: obr.db must remain a real
     # SQLite file and be queryable. (Doctor must NOT delete the WAL without
     # first checkpointing — but a fresh-init workspace has no uncommitted
     # data so checkpoint-then-remove is benign.)
-    [ -f .beads/beads.db ] || {
-      echo "ASSERT FAIL[$stage]: beads.db missing after --repair" >&2
+    [ -f .obr/obr.db ] || {
+      echo "ASSERT FAIL[$stage]: obr.db missing after --repair" >&2
       exit 1
     }
-    size=$(stat -c%s .beads/beads.db 2>/dev/null || stat -f%z .beads/beads.db)
+    size=$(stat -c%s .obr/obr.db 2>/dev/null || stat -f%z .obr/obr.db)
     if [ "$size" -lt 1024 ]; then
-      echo "ASSERT FAIL[$stage]: beads.db suspiciously small after --repair ($size bytes)" >&2
+      echo "ASSERT FAIL[$stage]: obr.db suspiciously small after --repair ($size bytes)" >&2
       exit 1
     fi
     # Doctor should still report ok schema after repair.
@@ -45,7 +45,7 @@ case "$stage" in
     fi
     ;;
   post_undo)
-    [ -f .beads/beads.db ] || { echo "ASSERT FAIL[$stage]: beads.db gone" >&2; exit 1; }
+    [ -f .obr/obr.db ] || { echo "ASSERT FAIL[$stage]: obr.db gone" >&2; exit 1; }
     ;;
   *)
     echo "unknown stage: $stage" >&2

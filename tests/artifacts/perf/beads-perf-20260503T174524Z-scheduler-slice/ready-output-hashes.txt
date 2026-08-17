@@ -1,2 +1,0 @@
-cdfe53f5ce2039d9362207385cc42af6be8099f4cb457811e26903429b8b3521  tests/artifacts/perf/beads-perf-20260503T174524Z-scheduler-slice/ready-before.json
-cdfe53f5ce2039d9362207385cc42af6be8099f4cb457811e26903429b8b3521  tests/artifacts/perf/beads-perf-20260503T174524Z-scheduler-slice/ready-after.json

@@ -46,19 +46,19 @@ case "$stage" in
   post_repair)
     # Detect-only: routes.jsonl must still be byte-identical (doctor
     # must NOT silently rewrite the operator's routing decisions).
-    [ -f .beads/routes.jsonl ] || {
+    [ -f .obr/routes.jsonl ] || {
       echo "ASSERT FAIL[$stage]: routes.jsonl vanished after --repair (unsafe)" >&2
       exit 1
     }
-    if ! grep -q '"ghost-"' .beads/routes.jsonl; then
+    if ! grep -q '"ghost-"' .obr/routes.jsonl; then
       echo "ASSERT FAIL[$stage]: doctor silently rewrote routes.jsonl (ghost- prefix gone)" >&2
-      cat .beads/routes.jsonl >&2
+      cat .obr/routes.jsonl >&2
       exit 1
     fi
     ;;
   post_undo)
-    [ -d .beads ] || { echo "ASSERT FAIL[$stage]: .beads gone after undo" >&2; exit 1; }
-    [ -f .beads/routes.jsonl ] || { echo "ASSERT FAIL[$stage]: routes.jsonl gone after undo" >&2; exit 1; }
+    [ -d .obr ] || { echo "ASSERT FAIL[$stage]: .obr gone after undo" >&2; exit 1; }
+    [ -f .obr/routes.jsonl ] || { echo "ASSERT FAIL[$stage]: routes.jsonl gone after undo" >&2; exit 1; }
     ;;
   *)
     echo "unknown stage: $stage" >&2

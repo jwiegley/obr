@@ -1,7 +1,7 @@
-//! Benchmark Comparison Tests: br (Rust) vs bd (Go) Performance
+//! Benchmark Comparison Tests: obr (Rust) vs bd (Go) Performance
 //!
 //! This module provides comprehensive performance benchmarks comparing the Rust
-//! implementation (br) against the Go implementation (bd) for equivalent operations.
+//! implementation (obr) against the Go implementation (bd) for equivalent operations.
 //!
 //! Run with: cargo test benchmark_ --release -- --nocapture --ignored
 //!
@@ -50,10 +50,10 @@ pub struct CmdOutput {
     pub duration: Duration,
 }
 
-/// Workspace for benchmark tests with paired br/bd directories
+/// Workspace for benchmark tests with paired obr/bd directories
 pub struct BenchmarkWorkspace {
     pub temp_dir: TempDir,
-    pub br_root: PathBuf,
+    pub obr_root: PathBuf,
     pub bd_root: PathBuf,
     pub log_dir: PathBuf,
 }
@@ -62,36 +62,36 @@ impl BenchmarkWorkspace {
     pub fn new() -> Self {
         let temp_dir = TempDir::new().expect("create temp dir");
         let root = temp_dir.path().to_path_buf();
-        let br_root = root.join("br_workspace");
+        let obr_root = root.join("br_workspace");
         let bd_root = root.join("bd_workspace");
         let log_dir = root.join("logs");
 
-        fs::create_dir_all(&br_root).expect("create br workspace");
+        fs::create_dir_all(&obr_root).expect("create obr workspace");
         fs::create_dir_all(&bd_root).expect("create bd workspace");
         fs::create_dir_all(&log_dir).expect("create log dir");
 
         Self {
             temp_dir,
-            br_root,
+            obr_root,
             bd_root,
             log_dir,
         }
     }
 
-    /// Initialize both br and bd workspaces
+    /// Initialize both obr and bd workspaces
     pub fn init_both(&self) -> (CmdOutput, CmdOutput) {
-        let br_out = self.run_br(["init"], "init");
+        let obr_out = self.run_obr(["init"], "init");
         let bd_out = self.run_bd(["init"], "init");
-        (br_out, bd_out)
+        (obr_out, bd_out)
     }
 
-    /// Run br command in the br workspace
-    pub fn run_br<I, S>(&self, args: I, label: &str) -> CmdOutput
+    /// Run obr command in the obr workspace
+    pub fn run_obr<I, S>(&self, args: I, label: &str) -> CmdOutput
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        run_br_cmd(&self.br_root, &self.log_dir, args, &format!("br_{label}"))
+        run_obr_cmd(&self.obr_root, &self.log_dir, args, &format!("br_{label}"))
     }
 
     /// Run bd command in the bd workspace
@@ -103,14 +103,14 @@ impl BenchmarkWorkspace {
         run_bd_cmd(&self.bd_root, &self.log_dir, args, &format!("bd_{label}"))
     }
 
-    /// Run br command and return duration only (for timing loops)
-    pub fn time_br<I, S>(&self, args: I) -> Duration
+    /// Run obr command and return duration only (for timing loops)
+    pub fn time_obr<I, S>(&self, args: I) -> Duration
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
         let start = Instant::now();
-        let _ = self.run_br(args, "timing");
+        let _ = self.run_obr(args, "timing");
         start.elapsed()
     }
 
@@ -179,11 +179,11 @@ struct SummaryReport {
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct ComparisonStats {
-    br_runs: u64,
+    obr_runs: u64,
     bd_runs: u64,
-    br_total_ms: u128,
+    obr_total_ms: u128,
     bd_total_ms: u128,
-    speedup_bd_over_br: Option<f64>,
+    speedup_bd_over_obr: Option<f64>,
 }
 
 static LOG_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
@@ -278,9 +278,9 @@ fn update_summary(log_dir: &PathBuf, entries: &[RunLogEntry]) {
             .comparisons
             .entry(entry.label.clone())
             .or_insert_with(ComparisonStats::default);
-        if entry.binary == "br" {
-            comparison.br_runs += 1;
-            comparison.br_total_ms = comparison.br_total_ms.saturating_add(entry.duration_ms);
+        if entry.binary == "obr" {
+            comparison.obr_runs += 1;
+            comparison.obr_total_ms = comparison.obr_total_ms.saturating_add(entry.duration_ms);
         } else if entry.binary == "bd" {
             comparison.bd_runs += 1;
             comparison.bd_total_ms = comparison.bd_total_ms.saturating_add(entry.duration_ms);
@@ -288,9 +288,9 @@ fn update_summary(log_dir: &PathBuf, entries: &[RunLogEntry]) {
     }
 
     for comparison in report.comparisons.values_mut() {
-        if comparison.br_total_ms > 0 && comparison.bd_total_ms > 0 {
-            comparison.speedup_bd_over_br =
-                Some(comparison.bd_total_ms as f64 / comparison.br_total_ms as f64);
+        if comparison.obr_total_ms > 0 && comparison.bd_total_ms > 0 {
+            comparison.speedup_bd_over_obr =
+                Some(comparison.bd_total_ms as f64 / comparison.obr_total_ms as f64);
         }
     }
 
@@ -348,7 +348,7 @@ fn write_failure_context(
     stderr: &str,
     cwd: &PathBuf,
 ) {
-    let beads_dir = cwd.join(".beads");
+    let obr_dir = cwd.join(".obr");
     let context = serde_json::json!({
         "timestamp": entry.timestamp,
         "label": entry.label,
@@ -362,8 +362,8 @@ fn write_failure_context(
         "stderr_len": entry.stderr_len,
         "stdout_preview": stdout.chars().take(2000).collect::<String>(),
         "stderr_preview": stderr.chars().take(2000).collect::<String>(),
-        "beads_dir": beads_dir.display().to_string(),
-        "beads_entries": collect_dir_listing(&beads_dir),
+        "obr_dir": obr_dir.display().to_string(),
+        "beads_entries": collect_dir_listing(&obr_dir),
         "recent_runs": read_run_entries(log_dir).into_iter().rev().take(5).collect::<Vec<_>>(),
     });
     let path = log_dir.join(format!("{}.failure.json", entry.label));
@@ -392,19 +392,19 @@ fn record_run(log_dir: &PathBuf, entry: RunLogEntry, stdout: &str, stderr: &str,
     }
 }
 
-fn run_br_cmd<I, S>(cwd: &PathBuf, log_dir: &PathBuf, args: I, label: &str) -> CmdOutput
+fn run_obr_cmd<I, S>(cwd: &PathBuf, log_dir: &PathBuf, args: I, label: &str) -> CmdOutput
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("br"));
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("obr"));
     cmd.current_dir(cwd);
     cmd.args(args);
     cmd.env("NO_COLOR", "1");
     cmd.env("HOME", cwd);
 
     let start = Instant::now();
-    let output = cmd.output().expect("run br");
+    let output = cmd.output().expect("run obr");
     let duration = start.elapsed();
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -421,7 +421,7 @@ where
     let entry = RunLogEntry {
         timestamp: Utc::now().to_rfc3339(),
         label: label.to_string(),
-        binary: "br".to_string(),
+        binary: "obr".to_string(),
         args: cmd
             .get_args()
             .map(|arg| arg.to_string_lossy().to_string())
@@ -620,16 +620,16 @@ where
 // BENCHMARK COMPARISON REPORT
 // ============================================================================
 
-/// Result of comparing br vs bd for a single benchmark
+/// Result of comparing obr vs bd for a single benchmark
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkComparison {
     pub name: String,
     pub description: String,
-    pub br_stats: TimingStats,
+    pub obr_stats: TimingStats,
     pub bd_stats: TimingStats,
-    /// Ratio of br time to bd time (< 1 means br is faster)
+    /// Ratio of obr time to bd time (< 1 means obr is faster)
     pub speedup_ratio: f64,
-    /// Percentage speedup (positive = br faster, negative = bd faster)
+    /// Percentage speedup (positive = obr faster, negative = bd faster)
     pub speedup_percent: f64,
 }
 
@@ -637,16 +637,16 @@ impl BenchmarkComparison {
     pub fn new(
         name: &str,
         description: &str,
-        br_stats: TimingStats,
+        obr_stats: TimingStats,
         bd_stats: TimingStats,
     ) -> Self {
         let speedup_ratio = if bd_stats.mean_ms > 0.0 {
-            br_stats.mean_ms / bd_stats.mean_ms
+            obr_stats.mean_ms / bd_stats.mean_ms
         } else {
             1.0
         };
         let speedup_percent = if bd_stats.mean_ms > 0.0 {
-            ((bd_stats.mean_ms - br_stats.mean_ms) / bd_stats.mean_ms) * 100.0
+            ((bd_stats.mean_ms - obr_stats.mean_ms) / bd_stats.mean_ms) * 100.0
         } else {
             0.0
         };
@@ -654,7 +654,7 @@ impl BenchmarkComparison {
         Self {
             name: name.to_string(),
             description: description.to_string(),
-            br_stats,
+            obr_stats,
             bd_stats,
             speedup_ratio,
             speedup_percent,
@@ -666,8 +666,8 @@ impl BenchmarkComparison {
         println!("\n=== {} ===", self.name);
         println!("Description: {}", self.description);
         println!(
-            "br: mean={:.2}ms median={:.2}ms p95={:.2}ms",
-            self.br_stats.mean_ms, self.br_stats.median_ms, self.br_stats.p95_ms
+            "obr: mean={:.2}ms median={:.2}ms p95={:.2}ms",
+            self.obr_stats.mean_ms, self.obr_stats.median_ms, self.obr_stats.p95_ms
         );
         println!(
             "bd: mean={:.2}ms median={:.2}ms p95={:.2}ms",
@@ -676,12 +676,12 @@ impl BenchmarkComparison {
 
         if self.speedup_percent > 0.0 {
             println!(
-                "Result: br is {:.1}% FASTER (ratio: {:.2}x)",
+                "Result: obr is {:.1}% FASTER (ratio: {:.2}x)",
                 self.speedup_percent, self.speedup_ratio
             );
         } else if self.speedup_percent < 0.0 {
             println!(
-                "Result: br is {:.1}% SLOWER (ratio: {:.2}x)",
+                "Result: obr is {:.1}% SLOWER (ratio: {:.2}x)",
                 -self.speedup_percent, self.speedup_ratio
             );
         } else {
@@ -713,7 +713,7 @@ pub struct BenchmarkConfigJson {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkSummary {
     pub total_benchmarks: usize,
-    pub br_faster_count: usize,
+    pub obr_faster_count: usize,
     pub bd_faster_count: usize,
     pub avg_speedup_percent: f64,
     pub avg_speedup_ratio: f64,
@@ -726,7 +726,7 @@ impl BenchmarkReport {
         memory: Vec<MemoryComparison>,
     ) -> Self {
         let total = comparisons.len();
-        let br_faster = comparisons
+        let obr_faster = comparisons
             .iter()
             .filter(|c| c.speedup_percent > 0.0)
             .count();
@@ -758,7 +758,7 @@ impl BenchmarkReport {
             memory,
             summary: BenchmarkSummary {
                 total_benchmarks: total,
-                br_faster_count: br_faster,
+                obr_faster_count: obr_faster,
                 bd_faster_count: bd_faster,
                 avg_speedup_percent: avg_speedup,
                 avg_speedup_ratio: avg_ratio,
@@ -789,15 +789,15 @@ impl BenchmarkReport {
             for entry in &self.memory {
                 println!("\n=== {} ===", entry.name);
                 println!("Description: {}", entry.description);
-                let br_rss = entry
-                    .br
+                let obr_rss = entry
+                    .obr
                     .max_rss_kb
                     .map_or("n/a".to_string(), |rss| format!("{rss} KB"));
                 let bd_rss = entry
                     .bd
                     .max_rss_kb
                     .map_or("n/a".to_string(), |rss| format!("{rss} KB"));
-                println!("br max RSS: {br_rss}");
+                println!("obr max RSS: {obr_rss}");
                 println!("bd max RSS: {bd_rss}");
             }
         }
@@ -807,9 +807,9 @@ impl BenchmarkReport {
         println!("========================================");
         println!("Total benchmarks: {}", self.summary.total_benchmarks);
         println!(
-            "br faster: {} ({:.0}%)",
-            self.summary.br_faster_count,
-            100.0 * self.summary.br_faster_count as f64 / self.summary.total_benchmarks as f64
+            "obr faster: {} ({:.0}%)",
+            self.summary.obr_faster_count,
+            100.0 * self.summary.obr_faster_count as f64 / self.summary.total_benchmarks as f64
         );
         println!(
             "bd faster: {} ({:.0}%)",
@@ -822,7 +822,7 @@ impl BenchmarkReport {
         );
 
         if self.summary.avg_speedup_percent > 0.0 {
-            println!("\nOverall: br (Rust) is faster on average");
+            println!("\nOverall: obr (Rust) is faster on average");
         } else if self.summary.avg_speedup_percent < 0.0 {
             println!("\nOverall: bd (Go) is faster on average");
         } else {
@@ -849,7 +849,7 @@ pub struct MemoryStats {
 pub struct MemoryComparison {
     pub name: String,
     pub description: String,
-    pub br: MemoryStats,
+    pub obr: MemoryStats,
     pub bd: MemoryStats,
 }
 
@@ -895,14 +895,14 @@ fn benchmark_memory_usage_1000() -> Option<MemoryComparison> {
     let workspace = BenchmarkWorkspace::new();
     populate_workspace(&workspace, 1000);
 
-    let br_bin = assert_cmd::cargo::cargo_bin!("br");
-    let br_stats = time_binary_with_rss(&br_bin, &workspace.br_root, &["list", "--json"])
+    let obr_bin = assert_cmd::cargo::cargo_bin!("obr");
+    let obr_stats = time_binary_with_rss(&obr_bin, &workspace.obr_root, &["list", "--json"])
         .unwrap_or(MemoryStats { max_rss_kb: None });
 
     let bd_stats = time_binary_with_rss("bd", &workspace.bd_root, &["list", "--json"])
         .unwrap_or(MemoryStats { max_rss_kb: None });
 
-    if br_stats.max_rss_kb.is_none() && bd_stats.max_rss_kb.is_none() {
+    if obr_stats.max_rss_kb.is_none() && bd_stats.max_rss_kb.is_none() {
         info!("benchmark_memory_usage_1000: no RSS data available");
         return None;
     }
@@ -910,7 +910,7 @@ fn benchmark_memory_usage_1000() -> Option<MemoryComparison> {
     Some(MemoryComparison {
         name: "memory_list_1000".to_string(),
         description: "Max RSS for list --json with 1000 issues".to_string(),
-        br: br_stats,
+        obr: obr_stats,
         bd: bd_stats,
     })
 }
@@ -921,14 +921,14 @@ fn benchmark_memory_sync_flush_1000() -> Option<MemoryComparison> {
     let workspace = BenchmarkWorkspace::new();
     populate_workspace(&workspace, 1000);
 
-    let br_bin = assert_cmd::cargo::cargo_bin!("br");
-    let br_stats = time_binary_with_rss(&br_bin, &workspace.br_root, &["sync", "--flush-only"])
+    let obr_bin = assert_cmd::cargo::cargo_bin!("obr");
+    let obr_stats = time_binary_with_rss(&obr_bin, &workspace.obr_root, &["sync", "--flush-only"])
         .unwrap_or(MemoryStats { max_rss_kb: None });
 
     let bd_stats = time_binary_with_rss("bd", &workspace.bd_root, &["sync", "--flush-only"])
         .unwrap_or(MemoryStats { max_rss_kb: None });
 
-    if br_stats.max_rss_kb.is_none() && bd_stats.max_rss_kb.is_none() {
+    if obr_stats.max_rss_kb.is_none() && bd_stats.max_rss_kb.is_none() {
         info!("benchmark_memory_sync_flush_1000: no RSS data available");
         return None;
     }
@@ -936,7 +936,7 @@ fn benchmark_memory_sync_flush_1000() -> Option<MemoryComparison> {
     Some(MemoryComparison {
         name: "memory_sync_flush_1000".to_string(),
         description: "Max RSS for sync --flush-only with 1000 issues".to_string(),
-        br: br_stats,
+        obr: obr_stats,
         bd: bd_stats,
     })
 }
@@ -946,26 +946,30 @@ fn benchmark_memory_sync_import_1000() -> Option<MemoryComparison> {
 
     let jsonl_data = generate_import_jsonl(1000);
 
-    let br_workspace = BenchmarkWorkspace::new();
-    let br_init = br_workspace.run_br(["init"], "init");
-    assert!(br_init.success, "br init failed: {}", br_init.stderr);
-    let br_jsonl_path = br_workspace.br_root.join(".beads").join("issues.jsonl");
-    fs::write(&br_jsonl_path, &jsonl_data).expect("write br issues.jsonl");
+    let obr_workspace = BenchmarkWorkspace::new();
+    let obr_init = obr_workspace.run_obr(["init"], "init");
+    assert!(obr_init.success, "obr init failed: {}", obr_init.stderr);
+    let obr_jsonl_path = obr_workspace.obr_root.join(".obr").join("issues.jsonl");
+    fs::write(&obr_jsonl_path, &jsonl_data).expect("write obr issues.jsonl");
 
     let bd_workspace = BenchmarkWorkspace::new();
     let bd_init = bd_workspace.run_bd(["init"], "init");
     assert!(bd_init.success, "bd init failed: {}", bd_init.stderr);
-    let bd_jsonl_path = bd_workspace.bd_root.join(".beads").join("issues.jsonl");
+    let bd_jsonl_path = bd_workspace.bd_root.join(".obr").join("issues.jsonl");
     fs::write(&bd_jsonl_path, &jsonl_data).expect("write bd issues.jsonl");
 
-    let br_bin = assert_cmd::cargo::cargo_bin!("br");
-    let br_stats = time_binary_with_rss(&br_bin, &br_workspace.br_root, &["sync", "--import-only"])
-        .unwrap_or(MemoryStats { max_rss_kb: None });
+    let obr_bin = assert_cmd::cargo::cargo_bin!("obr");
+    let obr_stats = time_binary_with_rss(
+        &obr_bin,
+        &obr_workspace.obr_root,
+        &["sync", "--import-only"],
+    )
+    .unwrap_or(MemoryStats { max_rss_kb: None });
 
     let bd_stats = time_binary_with_rss("bd", &bd_workspace.bd_root, &["sync", "--import-only"])
         .unwrap_or(MemoryStats { max_rss_kb: None });
 
-    if br_stats.max_rss_kb.is_none() && bd_stats.max_rss_kb.is_none() {
+    if obr_stats.max_rss_kb.is_none() && bd_stats.max_rss_kb.is_none() {
         info!("benchmark_memory_sync_import_1000: no RSS data available");
         return None;
     }
@@ -973,7 +977,7 @@ fn benchmark_memory_sync_import_1000() -> Option<MemoryComparison> {
     Some(MemoryComparison {
         name: "memory_sync_import_1000".to_string(),
         description: "Max RSS for sync --import-only with 1000 issues".to_string(),
-        br: br_stats,
+        obr: obr_stats,
         bd: bd_stats,
     })
 }
@@ -986,9 +990,9 @@ fn benchmark_memory_sync_import_1000() -> Option<MemoryComparison> {
 fn benchmark_init(config: &BenchmarkConfig) -> BenchmarkComparison {
     info!("benchmark_init: starting");
 
-    let br_stats = run_benchmark(config, || {
+    let obr_stats = run_benchmark(config, || {
         let workspace = BenchmarkWorkspace::new();
-        workspace.time_br(["init"])
+        workspace.time_obr(["init"])
     });
 
     let bd_stats = run_benchmark(config, || {
@@ -998,13 +1002,13 @@ fn benchmark_init(config: &BenchmarkConfig) -> BenchmarkComparison {
 
     info!(
         "benchmark_init: br_mean={:.2}ms bd_mean={:.2}ms",
-        br_stats.mean_ms, bd_stats.mean_ms
+        obr_stats.mean_ms, bd_stats.mean_ms
     );
 
     BenchmarkComparison::new(
         "init",
         "Initialize workspace (cold start)",
-        br_stats,
+        obr_stats,
         bd_stats,
     )
 }
@@ -1017,11 +1021,11 @@ fn benchmark_create_single(config: &BenchmarkConfig) -> BenchmarkComparison {
     let workspace = BenchmarkWorkspace::new();
     workspace.init_both();
 
-    let mut br_counter = 0;
-    let br_stats = run_benchmark(config, || {
-        let title = format!("Benchmark issue {}", br_counter);
-        br_counter += 1;
-        workspace.time_br(["create", &title, "--json"])
+    let mut obr_counter = 0;
+    let obr_stats = run_benchmark(config, || {
+        let title = format!("Benchmark issue {}", obr_counter);
+        obr_counter += 1;
+        workspace.time_obr(["create", &title, "--json"])
     });
 
     let mut bd_counter = 0;
@@ -1033,24 +1037,24 @@ fn benchmark_create_single(config: &BenchmarkConfig) -> BenchmarkComparison {
 
     info!(
         "benchmark_create_single: br_mean={:.2}ms bd_mean={:.2}ms",
-        br_stats.mean_ms, bd_stats.mean_ms
+        obr_stats.mean_ms, bd_stats.mean_ms
     );
 
-    BenchmarkComparison::new("create_single", "Create single issue", br_stats, bd_stats)
+    BenchmarkComparison::new("create_single", "Create single issue", obr_stats, bd_stats)
 }
 
 /// Benchmark: create 100 issues (throughput)
 fn benchmark_create_batch_100(config: &BenchmarkConfig) -> BenchmarkComparison {
     info!("benchmark_create_batch_100: starting");
 
-    let br_stats = run_benchmark(config, || {
+    let obr_stats = run_benchmark(config, || {
         let workspace = BenchmarkWorkspace::new();
-        let _ = workspace.run_br(["init"], "init");
+        let _ = workspace.run_obr(["init"], "init");
 
         let start = Instant::now();
         for i in 0..100 {
             let title = format!("Batch issue {}", i);
-            let _ = workspace.run_br(["create", &title, "--json"], "create");
+            let _ = workspace.run_obr(["create", &title, "--json"], "create");
         }
         start.elapsed()
     });
@@ -1069,13 +1073,13 @@ fn benchmark_create_batch_100(config: &BenchmarkConfig) -> BenchmarkComparison {
 
     info!(
         "benchmark_create_batch_100: br_mean={:.2}ms bd_mean={:.2}ms",
-        br_stats.mean_ms, bd_stats.mean_ms
+        obr_stats.mean_ms, bd_stats.mean_ms
     );
 
     BenchmarkComparison::new(
         "create_batch_100",
         "Create 100 issues (throughput)",
-        br_stats,
+        obr_stats,
         bd_stats,
     )
 }
@@ -1087,7 +1091,7 @@ fn populate_workspace(workspace: &BenchmarkWorkspace, count: usize) {
     for i in 0..count {
         let title = format!("Issue {}", i);
         let priority = format!("{}", i % 5);
-        workspace.run_br(
+        workspace.run_obr(
             ["create", &title, "--priority", &priority, "--json"],
             "setup",
         );
@@ -1098,22 +1102,22 @@ fn populate_workspace(workspace: &BenchmarkWorkspace, count: usize) {
     }
 }
 
-/// Generate JSONL data for import benchmarks using br as the source of truth.
+/// Generate JSONL data for import benchmarks using obr as the source of truth.
 fn generate_import_jsonl(count: usize) -> Vec<u8> {
     let workspace = BenchmarkWorkspace::new();
-    let init = workspace.run_br(["init"], "init");
-    assert!(init.success, "br init failed: {}", init.stderr);
+    let init = workspace.run_obr(["init"], "init");
+    assert!(init.success, "obr init failed: {}", init.stderr);
 
     for i in 0..count {
         let title = format!("Import seed issue {}", i);
-        let create = workspace.run_br(["create", &title, "--json"], "create");
-        assert!(create.success, "br create failed: {}", create.stderr);
+        let create = workspace.run_obr(["create", &title, "--json"], "create");
+        assert!(create.success, "obr create failed: {}", create.stderr);
     }
 
-    let flush = workspace.run_br(["sync", "--flush-only"], "sync_flush");
-    assert!(flush.success, "br sync flush failed: {}", flush.stderr);
+    let flush = workspace.run_obr(["sync", "--flush-only"], "sync_flush");
+    assert!(flush.success, "obr sync flush failed: {}", flush.stderr);
 
-    let jsonl_path = workspace.br_root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.obr_root.join(".obr").join("issues.jsonl");
     fs::read(&jsonl_path).expect("read issues.jsonl for import seed")
 }
 
@@ -1124,16 +1128,16 @@ fn benchmark_list_10(config: &BenchmarkConfig) -> BenchmarkComparison {
     let workspace = BenchmarkWorkspace::new();
     populate_workspace(&workspace, 10);
 
-    let br_stats = run_benchmark(config, || workspace.time_br(["list", "--json"]));
+    let obr_stats = run_benchmark(config, || workspace.time_obr(["list", "--json"]));
 
     let bd_stats = run_benchmark(config, || workspace.time_bd(["list", "--json"]));
 
     info!(
         "benchmark_list_10: br_mean={:.2}ms bd_mean={:.2}ms",
-        br_stats.mean_ms, bd_stats.mean_ms
+        obr_stats.mean_ms, bd_stats.mean_ms
     );
 
-    BenchmarkComparison::new("list_10", "List 10 issues", br_stats, bd_stats)
+    BenchmarkComparison::new("list_10", "List 10 issues", obr_stats, bd_stats)
 }
 
 /// Benchmark: list with 100 issues
@@ -1143,16 +1147,16 @@ fn benchmark_list_100(config: &BenchmarkConfig) -> BenchmarkComparison {
     let workspace = BenchmarkWorkspace::new();
     populate_workspace(&workspace, 100);
 
-    let br_stats = run_benchmark(config, || workspace.time_br(["list", "--json"]));
+    let obr_stats = run_benchmark(config, || workspace.time_obr(["list", "--json"]));
 
     let bd_stats = run_benchmark(config, || workspace.time_bd(["list", "--json"]));
 
     info!(
         "benchmark_list_100: br_mean={:.2}ms bd_mean={:.2}ms",
-        br_stats.mean_ms, bd_stats.mean_ms
+        obr_stats.mean_ms, bd_stats.mean_ms
     );
 
-    BenchmarkComparison::new("list_100", "List 100 issues", br_stats, bd_stats)
+    BenchmarkComparison::new("list_100", "List 100 issues", obr_stats, bd_stats)
 }
 
 /// Benchmark: list with 1000 issues
@@ -1162,16 +1166,16 @@ fn benchmark_list_1000(config: &BenchmarkConfig) -> BenchmarkComparison {
     let workspace = BenchmarkWorkspace::new();
     populate_workspace(&workspace, 1000);
 
-    let br_stats = run_benchmark(config, || workspace.time_br(["list", "--json"]));
+    let obr_stats = run_benchmark(config, || workspace.time_obr(["list", "--json"]));
 
     let bd_stats = run_benchmark(config, || workspace.time_bd(["list", "--json"]));
 
     info!(
         "benchmark_list_1000: br_mean={:.2}ms bd_mean={:.2}ms",
-        br_stats.mean_ms, bd_stats.mean_ms
+        obr_stats.mean_ms, bd_stats.mean_ms
     );
 
-    BenchmarkComparison::new("list_1000", "List 1000 issues", br_stats, bd_stats)
+    BenchmarkComparison::new("list_1000", "List 1000 issues", obr_stats, bd_stats)
 }
 
 /// Benchmark: list with status filter
@@ -1181,8 +1185,8 @@ fn benchmark_list_filtered(config: &BenchmarkConfig) -> BenchmarkComparison {
     let workspace = BenchmarkWorkspace::new();
     populate_workspace(&workspace, 50);
 
-    let br_stats = run_benchmark(config, || {
-        workspace.time_br(["list", "--status=open", "--json"])
+    let obr_stats = run_benchmark(config, || {
+        workspace.time_obr(["list", "--status=open", "--json"])
     });
 
     let bd_stats = run_benchmark(config, || {
@@ -1191,13 +1195,13 @@ fn benchmark_list_filtered(config: &BenchmarkConfig) -> BenchmarkComparison {
 
     info!(
         "benchmark_list_filtered: br_mean={:.2}ms bd_mean={:.2}ms",
-        br_stats.mean_ms, bd_stats.mean_ms
+        obr_stats.mean_ms, bd_stats.mean_ms
     );
 
     BenchmarkComparison::new(
         "list_filtered",
         "List with status filter (50 issues)",
-        br_stats,
+        obr_stats,
         bd_stats,
     )
 }
@@ -1209,16 +1213,21 @@ fn benchmark_search(config: &BenchmarkConfig) -> BenchmarkComparison {
     let workspace = BenchmarkWorkspace::new();
     populate_workspace(&workspace, 50);
 
-    let br_stats = run_benchmark(config, || workspace.time_br(["search", "Issue", "--json"]));
+    let obr_stats = run_benchmark(config, || workspace.time_obr(["search", "Issue", "--json"]));
 
     let bd_stats = run_benchmark(config, || workspace.time_bd(["search", "Issue", "--json"]));
 
     info!(
         "benchmark_search: br_mean={:.2}ms bd_mean={:.2}ms",
-        br_stats.mean_ms, bd_stats.mean_ms
+        obr_stats.mean_ms, bd_stats.mean_ms
     );
 
-    BenchmarkComparison::new("search", "Full-text search (50 issues)", br_stats, bd_stats)
+    BenchmarkComparison::new(
+        "search",
+        "Full-text search (50 issues)",
+        obr_stats,
+        bd_stats,
+    )
 }
 
 /// Benchmark: ready command (unblocked issues)
@@ -1228,16 +1237,16 @@ fn benchmark_ready(config: &BenchmarkConfig) -> BenchmarkComparison {
     let workspace = BenchmarkWorkspace::new();
     populate_workspace(&workspace, 30);
 
-    let br_stats = run_benchmark(config, || workspace.time_br(["ready", "--json"]));
+    let obr_stats = run_benchmark(config, || workspace.time_obr(["ready", "--json"]));
 
     let bd_stats = run_benchmark(config, || workspace.time_bd(["ready", "--json"]));
 
     info!(
         "benchmark_ready: br_mean={:.2}ms bd_mean={:.2}ms",
-        br_stats.mean_ms, bd_stats.mean_ms
+        obr_stats.mean_ms, bd_stats.mean_ms
     );
 
-    BenchmarkComparison::new("ready", "Get ready issues (30 issues)", br_stats, bd_stats)
+    BenchmarkComparison::new("ready", "Get ready issues (30 issues)", obr_stats, bd_stats)
 }
 
 /// Benchmark: sync --flush-only (export to JSONL)
@@ -1247,19 +1256,19 @@ fn benchmark_sync_flush(config: &BenchmarkConfig) -> BenchmarkComparison {
     let workspace = BenchmarkWorkspace::new();
     populate_workspace(&workspace, 50);
 
-    let br_stats = run_benchmark(config, || workspace.time_br(["sync", "--flush-only"]));
+    let obr_stats = run_benchmark(config, || workspace.time_obr(["sync", "--flush-only"]));
 
     let bd_stats = run_benchmark(config, || workspace.time_bd(["sync", "--flush-only"]));
 
     info!(
         "benchmark_sync_flush: br_mean={:.2}ms bd_mean={:.2}ms",
-        br_stats.mean_ms, bd_stats.mean_ms
+        obr_stats.mean_ms, bd_stats.mean_ms
     );
 
     BenchmarkComparison::new(
         "sync_flush",
         "Sync flush to JSONL (50 issues)",
-        br_stats,
+        obr_stats,
         bd_stats,
     )
 }
@@ -1270,16 +1279,16 @@ fn benchmark_sync_import(config: &BenchmarkConfig) -> BenchmarkComparison {
 
     let jsonl_data = generate_import_jsonl(50);
 
-    let br_stats = run_benchmark(config, || {
+    let obr_stats = run_benchmark(config, || {
         let workspace = BenchmarkWorkspace::new();
-        let init = workspace.run_br(["init"], "init");
-        assert!(init.success, "br init failed: {}", init.stderr);
+        let init = workspace.run_obr(["init"], "init");
+        assert!(init.success, "obr init failed: {}", init.stderr);
 
-        let jsonl_path = workspace.br_root.join(".beads").join("issues.jsonl");
-        fs::write(&jsonl_path, &jsonl_data).expect("write br issues.jsonl");
+        let jsonl_path = workspace.obr_root.join(".obr").join("issues.jsonl");
+        fs::write(&jsonl_path, &jsonl_data).expect("write obr issues.jsonl");
 
-        let result = workspace.run_br(["sync", "--import-only"], "sync_import");
-        assert!(result.success, "br sync import failed: {}", result.stderr);
+        let result = workspace.run_obr(["sync", "--import-only"], "sync_import");
+        assert!(result.success, "obr sync import failed: {}", result.stderr);
         result.duration
     });
 
@@ -1288,7 +1297,7 @@ fn benchmark_sync_import(config: &BenchmarkConfig) -> BenchmarkComparison {
         let init = workspace.run_bd(["init"], "init");
         assert!(init.success, "bd init failed: {}", init.stderr);
 
-        let jsonl_path = workspace.bd_root.join(".beads").join("issues.jsonl");
+        let jsonl_path = workspace.bd_root.join(".obr").join("issues.jsonl");
         fs::write(&jsonl_path, &jsonl_data).expect("write bd issues.jsonl");
 
         let result = workspace.run_bd(["sync", "--import-only"], "sync_import");
@@ -1298,13 +1307,13 @@ fn benchmark_sync_import(config: &BenchmarkConfig) -> BenchmarkComparison {
 
     info!(
         "benchmark_sync_import: br_mean={:.2}ms bd_mean={:.2}ms",
-        br_stats.mean_ms, bd_stats.mean_ms
+        obr_stats.mean_ms, bd_stats.mean_ms
     );
 
     BenchmarkComparison::new(
         "sync_import",
         "Sync import from JSONL (50 issues)",
-        br_stats,
+        obr_stats,
         bd_stats,
     )
 }
@@ -1316,16 +1325,21 @@ fn benchmark_stats(config: &BenchmarkConfig) -> BenchmarkComparison {
     let workspace = BenchmarkWorkspace::new();
     populate_workspace(&workspace, 30);
 
-    let br_stats = run_benchmark(config, || workspace.time_br(["stats", "--json"]));
+    let obr_stats = run_benchmark(config, || workspace.time_obr(["stats", "--json"]));
 
     let bd_stats = run_benchmark(config, || workspace.time_bd(["stats", "--json"]));
 
     info!(
         "benchmark_stats: br_mean={:.2}ms bd_mean={:.2}ms",
-        br_stats.mean_ms, bd_stats.mean_ms
+        obr_stats.mean_ms, bd_stats.mean_ms
     );
 
-    BenchmarkComparison::new("stats", "Get project stats (30 issues)", br_stats, bd_stats)
+    BenchmarkComparison::new(
+        "stats",
+        "Get project stats (30 issues)",
+        obr_stats,
+        bd_stats,
+    )
 }
 
 // ============================================================================
@@ -1446,8 +1460,8 @@ fn benchmark_comparison_quick() {
     // Just run init and create_single as quick sanity check
     let init_result = benchmark_init(&config);
     assert!(
-        init_result.br_stats.mean_ms > 0.0,
-        "br init should have positive timing"
+        init_result.obr_stats.mean_ms > 0.0,
+        "obr init should have positive timing"
     );
     assert!(
         init_result.bd_stats.mean_ms > 0.0,
@@ -1458,8 +1472,8 @@ fn benchmark_comparison_quick() {
 
     let create_result = benchmark_create_single(&config);
     assert!(
-        create_result.br_stats.mean_ms > 0.0,
-        "br create should have positive timing"
+        create_result.obr_stats.mean_ms > 0.0,
+        "obr create should have positive timing"
     );
     assert!(
         create_result.bd_stats.mean_ms > 0.0,
@@ -1481,24 +1495,31 @@ fn benchmark_infrastructure_works() {
 
     // Test workspace creation
     let workspace = BenchmarkWorkspace::new();
-    assert!(workspace.br_root.exists());
+    assert!(workspace.obr_root.exists());
     assert!(workspace.bd_root.exists());
 
     // Test init
-    let (br_out, bd_out) = workspace.init_both();
-    assert!(br_out.success, "br init failed: {}", br_out.stderr);
+    let (obr_out, bd_out) = workspace.init_both();
+    assert!(obr_out.success, "obr init failed: {}", obr_out.stderr);
     assert!(bd_out.success, "bd init failed: {}", bd_out.stderr);
 
     // Test create
-    let br_create = workspace.run_br(["create", "Test issue", "--json"], "create");
+    let obr_create = workspace.run_obr(["create", "Test issue", "--json"], "create");
     let bd_create = workspace.run_bd(["create", "Test issue", "--json"], "create");
-    assert!(br_create.success, "br create failed: {}", br_create.stderr);
+    assert!(
+        obr_create.success,
+        "obr create failed: {}",
+        obr_create.stderr
+    );
     assert!(bd_create.success, "bd create failed: {}", bd_create.stderr);
 
     // Test timing functions
-    let br_duration = workspace.time_br(["list", "--json"]);
+    let obr_duration = workspace.time_obr(["list", "--json"]);
     let bd_duration = workspace.time_bd(["list", "--json"]);
-    assert!(br_duration.as_millis() > 0, "br timing should be positive");
+    assert!(
+        obr_duration.as_millis() > 0,
+        "obr timing should be positive"
+    );
     assert!(bd_duration.as_millis() > 0, "bd timing should be positive");
 
     info!("benchmark_infrastructure_works: all checks passed");
@@ -1590,7 +1611,7 @@ fn test_outlier_filtering() {
 fn test_benchmark_comparison_calculations() {
     init_test_logging();
 
-    let br_stats = TimingStats {
+    let obr_stats = TimingStats {
         mean_ms: 10.0,
         median_ms: 10.0,
         p95_ms: 12.0,
@@ -1610,16 +1631,16 @@ fn test_benchmark_comparison_calculations() {
         run_count: 5,
     };
 
-    let comparison = BenchmarkComparison::new("test", "Test benchmark", br_stats, bd_stats);
+    let comparison = BenchmarkComparison::new("test", "Test benchmark", obr_stats, bd_stats);
 
-    // br is 2x faster (10ms vs 20ms), so ratio should be 0.5
+    // obr is 2x faster (10ms vs 20ms), so ratio should be 0.5
     assert!(
         (comparison.speedup_ratio - 0.5).abs() < 0.01,
         "Speedup ratio should be 0.5, was {}",
         comparison.speedup_ratio
     );
 
-    // Speedup percent should be 50% (br is 50% faster)
+    // Speedup percent should be 50% (obr is 50% faster)
     assert!(
         (comparison.speedup_percent - 50.0).abs() < 0.1,
         "Speedup percent should be 50%, was {}",

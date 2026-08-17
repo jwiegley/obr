@@ -1,14 +1,14 @@
 mod common;
-use common::cli::{BrWorkspace, run_br};
+use common::cli::{ObrWorkspace, run_obr};
 
 #[test]
 fn test_list_priority_accepts_p_prefix() {
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
-    run_br(&workspace, ["create", "Critical", "-p", "0"], "create");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
+    run_obr(&workspace, ["create", "Critical", "-p", "0"], "create");
 
     // This should work (numeric)
-    let list_num = run_br(&workspace, ["list", "-p", "0"], "list_num");
+    let list_num = run_obr(&workspace, ["list", "-p", "0"], "list_num");
     assert!(
         list_num.status.success(),
         "Numeric priority failed: {}",
@@ -17,7 +17,7 @@ fn test_list_priority_accepts_p_prefix() {
     assert!(list_num.stdout.contains("Critical"));
 
     // This should work (P-prefix) but likely fails currently
-    let list_p = run_br(&workspace, ["list", "-p", "P0"], "list_p");
+    let list_p = run_obr(&workspace, ["list", "-p", "P0"], "list_p");
 
     // If it fails with clap error, it's because of Vec<u8> type
     if list_p.status.success() {
@@ -34,15 +34,15 @@ fn test_list_priority_accepts_p_prefix() {
 
 #[test]
 fn test_list_csv_default_header_and_escaping() {
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init_csv_default");
-    run_br(
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init_csv_default");
+    run_obr(
         &workspace,
         ["create", "Hello, \"CSV\", world", "-p", "2"],
         "create_csv_default",
     );
 
-    let list = run_br(&workspace, ["list", "--format", "csv"], "list_csv_default");
+    let list = run_obr(&workspace, ["list", "--format", "csv"], "list_csv_default");
     assert!(list.status.success(), "CSV list failed: {}", list.stderr);
 
     let header = list.stdout.lines().next().unwrap_or_default();
@@ -59,15 +59,15 @@ fn test_list_csv_default_header_and_escaping() {
 
 #[test]
 fn test_list_csv_fields_with_newlines() {
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init_csv_fields");
-    run_br(
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init_csv_fields");
+    run_obr(
         &workspace,
         ["create", "HasDescription", "-d", "Line1\nLine2"],
         "create_csv_fields",
     );
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         [
             "list",

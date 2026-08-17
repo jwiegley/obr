@@ -1,9 +1,9 @@
 # base_jsonl_stale_regen
 
 - **FM**: `fm-state_files-base-jsonl-missing-or-stale` (P2, STALE
-  subset) — `.beads/beads.base.jsonl` exists as a regular file but
-  its `mtime` is older than `.beads/issues.jsonl`. A stale merge
-  anchor produces incorrect 3-way merges when `br sync --merge`
+  subset) — `.obr/merge.base.jsonl` exists as a regular file but
+  its `mtime` is older than `.obr/issues.jsonl`. A stale merge
+  anchor produces incorrect 3-way merges when `obr sync --merge`
   reconciles a remote with the local workspace.
 - **Subsystem**: state_files
 - **Detect**: `base_jsonl` check goes to `warn` when both:
@@ -13,9 +13,9 @@
   - the live JSONL is non-empty.
   Details payload carries `kind: "stale"` and `live_jsonl` path.
 - **Repair contract**: SAFETY — `--repair` reads the current
-  `.beads/issues.jsonl` bytes and rewrites `.beads/beads.base.jsonl`
+  `.obr/issues.jsonl` bytes and rewrites `.obr/merge.base.jsonl`
   with those bytes via `chokepoint::mutate(Op::WriteFile)`. This
-  matches what `br sync --flush-only` would produce as a side
+  matches what `obr sync --flush-only` would produce as a side
   effect of a clean export; the doctor surfaces it as a named
   repair so operators don't need to remember which sync command
   rewrites the merge anchor.

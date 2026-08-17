@@ -3,4 +3,4 @@ source: tests/snapshots/error_messages.rs
 expression: normalize_output(&output.stderr)
 ---
 Error: Issue not found: ID-REDACTED
-Hint: Run 'br list' to see available issues.
+Hint: Run 'obr list' to see available issues.

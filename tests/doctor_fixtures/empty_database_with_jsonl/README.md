@@ -4,9 +4,9 @@
 - **Subsystem**: state_files
 - **Detect**: `schema.tables` check goes to `error` (no tables in zero-byte DB);
   `workspace_health = recoverable`
-- **Repair contract**: `--repair` rebuilds the DB from `.beads/issues.jsonl`,
+- **Repair contract**: `--repair` rebuilds the DB from `.obr/issues.jsonl`,
   preserving issue history. Quarantines the truncated DB under
-  `.beads/.br_recovery/`.
+  `.obr/recovery/`.
 - **Round-trip**: PARTIAL — DB rebuild predates WP3/WP4 chokepoint. `undo
   latest` may report `restored: 0`.
 - **Expected exit codes**:

@@ -9,7 +9,7 @@ tool_bin="${TOOL_BIN:-br}"
 
 cd "$target_dir"
 
-recovery_dir=".beads/.br_recovery"
+recovery_dir=".obr/recovery"
 
 cur_mode() {
     python3 - "$recovery_dir" <<'PY'

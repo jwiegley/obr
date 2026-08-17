@@ -1,6 +1,5 @@
 ---
 source: tests/snapshots/toon_output.rs
-assertion_line: 113
 expression: normalized
 ---
 [3]:

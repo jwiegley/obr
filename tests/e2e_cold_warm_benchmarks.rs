@@ -1,7 +1,7 @@
 //! Cold vs Warm Start Benchmark Suite
 //!
 //! Measures startup and repeated-run performance to capture cache effects.
-//! Compares br (Rust) vs bd (Go) for both cold and warm scenarios.
+//! Compares obr (Rust) vs bd (Go) for both cold and warm scenarios.
 //!
 //! # Concepts
 //!
@@ -78,7 +78,7 @@ impl std::fmt::Display for RunType {
 pub struct RunMetrics {
     /// Command label
     pub command: String,
-    /// Binary (br or bd)
+    /// Binary (obr or bd)
     pub binary: String,
     /// Run type (cold or warm)
     pub run_type: RunType,
@@ -163,7 +163,7 @@ impl RunStats {
 pub struct ColdWarmComparison {
     /// Command label
     pub command: String,
-    /// Binary (br or bd)
+    /// Binary (obr or bd)
     pub binary: String,
     /// Cold run statistics
     pub cold: RunStats,
@@ -178,16 +178,16 @@ pub struct ColdWarmComparison {
     pub runs: Vec<RunMetrics>,
 }
 
-/// Full comparison for a command across br and bd
+/// Full comparison for a command across obr and bd
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandComparison {
     pub command: String,
-    pub br: ColdWarmComparison,
+    pub obr: ColdWarmComparison,
     pub bd: ColdWarmComparison,
-    /// br vs bd cold comparison (`br_cold` / `bd_cold`, < 1.0 means br faster)
-    pub br_bd_cold_ratio: f64,
-    /// br vs bd warm comparison (`br_warm` / `bd_warm`, < 1.0 means br faster)
-    pub br_bd_warm_ratio: f64,
+    /// obr vs bd cold comparison (`obr_cold` / `bd_cold`, < 1.0 means obr faster)
+    pub obr_bd_cold_ratio: f64,
+    /// obr vs bd warm comparison (`obr_warm` / `bd_warm`, < 1.0 means obr faster)
+    pub obr_bd_warm_ratio: f64,
 }
 
 /// Full benchmark results
@@ -235,14 +235,14 @@ impl Default for BenchmarkConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkSummary {
-    /// Average cache benefit for br (%)
-    pub br_avg_cache_benefit_pct: f64,
+    /// Average cache benefit for obr (%)
+    pub obr_avg_cache_benefit_pct: f64,
     /// Average cache benefit for bd (%)
     pub bd_avg_cache_benefit_pct: f64,
-    /// br faster than bd in cold starts (count)
-    pub br_faster_cold_count: usize,
-    /// br faster than bd in warm starts (count)
-    pub br_faster_warm_count: usize,
+    /// obr faster than bd in cold starts (count)
+    pub obr_faster_cold_count: usize,
+    /// obr faster than bd in warm starts (count)
+    pub obr_faster_warm_count: usize,
     /// Total commands compared
     pub total_commands: usize,
 }
@@ -316,7 +316,7 @@ fn try_drop_caches() -> bool {
 // =============================================================================
 
 fn benchmark_command(
-    br_path: &Path,
+    obr_path: &Path,
     bd_path: &Path,
     workspace: &Path,
     command: &str,
@@ -325,7 +325,7 @@ fn benchmark_command(
     let args: Vec<&str> = command.split_whitespace().collect();
     let label = command;
 
-    let mut br_runs = Vec::new();
+    let mut obr_runs = Vec::new();
     let mut bd_runs = Vec::new();
 
     // Attempt to drop caches before cold runs (best effort)
@@ -333,9 +333,9 @@ fn benchmark_command(
 
     // Cold runs - first invocations
     for i in 0..config.cold_runs {
-        // Run br cold
-        let br_run = run_command(br_path, &args, workspace, label, "br", RunType::Cold, i);
-        br_runs.push(br_run);
+        // Run obr cold
+        let obr_run = run_command(obr_path, &args, workspace, label, "obr", RunType::Cold, i);
+        obr_runs.push(obr_run);
 
         // Run bd cold
         let bd_run = run_command(bd_path, &args, workspace, label, "bd", RunType::Cold, i);
@@ -344,26 +344,26 @@ fn benchmark_command(
 
     // Warm runs - subsequent invocations benefit from caches
     for i in 0..config.warm_runs {
-        let br_run = run_command(br_path, &args, workspace, label, "br", RunType::Warm, i);
-        br_runs.push(br_run);
+        let obr_run = run_command(obr_path, &args, workspace, label, "obr", RunType::Warm, i);
+        obr_runs.push(obr_run);
 
         let bd_run = run_command(bd_path, &args, workspace, label, "bd", RunType::Warm, i);
         bd_runs.push(bd_run);
     }
 
     // Calculate statistics
-    let br_cold = RunStats::from_runs(&br_runs, RunType::Cold);
-    let br_warm = RunStats::from_runs(&br_runs, RunType::Warm);
+    let obr_cold = RunStats::from_runs(&obr_runs, RunType::Cold);
+    let obr_warm = RunStats::from_runs(&obr_runs, RunType::Warm);
     let bd_cold = RunStats::from_runs(&bd_runs, RunType::Cold);
     let bd_warm = RunStats::from_runs(&bd_runs, RunType::Warm);
 
-    let br_warm_speedup = if br_warm.mean_ms > 0.0 {
-        br_cold.mean_ms / br_warm.mean_ms
+    let obr_warm_speedup = if obr_warm.mean_ms > 0.0 {
+        obr_cold.mean_ms / obr_warm.mean_ms
     } else {
         1.0
     };
-    let br_cache_benefit = if br_cold.mean_ms > 0.0 {
-        (br_cold.mean_ms - br_warm.mean_ms) / br_cold.mean_ms * 100.0
+    let obr_cache_benefit = if obr_cold.mean_ms > 0.0 {
+        (obr_cold.mean_ms - obr_warm.mean_ms) / obr_cold.mean_ms * 100.0
     } else {
         0.0
     };
@@ -379,14 +379,14 @@ fn benchmark_command(
         0.0
     };
 
-    let br_comparison = ColdWarmComparison {
+    let obr_comparison = ColdWarmComparison {
         command: label.to_string(),
-        binary: "br".to_string(),
-        cold: br_cold.clone(),
-        warm: br_warm.clone(),
-        warm_speedup_ratio: br_warm_speedup,
-        cache_benefit_pct: br_cache_benefit,
-        runs: br_runs,
+        binary: "obr".to_string(),
+        cold: obr_cold.clone(),
+        warm: obr_warm.clone(),
+        warm_speedup_ratio: obr_warm_speedup,
+        cache_benefit_pct: obr_cache_benefit,
+        runs: obr_runs,
     };
 
     let bd_comparison = ColdWarmComparison {
@@ -400,24 +400,24 @@ fn benchmark_command(
     };
 
     // Cross-binary comparisons
-    let br_bd_cold_ratio = if bd_cold.mean_ms > 0.0 {
-        br_cold.mean_ms / bd_cold.mean_ms
+    let obr_bd_cold_ratio = if bd_cold.mean_ms > 0.0 {
+        obr_cold.mean_ms / bd_cold.mean_ms
     } else {
         1.0
     };
 
-    let br_bd_warm_ratio = if bd_warm.mean_ms > 0.0 {
-        br_warm.mean_ms / bd_warm.mean_ms
+    let obr_bd_warm_ratio = if bd_warm.mean_ms > 0.0 {
+        obr_warm.mean_ms / bd_warm.mean_ms
     } else {
         1.0
     };
 
     CommandComparison {
         command: label.to_string(),
-        br: br_comparison,
+        obr: obr_comparison,
         bd: bd_comparison,
-        br_bd_cold_ratio,
-        br_bd_warm_ratio,
+        obr_bd_cold_ratio,
+        obr_bd_warm_ratio,
     }
 }
 
@@ -454,7 +454,7 @@ fn run_cold_warm_benchmarks(
     let mut comparisons = Vec::new();
     for cmd in &config.commands {
         println!("    Benchmarking: {cmd}");
-        let comparison = benchmark_command(&binaries.br.path, &bd.path, workspace, cmd, config);
+        let comparison = benchmark_command(&binaries.obr.path, &bd.path, workspace, cmd, config);
         comparisons.push(comparison);
     }
 
@@ -468,13 +468,16 @@ fn run_cold_warm_benchmarks(
     }
 
     // Calculate summary
-    let br_cache_benefits: Vec<f64> = comparisons.iter().map(|c| c.br.cache_benefit_pct).collect();
+    let obr_cache_benefits: Vec<f64> = comparisons
+        .iter()
+        .map(|c| c.obr.cache_benefit_pct)
+        .collect();
     let bd_cache_benefits: Vec<f64> = comparisons.iter().map(|c| c.bd.cache_benefit_pct).collect();
 
-    let br_avg_cache = if br_cache_benefits.is_empty() {
+    let obr_avg_cache = if obr_cache_benefits.is_empty() {
         0.0
     } else {
-        br_cache_benefits.iter().sum::<f64>() / br_cache_benefits.len() as f64
+        obr_cache_benefits.iter().sum::<f64>() / obr_cache_benefits.len() as f64
     };
 
     let bd_avg_cache = if bd_cache_benefits.is_empty() {
@@ -483,20 +486,20 @@ fn run_cold_warm_benchmarks(
         bd_cache_benefits.iter().sum::<f64>() / bd_cache_benefits.len() as f64
     };
 
-    let br_faster_cold = comparisons
+    let obr_faster_cold = comparisons
         .iter()
-        .filter(|c| c.br_bd_cold_ratio < 1.0)
+        .filter(|c| c.obr_bd_cold_ratio < 1.0)
         .count();
-    let br_faster_warm = comparisons
+    let obr_faster_warm = comparisons
         .iter()
-        .filter(|c| c.br_bd_warm_ratio < 1.0)
+        .filter(|c| c.obr_bd_warm_ratio < 1.0)
         .count();
 
     let summary = BenchmarkSummary {
-        br_avg_cache_benefit_pct: br_avg_cache,
+        obr_avg_cache_benefit_pct: obr_avg_cache,
         bd_avg_cache_benefit_pct: bd_avg_cache,
-        br_faster_cold_count: br_faster_cold,
-        br_faster_warm_count: br_faster_warm,
+        obr_faster_cold_count: obr_faster_cold,
+        obr_faster_warm_count: obr_faster_warm,
         total_commands: comparisons.len(),
     };
 
@@ -539,9 +542,9 @@ fn print_cold_warm_table(result: &ColdWarmBenchmarkResult) {
         println!(
             "{:<25} {:>10.1} {:>10.1} {:>10.1} {:>10.1} {:>10.1} {:>10.1}",
             c.command,
-            c.br.cold.mean_ms,
-            c.br.warm.mean_ms,
-            c.br.cache_benefit_pct,
+            c.obr.cold.mean_ms,
+            c.obr.warm.mean_ms,
+            c.obr.cache_benefit_pct,
             c.bd.cold.mean_ms,
             c.bd.warm.mean_ms,
             c.bd.cache_benefit_pct
@@ -551,47 +554,47 @@ fn print_cold_warm_table(result: &ColdWarmBenchmarkResult) {
     println!("{dash}");
     println!("\nSummary:");
     println!(
-        "  br average cache benefit: {:.1}%",
-        result.summary.br_avg_cache_benefit_pct
+        "  obr average cache benefit: {:.1}%",
+        result.summary.obr_avg_cache_benefit_pct
     );
     println!(
         "  bd average cache benefit: {:.1}%",
         result.summary.bd_avg_cache_benefit_pct
     );
     println!(
-        "  br faster (cold): {}/{}",
-        result.summary.br_faster_cold_count, result.summary.total_commands
+        "  obr faster (cold): {}/{}",
+        result.summary.obr_faster_cold_count, result.summary.total_commands
     );
     println!(
-        "  br faster (warm): {}/{}",
-        result.summary.br_faster_warm_count, result.summary.total_commands
+        "  obr faster (warm): {}/{}",
+        result.summary.obr_faster_warm_count, result.summary.total_commands
     );
 
-    // Print br vs bd comparison
-    println!("\nCross-binary comparison (ratio < 1.0 means br faster):");
+    // Print obr vs bd comparison
+    println!("\nCross-binary comparison (ratio < 1.0 means obr faster):");
     println!(
         "{:<25} {:>15} {:>15}",
         "Command", "cold_ratio", "warm_ratio"
     );
     println!("{}", "-".repeat(60));
     for c in &result.comparisons {
-        let cold_winner = if c.br_bd_cold_ratio < 0.95 {
-            "br"
-        } else if c.br_bd_cold_ratio > 1.05 {
+        let cold_winner = if c.obr_bd_cold_ratio < 0.95 {
+            "obr"
+        } else if c.obr_bd_cold_ratio > 1.05 {
             "bd"
         } else {
             "tie"
         };
-        let warm_winner = if c.br_bd_warm_ratio < 0.95 {
-            "br"
-        } else if c.br_bd_warm_ratio > 1.05 {
+        let warm_winner = if c.obr_bd_warm_ratio < 0.95 {
+            "obr"
+        } else if c.obr_bd_warm_ratio > 1.05 {
             "bd"
         } else {
             "tie"
         };
         println!(
             "{:<25} {:>10.2} ({:>3}) {:>10.2} ({:>3})",
-            c.command, c.br_bd_cold_ratio, cold_winner, c.br_bd_warm_ratio, warm_winner
+            c.command, c.obr_bd_cold_ratio, cold_winner, c.obr_bd_warm_ratio, warm_winner
         );
     }
 }
@@ -620,14 +623,14 @@ fn cold_warm_benchmark_full() {
         Ok(b) => b,
         Err(e) => {
             eprintln!("Binary discovery failed: {e}");
-            panic!("Cannot run benchmarks without br binary");
+            panic!("Cannot run benchmarks without obr binary");
         }
     };
 
     println!(
-        "br: {} ({})",
-        binaries.br.path.display(),
-        binaries.br.version
+        "obr: {} ({})",
+        binaries.obr.path.display(),
+        binaries.obr.version
     );
 
     if let Some(ref bd) = binaries.bd {
@@ -648,9 +651,9 @@ fn cold_warm_benchmark_full() {
         ],
     };
 
-    // Use beads_rust dataset for testing
-    let dataset = KnownDataset::BeadsRust;
-    if !dataset.beads_dir().exists() {
+    // Use obr dataset for testing
+    let dataset = KnownDataset::Obr;
+    if !dataset.obr_dir().exists() {
         println!("Dataset {} not available", dataset.name());
         return;
     }
@@ -709,8 +712,8 @@ fn cold_warm_quick() {
         commands: vec!["list --json".to_string(), "stats --json".to_string()],
     };
 
-    let dataset = KnownDataset::BeadsRust;
-    if !dataset.beads_dir().exists() {
+    let dataset = KnownDataset::Obr;
+    if !dataset.obr_dir().exists() {
         println!("Dataset {} not available, skipping", dataset.name());
         return;
     }
@@ -729,8 +732,8 @@ fn cold_warm_quick() {
             // Cache benefit should generally be positive (warm faster than cold)
             // Allow for variance in short runs
             println!(
-                "\nVerification: br cache benefit={:.1}%, bd cache benefit={:.1}%",
-                result.summary.br_avg_cache_benefit_pct, result.summary.bd_avg_cache_benefit_pct
+                "\nVerification: obr cache benefit={:.1}%, bd cache benefit={:.1}%",
+                result.summary.obr_avg_cache_benefit_pct, result.summary.bd_avg_cache_benefit_pct
             );
         }
         Err(e) => {
@@ -746,7 +749,7 @@ fn cold_warm_quick() {
 fn cold_warm_tagging_works() {
     let cold_run = RunMetrics {
         command: "test".to_string(),
-        binary: "br".to_string(),
+        binary: "obr".to_string(),
         run_type: RunType::Cold,
         run_index: 0,
         duration_ms: 100,
@@ -757,7 +760,7 @@ fn cold_warm_tagging_works() {
 
     let warm_run = RunMetrics {
         command: "test".to_string(),
-        binary: "br".to_string(),
+        binary: "obr".to_string(),
         run_type: RunType::Warm,
         run_index: 0,
         duration_ms: 50,
@@ -778,7 +781,7 @@ fn run_stats_calculation() {
     let runs = vec![
         RunMetrics {
             command: "test".to_string(),
-            binary: "br".to_string(),
+            binary: "obr".to_string(),
             run_type: RunType::Cold,
             run_index: 0,
             duration_ms: 100,
@@ -788,7 +791,7 @@ fn run_stats_calculation() {
         },
         RunMetrics {
             command: "test".to_string(),
-            binary: "br".to_string(),
+            binary: "obr".to_string(),
             run_type: RunType::Cold,
             run_index: 1,
             duration_ms: 120,
@@ -798,7 +801,7 @@ fn run_stats_calculation() {
         },
         RunMetrics {
             command: "test".to_string(),
-            binary: "br".to_string(),
+            binary: "obr".to_string(),
             run_type: RunType::Warm,
             run_index: 0,
             duration_ms: 50,
@@ -808,7 +811,7 @@ fn run_stats_calculation() {
         },
         RunMetrics {
             command: "test".to_string(),
-            binary: "br".to_string(),
+            binary: "obr".to_string(),
             run_type: RunType::Warm,
             run_index: 1,
             duration_ms: 60,

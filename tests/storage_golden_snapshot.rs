@@ -3,13 +3,12 @@
 //! The snapshot intentionally masks volatile timestamps while preserving the
 //! row shape, event sequence, content hash, and JSONL field layout.
 
-use beads_rust::franken_sync::Connection;
-use beads_rust::franken_sync::Row;
-use beads_rust::model::{Issue, IssueType, Priority, Status};
-use beads_rust::storage::{IssueUpdate, SqliteStorage};
 use chrono::{TimeZone, Utc};
 use fsqlite_types::SqliteValue;
 use insta::assert_snapshot;
+use obr::franken_sync::{Connection, Row};
+use obr::model::{Issue, IssueType, Priority, Status};
+use obr::storage::{IssueUpdate, SqliteStorage};
 use serde_json::Value;
 use std::fmt::Write;
 use tempfile::TempDir;
@@ -181,7 +180,7 @@ fn golden_create_update_close_sqlite_rows_and_jsonl() {
     push_events_snapshot(&mut snapshot, &conn);
 
     let mut jsonl = Vec::new();
-    beads_rust::sync::export_to_writer(&storage, &mut jsonl).expect("export JSONL");
+    obr::sync::export_to_writer(&storage, &mut jsonl).expect("export JSONL");
     writeln!(snapshot, "jsonl:").unwrap();
     snapshot.push_str(&normalized_jsonl(&jsonl));
 

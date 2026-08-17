@@ -1,8 +1,8 @@
 mod common;
 
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{ExportConfig, ImportConfig, export_to_jsonl, import_from_jsonl};
 use common::fixtures;
+use obr::storage::SqliteStorage;
+use obr::sync::{ExportConfig, ImportConfig, export_to_jsonl, import_from_jsonl};
 use tempfile::TempDir;
 
 #[test]

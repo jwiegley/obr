@@ -1,11 +1,11 @@
 mod common;
 
-use beads_rust::franken_sync::Connection;
-use beads_rust::model::{DependencyType, Issue, IssueType, Priority, Status};
-use beads_rust::storage::{ListFilters, ReadyFilters, ReadySortPolicy};
 use chrono::{Duration, Utc};
 use common::{fixtures, test_db, test_db_with_dir};
 use fsqlite_types::SqliteValue;
+use obr::franken_sync::Connection;
+use obr::model::{DependencyType, Issue, IssueType, Priority, Status};
+use obr::storage::{ListFilters, ReadyFilters, ReadySortPolicy};
 use std::collections::HashSet;
 
 fn table_names(conn: &Connection) -> HashSet<String> {
@@ -95,7 +95,7 @@ fn assert_capacity_occupancy_schema(conn: &Connection) {
 #[test]
 fn schema_tables_and_columns_exist() {
     let (storage, dir) = test_db_with_dir();
-    let db_path = dir.path().join(".beads").join("beads.db");
+    let db_path = dir.path().join(".obr").join("obr.db");
 
     drop(storage);
     let conn = Connection::open(db_path.to_string_lossy().into_owned()).expect("open db");

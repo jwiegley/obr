@@ -1,8 +1,8 @@
-//! Regression coverage for beads_rust-r9i9: FrankenSQLite must enforce every
+//! Regression coverage for obr-r9i9: FrankenSQLite must enforce every
 //! `CHECK` constraint, including consecutive constraints in comment-prefixed
 //! DDL.
 
-use beads_rust::franken_sync::Connection;
+use obr::franken_sync::Connection;
 use std::path::PathBuf;
 use tempfile::TempDir;
 

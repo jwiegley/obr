@@ -1,9 +1,9 @@
 # jsonl_world_writable
 
 - **FM**: `fm-permissions-jsonl-world-writable` (P2) — security
-  concern when `.beads/issues.jsonl` has the world-write bit
+  concern when `.obr/issues.jsonl` has the world-write bit
   (`0o002`) set. Any local user could inject malicious issues that
-  `br sync --flush-only` reimports.
+  `obr sync --flush-only` reimports.
 - **Subsystem**: permissions
 - **Detect**: `permissions.jsonl_world_writable` check goes to
   `warn` when the JSONL file's mode (`stat % 0o777`) has the world-
@@ -17,7 +17,7 @@
   `copy_source_permissions`, so `doctor undo` byte-restores both
   content and mode through the existing WriteFile-with-mode
   restore path.
-- **Round-trip**: chmod `.beads/issues.jsonl` to `0o666` → detect
+- **Round-trip**: chmod `.obr/issues.jsonl` to `0o666` → detect
   warn → `--repair` strips world-write (`0o664`) → re-detect ok →
   `doctor undo` restores `0o666`.
 - **Idempotence**: a second `--repair` finds no divergence (the

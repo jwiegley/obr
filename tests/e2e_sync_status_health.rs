@@ -1,18 +1,18 @@
-//! E2E coverage for `br sync --status --json`:
+//! E2E coverage for `obr sync --status --json`:
 //!
 //! - beads_rust-0v1.2.4: stable `git_export` compatibility slot that never
-//!   probes VCS and points to the explicit `br vcs-status` command.
+//!   probes VCS and points to the explicit `obr vcs-status` command.
 //! - beads_rust#334: `workspace_health` + `reliability_audit` fields in
-//!   the same write-gate vocabulary as `br doctor --json`.
+//!   the same write-gate vocabulary as `obr doctor --json`.
 
 mod common;
 
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{
+use common::cli::{ObrRun, ObrWorkspace, extract_json_payload, pin_jsonl, run_obr};
+use obr::storage::SqliteStorage;
+use obr::sync::{
     METADATA_JSONL_CONTENT_HASH, METADATA_JSONL_MTIME, METADATA_JSONL_SIZE,
     METADATA_LAST_EXPORT_TIME, METADATA_LAST_IMPORT_TIME, compute_jsonl_hash,
 };
-use common::cli::{BrRun, BrWorkspace, extract_json_payload, run_br};
 use serde_json::Value;
 use std::collections::BTreeMap;
 #[cfg(unix)]
@@ -52,8 +52,8 @@ fn git_ok(root: &Path, args: &[&str]) {
     );
 }
 
-fn sync_status_json(workspace: &BrWorkspace, label: &str) -> Value {
-    let status = run_br(workspace, ["sync", "--status", "--json"], label);
+fn sync_status_json(workspace: &ObrWorkspace, label: &str) -> Value {
+    let status = run_obr(workspace, ["sync", "--status", "--json"], label);
     assert!(
         status.status.success(),
         "sync --status failed: {}",
@@ -65,8 +65,8 @@ fn sync_status_json(workspace: &BrWorkspace, label: &str) -> Value {
 /// Like `sync_status_json` but suppresses the open-time auto-import so a
 /// deliberately-dirtied JSONL stays `jsonl_newer` for the read-only
 /// status snapshot (the harness clears BR env, so we pass the flag).
-fn sync_status_json_no_auto_import(workspace: &BrWorkspace, label: &str) -> Value {
-    let status = run_br(
+fn sync_status_json_no_auto_import(workspace: &ObrWorkspace, label: &str) -> Value {
+    let status = run_obr(
         workspace,
         ["sync", "--status", "--json", "--no-auto-import"],
         label,
@@ -95,12 +95,15 @@ struct SyncPersistenceSnapshot {
     metadata: BTreeMap<String, Option<String>>,
 }
 
-fn setup_certified_anchor_workspace(label: &str) -> (BrWorkspace, String) {
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], &format!("{label}_init"));
+fn setup_certified_anchor_workspace(label: &str) -> (ObrWorkspace, String) {
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], &format!("{label}_init"));
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    // Merge-anchor certification is JSONL-specific machinery: the anchor is a
+    // byte-exact copy of the JSONL export and these tests hand-edit its rows.
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "No-op anchor certification", "--json"],
         &format!("{label}_create"),
@@ -113,7 +116,7 @@ fn setup_certified_anchor_workspace(label: &str) -> (BrWorkspace, String) {
         .expect("created issue id")
         .to_string();
 
-    let flush = run_br(
+    let flush = run_obr(
         &workspace,
         ["sync", "--flush-only", "--no-auto-import"],
         &format!("{label}_baseline_flush"),
@@ -124,19 +127,19 @@ fn setup_certified_anchor_workspace(label: &str) -> (BrWorkspace, String) {
         flush.stderr
     );
 
-    let beads_dir = workspace.root.join(".beads");
+    let obr_dir = workspace.root.join(".obr");
     assert_eq!(
-        std::fs::read(beads_dir.join("beads.base.jsonl")).expect("baseline anchor"),
-        std::fs::read(beads_dir.join("issues.jsonl")).expect("baseline JSONL"),
+        std::fs::read(obr_dir.join("merge.base.jsonl")).expect("baseline anchor"),
+        std::fs::read(obr_dir.join("issues.jsonl")).expect("baseline JSONL"),
         "baseline anchor must be certified and byte-exact"
     );
 
     (workspace, issue_id)
 }
 
-fn persistence_snapshot(workspace: &BrWorkspace) -> SyncPersistenceSnapshot {
-    let beads_dir = workspace.root.join(".beads");
-    let storage = SqliteStorage::open(&beads_dir.join("beads.db")).expect("open workspace db");
+fn persistence_snapshot(workspace: &ObrWorkspace) -> SyncPersistenceSnapshot {
+    let obr_dir = workspace.root.join(".obr");
+    let storage = SqliteStorage::open(&obr_dir.join("obr.db")).expect("open workspace db");
     let metadata = CERTIFICATION_METADATA_KEYS
         .into_iter()
         .map(|key| {
@@ -148,13 +151,13 @@ fn persistence_snapshot(workspace: &BrWorkspace) -> SyncPersistenceSnapshot {
         .collect();
 
     SyncPersistenceSnapshot {
-        jsonl: std::fs::read(beads_dir.join("issues.jsonl")).expect("read JSONL snapshot"),
-        anchor: std::fs::read(beads_dir.join("beads.base.jsonl")).expect("read anchor snapshot"),
+        jsonl: std::fs::read(obr_dir.join("issues.jsonl")).expect("read JSONL snapshot"),
+        anchor: std::fs::read(obr_dir.join("merge.base.jsonl")).expect("read anchor snapshot"),
         metadata,
     }
 }
 
-fn assert_noop_anchor_certification_failure(run: &BrRun, context: &str) {
+fn assert_noop_anchor_certification_failure(run: &ObrRun, context: &str) {
     assert!(
         !run.status.success(),
         "{context} unexpectedly succeeded\nstdout={}\nstderr={}",
@@ -164,9 +167,9 @@ fn assert_noop_anchor_certification_failure(run: &BrRun, context: &str) {
     let output = format!("{}\n{}", run.stdout, run.stderr);
     for guidance in [
         "merge anchor was not changed",
-        "br sync --merge",
-        "br sync --import-only --force",
-        "br sync --flush-only --force",
+        "obr sync --merge",
+        "obr sync --import-only --force",
+        "obr sync --flush-only --force",
     ] {
         assert!(
             output.contains(guidance),
@@ -177,7 +180,7 @@ fn assert_noop_anchor_certification_failure(run: &BrRun, context: &str) {
 
 /// Assert the `git_export` compatibility slot proves sync did NOT probe
 /// VCS state: exactly {available:false, reason:"not_probed",
-/// diagnostic_command:"br vcs-status --json"} and nothing else.
+/// diagnostic_command:"obr vcs-status --json"} and nothing else.
 fn assert_vcs_not_probed(status: &Value) {
     let git_export = status["git_export"]
         .as_object()
@@ -196,7 +199,7 @@ fn assert_vcs_not_probed(status: &Value) {
     assert_eq!(git_export["available"], false, "{status}");
     assert_eq!(git_export["reason"], "not_probed", "{status}");
     assert_eq!(
-        git_export["diagnostic_command"], "br vcs-status --json",
+        git_export["diagnostic_command"], "obr vcs-status --json",
         "{status}"
     );
 }
@@ -204,7 +207,7 @@ fn assert_vcs_not_probed(status: &Value) {
 #[test]
 fn e2e_sync_status_vcs_slot_is_not_probed_inside_git_repo() {
     let _log = common::test_log("e2e_sync_status_vcs_slot_is_not_probed_inside_git_repo");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     let git = std::process::Command::new("git")
         .args(["init", "--initial-branch=main"])
         .current_dir(&workspace.root)
@@ -212,7 +215,7 @@ fn e2e_sync_status_vcs_slot_is_not_probed_inside_git_repo() {
         .expect("git init");
     assert!(git.status.success(), "git init failed");
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
     assert_vcs_not_probed(&sync_status_json(&workspace, "status_in_git"));
 }
@@ -220,9 +223,9 @@ fn e2e_sync_status_vcs_slot_is_not_probed_inside_git_repo() {
 #[test]
 fn e2e_sync_status_vcs_slot_is_not_probed_outside_git_repo() {
     let _log = common::test_log("e2e_sync_status_vcs_slot_is_not_probed_outside_git_repo");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
     assert_vcs_not_probed(&sync_status_json(&workspace, "status_no_git"));
 }
@@ -230,18 +233,21 @@ fn e2e_sync_status_vcs_slot_is_not_probed_outside_git_repo() {
 #[test]
 fn e2e_sync_status_reports_workspace_health_and_reliability_audit() {
     let _log = common::test_log("e2e_sync_status_reports_workspace_health_and_reliability_audit");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    // The drift this test drives is a hand-authored JSONL record appended to
+    // the export, so the workspace must be a JSONL workspace.
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(&workspace, ["create", "Health issue"], "create");
+    let create = run_obr(&workspace, ["create", "Health issue"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    // Establish a clean, fully-synced baseline. `br create` already
+    // Establish a clean, fully-synced baseline. `obr create` already
     // auto-flushes, but flush again explicitly so the DB and JSONL are
     // unambiguously in sync before we drive a deterministic anomaly.
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "flush");
     assert!(flush.status.success(), "flush failed: {}", flush.stderr);
 
     let healthy = sync_status_json(&workspace, "status_healthy");
@@ -266,7 +272,7 @@ fn e2e_sync_status_reports_workspace_health_and_reliability_audit() {
     // so it is now newer than the DB (pending import). This is the same
     // jsonl_newer → degraded mapping doctor uses; only codes we actually
     // evaluate may appear.
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     {
         use std::io::Write as _;
         let mut f = std::fs::OpenOptions::new()
@@ -303,33 +309,36 @@ fn e2e_sync_status_reports_workspace_health_and_reliability_audit() {
     );
 }
 
-/// Issue #378: `br sync --flush-only` maintains the merge anchor
-/// (`beads.base.jsonl`) so `br doctor` and `br sync --status` agree.
+/// Issue #378: `obr sync --flush-only` maintains the merge anchor
+/// (`merge.base.jsonl`) so `obr doctor` and `obr sync --status` agree.
 ///
 /// Historically only the merge path wrote the anchor: flush-only workspaces
 /// (the common agent workflow) accumulated `metadata.last_export_time`
-/// without ever growing an anchor, so `br doctor` warned
-/// `base_jsonl.missing_post_flush` forever while `br sync --status` reported
+/// without ever growing an anchor, so `obr doctor` warned
+/// `base_jsonl.missing_post_flush` forever while `obr sync --status` reported
 /// a fully healthy "In sync". The flush path now (a) refreshes the anchor
 /// from the finalized export and (b) materializes a missing anchor even on a
-/// no-op flush, making `br sync --flush-only` the idempotent recovery
+/// no-op flush, making `obr sync --flush-only` the idempotent recovery
 /// command the doctor warning names.
 #[test]
 fn e2e_flush_only_maintains_merge_anchor_and_doctor_agrees() {
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    // `merge.base.jsonl` is JSONL-specific machinery: the anchor is asserted to
+    // be a byte-exact copy of the JSONL export.
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(&workspace, ["create", "Anchor issue"], "create");
+    let create = run_obr(&workspace, ["create", "Anchor issue"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    let beads_dir = workspace.root.join(".beads");
-    let jsonl_path = beads_dir.join("issues.jsonl");
-    let anchor_path = beads_dir.join("beads.base.jsonl");
+    let obr_dir = workspace.root.join(".obr");
+    let jsonl_path = obr_dir.join("issues.jsonl");
+    let anchor_path = obr_dir.join("merge.base.jsonl");
 
     // No-op flush path: create's auto-flush already exported, so this flush
     // has nothing to export — it must still materialize the missing anchor.
-    let flush_noop = run_br(&workspace, ["sync", "--flush-only"], "flush_noop");
+    let flush_noop = run_obr(&workspace, ["sync", "--flush-only"], "flush_noop");
     assert!(
         flush_noop.status.success(),
         "no-op flush failed: {}",
@@ -352,7 +361,7 @@ fn e2e_flush_only_maintains_merge_anchor_and_doctor_agrees() {
     let matching_anchor_inode = std::fs::metadata(&anchor_path)
         .expect("matching anchor metadata")
         .ino();
-    let flush_idempotent = run_br(&workspace, ["sync", "--flush-only"], "flush_idempotent");
+    let flush_idempotent = run_obr(&workspace, ["sync", "--flush-only"], "flush_idempotent");
     assert!(
         flush_idempotent.status.success(),
         "idempotent no-op flush failed: {}",
@@ -374,7 +383,7 @@ fn e2e_flush_only_maintains_merge_anchor_and_doctor_agrees() {
         b"{\"id\":\"stale-anchor\",\"title\":\"must be replaced\"}\n",
     )
     .expect("write stale anchor");
-    let flush_stale = run_br(&workspace, ["sync", "--flush-only"], "flush_stale");
+    let flush_stale = run_obr(&workspace, ["sync", "--flush-only"], "flush_stale");
     assert!(
         flush_stale.status.success(),
         "stale-anchor no-op flush failed: {}",
@@ -388,13 +397,13 @@ fn e2e_flush_only_maintains_merge_anchor_and_doctor_agrees() {
 
     // Real export path: a dirty issue forces an actual export, which must
     // refresh the anchor to the newly finalized JSONL.
-    let create2 = run_br(&workspace, ["create", "Second issue"], "create2");
+    let create2 = run_obr(&workspace, ["create", "Second issue"], "create2");
     assert!(
         create2.status.success(),
         "create2 failed: {}",
         create2.stderr
     );
-    let flush_real = run_br(
+    let flush_real = run_obr(
         &workspace,
         ["sync", "--flush-only", "--force"],
         "flush_real",
@@ -413,7 +422,7 @@ fn e2e_flush_only_maintains_merge_anchor_and_doctor_agrees() {
     // Doctor must agree with sync --status: no missing-anchor warning.
     let status = sync_status_json(&workspace, "status_after_flush");
     assert_eq!(status["dirty_count"], 0, "{status}");
-    let doctor = run_br(&workspace, ["doctor", "--json"], "doctor_after_flush");
+    let doctor = run_obr(&workspace, ["doctor", "--json"], "doctor_after_flush");
     let doctor_json: Value =
         serde_json::from_str(&extract_json_payload(&doctor.stdout)).expect("doctor json");
     let anchor_check = doctor_json["checks"]
@@ -432,7 +441,7 @@ fn e2e_flush_only_maintains_merge_anchor_and_doctor_agrees() {
 #[test]
 fn e2e_noop_anchor_rejects_same_id_external_semantic_edit_without_mutation() {
     let (workspace, issue_id) = setup_certified_anchor_workspace("same_id_semantic_edit");
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
 
     let mut records: Vec<Value> = std::fs::read_to_string(&jsonl_path)
         .expect("read JSONL")
@@ -456,7 +465,7 @@ fn e2e_noop_anchor_rejects_same_id_external_semantic_edit_without_mutation() {
     std::fs::write(&jsonl_path, edited_jsonl).expect("write same-ID semantic edit");
 
     let before = persistence_snapshot(&workspace);
-    let flush = run_br(
+    let flush = run_obr(
         &workspace,
         ["sync", "--flush-only", "--json", "--no-auto-import"],
         "same_id_semantic_edit_flush",
@@ -472,11 +481,11 @@ fn e2e_noop_anchor_rejects_same_id_external_semantic_edit_without_mutation() {
 #[test]
 fn e2e_noop_anchor_rejects_external_truncation_without_mutation() {
     let (workspace, _issue_id) = setup_certified_anchor_workspace("external_truncation");
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     std::fs::write(&jsonl_path, b"").expect("truncate JSONL");
 
     let before = persistence_snapshot(&workspace);
-    let flush = run_br(
+    let flush = run_obr(
         &workspace,
         ["sync", "--flush-only", "--json", "--no-auto-import"],
         "external_truncation_flush",
@@ -492,8 +501,8 @@ fn e2e_noop_anchor_rejects_external_truncation_without_mutation() {
 #[test]
 fn e2e_noop_anchor_missing_cached_hash_fails_then_force_recovers() {
     let (workspace, _issue_id) = setup_certified_anchor_workspace("missing_cached_hash");
-    let beads_dir = workspace.root.join(".beads");
-    let mut storage = SqliteStorage::open(&beads_dir.join("beads.db")).expect("open workspace db");
+    let obr_dir = workspace.root.join(".obr");
+    let mut storage = SqliteStorage::open(&obr_dir.join("obr.db")).expect("open workspace db");
     assert!(
         storage
             .delete_metadata(METADATA_JSONL_CONTENT_HASH)
@@ -507,7 +516,7 @@ fn e2e_noop_anchor_missing_cached_hash_fails_then_force_recovers() {
         before.metadata[METADATA_JSONL_CONTENT_HASH], None,
         "test precondition requires a missing cached hash"
     );
-    let failed = run_br(
+    let failed = run_obr(
         &workspace,
         ["sync", "--flush-only", "--json", "--no-auto-import"],
         "missing_cached_hash_flush",
@@ -519,7 +528,7 @@ fn e2e_noop_anchor_missing_cached_hash_fails_then_force_recovers() {
         "missing-hash failure must preserve JSONL, anchor, and metadata"
     );
 
-    let forced = run_br(
+    let forced = run_obr(
         &workspace,
         [
             "sync",
@@ -542,7 +551,7 @@ fn e2e_noop_anchor_missing_cached_hash_fails_then_force_recovers() {
         "forced recovery must republish a byte-exact anchor"
     );
     let recovered_hash =
-        compute_jsonl_hash(&beads_dir.join("issues.jsonl")).expect("hash recovered JSONL");
+        compute_jsonl_hash(&obr_dir.join("issues.jsonl")).expect("hash recovered JSONL");
     assert_eq!(
         recovered.metadata[METADATA_JSONL_CONTENT_HASH].as_deref(),
         Some(recovered_hash.as_str()),
@@ -553,9 +562,9 @@ fn e2e_noop_anchor_missing_cached_hash_fails_then_force_recovers() {
 #[test]
 fn e2e_noop_anchor_accepts_whitespace_only_change_and_copies_exact_bytes() {
     let (workspace, _issue_id) = setup_certified_anchor_workspace("whitespace_only");
-    let beads_dir = workspace.root.join(".beads");
-    let jsonl_path = beads_dir.join("issues.jsonl");
-    let anchor_path = beads_dir.join("beads.base.jsonl");
+    let obr_dir = workspace.root.join(".obr");
+    let jsonl_path = obr_dir.join("issues.jsonl");
+    let anchor_path = obr_dir.join("merge.base.jsonl");
     let original_jsonl = std::fs::read(&jsonl_path).expect("read baseline JSONL");
     let mut whitespace_changed = b" \t\n\n".to_vec();
     whitespace_changed.extend_from_slice(&original_jsonl);
@@ -575,7 +584,7 @@ fn e2e_noop_anchor_accepts_whitespace_only_change_and_copies_exact_bytes() {
             .expect("stored baseline hash"),
         "whitespace-only drift must retain semantic hash equality"
     );
-    let flush = run_br(
+    let flush = run_obr(
         &workspace,
         ["sync", "--flush-only", "--json", "--no-auto-import"],
         "whitespace_only_flush",
@@ -598,5 +607,140 @@ fn e2e_noop_anchor_accepts_whitespace_only_change_and_copies_exact_bytes() {
     assert_eq!(
         after.metadata, before.metadata,
         "a no-op anchor repair must not mutate sync metadata"
+    );
+}
+
+/// Assert a `obr sync --merge` run reached the merge report rather than a
+/// verification conflict.
+fn assert_merge_succeeded(run: &ObrRun, context: &str) {
+    assert!(
+        run.status.success(),
+        "{context} failed\nstdout={}\nstderr={}",
+        run.stdout,
+        run.stderr
+    );
+    assert!(
+        run.stdout.contains("Merge complete"),
+        "{context} did not report a completed merge\nstdout={}\nstderr={}",
+        run.stdout,
+        run.stderr
+    );
+    let output = format!("{}\n{}", run.stdout, run.stderr);
+    for forbidden in [
+        "Published merge base does not match",
+        "Terminal merge base witness differs",
+        "Merge base changed before outer completion",
+    ] {
+        assert!(
+            !output.contains(forbidden),
+            "{context} tripped an anchor-equality guard ({forbidden:?}): {output}"
+        );
+    }
+}
+
+/// Org-workspace merge regression: the merge anchor (`merge.base.jsonl`) is
+/// always JSONL, so on an Org workspace it is *derived* from the export
+/// (parsed, then re-serialized as canonical JSONL) instead of byte-copied.
+/// The pending-merge verification arms compared the published anchor's
+/// content digest against the Org export's own digest — an Org snapshot's
+/// content digest is its raw Org bytes, so those can never be equal and
+/// every `obr sync --merge` on the default (Org) workspace failed with
+/// "Published merge base does not match the exact finalized JSONL
+/// generation". A second merge must stay idempotent for the same reason.
+#[test]
+fn e2e_org_workspace_sync_merge_verifies_its_derived_anchor() {
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "org_merge_init");
+    assert!(init.status.success(), "init failed: {}", init.stderr);
+    // Deliberately NOT pinned: this is the default Org workspace.
+    let obr_dir = workspace.root.join(".obr");
+    let org_export_path = obr::config::computed_surface_path(&workspace.root);
+    assert!(
+        org_export_path.is_file(),
+        "default workspace must export Org at the tracked surface"
+    );
+
+    let create = run_obr(
+        &workspace,
+        ["create", "Org anchor issue"],
+        "org_merge_create",
+    );
+    assert!(create.status.success(), "create failed: {}", create.stderr);
+
+    let flush = run_obr(
+        &workspace,
+        ["sync", "--flush-only", "--force"],
+        "org_merge_flush",
+    );
+    assert!(flush.status.success(), "flush failed: {}", flush.stderr);
+
+    let merge = run_obr(&workspace, ["sync", "--merge"], "org_merge_first");
+    assert_merge_succeeded(&merge, "first Org merge");
+
+    let anchor = std::fs::read(obr_dir.join("merge.base.jsonl")).expect("read Org anchor");
+    let org_export = std::fs::read(&org_export_path).expect("read Org export");
+    assert_ne!(
+        anchor, org_export,
+        "the Org anchor is derived JSONL, not a byte copy of the export"
+    );
+    assert!(
+        std::str::from_utf8(&anchor)
+            .expect("anchor is UTF-8")
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .all(|line| serde_json::from_str::<Value>(line).is_ok()),
+        "every anchor line must be JSON: {}",
+        String::from_utf8_lossy(&anchor)
+    );
+
+    // Idempotence: a second merge over the same state must also verify.
+    let merge_again = run_obr(&workspace, ["sync", "--merge"], "org_merge_second");
+    assert_merge_succeeded(&merge_again, "second Org merge");
+    assert_eq!(
+        std::fs::read(obr_dir.join("merge.base.jsonl")).expect("re-read Org anchor"),
+        anchor,
+        "an idempotent second merge must republish the same derived anchor"
+    );
+}
+
+/// The JSONL-pinned variant of the same flow. JSONL anchors stay byte-exact
+/// copies of the export, and the merge path must keep enforcing that: the
+/// Org fix must not have relaxed anything for JSONL workspaces.
+#[test]
+fn e2e_jsonl_workspace_sync_merge_keeps_a_byte_exact_anchor() {
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "jsonl_merge_init");
+    assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
+    let obr_dir = workspace.root.join(".obr");
+
+    let create = run_obr(
+        &workspace,
+        ["create", "JSONL anchor issue"],
+        "jsonl_merge_create",
+    );
+    assert!(create.status.success(), "create failed: {}", create.stderr);
+
+    let flush = run_obr(
+        &workspace,
+        ["sync", "--flush-only", "--force"],
+        "jsonl_merge_flush",
+    );
+    assert!(flush.status.success(), "flush failed: {}", flush.stderr);
+
+    let merge = run_obr(&workspace, ["sync", "--merge"], "jsonl_merge_first");
+    assert_merge_succeeded(&merge, "first JSONL merge");
+    assert_eq!(
+        std::fs::read(obr_dir.join("merge.base.jsonl")).expect("read JSONL anchor"),
+        std::fs::read(obr_dir.join("issues.jsonl")).expect("read JSONL export"),
+        "a JSONL anchor must remain a byte-exact copy of the export"
+    );
+
+    let merge_again = run_obr(&workspace, ["sync", "--merge"], "jsonl_merge_second");
+    assert_merge_succeeded(&merge_again, "second JSONL merge");
+    assert_eq!(
+        std::fs::read(obr_dir.join("merge.base.jsonl")).expect("re-read JSONL anchor"),
+        std::fs::read(obr_dir.join("issues.jsonl")).expect("re-read JSONL export"),
+        "byte-exactness must survive an idempotent second merge"
     );
 }

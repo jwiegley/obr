@@ -1,7 +1,7 @@
 # jsonl_duplicate_ids
 
 - **FM**: `fm-state_files-jsonl-duplicate-ids` (P2) —
-  `.beads/issues.jsonl` contains two or more records with the
+  `.obr/issues.jsonl` contains two or more records with the
   same top-level `id`. Usually the result of an unresolved merge
   conflict that left both sides' records, or a partial JSONL
   rebuild that double-appended.

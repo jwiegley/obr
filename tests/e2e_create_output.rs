@@ -43,7 +43,7 @@ fn test_create_with_title_flag() {
     let temp = isolated_tempdir();
     let path = temp.path();
 
-    let bin = assert_cmd::cargo::cargo_bin!("br");
+    let bin = assert_cmd::cargo::cargo_bin!("obr");
 
     // Init
     Command::new(bin.as_os_str())
@@ -81,7 +81,7 @@ fn test_create_positional_vs_title_flag() {
     let temp = isolated_tempdir();
     let path = temp.path();
 
-    let bin = assert_cmd::cargo::cargo_bin!("br");
+    let bin = assert_cmd::cargo::cargo_bin!("obr");
 
     // Init
     Command::new(bin.as_os_str())
@@ -125,7 +125,7 @@ fn test_create_rejects_positional_and_title_flag_together() {
     let temp = isolated_tempdir();
     let path = temp.path();
 
-    let bin = assert_cmd::cargo::cargo_bin!("br");
+    let bin = assert_cmd::cargo::cargo_bin!("obr");
 
     Command::new(bin.as_os_str())
         .current_dir(path)
@@ -177,7 +177,7 @@ fn test_create_json_output_includes_labels_and_deps() {
     let temp = isolated_tempdir();
     let path = temp.path();
 
-    let bin = assert_cmd::cargo::cargo_bin!("br");
+    let bin = assert_cmd::cargo::cargo_bin!("obr");
 
     // Init
     Command::new(bin.as_os_str())
@@ -246,7 +246,7 @@ fn test_create_toon_output_decodes_single_issue() {
     let temp = isolated_tempdir();
     let path = temp.path();
 
-    let bin = assert_cmd::cargo::cargo_bin!("br");
+    let bin = assert_cmd::cargo::cargo_bin!("obr");
 
     Command::new(bin.as_os_str())
         .current_dir(path)
@@ -258,7 +258,7 @@ fn test_create_toon_output_decodes_single_issue() {
         .current_dir(path)
         .arg("create")
         .arg("TOON issue")
-        .env("BR_OUTPUT_FORMAT", "toon")
+        .env("OBR_OUTPUT_FORMAT", "toon")
         .output()
         .expect("create with toon output");
 
@@ -281,7 +281,7 @@ fn test_create_file_empty_markdown_emits_empty_toon_array() {
     let path = temp.path();
     let markdown_path = path.join("empty.md");
 
-    let bin = assert_cmd::cargo::cargo_bin!("br");
+    let bin = assert_cmd::cargo::cargo_bin!("obr");
 
     Command::new(bin.as_os_str())
         .current_dir(path)
@@ -296,7 +296,7 @@ fn test_create_file_empty_markdown_emits_empty_toon_array() {
         .arg("create")
         .arg("--file")
         .arg("empty.md")
-        .env("BR_OUTPUT_FORMAT", "toon")
+        .env("OBR_OUTPUT_FORMAT", "toon")
         .output()
         .expect("create --file with empty markdown in toon mode");
 
@@ -322,7 +322,7 @@ fn test_create_file_silent_outputs_only_ids() {
     let path = temp.path();
     let markdown_path = path.join("issues.md");
 
-    let bin = assert_cmd::cargo::cargo_bin!("br");
+    let bin = assert_cmd::cargo::cargo_bin!("obr");
 
     Command::new(bin.as_os_str())
         .current_dir(path)

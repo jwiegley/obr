@@ -7,7 +7,7 @@
   `.doctor/runs/<run-id>/` directories.
 - **Repair contract**: detect-only. Doctor must not prune its own audit
   history during `--repair`; removing old run directories would break
-  later `br doctor undo <run-id>` calls and destroy recovery evidence.
+  later `obr doctor undo <run-id>` calls and destroy recovery evidence.
 - **Round-trip**: create 55 synthetic run directories -> detect warns ->
   `--repair` leaves the existing run directories intact -> undo leaves the
   audit history intact.

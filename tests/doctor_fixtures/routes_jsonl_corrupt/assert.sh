@@ -32,18 +32,18 @@ case "$stage" in
     # Detect-only: routes.jsonl must still be present, byte-identical to
     # the corrupted state. Operator intent is unknowable so doctor never
     # rewrites this file silently.
-    [ -f .beads/routes.jsonl ] || {
+    [ -f .obr/routes.jsonl ] || {
       echo "ASSERT FAIL[$stage]: routes.jsonl vanished after --repair (unsafe)" >&2
       exit 1
     }
-    if ! grep -q '{not json at all}' .beads/routes.jsonl; then
+    if ! grep -q '{not json at all}' .obr/routes.jsonl; then
       echo "ASSERT FAIL[$stage]: doctor silently rewrote routes.jsonl (the bad line is gone)" >&2
-      cat .beads/routes.jsonl >&2
+      cat .obr/routes.jsonl >&2
       exit 1
     fi
     ;;
   post_undo)
-    [ -d .beads ] || { echo "ASSERT FAIL[$stage]: .beads gone after undo" >&2; exit 1; }
+    [ -d .obr ] || { echo "ASSERT FAIL[$stage]: .obr gone after undo" >&2; exit 1; }
     ;;
   *)
     echo "unknown stage: $stage" >&2

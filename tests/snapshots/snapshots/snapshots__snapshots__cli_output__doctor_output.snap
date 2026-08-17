@@ -1,9 +1,9 @@
 ---
 source: tests/snapshots/cli_output.rs
-expression: normalize_output(&output.stdout)
+expression: normalized
 ---
-br doctor
-HEALTH workspace: degraded
+obr doctor
+HEALTH workspace: healthy
 OK jsonl.merge_artifacts
 OK base_jsonl
 OK doctor.runs_dir
@@ -13,19 +13,18 @@ OK permissions.write_lock
 OK permissions.root_gitignore
 OK permissions.db_sidecars
 OK permissions.config_yaml_secrets
-OK br_path_dupes
-OK gitignore.beads_inner_present
+OK obr_path_dupes
+OK gitignore.obr_inner_present
 OK tmp_files_orphan
-OK br_history.size
+OK obr_history.size
 OK routes_jsonl: No routes.jsonl present (ID-REDACTED routing is optional)
 OK rust_log: RUST_LOG=error (quiet)
-OK permissions.beads_dir: `.beads/` and critical children are ID-REDACTED
-OK config.yaml: config.yaml parses cleanly (99 bytes)
-OK metadata.json: metadata.json parses cleanly (62 bytes); declared targets exist on disk
-HOST-DEPENDENT binary_version
-OK write_lock: .beads/.write.lock is 0s old (within 300s threshold); not stale
+OK permissions.obr_dir: the workspace directory, the database and the export are ID-REDACTED
+OK config.yaml: config.yaml parses cleanly (97 bytes)
+OK metadata.json: metadata.json parses cleanly (56 bytes); declared targets exist on disk
+OK binary_version: Running obr X.Y.Z; no obr Cargo.toml reachable from .obr/ — not flagging
+OK write_lock: No <workspace>/.write.lock present (no writer contention)
 OK routes.targets: No local or town routes.jsonl present (route targets are optional)
-OK startup_cache.health
 OK sync.merge_pending: No pending sync merge requires artifact reconciliation
 OK permissions.jsonl_world_writable
 OK jsonl_crlf
@@ -33,7 +32,7 @@ OK jsonl_bom
 OK jsonl_eof_newline
 OK jsonl_size
 OK jsonl.duplicate_ids
-OK sync_jsonl_path: JSONL path is within sync allowlist
+OK sync_jsonl_path: Workspace surface is within the sync allowlist
 OK sync_conflict_markers: No merge conflict markers found
 OK jsonl.parse: Parsed 0 records
 OK dep.dead_closed_blocking_edges
@@ -43,7 +42,7 @@ OK wal_size
 OK db.recovery_artifacts
 OK db.recovery_artifacts.aged
 OK db.foreign_recovery_debris
-OK db.sidecars: SHM sidecar at /TMP/.beads/beads.ID-REDACTED is inert beside the WAL (a ID-REDACTED family is expected for frankensqlite; the WAL index lives in process memory)
+OK db.sidecars: SHM sidecar at /TMP/.obr/obr.ID-REDACTED is inert beside the WAL (a ID-REDACTED family is expected for frankensqlite; the WAL index lives in process memory)
 OK schema.tables
 OK schema.columns
 OK db.recoverable_anomalies
@@ -57,6 +56,6 @@ OK labels.orphans
 OK dependencies.orphans
 OK audit.suspect_close_reasons
 OK counts.db_vs_jsonl: Both have 0 records
-OK sync.metadata: External changes pending import (empty JSONL, nothing to import)
+OK sync.metadata: Database and JSONL are in sync
 OK db.write_probe: No issues available for ID-REDACTED write probe
 HOST-DEPENDENT sqlite3.integrity_check

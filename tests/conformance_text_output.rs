@@ -1,7 +1,7 @@
 #![allow(clippy::all, clippy::pedantic, clippy::nursery)]
 //! Conformance Tests: Text Output Parity (beads_rust-g1ig)
 //!
-//! These tests verify br (Rust) produces identical human-readable text output
+//! These tests verify obr (Rust) produces identical human-readable text output
 //! to bd (Go) for stable commands with color/whitespace normalization.
 //!
 //! Commands tested: list, show, ready, blocked, stats, orphans
@@ -53,13 +53,19 @@ static TMP_PATH_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static VERSION_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\((?:[A-Za-z0-9._/-]+)@[a-f0-9]+\)").expect("version regex"));
-static SEMVER_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?").expect("semver regex"));
+/// A semver version, including any pre-release (`-rc.1`) and build-metadata
+/// (`+1`) tail. obr's own version carries the latter — `0.2.22+1` is
+/// the tracked upstream release plus the fork generation since it — so a mask
+/// that stopped at the patch digit would leave `+1` in the compared text
+/// and make this conformance pass version-dependent.
+static SEMVER_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?").expect("semver regex")
+});
 
 /// Normalize text output for conformance comparison.
 ///
 /// This strips ANSI codes, normalizes IDs/timestamps/paths, and cleans up
-/// whitespace differences to allow comparing br and bd output.
+/// whitespace differences to allow comparing obr and bd output.
 fn normalize_text_for_conformance(text: &str) -> String {
     let mut normalized = text.to_string();
 
@@ -113,38 +119,38 @@ fn normalize_text_for_conformance(text: &str) -> String {
     normalized
 }
 
-/// Result of comparing text outputs between br and bd
+/// Result of comparing text outputs between obr and bd
 #[derive(Debug)]
 struct TextComparisonResult {
     matches: bool,
-    br_normalized: String,
+    obr_normalized: String,
     bd_normalized: String,
     diff_summary: String,
 }
 
 impl TextComparisonResult {
-    fn compare(br_output: &str, bd_output: &str) -> Self {
-        let br_normalized = normalize_text_for_conformance(br_output);
+    fn compare(obr_output: &str, bd_output: &str) -> Self {
+        let obr_normalized = normalize_text_for_conformance(obr_output);
         let bd_normalized = normalize_text_for_conformance(bd_output);
-        let matches = br_normalized == bd_normalized;
+        let matches = obr_normalized == bd_normalized;
 
         let diff_summary = if matches {
             "Outputs match after normalization".to_string()
         } else {
-            let br_lines: Vec<&str> = br_normalized.lines().collect();
+            let obr_lines: Vec<&str> = obr_normalized.lines().collect();
             let bd_lines: Vec<&str> = bd_normalized.lines().collect();
 
             let mut diffs = Vec::new();
-            let max_lines = br_lines.len().max(bd_lines.len());
+            let max_lines = obr_lines.len().max(bd_lines.len());
 
             for i in 0..max_lines {
-                let br_line = br_lines.get(i).map(|s| *s).unwrap_or("<missing>");
+                let obr_line = obr_lines.get(i).map(|s| *s).unwrap_or("<missing>");
                 let bd_line = bd_lines.get(i).map(|s| *s).unwrap_or("<missing>");
-                if br_line != bd_line {
+                if obr_line != bd_line {
                     diffs.push(format!(
-                        "Line {}: br='{}' vs bd='{}'",
+                        "Line {}: obr='{}' vs bd='{}'",
                         i + 1,
-                        br_line,
+                        obr_line,
                         bd_line
                     ));
                 }
@@ -163,7 +169,7 @@ impl TextComparisonResult {
 
         Self {
             matches,
-            br_normalized,
+            obr_normalized,
             bd_normalized,
             diff_summary,
         }
@@ -172,11 +178,11 @@ impl TextComparisonResult {
 
 /// Extract issue ID from create output
 fn extract_id_from_create(stdout: &str) -> String {
-    // br output: "✓ Created bd-abc123: Title" (with checkmark)
+    // obr output: "✓ Created bd-abc123: Title" (with checkmark)
     // bd output: "Created bd-abc123: Title" (no checkmark)
     for line in stdout.lines() {
         let line = line.trim();
-        // Handle br format with checkmark: "✓ Created ID: Title"
+        // Handle obr format with checkmark: "✓ Created ID: Title"
         if let Some(rest) = line.strip_prefix("✓ Created ") {
             if let Some(id) = rest.split(':').next() {
                 let id = id.trim();
@@ -185,7 +191,7 @@ fn extract_id_from_create(stdout: &str) -> String {
                 }
             }
         }
-        // Handle bd format (and br without checkmark): "Created ID: Title"
+        // Handle bd format (and obr without checkmark): "Created ID: Title"
         if let Some(rest) = line.strip_prefix("Created ") {
             if let Some(id) = rest.split(':').next() {
                 let id = id.trim();
@@ -209,24 +215,24 @@ fn conformance_text_list_empty() {
     common::init_test_logging();
 
     let mut workspace = ConformanceWorkspace::new("conformance_text", "list_empty");
-    let (br_init, bd_init) = workspace.init_both();
+    let (obr_init, bd_init) = workspace.init_both();
 
-    assert!(br_init.success, "br init failed: {}", br_init.stderr);
+    assert!(obr_init.success, "obr init failed: {}", obr_init.stderr);
     assert!(bd_init.success, "bd init failed: {}", bd_init.stderr);
 
     // Run list command (text output, no --json)
-    let br_list = workspace.run_br(["list"], "list");
+    let obr_list = workspace.run_obr(["list"], "list");
     let bd_list = workspace.run_bd(["list"], "list");
 
-    assert!(br_list.success, "br list failed: {}", br_list.stderr);
+    assert!(obr_list.success, "obr list failed: {}", obr_list.stderr);
     assert!(bd_list.success, "bd list failed: {}", bd_list.stderr);
 
-    let result = TextComparisonResult::compare(&br_list.stdout, &bd_list.stdout);
+    let result = TextComparisonResult::compare(&obr_list.stdout, &bd_list.stdout);
 
     assert!(
         result.matches,
         "Text output mismatch for 'list' (empty):\n{}\n\nbr output:\n{}\n\nbd output:\n{}",
-        result.diff_summary, result.br_normalized, result.bd_normalized
+        result.diff_summary, result.obr_normalized, result.bd_normalized
     );
 
     workspace.finish(true);
@@ -242,26 +248,26 @@ fn conformance_text_list_with_issues() {
     workspace.init_both();
 
     // Create identical issues in both workspaces
-    workspace.run_br(["create", "First issue"], "create1");
+    workspace.run_obr(["create", "First issue"], "create1");
     workspace.run_bd(["create", "First issue"], "create1");
-    workspace.run_br(["create", "Second issue"], "create2");
+    workspace.run_obr(["create", "Second issue"], "create2");
     workspace.run_bd(["create", "Second issue"], "create2");
-    workspace.run_br(["create", "Third issue"], "create3");
+    workspace.run_obr(["create", "Third issue"], "create3");
     workspace.run_bd(["create", "Third issue"], "create3");
 
     // Run list command
-    let br_list = workspace.run_br(["list"], "list");
+    let obr_list = workspace.run_obr(["list"], "list");
     let bd_list = workspace.run_bd(["list"], "list");
 
-    assert!(br_list.success, "br list failed: {}", br_list.stderr);
+    assert!(obr_list.success, "obr list failed: {}", obr_list.stderr);
     assert!(bd_list.success, "bd list failed: {}", bd_list.stderr);
 
-    let result = TextComparisonResult::compare(&br_list.stdout, &bd_list.stdout);
+    let result = TextComparisonResult::compare(&obr_list.stdout, &bd_list.stdout);
 
     assert!(
         result.matches,
         "Text output mismatch for 'list' (with issues):\n{}\n\nbr output:\n{}\n\nbd output:\n{}",
-        result.diff_summary, result.br_normalized, result.bd_normalized
+        result.diff_summary, result.obr_normalized, result.bd_normalized
     );
 
     workspace.finish(true);
@@ -277,25 +283,25 @@ fn conformance_text_show() {
     workspace.init_both();
 
     // Create issues and capture IDs
-    let br_create = workspace.run_br(["create", "Test issue for show"], "create");
+    let obr_create = workspace.run_obr(["create", "Test issue for show"], "create");
     let bd_create = workspace.run_bd(["create", "Test issue for show"], "create");
 
-    let br_id = extract_id_from_create(&br_create.stdout);
+    let obr_id = extract_id_from_create(&obr_create.stdout);
     let bd_id = extract_id_from_create(&bd_create.stdout);
 
     // Run show command
-    let br_show = workspace.run_br(["show", &br_id], "show");
+    let obr_show = workspace.run_obr(["show", &obr_id], "show");
     let bd_show = workspace.run_bd(["show", &bd_id], "show");
 
-    assert!(br_show.success, "br show failed: {}", br_show.stderr);
+    assert!(obr_show.success, "obr show failed: {}", obr_show.stderr);
     assert!(bd_show.success, "bd show failed: {}", bd_show.stderr);
 
-    let result = TextComparisonResult::compare(&br_show.stdout, &bd_show.stdout);
+    let result = TextComparisonResult::compare(&obr_show.stdout, &bd_show.stdout);
 
     assert!(
         result.matches,
         "Text output mismatch for 'show':\n{}\n\nbr output:\n{}\n\nbd output:\n{}",
-        result.diff_summary, result.br_normalized, result.bd_normalized
+        result.diff_summary, result.obr_normalized, result.bd_normalized
     );
 
     workspace.finish(true);
@@ -310,18 +316,18 @@ fn conformance_text_ready_empty() {
     let mut workspace = ConformanceWorkspace::new("conformance_text", "ready_empty");
     workspace.init_both();
 
-    let br_ready = workspace.run_br(["ready"], "ready");
+    let obr_ready = workspace.run_obr(["ready"], "ready");
     let bd_ready = workspace.run_bd(["ready"], "ready");
 
-    assert!(br_ready.success, "br ready failed: {}", br_ready.stderr);
+    assert!(obr_ready.success, "obr ready failed: {}", obr_ready.stderr);
     assert!(bd_ready.success, "bd ready failed: {}", bd_ready.stderr);
 
-    let result = TextComparisonResult::compare(&br_ready.stdout, &bd_ready.stdout);
+    let result = TextComparisonResult::compare(&obr_ready.stdout, &bd_ready.stdout);
 
     assert!(
         result.matches,
         "Text output mismatch for 'ready' (empty):\n{}\n\nbr output:\n{}\n\nbd output:\n{}",
-        result.diff_summary, result.br_normalized, result.bd_normalized
+        result.diff_summary, result.obr_normalized, result.bd_normalized
     );
 
     workspace.finish(true);
@@ -337,7 +343,7 @@ fn conformance_text_ready_with_issues() {
     workspace.init_both();
 
     // Create issues with different priorities
-    workspace.run_br(
+    workspace.run_obr(
         ["create", "High priority task", "--priority", "1"],
         "create1",
     );
@@ -345,7 +351,7 @@ fn conformance_text_ready_with_issues() {
         ["create", "High priority task", "--priority", "1"],
         "create1",
     );
-    workspace.run_br(
+    workspace.run_obr(
         ["create", "Medium priority task", "--priority", "2"],
         "create2",
     );
@@ -353,7 +359,7 @@ fn conformance_text_ready_with_issues() {
         ["create", "Medium priority task", "--priority", "2"],
         "create2",
     );
-    workspace.run_br(
+    workspace.run_obr(
         ["create", "Low priority task", "--priority", "3"],
         "create3",
     );
@@ -362,18 +368,18 @@ fn conformance_text_ready_with_issues() {
         "create3",
     );
 
-    let br_ready = workspace.run_br(["ready"], "ready");
+    let obr_ready = workspace.run_obr(["ready"], "ready");
     let bd_ready = workspace.run_bd(["ready"], "ready");
 
-    assert!(br_ready.success, "br ready failed: {}", br_ready.stderr);
+    assert!(obr_ready.success, "obr ready failed: {}", obr_ready.stderr);
     assert!(bd_ready.success, "bd ready failed: {}", bd_ready.stderr);
 
-    let result = TextComparisonResult::compare(&br_ready.stdout, &bd_ready.stdout);
+    let result = TextComparisonResult::compare(&obr_ready.stdout, &bd_ready.stdout);
 
     assert!(
         result.matches,
         "Text output mismatch for 'ready' (with issues):\n{}\n\nbr output:\n{}\n\nbd output:\n{}",
-        result.diff_summary, result.br_normalized, result.bd_normalized
+        result.diff_summary, result.obr_normalized, result.bd_normalized
     );
 
     workspace.finish(true);
@@ -388,13 +394,13 @@ fn conformance_text_blocked_empty() {
     let mut workspace = ConformanceWorkspace::new("conformance_text", "blocked_empty");
     workspace.init_both();
 
-    let br_blocked = workspace.run_br(["blocked"], "blocked");
+    let obr_blocked = workspace.run_obr(["blocked"], "blocked");
     let bd_blocked = workspace.run_bd(["blocked"], "blocked");
 
     assert!(
-        br_blocked.success,
-        "br blocked failed: {}",
-        br_blocked.stderr
+        obr_blocked.success,
+        "obr blocked failed: {}",
+        obr_blocked.stderr
     );
     assert!(
         bd_blocked.success,
@@ -402,12 +408,12 @@ fn conformance_text_blocked_empty() {
         bd_blocked.stderr
     );
 
-    let result = TextComparisonResult::compare(&br_blocked.stdout, &bd_blocked.stdout);
+    let result = TextComparisonResult::compare(&obr_blocked.stdout, &bd_blocked.stdout);
 
     assert!(
         result.matches,
         "Text output mismatch for 'blocked' (empty):\n{}\n\nbr output:\n{}\n\nbd output:\n{}",
-        result.diff_summary, result.br_normalized, result.bd_normalized
+        result.diff_summary, result.obr_normalized, result.bd_normalized
     );
 
     workspace.finish(true);
@@ -415,7 +421,7 @@ fn conformance_text_blocked_empty() {
 
 /// Test: `blocked` command with blocked issues
 #[test]
-#[ignore = "text formatting differences between br and bd for blocked output"]
+#[ignore = "text formatting differences between obr and bd for blocked output"]
 fn conformance_text_blocked_with_issues() {
     skip_if_no_bd!();
     common::init_test_logging();
@@ -424,32 +430,36 @@ fn conformance_text_blocked_with_issues() {
     workspace.init_both();
 
     // Create issues and add dependencies to create blocked issues
-    let br_blocker = workspace.run_br(["create", "Blocker issue"], "create_blocker");
+    let obr_blocker = workspace.run_obr(["create", "Blocker issue"], "create_blocker");
     let bd_blocker = workspace.run_bd(["create", "Blocker issue"], "create_blocker");
-    let br_blocked = workspace.run_br(["create", "Blocked issue"], "create_blocked");
+    let obr_blocked = workspace.run_obr(["create", "Blocked issue"], "create_blocked");
     let bd_blocked = workspace.run_bd(["create", "Blocked issue"], "create_blocked");
 
-    let br_blocker_id = extract_id_from_create(&br_blocker.stdout);
+    let obr_blocker_id = extract_id_from_create(&obr_blocker.stdout);
     let bd_blocker_id = extract_id_from_create(&bd_blocker.stdout);
-    let br_blocked_id = extract_id_from_create(&br_blocked.stdout);
+    let obr_blocked_id = extract_id_from_create(&obr_blocked.stdout);
     let bd_blocked_id = extract_id_from_create(&bd_blocked.stdout);
 
     // Add dependency: blocked depends on blocker
-    workspace.run_br(["dep", "add", &br_blocked_id, &br_blocker_id], "dep_add");
+    workspace.run_obr(["dep", "add", &obr_blocked_id, &obr_blocker_id], "dep_add");
     workspace.run_bd(["dep", "add", &bd_blocked_id, &bd_blocker_id], "dep_add");
 
-    let br_result = workspace.run_br(["blocked"], "blocked");
+    let obr_result = workspace.run_obr(["blocked"], "blocked");
     let bd_result = workspace.run_bd(["blocked"], "blocked");
 
-    assert!(br_result.success, "br blocked failed: {}", br_result.stderr);
+    assert!(
+        obr_result.success,
+        "obr blocked failed: {}",
+        obr_result.stderr
+    );
     assert!(bd_result.success, "bd blocked failed: {}", bd_result.stderr);
 
-    let result = TextComparisonResult::compare(&br_result.stdout, &bd_result.stdout);
+    let result = TextComparisonResult::compare(&obr_result.stdout, &bd_result.stdout);
 
     assert!(
         result.matches,
         "Text output mismatch for 'blocked' (with issues):\n{}\n\nbr output:\n{}\n\nbd output:\n{}",
-        result.diff_summary, result.br_normalized, result.bd_normalized
+        result.diff_summary, result.obr_normalized, result.bd_normalized
     );
 
     workspace.finish(true);
@@ -465,18 +475,18 @@ fn conformance_text_stats_empty() {
     workspace.init_both();
 
     // Use --no-activity to skip git activity tracking which could differ
-    let br_stats = workspace.run_br(["stats", "--no-activity"], "stats");
+    let obr_stats = workspace.run_obr(["stats", "--no-activity"], "stats");
     let bd_stats = workspace.run_bd(["stats", "--no-activity"], "stats");
 
-    assert!(br_stats.success, "br stats failed: {}", br_stats.stderr);
+    assert!(obr_stats.success, "obr stats failed: {}", obr_stats.stderr);
     assert!(bd_stats.success, "bd stats failed: {}", bd_stats.stderr);
 
-    let result = TextComparisonResult::compare(&br_stats.stdout, &bd_stats.stdout);
+    let result = TextComparisonResult::compare(&obr_stats.stdout, &bd_stats.stdout);
 
     assert!(
         result.matches,
         "Text output mismatch for 'stats' (empty):\n{}\n\nbr output:\n{}\n\nbd output:\n{}",
-        result.diff_summary, result.br_normalized, result.bd_normalized
+        result.diff_summary, result.obr_normalized, result.bd_normalized
     );
 
     workspace.finish(true);
@@ -484,7 +494,7 @@ fn conformance_text_stats_empty() {
 
 /// Test: `stats` command with issues
 #[test]
-#[ignore = "text formatting differences between br and bd for stats output"]
+#[ignore = "text formatting differences between obr and bd for stats output"]
 fn conformance_text_stats_with_issues() {
     skip_if_no_bd!();
     common::init_test_logging();
@@ -493,31 +503,31 @@ fn conformance_text_stats_with_issues() {
     workspace.init_both();
 
     // Create some issues
-    workspace.run_br(["create", "Open issue 1"], "create1");
+    workspace.run_obr(["create", "Open issue 1"], "create1");
     workspace.run_bd(["create", "Open issue 1"], "create1");
-    workspace.run_br(["create", "Open issue 2"], "create2");
+    workspace.run_obr(["create", "Open issue 2"], "create2");
     workspace.run_bd(["create", "Open issue 2"], "create2");
 
     // Create and close an issue
-    let br_close = workspace.run_br(["create", "Issue to close"], "create_close");
+    let obr_close = workspace.run_obr(["create", "Issue to close"], "create_close");
     let bd_close = workspace.run_bd(["create", "Issue to close"], "create_close");
-    let br_close_id = extract_id_from_create(&br_close.stdout);
+    let obr_close_id = extract_id_from_create(&obr_close.stdout);
     let bd_close_id = extract_id_from_create(&bd_close.stdout);
-    workspace.run_br(["close", &br_close_id], "close");
+    workspace.run_obr(["close", &obr_close_id], "close");
     workspace.run_bd(["close", &bd_close_id], "close");
 
-    let br_stats = workspace.run_br(["stats", "--no-activity"], "stats");
+    let obr_stats = workspace.run_obr(["stats", "--no-activity"], "stats");
     let bd_stats = workspace.run_bd(["stats", "--no-activity"], "stats");
 
-    assert!(br_stats.success, "br stats failed: {}", br_stats.stderr);
+    assert!(obr_stats.success, "obr stats failed: {}", obr_stats.stderr);
     assert!(bd_stats.success, "bd stats failed: {}", bd_stats.stderr);
 
-    let result = TextComparisonResult::compare(&br_stats.stdout, &bd_stats.stdout);
+    let result = TextComparisonResult::compare(&obr_stats.stdout, &bd_stats.stdout);
 
     assert!(
         result.matches,
         "Text output mismatch for 'stats' (with issues):\n{}\n\nbr output:\n{}\n\nbd output:\n{}",
-        result.diff_summary, result.br_normalized, result.bd_normalized
+        result.diff_summary, result.obr_normalized, result.bd_normalized
     );
 
     workspace.finish(true);
@@ -532,22 +542,22 @@ fn conformance_text_orphans_empty() {
     let mut workspace = ConformanceWorkspace::new("conformance_text", "orphans_empty");
     workspace.init_both();
 
-    let br_orphans = workspace.run_br(["orphans"], "orphans");
+    let obr_orphans = workspace.run_obr(["orphans"], "orphans");
     let bd_orphans = workspace.run_bd(["orphans"], "orphans");
 
     // Exit code behavior should match
     assert_eq!(
-        br_orphans.success, bd_orphans.success,
-        "Exit code mismatch for 'orphans' (empty): br={}, bd={}",
-        br_orphans.exit_code, bd_orphans.exit_code
+        obr_orphans.success, bd_orphans.success,
+        "Exit code mismatch for 'orphans' (empty): obr={}, bd={}",
+        obr_orphans.exit_code, bd_orphans.exit_code
     );
 
-    let result = TextComparisonResult::compare(&br_orphans.stdout, &bd_orphans.stdout);
+    let result = TextComparisonResult::compare(&obr_orphans.stdout, &bd_orphans.stdout);
 
     assert!(
         result.matches,
         "Text output mismatch for 'orphans' (empty):\n{}\n\nbr output:\n{}\n\nbd output:\n{}",
-        result.diff_summary, result.br_normalized, result.bd_normalized
+        result.diff_summary, result.obr_normalized, result.bd_normalized
     );
 
     workspace.finish(true);
@@ -555,7 +565,7 @@ fn conformance_text_orphans_empty() {
 
 /// Test: `list` with status filter
 #[test]
-#[ignore = "text formatting differences between br and bd for list output"]
+#[ignore = "text formatting differences between obr and bd for list output"]
 fn conformance_text_list_status_filter() {
     skip_if_no_bd!();
     common::init_test_logging();
@@ -564,24 +574,24 @@ fn conformance_text_list_status_filter() {
     workspace.init_both();
 
     // Create issues with different statuses
-    workspace.run_br(["create", "Open issue"], "create_open");
+    workspace.run_obr(["create", "Open issue"], "create_open");
     workspace.run_bd(["create", "Open issue"], "create_open");
 
-    let br_create = workspace.run_br(["create", "Issue to close"], "create_close");
+    let obr_create = workspace.run_obr(["create", "Issue to close"], "create_close");
     let bd_create = workspace.run_bd(["create", "Issue to close"], "create_close");
-    let br_id = extract_id_from_create(&br_create.stdout);
+    let obr_id = extract_id_from_create(&obr_create.stdout);
     let bd_id = extract_id_from_create(&bd_create.stdout);
-    workspace.run_br(["close", &br_id], "close");
+    workspace.run_obr(["close", &obr_id], "close");
     workspace.run_bd(["close", &bd_id], "close");
 
     // List only open issues
-    let br_list = workspace.run_br(["list", "--status", "open"], "list_open");
+    let obr_list = workspace.run_obr(["list", "--status", "open"], "list_open");
     let bd_list = workspace.run_bd(["list", "--status", "open"], "list_open");
 
     assert!(
-        br_list.success,
-        "br list --status failed: {}",
-        br_list.stderr
+        obr_list.success,
+        "obr list --status failed: {}",
+        obr_list.stderr
     );
     assert!(
         bd_list.success,
@@ -589,12 +599,12 @@ fn conformance_text_list_status_filter() {
         bd_list.stderr
     );
 
-    let result = TextComparisonResult::compare(&br_list.stdout, &bd_list.stdout);
+    let result = TextComparisonResult::compare(&obr_list.stdout, &bd_list.stdout);
 
     assert!(
         result.matches,
         "Text output mismatch for 'list --status open':\n{}\n\nbr output:\n{}\n\nbd output:\n{}",
-        result.diff_summary, result.br_normalized, result.bd_normalized
+        result.diff_summary, result.obr_normalized, result.bd_normalized
     );
 
     workspace.finish(true);
@@ -610,9 +620,9 @@ fn conformance_text_list_type_filter() {
     workspace.init_both();
 
     // Create issues with different types
-    workspace.run_br(["create", "Bug report", "--type", "bug"], "create_bug");
+    workspace.run_obr(["create", "Bug report", "--type", "bug"], "create_bug");
     workspace.run_bd(["create", "Bug report", "--type", "bug"], "create_bug");
-    workspace.run_br(
+    workspace.run_obr(
         ["create", "Feature request", "--type", "feature"],
         "create_feature",
     );
@@ -620,22 +630,26 @@ fn conformance_text_list_type_filter() {
         ["create", "Feature request", "--type", "feature"],
         "create_feature",
     );
-    workspace.run_br(["create", "Regular task", "--type", "task"], "create_task");
+    workspace.run_obr(["create", "Regular task", "--type", "task"], "create_task");
     workspace.run_bd(["create", "Regular task", "--type", "task"], "create_task");
 
     // List only bugs
-    let br_list = workspace.run_br(["list", "--type", "bug"], "list_bug");
+    let obr_list = workspace.run_obr(["list", "--type", "bug"], "list_bug");
     let bd_list = workspace.run_bd(["list", "--type", "bug"], "list_bug");
 
-    assert!(br_list.success, "br list --type failed: {}", br_list.stderr);
+    assert!(
+        obr_list.success,
+        "obr list --type failed: {}",
+        obr_list.stderr
+    );
     assert!(bd_list.success, "bd list --type failed: {}", bd_list.stderr);
 
-    let result = TextComparisonResult::compare(&br_list.stdout, &bd_list.stdout);
+    let result = TextComparisonResult::compare(&obr_list.stdout, &bd_list.stdout);
 
     assert!(
         result.matches,
         "Text output mismatch for 'list --type bug':\n{}\n\nbr output:\n{}\n\nbd output:\n{}",
-        result.diff_summary, result.br_normalized, result.bd_normalized
+        result.diff_summary, result.obr_normalized, result.bd_normalized
     );
 
     workspace.finish(true);
@@ -651,11 +665,11 @@ fn conformance_text_list_priority_filter() {
     workspace.init_both();
 
     // Create issues with different priorities
-    workspace.run_br(["create", "Critical issue", "--priority", "0"], "create_p0");
+    workspace.run_obr(["create", "Critical issue", "--priority", "0"], "create_p0");
     workspace.run_bd(["create", "Critical issue", "--priority", "0"], "create_p0");
-    workspace.run_br(["create", "High priority", "--priority", "1"], "create_p1");
+    workspace.run_obr(["create", "High priority", "--priority", "1"], "create_p1");
     workspace.run_bd(["create", "High priority", "--priority", "1"], "create_p1");
-    workspace.run_br(
+    workspace.run_obr(
         ["create", "Medium priority", "--priority", "2"],
         "create_p2",
     );
@@ -665,13 +679,13 @@ fn conformance_text_list_priority_filter() {
     );
 
     // List only critical (P0) issues
-    let br_list = workspace.run_br(["list", "--priority", "0"], "list_p0");
+    let obr_list = workspace.run_obr(["list", "--priority", "0"], "list_p0");
     let bd_list = workspace.run_bd(["list", "--priority", "0"], "list_p0");
 
     assert!(
-        br_list.success,
-        "br list --priority failed: {}",
-        br_list.stderr
+        obr_list.success,
+        "obr list --priority failed: {}",
+        obr_list.stderr
     );
     assert!(
         bd_list.success,
@@ -679,12 +693,12 @@ fn conformance_text_list_priority_filter() {
         bd_list.stderr
     );
 
-    let result = TextComparisonResult::compare(&br_list.stdout, &bd_list.stdout);
+    let result = TextComparisonResult::compare(&obr_list.stdout, &bd_list.stdout);
 
     assert!(
         result.matches,
         "Text output mismatch for 'list --priority 0':\n{}\n\nbr output:\n{}\n\nbd output:\n{}",
-        result.diff_summary, result.br_normalized, result.bd_normalized
+        result.diff_summary, result.obr_normalized, result.bd_normalized
     );
 
     workspace.finish(true);
@@ -693,10 +707,10 @@ fn conformance_text_list_priority_filter() {
 /// Test: `show` with non-existent issue
 ///
 /// NOTE: This test documents an intentional behavioral difference:
-/// - br: Returns exit code 3 (error) for not-found issues
+/// - obr: Returns exit code 3 (error) for not-found issues
 /// - bd: Returns exit code 0 (success) with error message to stderr
 ///
-/// br's behavior is more correct (non-zero exit for errors), so we don't
+/// obr's behavior is more correct (non-zero exit for errors), so we don't
 /// match bd's permissive behavior here. This test verifies both produce
 /// appropriate error messages.
 #[test]
@@ -707,24 +721,24 @@ fn conformance_text_show_not_found() {
     let mut workspace = ConformanceWorkspace::new("conformance_text", "show_not_found");
     workspace.init_both();
 
-    let br_show = workspace.run_br(["show", "nonexistent-id"], "show");
+    let obr_show = workspace.run_obr(["show", "nonexistent-id"], "show");
     let bd_show = workspace.run_bd(["show", "nonexistent-id"], "show");
 
-    // INTENTIONAL DIFFERENCE: br returns error (exit 3), bd returns success (exit 0)
-    // br's behavior is more correct - errors should have non-zero exit codes
-    // We verify br fails as expected, not that it matches bd's permissive behavior
+    // INTENTIONAL DIFFERENCE: obr returns error (exit 3), bd returns success (exit 0)
+    // obr's behavior is more correct - errors should have non-zero exit codes
+    // We verify obr fails as expected, not that it matches bd's permissive behavior
     assert!(
-        !br_show.success,
-        "br should return error for not-found issue, got exit code {}",
-        br_show.exit_code
+        !obr_show.success,
+        "obr should return error for not-found issue, got exit code {}",
+        obr_show.exit_code
     );
 
     // Both should print a not-found diagnostic even though legacy bd differs
     // on exit status and output stream.
     assert!(
-        br_show.stderr.contains("not found") || br_show.stderr.contains("IssueNotFound"),
-        "br should print not-found error, got: {}",
-        br_show.stderr
+        obr_show.stderr.contains("not found") || obr_show.stderr.contains("IssueNotFound"),
+        "obr should print not-found error, got: {}",
+        obr_show.stderr
     );
     let bd_diagnostic = format!("{}\n{}", bd_show.stdout, bd_show.stderr).to_lowercase();
     assert!(
@@ -751,18 +765,18 @@ fn conformance_text_ready_with_limit() {
     // Create multiple issues
     for i in 1..=5 {
         let title = format!("Task {}", i);
-        workspace.run_br(["create", &title], &format!("create_{}", i));
+        workspace.run_obr(["create", &title], &format!("create_{}", i));
         workspace.run_bd(["create", &title], &format!("create_{}", i));
     }
 
     // Get only first 2 ready issues
-    let br_ready = workspace.run_br(["ready", "--limit", "2"], "ready");
+    let obr_ready = workspace.run_obr(["ready", "--limit", "2"], "ready");
     let bd_ready = workspace.run_bd(["ready", "--limit", "2"], "ready");
 
     assert!(
-        br_ready.success,
-        "br ready --limit failed: {}",
-        br_ready.stderr
+        obr_ready.success,
+        "obr ready --limit failed: {}",
+        obr_ready.stderr
     );
     assert!(
         bd_ready.success,
@@ -770,12 +784,12 @@ fn conformance_text_ready_with_limit() {
         bd_ready.stderr
     );
 
-    let result = TextComparisonResult::compare(&br_ready.stdout, &bd_ready.stdout);
+    let result = TextComparisonResult::compare(&obr_ready.stdout, &bd_ready.stdout);
 
     assert!(
         result.matches,
         "Text output mismatch for 'ready --limit 2':\n{}\n\nbr output:\n{}\n\nbd output:\n{}",
-        result.diff_summary, result.br_normalized, result.bd_normalized
+        result.diff_summary, result.obr_normalized, result.bd_normalized
     );
 
     workspace.finish(true);
@@ -833,7 +847,7 @@ mod normalization_tests {
 
     #[test]
     fn test_normalize_paths() {
-        let input = "Config at /home/user/.config/br";
+        let input = "Config at /home/user/.config/obr";
         let result = normalize_text_for_conformance(input);
         assert!(result.contains("/HOME"));
         assert!(!result.contains("/home/user"));
@@ -866,9 +880,9 @@ mod normalization_tests {
 
     #[test]
     fn test_comparison_result_mismatch() {
-        let br = "Issue bd-abc: open";
+        let obr = "Issue bd-abc: open";
         let bd = "Issue bd-xyz: closed";
-        let result = TextComparisonResult::compare(br, bd);
+        let result = TextComparisonResult::compare(obr, bd);
         // After normalization, "bd-abc" and "bd-xyz" become "ISSUE_ID"
         // but "open" vs "closed" will differ
         assert!(!result.matches);

@@ -24,14 +24,14 @@ case "$stage" in
     #   (a) doctor rebuilt the DB to match JSONL — counts now agree.
     #   (b) doctor's freshness gate refused the rebuild — mismatch persists.
     # Either way the JSONL file must NOT have lost data.
-    n_jsonl=$(wc -l < .beads/issues.jsonl 2>/dev/null || echo 0)
+    n_jsonl=$(wc -l < .obr/issues.jsonl 2>/dev/null || echo 0)
     if [ "$n_jsonl" -lt 7 ]; then
       echo "ASSERT FAIL[$stage]: JSONL line count dropped to $n_jsonl (expected >= 7; planted records destroyed)" >&2
       exit 1
     fi
     ;;
   post_undo)
-    [ -f .beads/issues.jsonl ] || {
+    [ -f .obr/issues.jsonl ] || {
       echo "ASSERT FAIL[$stage]: issues.jsonl gone after undo" >&2
       exit 1
     }

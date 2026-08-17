@@ -15,7 +15,7 @@ cd "$target_dir"
 orphan_count() {
   python3 <<'PY'
 import sqlite3
-conn = sqlite3.connect(".beads/beads.db")
+conn = sqlite3.connect(".obr/obr.db")
 cur = conn.cursor()
 cur.execute(
     "SELECT COUNT(*) FROM labels l "
@@ -30,7 +30,7 @@ PY
 orphan_key() {
   python3 <<'PY'
 import sqlite3
-conn = sqlite3.connect(".beads/beads.db")
+conn = sqlite3.connect(".obr/obr.db")
 cur = conn.cursor()
 cur.execute("SELECT issue_id, label FROM labels WHERE issue_id = 'bd-ghost-fixture-l'")
 row = cur.fetchone()
@@ -55,7 +55,7 @@ case "$stage" in
       echo "ASSERT FAIL[$stage]: expected 1 orphan, got '$count'" >&2
       exit 1
     fi
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: JSONL bytes drifted during corrupt stage" >&2
@@ -79,7 +79,7 @@ case "$stage" in
       }
     fi
     # SACRED INVARIANT: JSONL byte-identical to pre-corruption.
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: JSONL bytes mutated by --repair (sacred invariant violation)" >&2
@@ -120,7 +120,7 @@ case "$stage" in
       echo "ASSERT FAIL[$stage]: restored key '$key' != snapshot '$expected'" >&2
       exit 1
     fi
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: JSONL bytes drifted across undo" >&2

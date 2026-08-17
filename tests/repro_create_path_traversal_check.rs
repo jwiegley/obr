@@ -1,7 +1,7 @@
-use beads_rust::cli::CreateArgs;
-use beads_rust::cli::commands::create;
-use beads_rust::config::CliOverrides;
-use beads_rust::output::OutputContext;
+use obr::cli::CreateArgs;
+use obr::cli::commands::create;
+use obr::config::CliOverrides;
+use obr::output::OutputContext;
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -52,9 +52,9 @@ fn test_create_from_file_rejects_parent_dir() {
         );
         // Other errors might happen (e.g. no DB found if we didn't mock it?
         // Wait, create::execute tries to open storage.
-        // We are in a temp dir. discover_beads_dir might fail or init new?
-        // discover_beads_dir looks for .beads.
-        // We didn't create .beads in temp_dir.
+        // We are in a temp dir. discover_obr_dir might fail or init new?
+        // discover_obr_dir looks for .obr.
+        // We didn't create .obr in temp_dir.
         // So execute() might fail with "beads directory not found".
         // That's acceptable for this test, as long as it's not the traversal error.
     }

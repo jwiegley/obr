@@ -10,18 +10,18 @@ tool_bin="${TOOL_BIN:-br}"
 cd "$target_dir"
 
 current_db_sha() {
-    sha256sum .beads/beads.db | cut -d ' ' -f 1
+    sha256sum .obr/obr.db | cut -d ' ' -f 1
 }
 
 baseline_db_sha() {
-    cut -d ' ' -f 1 .fixture_baseline/beads.db.sha256
+    cut -d ' ' -f 1 .fixture_baseline/obr.db.sha256
 }
 
 header_user_version() {
     python3 - <<'PY'
 from pathlib import Path
 
-data = Path(".beads/beads.db").read_bytes()
+data = Path(".obr/obr.db").read_bytes()
 print(int.from_bytes(data[60:64], "big"))
 PY
 }

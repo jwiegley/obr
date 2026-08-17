@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, run_br};
+use common::cli::{ObrWorkspace, run_obr};
 
 fn parse_created_id(stdout: &str) -> String {
     let line = stdout.lines().next().unwrap_or("");
@@ -18,8 +18,8 @@ fn parse_created_id(stdout: &str) -> String {
 #[test]
 fn e2e_graph_dfs_ordering() {
     let _log = common::test_log("e2e_graph_dfs_ordering");
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
 
     // Root -> A -> C
     // Root -> B
@@ -30,24 +30,24 @@ fn e2e_graph_dfs_ordering() {
     //   B
     // (B should NOT appear under C's indentation)
 
-    let root = run_br(&workspace, ["create", "Root"], "root");
+    let root = run_obr(&workspace, ["create", "Root"], "root");
     let id_root = parse_created_id(&root.stdout);
 
-    let a = run_br(&workspace, ["create", "A"], "a");
+    let a = run_obr(&workspace, ["create", "A"], "a");
     let id_a = parse_created_id(&a.stdout);
 
-    let b = run_br(&workspace, ["create", "B"], "b");
+    let b = run_obr(&workspace, ["create", "B"], "b");
     let id_b = parse_created_id(&b.stdout);
 
-    let c = run_br(&workspace, ["create", "C"], "c");
+    let c = run_obr(&workspace, ["create", "C"], "c");
     let id_c = parse_created_id(&c.stdout);
 
     // Dependencies
-    run_br(&workspace, ["dep", "add", &id_a, &id_root], "dep_a_root");
-    run_br(&workspace, ["dep", "add", &id_b, &id_root], "dep_b_root");
-    run_br(&workspace, ["dep", "add", &id_c, &id_a], "dep_c_a");
+    run_obr(&workspace, ["dep", "add", &id_a, &id_root], "dep_a_root");
+    run_obr(&workspace, ["dep", "add", &id_b, &id_root], "dep_b_root");
+    run_obr(&workspace, ["dep", "add", &id_c, &id_a], "dep_c_a");
 
-    let graph = run_br(&workspace, ["graph", &id_root], "graph");
+    let graph = run_obr(&workspace, ["graph", &id_root], "graph");
 
     // Output should contain:
     // ... id_a ...

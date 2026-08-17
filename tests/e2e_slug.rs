@@ -1,4 +1,4 @@
-//! E2E tests for `br create --slug` round-trip + slugged-ID tolerance in
+//! E2E tests for `obr create --slug` round-trip + slugged-ID tolerance in
 //! downstream commands (orphans, show, update, close).
 //!
 //! Created 2026-05-09 for beads_rust-l6xl (audit-driven snapshot + slug
@@ -9,7 +9,7 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, run_br};
+use common::cli::{ObrWorkspace, run_obr};
 use std::process::Command;
 
 fn extract_id_from_create_stdout(stdout: &str) -> Option<String> {
@@ -26,19 +26,19 @@ fn extract_id_from_create_stdout(stdout: &str) -> Option<String> {
     None
 }
 
-/// l6xl AC: full round-trip — `br create --slug "feature x"`, capture the
-/// returned ID, confirm `br show <id> --json` returns the same ID and a
+/// l6xl AC: full round-trip — `obr create --slug "feature x"`, capture the
+/// returned ID, confirm `obr show <id> --json` returns the same ID and a
 /// title field that contains the user-provided text.
 #[test]
 fn e2e_create_with_slug_then_show_renders_slug_in_id() {
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init", "--prefix", "bd"], "init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init", "--prefix", "bd"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     eprintln!("[l6xl TEST] e2e_create_with_slug_then_show_renders_slug_in_id");
 
     // Create with slug
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         [
             "create",
@@ -67,7 +67,7 @@ fn e2e_create_with_slug_then_show_renders_slug_in_id() {
     );
 
     // Round-trip: show --json must return the same ID
-    let show = run_br(&workspace, ["show", &id, "--json"], "show_slug");
+    let show = run_obr(&workspace, ["show", &id, "--json"], "show_slug");
     assert!(
         show.status.success(),
         "show <slugged-id> failed: {}",
@@ -100,14 +100,14 @@ fn e2e_create_with_slug_then_show_renders_slug_in_id() {
 /// prefixes` work end-to-end via the CLI surface).
 #[test]
 fn e2e_orphans_handles_slugged_ids_in_commit_messages() {
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init", "--prefix", "bd"], "init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init", "--prefix", "bd"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     eprintln!("[l6xl TEST] e2e_orphans_handles_slugged_ids_in_commit_messages");
 
     // Create a slugged issue
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         [
             "create",
@@ -157,7 +157,7 @@ fn e2e_orphans_handles_slugged_ids_in_commit_messages() {
     );
 
     // Run orphans --json and verify it finds the slugged ID
-    let orphans = run_br(&workspace, ["orphans", "--json"], "orphans_check");
+    let orphans = run_obr(&workspace, ["orphans", "--json"], "orphans_check");
     assert!(
         orphans.status.success(),
         "orphans command failed: {}",

@@ -1,6 +1,6 @@
 # wal_oversized_checkpoint
 
-- **FM**: `fm-state_files-wal-oversized` (P2) — `.beads/beads.db-wal`
+- **FM**: `fm-state_files-wal-oversized` (P2) — `.obr/obr.db-wal`
   exceeds the 32 MB oversized threshold. A WAL that grows unboundedly
   means SQLite's auto-checkpoint has been blocked (long-running read
   snapshot, peer process holding the WAL open) — disk usage climbs
@@ -17,7 +17,7 @@
   checkpoint pragmas must run outside an explicit transaction,
   which `Op::DbExec`'s `BEGIN IMMEDIATE` would violate). Records
   one `legacy_op` line in `actions.jsonl` per snapshot target
-  (`beads.db`, `beads.db-wal`, `beads.db-shm`) under `fixer_id =
+  (`obr.db`, `obr.db-wal`, `obr.db-shm`) under `fixer_id =
   doctor.wal_checkpoint_truncate`.
 
 ## What this fixture proves
@@ -30,15 +30,15 @@ chokepoint path (`record_legacy_mutation`) end-to-end:
 2. `--repair` invokes the chokepoint wrapper, which writes
    `legacy_op` entries to `actions.jsonl` with the correct
    `fixer_id`.
-3. Workspace remains queryable post-repair (`br list --json` succeeds).
+3. Workspace remains queryable post-repair (`obr list --json` succeeds).
 4. Doctor stops flagging `wal_size` after the fixer runs.
 
 ## SQLite WAL-lifecycle caveat
 
-`br doctor` (Full mode) runs `check_sqlite_cli_integrity` which
+`obr doctor` (Full mode) runs `check_sqlite_cli_integrity` which
 spawns the `sqlite3` CLI against the LIVE database. The CLI opens
 the DB and on close considers our zero-padded WAL "fully consumed"
-(the valid prefix from `br create` is auto-checkpointed; the zero
+(the valid prefix from `obr create` is auto-checkpointed; the zero
 tail is past-EOF garbage) and removes the file. This happens AFTER
 `check_wal_oversized` has already recorded `wal_size warn` in the
 report, so the fixer still activates correctly — but the chokepoint
@@ -46,9 +46,9 @@ snapshot taken at fixer-call time captures an absent WAL.
 
 Consequences for this fixture:
 
-- The `detect` stage does NOT call `br doctor --json` (which would
+- The `detect` stage does NOT call `obr doctor --json` (which would
   remove the planted WAL before the harness's `--repair` runs).
-  Instead it stats `.beads/beads.db-wal` on disk to verify the
+  Instead it stats `.obr/obr.db-wal` on disk to verify the
   planted >32MB state.
 - The `post_undo` stage cannot assert byte-deterministic restore
   of the 33MB inflated WAL, since the snapshot at fixer-call time

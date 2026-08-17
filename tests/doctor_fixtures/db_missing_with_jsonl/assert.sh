@@ -12,8 +12,8 @@ case "$stage" in
     # Precondition: doctor's own inspection must not have recreated the
     # file before we look. If some layer resurrects it, the fixture
     # cannot hold its planted state.
-    if [ -e .beads/beads.db ]; then
-      echo "SKIP[$stage]: .beads/beads.db reappeared before doctor ran; environment cannot hold the missing-db precondition" >&2
+    if [ -e .obr/obr.db ]; then
+      echo "SKIP[$stage]: .obr/obr.db reappeared before doctor ran; environment cannot hold the missing-db precondition" >&2
       exit 3
     fi
     out=$("$tool_bin" doctor --json 2>/dev/null) || true
@@ -27,7 +27,7 @@ case "$stage" in
       exit 1
     }
     # JSONL must be untouched by the read-only detect pass.
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: JSONL bytes drifted during detect" >&2
@@ -36,8 +36,8 @@ case "$stage" in
     ;;
   post_repair)
     # --repair rebuilds the DB from the surviving JSONL.
-    [ -f .beads/beads.db ] || {
-      echo "ASSERT FAIL[$stage]: --repair did not recreate .beads/beads.db" >&2
+    [ -f .obr/obr.db ] || {
+      echo "ASSERT FAIL[$stage]: --repair did not recreate .obr/obr.db" >&2
       exit 1
     }
     redetect=$("$tool_bin" doctor --json 2>/dev/null) || true
@@ -57,8 +57,8 @@ case "$stage" in
     fi
     ;;
   post_undo)
-    [ -d .beads ] || { echo "ASSERT FAIL[$stage]: .beads gone after undo" >&2; exit 1; }
-    [ -f .beads/issues.jsonl ] || { echo "ASSERT FAIL[$stage]: issues.jsonl gone after undo" >&2; exit 1; }
+    [ -d .obr ] || { echo "ASSERT FAIL[$stage]: .obr gone after undo" >&2; exit 1; }
+    [ -f .obr/issues.jsonl ] || { echo "ASSERT FAIL[$stage]: issues.jsonl gone after undo" >&2; exit 1; }
     ;;
   *)
     echo "unknown stage: $stage" >&2

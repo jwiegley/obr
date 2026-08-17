@@ -1,21 +1,14 @@
 mod common;
-
-use common::cli::{BrWorkspace, run_br};
+use common::cli::{ObrWorkspace, run_obr};
 
 #[test]
 fn test_list_sort_aliases_are_accepted() {
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
-    let create = run_br(&workspace, ["create", "sort alias fixture"], "create");
-    assert!(
-        create.status.success(),
-        "fixture create failed: {}",
-        create.stderr
-    );
 
     for alias in ["created", "updated"] {
-        let list = run_br(
+        let list = run_obr(
             &workspace,
             ["list", "--sort", alias, "--json"],
             &format!("list_sort_{alias}"),

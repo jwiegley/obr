@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, extract_issues_array, extract_json_payload, run_br};
+use common::cli::{ObrWorkspace, extract_issues_array, extract_json_payload, run_obr};
 use serde_json::Value;
 use std::fs;
 use tracing::info;
@@ -23,16 +23,25 @@ fn parse_created_id(stdout: &str) -> String {
 /// Every interactive surface (`dep add`, `dep import`) refuses a blocking
 /// cycle at insert time, but a JSONL produced elsewhere can carry one and
 /// `sync --import-only` round-trips it losslessly — that is the graph shape
-/// `br dep cycles` exists to diagnose.
-fn import_blocking_cycle(workspace: &BrWorkspace, issue_a_id: &str, issue_b_id: &str, label: &str) {
-    let flush = run_br(
+/// `obr dep cycles` exists to diagnose.
+///
+/// The cycle is planted as JSONL rows, so the caller must first pin the
+/// workspace to the legacy JSONL surface with `common::cli::pin_jsonl`: the
+/// default Org surface carries no place to hand-write a dependency row.
+fn import_blocking_cycle(
+    workspace: &ObrWorkspace,
+    issue_a_id: &str,
+    issue_b_id: &str,
+    label: &str,
+) {
+    let flush = run_obr(
         workspace,
         ["sync", "--flush-only"],
         &format!("{label}_flush"),
     );
     assert!(flush.status.success(), "flush failed: {}", flush.stderr);
 
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     let raw = fs::read_to_string(&jsonl_path).expect("read exported jsonl");
     let mut lines = Vec::new();
     for line in raw.lines() {
@@ -66,7 +75,7 @@ fn import_blocking_cycle(workspace: &BrWorkspace, issue_a_id: &str, issue_b_id: 
     }
     fs::write(&jsonl_path, lines.join("\n") + "\n").expect("write cyclic jsonl");
 
-    let import = run_br(
+    let import = run_obr(
         workspace,
         ["sync", "--import-only"],
         &format!("{label}_import"),
@@ -83,12 +92,16 @@ fn import_blocking_cycle(workspace: &BrWorkspace, issue_a_id: &str, issue_b_id: 
 fn e2e_dep_cycles_default_hides_closed_archive_and_include_closed_exposes_it() {
     common::init_test_logging();
     info!("e2e_dep_cycles_default_hides_closed_archive_and_include_closed_exposes_it: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init_closed_archive_cycles");
+    let init = run_obr(&workspace, ["init"], "init_closed_archive_cycles");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let issue_a = run_br(&workspace, ["create", "Archived cycle A"], "create_a");
+    // `import_blocking_cycle` plants the cycle as JSONL rows, so this
+    // workspace exports JSONL rather than the default Org surface.
+    common::cli::pin_jsonl(&workspace.root.join(".obr"));
+
+    let issue_a = run_obr(&workspace, ["create", "Archived cycle A"], "create_a");
     assert!(
         issue_a.status.success(),
         "create A failed: {}",
@@ -96,7 +109,7 @@ fn e2e_dep_cycles_default_hides_closed_archive_and_include_closed_exposes_it() {
     );
     let issue_a_id = parse_created_id(&issue_a.stdout);
 
-    let issue_b = run_br(&workspace, ["create", "Archived cycle B"], "create_b");
+    let issue_b = run_obr(&workspace, ["create", "Archived cycle B"], "create_b");
     assert!(
         issue_b.status.success(),
         "create B failed: {}",
@@ -113,20 +126,20 @@ fn e2e_dep_cycles_default_hides_closed_archive_and_include_closed_exposes_it() {
     // Inside a blocking cycle neither member can close normally (each is
     // blocked by the other), so archiving the cycle requires --force — the
     // same escape an operator uses on a real workspace.
-    let close_a = run_br(&workspace, ["close", &issue_a_id, "--force"], "close_a");
+    let close_a = run_obr(&workspace, ["close", &issue_a_id, "--force"], "close_a");
     assert!(
         close_a.status.success(),
         "close A failed: {}",
         close_a.stderr
     );
-    let close_b = run_br(&workspace, ["close", &issue_b_id, "--force"], "close_b");
+    let close_b = run_obr(&workspace, ["close", &issue_b_id, "--force"], "close_b");
     assert!(
         close_b.status.success(),
         "close B failed: {}",
         close_b.stderr
     );
 
-    let active_only = run_br(
+    let active_only = run_obr(
         &workspace,
         ["dep", "cycles", "--json"],
         "cycles_active_only",
@@ -147,7 +160,7 @@ fn e2e_dep_cycles_default_hides_closed_archive_and_include_closed_exposes_it() {
     assert_eq!(active_payload["cycles"].as_array().unwrap().len(), 0);
     assert!(active_payload.get("archived_closed_cycles").is_none());
 
-    let with_archive = run_br(
+    let with_archive = run_obr(
         &workspace,
         ["dep", "cycles", "--json", "--include-closed"],
         "cycles_include_closed",
@@ -185,12 +198,16 @@ fn e2e_dep_cycles_default_hides_closed_archive_and_include_closed_exposes_it() {
 fn e2e_dep_cycles_active_cycle_exits_nonzero() {
     common::init_test_logging();
     info!("e2e_dep_cycles_active_cycle_exits_nonzero: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init_active_cycle");
+    let init = run_obr(&workspace, ["init"], "init_active_cycle");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let issue_a = run_br(&workspace, ["create", "Active cycle A"], "create_a");
+    // `import_blocking_cycle` plants the cycle as JSONL rows, so this
+    // workspace exports JSONL rather than the default Org surface.
+    common::cli::pin_jsonl(&workspace.root.join(".obr"));
+
+    let issue_a = run_obr(&workspace, ["create", "Active cycle A"], "create_a");
     assert!(
         issue_a.status.success(),
         "create A failed: {}",
@@ -198,7 +215,7 @@ fn e2e_dep_cycles_active_cycle_exits_nonzero() {
     );
     let issue_a_id = parse_created_id(&issue_a.stdout);
 
-    let issue_b = run_br(&workspace, ["create", "Active cycle B"], "create_b");
+    let issue_b = run_obr(&workspace, ["create", "Active cycle B"], "create_b");
     assert!(
         issue_b.status.success(),
         "create B failed: {}",
@@ -214,7 +231,7 @@ fn e2e_dep_cycles_active_cycle_exits_nonzero() {
     import_blocking_cycle(&workspace, &issue_a_id, &issue_b_id, "active_cycle");
 
     // JSON surface: cycle data preserved AND non-zero exit.
-    let json = run_br(&workspace, ["dep", "cycles", "--json"], "cycles_json");
+    let json = run_obr(&workspace, ["dep", "cycles", "--json"], "cycles_json");
     assert_eq!(
         json.status.code(),
         Some(5),
@@ -227,7 +244,7 @@ fn e2e_dep_cycles_active_cycle_exits_nonzero() {
     assert_eq!(payload["active_count"], 1, "expected one active cycle");
 
     // Text surface: same non-zero exit.
-    let text = run_br(&workspace, ["dep", "cycles"], "cycles_text");
+    let text = run_obr(&workspace, ["dep", "cycles"], "cycles_text");
     assert_eq!(
         text.status.code(),
         Some(5),
@@ -245,9 +262,9 @@ fn e2e_dep_cycles_active_cycle_exits_nonzero() {
 fn e2e_create_bulk_dropped_cycle_edge_exits_nonzero() {
     common::init_test_logging();
     info!("e2e_create_bulk_dropped_cycle_edge_exits_nonzero: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init_bulk_cycle");
+    let init = run_obr(&workspace, ["init"], "init_bulk_cycle");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let bulk = "## Task A\n\n### ID\na1\n\n### Type\ntask\n\n### Description\nFirst task.\n\n\
@@ -257,7 +274,7 @@ fn e2e_create_bulk_dropped_cycle_edge_exits_nonzero() {
     let bulk_path = workspace.root.join("bulk.md");
     fs::write(&bulk_path, bulk).expect("write bulk.md");
 
-    let created = run_br(
+    let created = run_obr(
         &workspace,
         ["create", "-f", bulk_path.to_str().unwrap()],
         "bulk_create_cycle",
@@ -270,7 +287,7 @@ fn e2e_create_bulk_dropped_cycle_edge_exits_nonzero() {
     );
 
     // The issues themselves are still created despite the dropped edge.
-    let list = run_br(&workspace, ["list", "--json"], "list_after_bulk");
+    let list = run_obr(&workspace, ["list", "--json"], "list_after_bulk");
     assert!(list.status.success(), "list failed: {}", list.stderr);
     let issues = extract_issues_array(&list.stdout);
     assert_eq!(
@@ -286,12 +303,12 @@ fn e2e_create_bulk_dropped_cycle_edge_exits_nonzero() {
 fn e2e_relations_labels_comments() {
     common::init_test_logging();
     info!("e2e_relations_labels_comments: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let parent = run_br(&workspace, ["create", "Parent issue"], "create_parent");
+    let parent = run_obr(&workspace, ["create", "Parent issue"], "create_parent");
     assert!(
         parent.status.success(),
         "parent create failed: {}",
@@ -299,7 +316,7 @@ fn e2e_relations_labels_comments() {
     );
     let parent_id = parse_created_id(&parent.stdout);
 
-    let child = run_br(&workspace, ["create", "Child issue"], "create_child");
+    let child = run_obr(&workspace, ["create", "Child issue"], "create_child");
     assert!(
         child.status.success(),
         "child create failed: {}",
@@ -313,7 +330,7 @@ fn e2e_relations_labels_comments() {
         "--parent".to_string(),
         parent_id,
     ];
-    let parent_update = run_br(&workspace, parent_args, "set_parent");
+    let parent_update = run_obr(&workspace, parent_args, "set_parent");
     assert!(
         parent_update.status.success(),
         "parent update failed: {}",
@@ -326,14 +343,14 @@ fn e2e_relations_labels_comments() {
         "--add-label".to_string(),
         "backend".to_string(),
     ];
-    let label_update = run_br(&workspace, label_args, "add_label");
+    let label_update = run_obr(&workspace, label_args, "add_label");
     assert!(
         label_update.status.success(),
         "label update failed: {}",
         label_update.stderr
     );
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["list", "--label", "backend", "--json"],
         "list_label",
@@ -351,14 +368,14 @@ fn e2e_relations_labels_comments() {
         child_id.clone(),
         "First comment".to_string(),
     ];
-    let comment = run_br(&workspace, comment_args, "add_comment");
+    let comment = run_obr(&workspace, comment_args, "add_comment");
     assert!(
         comment.status.success(),
         "comment add failed: {}",
         comment.stderr
     );
 
-    let list_comments = run_br(
+    let list_comments = run_obr(
         &workspace,
         ["comments", "list", &child_id, "--json"],
         "list_comments",
@@ -379,12 +396,12 @@ fn e2e_relations_labels_comments() {
 fn e2e_label_add_updates_last_touched_context() {
     common::init_test_logging();
     info!("e2e_label_add_updates_last_touched_context: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init_label_last_touched");
+    let init = run_obr(&workspace, ["init"], "init_label_last_touched");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let target = run_br(
+    let target = run_obr(
         &workspace,
         ["create", "Label target"],
         "create_label_target",
@@ -392,11 +409,11 @@ fn e2e_label_add_updates_last_touched_context() {
     assert!(target.status.success(), "create failed: {}", target.stderr);
     let target_id = parse_created_id(&target.stdout);
 
-    let other = run_br(&workspace, ["create", "Other issue"], "create_label_other");
+    let other = run_obr(&workspace, ["create", "Other issue"], "create_label_other");
     assert!(other.status.success(), "create failed: {}", other.stderr);
     let other_id = parse_created_id(&other.stdout);
 
-    let label_add = run_br(
+    let label_add = run_obr(
         &workspace,
         ["label", "add", &target_id, "triage", "--json"],
         "label_add_last_touched",
@@ -407,7 +424,7 @@ fn e2e_label_add_updates_last_touched_context() {
         label_add.stderr
     );
 
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         ["update", "--title", "Label-touched target", "--json"],
         "update_after_label_add_last_touched",
@@ -418,7 +435,7 @@ fn e2e_label_add_updates_last_touched_context() {
         update.stderr
     );
 
-    let show_target = run_br(
+    let show_target = run_obr(
         &workspace,
         ["show", &target_id, "--json"],
         "show_label_target",
@@ -432,7 +449,7 @@ fn e2e_label_add_updates_last_touched_context() {
         serde_json::from_str(&extract_json_payload(&show_target.stdout)).expect("target json");
     assert_eq!(shown_target[0]["title"], "Label-touched target");
 
-    let show_other = run_br(
+    let show_other = run_obr(
         &workspace,
         ["show", &other_id, "--json"],
         "show_label_other",
@@ -452,12 +469,12 @@ fn e2e_label_add_updates_last_touched_context() {
 fn e2e_comments_add_updates_last_touched_context() {
     common::init_test_logging();
     info!("e2e_comments_add_updates_last_touched_context: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init_comments_last_touched");
+    let init = run_obr(&workspace, ["init"], "init_comments_last_touched");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let target = run_br(
+    let target = run_obr(
         &workspace,
         ["create", "Comment target"],
         "create_comments_target",
@@ -465,7 +482,7 @@ fn e2e_comments_add_updates_last_touched_context() {
     assert!(target.status.success(), "create failed: {}", target.stderr);
     let target_id = parse_created_id(&target.stdout);
 
-    let other = run_br(
+    let other = run_obr(
         &workspace,
         ["create", "Other comments issue"],
         "create_comments_other",
@@ -473,7 +490,7 @@ fn e2e_comments_add_updates_last_touched_context() {
     assert!(other.status.success(), "create failed: {}", other.stderr);
     let other_id = parse_created_id(&other.stdout);
 
-    let comment_add = run_br(
+    let comment_add = run_obr(
         &workspace,
         ["comments", "add", &target_id, "Context anchor", "--json"],
         "comments_add_last_touched",
@@ -484,7 +501,7 @@ fn e2e_comments_add_updates_last_touched_context() {
         comment_add.stderr
     );
 
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         ["update", "--title", "Comment-touched target", "--json"],
         "update_after_comments_add_last_touched",
@@ -495,7 +512,7 @@ fn e2e_comments_add_updates_last_touched_context() {
         update.stderr
     );
 
-    let show_target = run_br(
+    let show_target = run_obr(
         &workspace,
         ["show", &target_id, "--json"],
         "show_comments_target",
@@ -509,7 +526,7 @@ fn e2e_comments_add_updates_last_touched_context() {
         serde_json::from_str(&extract_json_payload(&show_target.stdout)).expect("target json");
     assert_eq!(shown_target[0]["title"], "Comment-touched target");
 
-    let show_other = run_br(
+    let show_other = run_obr(
         &workspace,
         ["show", &other_id, "--json"],
         "show_comments_other",
@@ -529,12 +546,12 @@ fn e2e_comments_add_updates_last_touched_context() {
 fn e2e_dep_add_list_blocked_remove() {
     common::init_test_logging();
     info!("e2e_dep_add_list_blocked_remove: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let blocking_issue = run_br(&workspace, ["create", "Blocker issue"], "create_blocker");
+    let blocking_issue = run_obr(&workspace, ["create", "Blocker issue"], "create_blocker");
     assert!(
         blocking_issue.status.success(),
         "blocker create failed: {}",
@@ -542,7 +559,7 @@ fn e2e_dep_add_list_blocked_remove() {
     );
     let blocking_id = parse_created_id(&blocking_issue.stdout);
 
-    let blocked_issue = run_br(&workspace, ["create", "Blocked issue"], "create_blocked");
+    let blocked_issue = run_obr(&workspace, ["create", "Blocked issue"], "create_blocked");
     assert!(
         blocked_issue.status.success(),
         "blocked create failed: {}",
@@ -550,7 +567,7 @@ fn e2e_dep_add_list_blocked_remove() {
     );
     let blocked_id = parse_created_id(&blocked_issue.stdout);
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &workspace,
         ["dep", "add", &blocked_id, &blocking_id, "--json"],
         "dep_add",
@@ -561,7 +578,7 @@ fn e2e_dep_add_list_blocked_remove() {
         dep_add.stderr
     );
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["dep", "list", &blocked_id, "--json"],
         "dep_list",
@@ -576,7 +593,7 @@ fn e2e_dep_add_list_blocked_remove() {
         "dependency not listed"
     );
 
-    let blocked_view = run_br(&workspace, ["blocked", "--json"], "blocked");
+    let blocked_view = run_obr(&workspace, ["blocked", "--json"], "blocked");
     assert!(
         blocked_view.status.success(),
         "blocked failed: {}",
@@ -588,7 +605,7 @@ fn e2e_dep_add_list_blocked_remove() {
         "blocked issue missing from blocked list"
     );
 
-    let dep_remove = run_br(
+    let dep_remove = run_obr(
         &workspace,
         ["dep", "remove", &blocked_id, &blocking_id, "--json"],
         "dep_remove",
@@ -599,7 +616,7 @@ fn e2e_dep_add_list_blocked_remove() {
         dep_remove.stderr
     );
 
-    let blocked_view = run_br(&workspace, ["blocked", "--json"], "blocked_after");
+    let blocked_view = run_obr(&workspace, ["blocked", "--json"], "blocked_after");
     assert!(
         blocked_view.status.success(),
         "blocked after remove failed: {}",
@@ -617,12 +634,12 @@ fn e2e_dep_add_list_blocked_remove() {
 fn e2e_dep_add_updates_last_touched_context() {
     common::init_test_logging();
     info!("e2e_dep_add_updates_last_touched_context: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let blocker = run_br(&workspace, ["create", "Blocker"], "create_blocker");
+    let blocker = run_obr(&workspace, ["create", "Blocker"], "create_blocker");
     assert!(
         blocker.status.success(),
         "create blocker failed: {}",
@@ -630,7 +647,7 @@ fn e2e_dep_add_updates_last_touched_context() {
     );
     let blocker_id = parse_created_id(&blocker.stdout);
 
-    let blocked = run_br(&workspace, ["create", "Blocked"], "create_blocked");
+    let blocked = run_obr(&workspace, ["create", "Blocked"], "create_blocked");
     assert!(
         blocked.status.success(),
         "create blocked failed: {}",
@@ -638,7 +655,7 @@ fn e2e_dep_add_updates_last_touched_context() {
     );
     let blocked_id = parse_created_id(&blocked.stdout);
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &workspace,
         ["dep", "add", &blocked_id, &blocker_id, "--json"],
         "dep_add_last_touched",
@@ -649,7 +666,7 @@ fn e2e_dep_add_updates_last_touched_context() {
         dep_add.stderr
     );
 
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         [
             "update",
@@ -665,7 +682,7 @@ fn e2e_dep_add_updates_last_touched_context() {
         update.stderr
     );
 
-    let show = run_br(
+    let show = run_obr(
         &workspace,
         ["show", &blocked_id, "--json"],
         "show_blocked_after_update",
@@ -681,12 +698,12 @@ fn e2e_dep_add_updates_last_touched_context() {
 fn e2e_dep_remove_updates_last_touched_context() {
     common::init_test_logging();
     info!("e2e_dep_remove_updates_last_touched_context: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let blocker = run_br(&workspace, ["create", "Blocker"], "create_blocker");
+    let blocker = run_obr(&workspace, ["create", "Blocker"], "create_blocker");
     assert!(
         blocker.status.success(),
         "create blocker failed: {}",
@@ -694,7 +711,7 @@ fn e2e_dep_remove_updates_last_touched_context() {
     );
     let blocker_id = parse_created_id(&blocker.stdout);
 
-    let blocked = run_br(&workspace, ["create", "Blocked"], "create_blocked");
+    let blocked = run_obr(&workspace, ["create", "Blocked"], "create_blocked");
     assert!(
         blocked.status.success(),
         "create blocked failed: {}",
@@ -702,7 +719,7 @@ fn e2e_dep_remove_updates_last_touched_context() {
     );
     let blocked_id = parse_created_id(&blocked.stdout);
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &workspace,
         ["dep", "add", &blocked_id, &blocker_id, "--json"],
         "dep_add_before_remove",
@@ -713,7 +730,7 @@ fn e2e_dep_remove_updates_last_touched_context() {
         dep_add.stderr
     );
 
-    let update_blocker = run_br(
+    let update_blocker = run_obr(
         &workspace,
         [
             "update",
@@ -730,7 +747,7 @@ fn e2e_dep_remove_updates_last_touched_context() {
         update_blocker.stderr
     );
 
-    let dep_remove = run_br(
+    let dep_remove = run_obr(
         &workspace,
         ["dep", "remove", &blocked_id, &blocker_id, "--json"],
         "dep_remove_last_touched",
@@ -741,7 +758,7 @@ fn e2e_dep_remove_updates_last_touched_context() {
         dep_remove.stderr
     );
 
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         [
             "update",
@@ -757,7 +774,7 @@ fn e2e_dep_remove_updates_last_touched_context() {
         update.stderr
     );
 
-    let show = run_br(
+    let show = run_obr(
         &workspace,
         ["show", &blocked_id, "--json"],
         "show_blocked_after_remove",
@@ -771,7 +788,7 @@ fn e2e_dep_remove_updates_last_touched_context() {
     let blocked_json: Value = serde_json::from_str(&blocked_payload).expect("show blocked json");
     assert_eq!(blocked_json[0]["title"], "Blocked renamed after dep remove");
 
-    let show_blocker = run_br(
+    let show_blocker = run_obr(
         &workspace,
         ["show", &blocker_id, "--json"],
         "show_blocker_final",
@@ -792,30 +809,30 @@ fn e2e_dep_remove_updates_last_touched_context() {
 fn e2e_dep_tree_external_nodes() {
     common::init_test_logging();
     info!("e2e_dep_tree_external_nodes: starting");
-    let workspace = BrWorkspace::new();
-    let external = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
+    let external = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init_main");
+    let init = run_obr(&workspace, ["init"], "init_main");
     assert!(init.status.success(), "init failed: {}", init.stderr);
-    let init_ext = run_br(&external, ["init"], "init_external");
+    let init_ext = run_obr(&external, ["init"], "init_external");
     assert!(
         init_ext.status.success(),
         "external init failed: {}",
         init_ext.stderr
     );
-    let external_config_path = external.root.join(".beads/config.yaml");
+    let external_config_path = external.root.join(".obr/config.yaml");
     fs::write(&external_config_path, "issue_prefix: bd\n").expect("write ext config");
 
-    let config_path = workspace.root.join(".beads/config.yaml");
+    let config_path = workspace.root.join(".obr/config.yaml");
     let external_path = external.root.display();
     let config = format!("issue_prefix: bd\nexternal_projects:\n  extproj: \"{external_path}\"\n");
     fs::write(&config_path, config).expect("write config");
 
-    let issue = run_br(&workspace, ["create", "Main issue"], "create_main_issue");
+    let issue = run_obr(&workspace, ["create", "Main issue"], "create_main_issue");
     assert!(issue.status.success(), "create failed: {}", issue.stderr);
     let issue_id = parse_created_id(&issue.stdout);
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &workspace,
         ["dep", "add", &issue_id, "external:extproj:auth"],
         "dep_add_external",
@@ -826,7 +843,7 @@ fn e2e_dep_tree_external_nodes() {
         dep_add.stderr
     );
 
-    let tree_before = run_br(
+    let tree_before = run_obr(
         &workspace,
         ["dep", "tree", &issue_id, "--json"],
         "dep_tree_before",
@@ -851,14 +868,14 @@ fn e2e_dep_tree_external_nodes() {
         "external node should show pending marker"
     );
 
-    let provider = run_br(&external, ["create", "Provide auth"], "ext_create");
+    let provider = run_obr(&external, ["create", "Provide auth"], "ext_create");
     assert!(
         provider.status.success(),
         "external create failed: {}",
         provider.stderr
     );
     let provider_id = parse_created_id(&provider.stdout);
-    let label = run_br(
+    let label = run_obr(
         &external,
         ["update", &provider_id, "--add-label", "provides:auth"],
         "ext_label",
@@ -868,14 +885,14 @@ fn e2e_dep_tree_external_nodes() {
         "external label failed: {}",
         label.stderr
     );
-    let close = run_br(&external, ["close", &provider_id], "ext_close");
+    let close = run_obr(&external, ["close", &provider_id], "ext_close");
     assert!(
         close.status.success(),
         "external close failed: {}",
         close.stderr
     );
 
-    let tree_after = run_br(
+    let tree_after = run_obr(
         &workspace,
         ["dep", "tree", &issue_id, "--json"],
         "dep_tree_after",
@@ -907,30 +924,30 @@ fn e2e_dep_tree_external_nodes() {
 fn e2e_dep_list_external_nodes() {
     common::init_test_logging();
     info!("e2e_dep_list_external_nodes: starting");
-    let workspace = BrWorkspace::new();
-    let external = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
+    let external = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init_main");
+    let init = run_obr(&workspace, ["init"], "init_main");
     assert!(init.status.success(), "init failed: {}", init.stderr);
-    let init_ext = run_br(&external, ["init"], "init_external");
+    let init_ext = run_obr(&external, ["init"], "init_external");
     assert!(
         init_ext.status.success(),
         "external init failed: {}",
         init_ext.stderr
     );
-    let external_config_path = external.root.join(".beads/config.yaml");
+    let external_config_path = external.root.join(".obr/config.yaml");
     fs::write(&external_config_path, "issue_prefix: bd\n").expect("write ext config");
 
-    let config_path = workspace.root.join(".beads/config.yaml");
+    let config_path = workspace.root.join(".obr/config.yaml");
     let external_path = external.root.display();
     let config = format!("issue_prefix: bd\nexternal_projects:\n  extproj: \"{external_path}\"\n");
     fs::write(&config_path, config).expect("write config");
 
-    let issue = run_br(&workspace, ["create", "Main issue"], "create_main_issue");
+    let issue = run_obr(&workspace, ["create", "Main issue"], "create_main_issue");
     assert!(issue.status.success(), "create failed: {}", issue.stderr);
     let issue_id = parse_created_id(&issue.stdout);
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &workspace,
         ["dep", "add", &issue_id, "external:extproj:auth"],
         "dep_add_external",
@@ -941,7 +958,7 @@ fn e2e_dep_list_external_nodes() {
         dep_add.stderr
     );
 
-    let list_before = run_br(
+    let list_before = run_obr(
         &workspace,
         ["dep", "list", &issue_id, "--json"],
         "dep_list_before",
@@ -966,14 +983,14 @@ fn e2e_dep_list_external_nodes() {
         "external dep should show pending marker"
     );
 
-    let provider = run_br(&external, ["create", "Provide auth"], "ext_create");
+    let provider = run_obr(&external, ["create", "Provide auth"], "ext_create");
     assert!(
         provider.status.success(),
         "external create failed: {}",
         provider.stderr
     );
     let provider_id = parse_created_id(&provider.stdout);
-    let label = run_br(
+    let label = run_obr(
         &external,
         ["update", &provider_id, "--add-label", "provides:auth"],
         "ext_label",
@@ -983,14 +1000,14 @@ fn e2e_dep_list_external_nodes() {
         "external label failed: {}",
         label.stderr
     );
-    let close = run_br(&external, ["close", &provider_id], "ext_close");
+    let close = run_obr(&external, ["close", &provider_id], "ext_close");
     assert!(
         close.status.success(),
         "external close failed: {}",
         close.stderr
     );
 
-    let list_after = run_br(
+    let list_after = run_obr(
         &workspace,
         ["dep", "list", &issue_id, "--json"],
         "dep_list_after",
@@ -1021,12 +1038,12 @@ fn e2e_dep_list_external_nodes() {
 fn e2e_close_suggest_next_unblocks() {
     common::init_test_logging();
     info!("e2e_close_suggest_next_unblocks: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let blocker = run_br(&workspace, ["create", "Blocker issue"], "create_blocker");
+    let blocker = run_obr(&workspace, ["create", "Blocker issue"], "create_blocker");
     assert!(
         blocker.status.success(),
         "blocker create failed: {}",
@@ -1034,7 +1051,7 @@ fn e2e_close_suggest_next_unblocks() {
     );
     let blocker_id = parse_created_id(&blocker.stdout);
 
-    let blocked = run_br(&workspace, ["create", "Blocked issue"], "create_blocked");
+    let blocked = run_obr(&workspace, ["create", "Blocked issue"], "create_blocked");
     assert!(
         blocked.status.success(),
         "blocked create failed: {}",
@@ -1042,7 +1059,7 @@ fn e2e_close_suggest_next_unblocks() {
     );
     let blocked_id = parse_created_id(&blocked.stdout);
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &workspace,
         ["dep", "add", &blocked_id, &blocker_id],
         "dep_add",
@@ -1053,7 +1070,7 @@ fn e2e_close_suggest_next_unblocks() {
         dep_add.stderr
     );
 
-    let close = run_br(
+    let close = run_obr(
         &workspace,
         ["close", &blocker_id, "--suggest-next", "--json"],
         "close_suggest_next",
@@ -1078,12 +1095,12 @@ fn e2e_close_suggest_next_unblocks() {
 fn e2e_close_blocked_requires_force() {
     common::init_test_logging();
     info!("e2e_close_blocked_requires_force: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let blocker = run_br(&workspace, ["create", "Blocker issue"], "create_blocker");
+    let blocker = run_obr(&workspace, ["create", "Blocker issue"], "create_blocker");
     assert!(
         blocker.status.success(),
         "blocker create failed: {}",
@@ -1091,7 +1108,7 @@ fn e2e_close_blocked_requires_force() {
     );
     let blocker_id = parse_created_id(&blocker.stdout);
 
-    let blocked = run_br(&workspace, ["create", "Blocked issue"], "create_blocked");
+    let blocked = run_obr(&workspace, ["create", "Blocked issue"], "create_blocked");
     assert!(
         blocked.status.success(),
         "blocked create failed: {}",
@@ -1099,7 +1116,7 @@ fn e2e_close_blocked_requires_force() {
     );
     let blocked_id = parse_created_id(&blocked.stdout);
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &workspace,
         ["dep", "add", &blocked_id, &blocker_id],
         "dep_add",
@@ -1110,7 +1127,7 @@ fn e2e_close_blocked_requires_force() {
         dep_add.stderr
     );
 
-    let close_skip = run_br(
+    let close_skip = run_obr(
         &workspace,
         ["close", &blocked_id, "--json"],
         "close_blocked_skip",
@@ -1151,7 +1168,7 @@ fn e2e_close_blocked_requires_force() {
         "blocked close should explain the dependency blocker"
     );
 
-    let show = run_br(
+    let show = run_obr(
         &workspace,
         ["show", &blocked_id, "--json"],
         "show_blocked_after_skip",
@@ -1164,7 +1181,7 @@ fn e2e_close_blocked_requires_force() {
     // real skip reason (dependency block + --force remediation) instead of
     // the misleading "already closed or not found" hint — the issue is open
     // and findable, it just has an open blocker.
-    let close_human = run_br(
+    let close_human = run_obr(
         &workspace,
         ["close", &blocked_id],
         "close_blocked_human_error",
@@ -1188,7 +1205,7 @@ fn e2e_close_blocked_requires_force() {
         "close error must not claim the issue is closed/missing when it is blocked: {combined}"
     );
 
-    let close_force = run_br(
+    let close_force = run_obr(
         &workspace,
         ["close", &blocked_id, "--force", "--json"],
         "close_blocked_force",
@@ -1212,12 +1229,12 @@ fn e2e_close_blocked_requires_force() {
 fn e2e_close_json_reports_closed_and_skipped_in_partial_batch() {
     common::init_test_logging();
     info!("e2e_close_json_reports_closed_and_skipped_in_partial_batch: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let blocker = run_br(&workspace, ["create", "Blocker issue"], "create_blocker");
+    let blocker = run_obr(&workspace, ["create", "Blocker issue"], "create_blocker");
     assert!(
         blocker.status.success(),
         "blocker create failed: {}",
@@ -1225,7 +1242,7 @@ fn e2e_close_json_reports_closed_and_skipped_in_partial_batch() {
     );
     let blocker_id = parse_created_id(&blocker.stdout);
 
-    let blocked = run_br(&workspace, ["create", "Blocked issue"], "create_blocked");
+    let blocked = run_obr(&workspace, ["create", "Blocked issue"], "create_blocked");
     assert!(
         blocked.status.success(),
         "blocked create failed: {}",
@@ -1233,7 +1250,7 @@ fn e2e_close_json_reports_closed_and_skipped_in_partial_batch() {
     );
     let blocked_id = parse_created_id(&blocked.stdout);
 
-    let independent = run_br(
+    let independent = run_obr(
         &workspace,
         ["create", "Independent issue"],
         "create_independent",
@@ -1245,7 +1262,7 @@ fn e2e_close_json_reports_closed_and_skipped_in_partial_batch() {
     );
     let independent_id = parse_created_id(&independent.stdout);
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &workspace,
         ["dep", "add", &blocked_id, &blocker_id],
         "dep_add",
@@ -1256,7 +1273,7 @@ fn e2e_close_json_reports_closed_and_skipped_in_partial_batch() {
         dep_add.stderr
     );
 
-    let close = run_br(
+    let close = run_obr(
         &workspace,
         ["close", &blocked_id, &independent_id, "--json"],
         "close_partial_batch",
@@ -1324,12 +1341,12 @@ fn e2e_close_json_reports_closed_and_skipped_in_partial_batch() {
 fn e2e_close_honors_env_json_mode() {
     common::init_test_logging();
     info!("e2e_close_honors_env_json_mode: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Close via env json", "--json"],
         "create_env_json_close",
@@ -1339,10 +1356,10 @@ fn e2e_close_honors_env_json_mode() {
         serde_json::from_str(&extract_json_payload(&create.stdout)).expect("create json");
     let issue_id = created["id"].as_str().expect("issue id");
 
-    let close = common::cli::run_br_with_env(
+    let close = common::cli::run_obr_with_env(
         &workspace,
         ["close", issue_id],
-        [("BR_OUTPUT_FORMAT", "json")],
+        [("OBR_OUTPUT_FORMAT", "json")],
         "close_env_json",
     );
     assert!(

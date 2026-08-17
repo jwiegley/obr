@@ -1,6 +1,6 @@
 //! E2E sync tests with detailed logging and artifact preservation.
 //!
-//! These tests run br sync in temp repos, capture stdout/stderr/tracing logs,
+//! These tests run obr sync in temp repos, capture stdout/stderr/tracing logs,
 //! and archive artifacts (before/after file tree snapshots, JSONL outputs).
 //!
 //! Design goals:
@@ -20,7 +20,7 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, run_br};
+use common::cli::{ObrWorkspace, export_path, pin_jsonl, run_obr};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
@@ -42,7 +42,7 @@ struct TestArtifacts {
 }
 
 impl TestArtifacts {
-    fn new(workspace: &BrWorkspace, test_name: &str) -> Self {
+    fn new(workspace: &ObrWorkspace, test_name: &str) -> Self {
         let artifact_dir = workspace.log_dir.join("artifacts");
         fs::create_dir_all(&artifact_dir).expect("create artifact dir");
         Self {
@@ -162,7 +162,7 @@ impl DirectorySnapshot {
                     if let Ok(contents) = fs::read(&path) {
                         let mut digest = Sha256::new();
                         digest.update(&contents);
-                        let hash = beads_rust::util::hex_encode(&digest.finalize());
+                        let hash = obr::util::hex_encode(&digest.finalize());
                         files.insert(rel_path, hash);
                     }
                 } else if path.is_dir() {
@@ -215,18 +215,30 @@ impl SnapshotDiff {
         self.added.is_empty() && self.removed.is_empty() && self.modified.is_empty()
     }
 
-    /// Check if only .beads/ files were affected (excluding logs/ which are test artifacts).
-    fn only_beads_affected(&self) -> bool {
-        let all_changes: Vec<_> = self
-            .added
+    /// Check that sync touched only its own files: `.obr/` (per-machine cache),
+    /// the tracked surface, and `logs/` (test artifacts).
+    ///
+    /// D-SURFACE puts the surface OUTSIDE `.obr/` on purpose — it is the one
+    /// file git is meant to see. It is allowed here by exact path, so a
+    /// regression that wrote anything else into the project tree still fails.
+    fn only_obr_affected(&self) -> bool {
+        // Snapshot paths are relative to the workspace root, so the surface has
+        // one spelling per candidate location.
+        let name = obr::config::SURFACE_FILENAME;
+        let surfaces: Vec<String> = obr::config::SURFACE_SUBDIRS
+            .iter()
+            .map(|subdir| format!("{subdir}/{name}"))
+            .chain(std::iter::once(name.to_string()))
+            .collect();
+
+        self.added
             .iter()
             .chain(self.removed.iter())
             .chain(self.modified.iter())
-            .collect();
-
-        all_changes
-            .iter()
-            .all(|p| p.starts_with(".beads") || p.starts_with("logs"))
+            .all(|p| {
+                let p = p.replace('\\', "/");
+                p.starts_with(".obr") || p.starts_with("logs") || surfaces.contains(&p)
+            })
     }
 }
 
@@ -239,21 +251,21 @@ impl SnapshotDiff {
 #[allow(clippy::too_many_lines)]
 fn e2e_sync_export_with_artifacts() {
     let _log = common::test_log("e2e_sync_export_with_artifacts");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     let mut artifacts = TestArtifacts::new(&workspace, "sync_export");
 
     // Capture initial state
     artifacts.capture_snapshot("initial", &workspace.root);
 
     // Initialize beads
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     artifacts.record_command("init", &init.stdout, &init.stderr, init.status.success());
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     artifacts.capture_snapshot("after_init", &workspace.root);
 
     // Create issues with various attributes
-    let create1 = run_br(
+    let create1 = run_obr(
         &workspace,
         [
             "create",
@@ -278,7 +290,7 @@ fn e2e_sync_export_with_artifacts() {
         create1.stderr
     );
 
-    let create2 = run_br(
+    let create2 = run_obr(
         &workspace,
         [
             "create",
@@ -306,24 +318,27 @@ fn e2e_sync_export_with_artifacts() {
     artifacts.capture_snapshot("after_creates", &workspace.root);
 
     // Run sync export
-    let sync = run_br(&workspace, ["sync", "--flush-only", "--manifest"], "export");
+    let sync = run_obr(&workspace, ["sync", "--flush-only", "--manifest"], "export");
     artifacts.record_command("export", &sync.stdout, &sync.stderr, sync.status.success());
     assert!(sync.status.success(), "sync export failed: {}", sync.stderr);
 
-    // Capture JSONL output
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    artifacts.capture_jsonl("after_export", &jsonl_path);
+    // Capture export output
+    let export_file = export_path(&workspace);
+    artifacts.capture_jsonl("after_export", &export_file);
 
     artifacts.capture_snapshot("after_export", &workspace.root);
 
-    // Verify JSONL was created
-    assert!(jsonl_path.exists(), "JSONL file should exist after export");
+    // Verify the export was created
+    assert!(
+        export_file.exists(),
+        "export file should exist after export"
+    );
 
     // Verify manifest was created
-    let manifest_path = workspace.root.join(".beads").join(".manifest.json");
+    let manifest_path = workspace.root.join(".obr").join(".manifest.json");
     if !manifest_path.exists() {
-        eprintln!("Manifest missing! Contents of .beads:");
-        for entry in fs::read_dir(workspace.root.join(".beads")).unwrap() {
+        eprintln!("Manifest missing! Contents of .obr:");
+        for entry in fs::read_dir(workspace.root.join(".obr")).unwrap() {
             eprintln!("  {:?}", entry.unwrap().path());
         }
     }
@@ -332,20 +347,20 @@ fn e2e_sync_export_with_artifacts() {
         "Manifest file should exist after export with --manifest"
     );
 
-    // Verify only .beads/ was affected (logs/ are test artifacts, not user files)
+    // Verify only .obr/ was affected (logs/ are test artifacts, not user files)
     let diff = artifacts.diff_snapshots("initial", "after_export");
     assert!(
-        diff.only_beads_affected(),
-        "Export should only affect .beads/ directory (and test logs/)\n\
+        diff.only_obr_affected(),
+        "Export should only affect .obr/ directory (and test logs/)\n\
          Added outside allowed: {:?}\n\
          Modified outside allowed: {:?}",
         diff.added
             .iter()
-            .filter(|p| !p.starts_with(".beads") && !p.starts_with("logs"))
+            .filter(|p| !p.starts_with(".obr") && !p.starts_with("logs"))
             .collect::<Vec<_>>(),
         diff.modified
             .iter()
-            .filter(|p| !p.starts_with(".beads") && !p.starts_with("logs"))
+            .filter(|p| !p.starts_with(".obr") && !p.starts_with("logs"))
             .collect::<Vec<_>>()
     );
 
@@ -355,10 +370,10 @@ fn e2e_sync_export_with_artifacts() {
     eprintln!(
         "[PASS] e2e_sync_export_with_artifacts\n\
          - Artifacts saved to: {:?}\n\
-         - JSONL size: {} bytes\n\
-         - Files in .beads/: {}",
+         - Export size: {} bytes\n\
+         - Files in .obr/: {}",
         artifacts.artifact_dir,
-        fs::metadata(&jsonl_path).map(|m| m.len()).unwrap_or(0),
+        fs::metadata(&export_file).map(|m| m.len()).unwrap_or(0),
         artifacts
             .snapshots
             .last()
@@ -371,14 +386,14 @@ fn e2e_sync_export_with_artifacts() {
 #[test]
 fn e2e_sync_import_with_artifacts() {
     let _log = common::test_log("e2e_sync_import_with_artifacts");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     let mut artifacts = TestArtifacts::new(&workspace, "sync_import");
 
     // Initialize and create issues
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed");
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Original issue", "--no-auto-flush"],
         "create",
@@ -386,23 +401,23 @@ fn e2e_sync_import_with_artifacts() {
     assert!(create.status.success(), "create failed");
 
     // Export first
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "flush");
     assert!(flush.status.success(), "flush failed");
 
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    artifacts.capture_jsonl("before_modification", &jsonl_path);
+    let export_file = export_path(&workspace);
+    artifacts.capture_jsonl("before_modification", &export_file);
     artifacts.capture_snapshot("before_modification", &workspace.root);
 
-    // Modify JSONL externally (simulate incoming changes)
-    let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
-    let modified = original.replace("Original issue", "Modified via JSONL");
-    fs::write(&jsonl_path, &modified).expect("write modified jsonl");
+    // Modify the export externally (simulate incoming changes)
+    let original = fs::read_to_string(&export_file).expect("read export");
+    let modified = original.replace("Original issue", "Modified externally");
+    fs::write(&export_file, &modified).expect("write modified export");
 
-    artifacts.capture_jsonl("after_modification", &jsonl_path);
+    artifacts.capture_jsonl("after_modification", &export_file);
     artifacts.capture_snapshot("after_modification", &workspace.root);
 
     // Run sync import
-    let import = run_br(&workspace, ["sync", "--import-only", "--force"], "import");
+    let import = run_obr(&workspace, ["sync", "--import-only", "--force"], "import");
     artifacts.record_command(
         "import",
         &import.stdout,
@@ -418,29 +433,29 @@ fn e2e_sync_import_with_artifacts() {
     artifacts.capture_snapshot("after_import", &workspace.root);
 
     // Verify the title was updated in the database via list command
-    let list = run_br(&workspace, ["list", "--json"], "list_verify");
+    let list = run_obr(&workspace, ["list", "--json"], "list_verify");
     assert!(list.status.success(), "list failed");
     assert!(
-        list.stdout.contains("Modified via JSONL"),
+        list.stdout.contains("Modified externally"),
         "Import should have updated the issue title\n\
          stdout: {}",
         list.stdout
     );
 
-    // Verify only .beads/ was affected (logs/ are test artifacts, not user files)
+    // Verify only .obr/ was affected (logs/ are test artifacts, not user files)
     let diff = artifacts.diff_snapshots("before_modification", "after_import");
     assert!(
-        diff.only_beads_affected(),
-        "Import should only affect .beads/ directory (and test logs/)\n\
+        diff.only_obr_affected(),
+        "Import should only affect .obr/ directory (and test logs/)\n\
          Added outside allowed: {:?}\n\
          Modified outside allowed: {:?}",
         diff.added
             .iter()
-            .filter(|p| !p.starts_with(".beads") && !p.starts_with("logs"))
+            .filter(|p| !p.starts_with(".obr") && !p.starts_with("logs"))
             .collect::<Vec<_>>(),
         diff.modified
             .iter()
-            .filter(|p| !p.starts_with(".beads") && !p.starts_with("logs"))
+            .filter(|p| !p.starts_with(".obr") && !p.starts_with("logs"))
             .collect::<Vec<_>>()
     );
 
@@ -457,11 +472,11 @@ fn e2e_sync_import_with_artifacts() {
 #[test]
 fn e2e_sync_full_cycle_with_artifacts() {
     let _log = common::test_log("e2e_sync_full_cycle_with_artifacts");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     let mut artifacts = TestArtifacts::new(&workspace, "sync_full_cycle");
 
     // Initialize
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed");
     artifacts.capture_snapshot("after_init", &workspace.root);
 
@@ -474,7 +489,7 @@ fn e2e_sync_full_cycle_with_artifacts() {
     .iter()
     .enumerate()
     {
-        let create = run_br(
+        let create = run_obr(
             &workspace,
             ["create", title, "-t", typ, "--no-auto-flush"],
             &format!("create{i}"),
@@ -491,7 +506,7 @@ fn e2e_sync_full_cycle_with_artifacts() {
     artifacts.capture_snapshot("after_creates", &workspace.root);
 
     // Phase 1: Export
-    let export1 = run_br(&workspace, ["sync", "--flush-only"], "export1");
+    let export1 = run_obr(&workspace, ["sync", "--flush-only"], "export1");
     artifacts.record_command(
         "export1",
         &export1.stdout,
@@ -500,18 +515,18 @@ fn e2e_sync_full_cycle_with_artifacts() {
     );
     assert!(export1.status.success(), "export1 failed");
 
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    artifacts.capture_jsonl("phase1_export", &jsonl_path);
+    let export_file = export_path(&workspace);
+    artifacts.capture_jsonl("phase1_export", &export_file);
     artifacts.capture_snapshot("after_export1", &workspace.root);
 
     // Phase 2: External modification (simulate git pull with changes)
-    let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
+    let original = fs::read_to_string(&export_file).expect("read export");
     let modified = original.replace("Bug: Login fails", "Bug: Login fails (critical)");
-    fs::write(&jsonl_path, &modified).expect("write modified");
-    artifacts.capture_jsonl("phase2_modified", &jsonl_path);
+    fs::write(&export_file, &modified).expect("write modified");
+    artifacts.capture_jsonl("phase2_modified", &export_file);
 
     // Phase 3: Import
-    let import = run_br(&workspace, ["sync", "--import-only", "--force"], "import");
+    let import = run_obr(&workspace, ["sync", "--import-only", "--force"], "import");
     artifacts.record_command(
         "import",
         &import.stdout,
@@ -522,7 +537,7 @@ fn e2e_sync_full_cycle_with_artifacts() {
     artifacts.capture_snapshot("after_import", &workspace.root);
 
     // Phase 4: Re-export
-    let export2 = run_br(&workspace, ["sync", "--flush-only", "--force"], "export2");
+    let export2 = run_obr(&workspace, ["sync", "--flush-only", "--force"], "export2");
     artifacts.record_command(
         "export2",
         &export2.stdout,
@@ -531,18 +546,18 @@ fn e2e_sync_full_cycle_with_artifacts() {
     );
     assert!(export2.status.success(), "export2 failed");
 
-    artifacts.capture_jsonl("phase4_reexport", &jsonl_path);
+    artifacts.capture_jsonl("phase4_reexport", &export_file);
     artifacts.capture_snapshot("after_export2", &workspace.root);
 
     // Verify the modification persisted
-    let list = run_br(&workspace, ["list", "--json"], "list_verify");
+    let list = run_obr(&workspace, ["list", "--json"], "list_verify");
     assert!(
         list.stdout.contains("critical"),
         "Modification should persist through full cycle"
     );
 
     // Check sync status
-    let status = run_br(&workspace, ["sync", "--status"], "status");
+    let status = run_obr(&workspace, ["sync", "--status"], "status");
     artifacts.record_command(
         "status",
         &status.stdout,
@@ -565,15 +580,15 @@ fn e2e_sync_full_cycle_with_artifacts() {
 #[test]
 fn e2e_sync_status_with_artifacts() {
     let _log = common::test_log("e2e_sync_status_with_artifacts");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     let mut artifacts = TestArtifacts::new(&workspace, "sync_status");
 
     // Initialize
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed");
 
     // Check status before any issues (clean state)
-    let status1 = run_br(&workspace, ["sync", "--status", "--json"], "status_empty");
+    let status1 = run_obr(&workspace, ["sync", "--status", "--json"], "status_empty");
     artifacts.record_command(
         "status_empty",
         &status1.stdout,
@@ -583,11 +598,11 @@ fn e2e_sync_status_with_artifacts() {
     assert!(status1.status.success(), "status check failed");
 
     // Create an issue (makes DB dirty)
-    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    let create = run_obr(&workspace, ["create", "Test issue"], "create");
     assert!(create.status.success(), "create failed");
 
     // Check status with dirty DB
-    let status2 = run_br(&workspace, ["sync", "--status", "--json"], "status_dirty");
+    let status2 = run_obr(&workspace, ["sync", "--status", "--json"], "status_dirty");
     artifacts.record_command(
         "status_dirty",
         &status2.stdout,
@@ -597,11 +612,11 @@ fn e2e_sync_status_with_artifacts() {
     assert!(status2.status.success(), "status check failed");
 
     // Export
-    let export = run_br(&workspace, ["sync", "--flush-only"], "export");
+    let export = run_obr(&workspace, ["sync", "--flush-only"], "export");
     assert!(export.status.success(), "export failed");
 
     // Check status after export (should be clean)
-    let status3 = run_br(&workspace, ["sync", "--status", "--json"], "status_clean");
+    let status3 = run_obr(&workspace, ["sync", "--status", "--json"], "status_clean");
     artifacts.record_command(
         "status_clean",
         &status3.stdout,
@@ -624,28 +639,28 @@ fn e2e_sync_status_with_artifacts() {
 #[test]
 fn e2e_sync_error_conflict_markers() {
     let _log = common::test_log("e2e_sync_error_conflict_markers");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     let mut artifacts = TestArtifacts::new(&workspace, "sync_error_conflict");
 
     // Initialize and export
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed");
 
-    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    let create = run_obr(&workspace, ["create", "Test issue"], "create");
     assert!(create.status.success(), "create failed");
 
-    let export = run_br(&workspace, ["sync", "--flush-only"], "export");
+    let export = run_obr(&workspace, ["sync", "--flush-only"], "export");
     assert!(export.status.success(), "export failed");
 
-    // Inject conflict markers into JSONL
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
+    // Inject conflict markers into the export
+    let export_file = export_path(&workspace);
+    let original = fs::read_to_string(&export_file).expect("read export");
     let corrupted = format!("<<<<<<< HEAD\n{original}=======\n{original}>>>>>>> branch\n");
-    fs::write(&jsonl_path, &corrupted).expect("write corrupted");
-    artifacts.capture_jsonl("corrupted", &jsonl_path);
+    fs::write(&export_file, &corrupted).expect("write corrupted");
+    artifacts.capture_jsonl("corrupted", &export_file);
 
     // Attempt import (should fail)
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--force"],
         "import_fail",
@@ -673,7 +688,7 @@ fn e2e_sync_error_conflict_markers() {
 
     eprintln!(
         "[PASS] e2e_sync_error_conflict_markers\n\
-         - Correctly rejected JSONL with conflict markers\n\
+         - Correctly rejected an export with conflict markers\n\
          - Artifacts saved to: {:?}",
         artifacts.artifact_dir
     );
@@ -683,17 +698,17 @@ fn e2e_sync_error_conflict_markers() {
 #[test]
 fn e2e_sync_export_empty_db() {
     let _log = common::test_log("e2e_sync_export_empty_db");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     let mut artifacts = TestArtifacts::new(&workspace, "sync_export_empty");
 
     // Initialize only (no issues)
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed");
 
     artifacts.capture_snapshot("after_init", &workspace.root);
 
     // Try to export empty DB (without --force)
-    let export1 = run_br(&workspace, ["sync", "--flush-only"], "export_no_force");
+    let export1 = run_obr(&workspace, ["sync", "--flush-only"], "export_no_force");
     artifacts.record_command(
         "export_no_force",
         &export1.stdout,
@@ -703,7 +718,7 @@ fn e2e_sync_export_empty_db() {
     // This may succeed or report "nothing to export" - both are valid
 
     // Export with --force
-    let export2 = run_br(
+    let export2 = run_obr(
         &workspace,
         ["sync", "--flush-only", "--force"],
         "export_force",
@@ -722,9 +737,8 @@ fn e2e_sync_export_empty_db() {
 
     artifacts.capture_snapshot("after_export", &workspace.root);
 
-    // Verify JSONL exists (may be empty)
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    artifacts.capture_jsonl("empty_export", &jsonl_path);
+    // Capture the export (may be empty)
+    artifacts.capture_jsonl("empty_export", &export_path(&workspace));
 
     artifacts.persist();
 
@@ -740,25 +754,28 @@ fn e2e_sync_export_empty_db() {
 #[test]
 fn e2e_sync_deterministic_export() {
     let _log = common::test_log("e2e_sync_deterministic_export");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     let mut artifacts = TestArtifacts::new(&workspace, "sync_deterministic");
 
     // Initialize
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed");
+    // This test asserts row-level JSONL structure (every exported line parses as
+    // a JSON record, sorted by id), so it must run against a JSONL export.
+    pin_jsonl(&workspace.root.join(".obr"));
 
     // Create issues in specific order
     for title in ["Zebra", "Apple", "Mango", "Banana"] {
-        let create = run_br(&workspace, ["create", title], &format!("create_{title}"));
+        let create = run_obr(&workspace, ["create", title], &format!("create_{title}"));
         assert!(create.status.success(), "create failed");
     }
 
     // Export multiple times
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     let mut exports = Vec::new();
 
     for i in 0..3 {
-        let export = run_br(
+        let export = run_obr(
             &workspace,
             ["sync", "--flush-only", "--force"],
             &format!("export{i}"),
@@ -811,23 +828,23 @@ fn e2e_staleness_hash_check_prevents_false_touch() {
     use std::time::Duration;
 
     let _log = common::test_log("e2e_staleness_hash_check_prevents_false_touch");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     let mut artifacts = TestArtifacts::new(&workspace, "staleness_hash_check");
 
     // Initialize
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create an issue
-    let create = run_br(&workspace, ["create", "Test staleness"], "create");
+    let create = run_obr(&workspace, ["create", "Test staleness"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // Export to JSONL
-    let export = run_br(&workspace, ["sync", "--flush-only"], "export");
+    let export = run_obr(&workspace, ["sync", "--flush-only"], "export");
     assert!(export.status.success(), "export failed: {}", export.stderr);
 
     // Check status - should be in sync
-    let status1 = run_br(
+    let status1 = run_obr(
         &workspace,
         ["sync", "--status", "--json"],
         "status_after_export",
@@ -854,14 +871,14 @@ fn e2e_staleness_hash_check_prevents_false_touch() {
     // Sleep briefly to ensure mtime would differ
     thread::sleep(Duration::from_millis(100));
 
-    // Touch the JSONL file (updates mtime but not content)
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    let content = fs::read_to_string(&jsonl_path).expect("read jsonl");
-    fs::write(&jsonl_path, &content).expect("touch jsonl");
-    artifacts.capture_jsonl("after_touch", &jsonl_path);
+    // Touch the export file (updates mtime but not content)
+    let export_file = export_path(&workspace);
+    let content = fs::read_to_string(&export_file).expect("read export");
+    fs::write(&export_file, &content).expect("touch export");
+    artifacts.capture_jsonl("after_touch", &export_file);
 
     // Check status again - should NOT be marked stale due to hash check
-    let status2 = run_br(
+    let status2 = run_obr(
         &workspace,
         ["sync", "--status", "--json"],
         "status_after_touch",
@@ -904,33 +921,33 @@ fn e2e_staleness_hash_check_prevents_false_touch() {
 #[test]
 fn e2e_staleness_detects_real_content_change() {
     let _log = common::test_log("e2e_staleness_detects_real_content_change");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     let mut artifacts = TestArtifacts::new(&workspace, "staleness_real_change");
 
     // Initialize
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Create an issue
-    let create = run_br(&workspace, ["create", "Test staleness"], "create");
+    let create = run_obr(&workspace, ["create", "Test staleness"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // Export to JSONL
-    let export = run_br(&workspace, ["sync", "--flush-only"], "export");
+    let export = run_obr(&workspace, ["sync", "--flush-only"], "export");
     assert!(export.status.success(), "export failed: {}", export.stderr);
 
-    // Modify the JSONL content (simulate external change)
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    let mut content = fs::read_to_string(&jsonl_path).expect("read jsonl");
-    artifacts.capture_jsonl("before_modify", &jsonl_path);
+    // Modify the export content (simulate external change)
+    let export_file = export_path(&workspace);
+    let mut content = fs::read_to_string(&export_file).expect("read export");
+    artifacts.capture_jsonl("before_modify", &export_file);
 
-    // Append a comment to trigger content change
-    content.push_str("# External comment added\n");
-    fs::write(&jsonl_path, &content).expect("write modified jsonl");
-    artifacts.capture_jsonl("after_modify", &jsonl_path);
+    // Append a record to trigger a real content change
+    content.push_str("* TODO [#C] External issue added\n");
+    fs::write(&export_file, &content).expect("write modified export");
+    artifacts.capture_jsonl("after_modify", &export_file);
 
     // Check status - should be marked stale (jsonl_newer = true)
-    let status = run_br(
+    let status = run_obr(
         &workspace,
         ["sync", "--status", "--json"],
         "status_after_modify",
@@ -971,23 +988,23 @@ fn e2e_staleness_detects_real_content_change() {
     );
 }
 
-/// Regression test for issue #248: `br sync --import-only --force` left the
+/// Regression test for issue #248: `obr sync --import-only --force` left the
 /// on-disk SQLite file in a state where C sqlite3's `PRAGMA integrity_check`
 /// reported "database disk image is malformed (11)" and where a subsequent
-/// `br close` could fail with "Issue not found" / corrupt the DB further.
+/// `obr close` could fail with "Issue not found" / corrupt the DB further.
 ///
 /// The root cause was that the force/rebuild path drops and recreates the
 /// data tables before bulk-inserting from JSONL, but (unlike the
-/// `rebuild_database_family` chokepoint used by `br doctor --repair` and auto
+/// `rebuild_database_family` chokepoint used by `obr doctor --repair` and auto
 /// recovery) it did not run a post-import `VACUUM` + `REINDEX`.  On larger
 /// imports this left partial-index rows missing and B-tree freeblock
 /// accounting anomalies that only surfaced when a later write transaction
 /// looked up an issue by id (issues #237, #245, #246 covered the adjacent
 /// paths).  This test exports ~220 issues to JSONL, removes the DB, runs
-/// `br sync --import-only --force`, and asserts that:
+/// `obr sync --import-only --force`, and asserts that:
 ///   1. The rebuilt DB passes the strict C-sqlite3 `PRAGMA integrity_check`
 ///      (frankensqlite-generated files must be readable by upstream sqlite).
-///   2. A subsequent `br close` on a non-zero-blocker issue succeeds and
+///   2. A subsequent `obr close` on a non-zero-blocker issue succeeds and
 ///      the DB still passes `integrity_check` afterwards.
 #[test]
 #[allow(clippy::too_many_lines)]
@@ -999,18 +1016,18 @@ fn e2e_sync_import_force_preserves_integrity_and_close_works() {
     const ISSUE_COUNT: usize = 220;
 
     let _log = common::test_log("e2e_sync_import_force_preserves_integrity_and_close_works");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     let mut artifacts = TestArtifacts::new(&workspace, "sync_import_force_preserves_integrity");
 
     // Initialize with a custom prefix so resolution can't fall back to the
     // default "br-" prefix (matches the reporter's swarm workspace setup).
-    let init = run_br(&workspace, ["init", "--prefix", "rr"], "init");
+    let init = run_obr(&workspace, ["init", "--prefix", "rr"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let mut last_id: String = String::new();
     for i in 0..ISSUE_COUNT {
         let title = format!("issue {i}");
-        let create = run_br(
+        let create = run_obr(
             &workspace,
             ["create", &title, "-p", "3", "--silent", "--no-auto-flush"],
             "create_bulk",
@@ -1025,27 +1042,31 @@ fn e2e_sync_import_force_preserves_integrity_and_close_works() {
     assert!(!last_id.is_empty(), "expected at least one created id");
 
     // Flush DB → JSONL so the JSONL is the canonical source for the rebuild.
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "flush");
     assert!(flush.status.success(), "flush failed: {}", flush.stderr);
 
-    let beads_dir = workspace.root.join(".beads");
-    let db_path = beads_dir.join("beads.db");
-    let jsonl_path = beads_dir.join("issues.jsonl");
-    artifacts.capture_jsonl("after_flush", &jsonl_path);
+    let obr_dir = workspace.root.join(".obr");
+    let db_path = obr_dir.join("obr.db");
+    artifacts.capture_jsonl("after_flush", &export_path(&workspace));
 
     // Delete the DB family (db + WAL + SHM sidecars) to simulate the
     // "rebuild from canonical JSONL" path the reporter's swarm script takes.
+    // The suffix list mirrors `config::db_sidecar_suffixes()` — classic
+    // (-wal/-shm/-journal) plus fsqlite's namespace, WAL-certificate and
+    // WAL-FEC sidecars — so a family member added there and forgotten here
+    // cannot leave a stale file behind for the rebuild to trip over.
     for sidecar in [
-        "beads.db",
-        "beads.db-wal",
-        "beads.db-wal-cert",
-        "beads.db-wal-cert-head",
-        "beads.db-shm",
-        "beads.db-journal",
-        "beads.db-fsqlite-ns-gate",
-        "beads.db-fsqlite-ns-use",
+        "obr.db",
+        "obr.db-wal",
+        "obr.db-shm",
+        "obr.db-journal",
+        "obr.db-fsqlite-ns-gate",
+        "obr.db-fsqlite-ns-use",
+        "obr.db-wal-cert",
+        "obr.db-wal-cert-head",
+        "obr.db-wal-fec",
     ] {
-        let path = beads_dir.join(sidecar);
+        let path = obr_dir.join(sidecar);
         if path.exists() {
             fs::remove_file(&path).expect("remove db sidecar");
         }
@@ -1054,10 +1075,10 @@ fn e2e_sync_import_force_preserves_integrity_and_close_works() {
     // Re-init and force-import from the canonical JSONL.  The `--force`
     // flag triggers `reset_data_tables()` + bulk import — the exact path
     // that historically left frankensqlite's B-tree/indexes inconsistent.
-    let reinit = run_br(&workspace, ["init", "--prefix", "rr", "--force"], "reinit");
+    let reinit = run_obr(&workspace, ["init", "--prefix", "rr", "--force"], "reinit");
     assert!(reinit.status.success(), "reinit failed: {}", reinit.stderr);
 
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--force"],
         "force_import",
@@ -1093,17 +1114,17 @@ fn e2e_sync_import_force_preserves_integrity_and_close_works() {
          output: {integrity_before_close}"
     );
 
-    // Probe #2: a regular `br close` on an issue visible to `br show`
+    // Probe #2: a regular `obr close` on an issue visible to `obr show`
     // must succeed without tripping the mutation-path "Issue not found"
     // code path and without further corrupting the DB.
-    let show = run_br(&workspace, ["show", &last_id], "show_before_close");
+    let show = run_obr(&workspace, ["show", &last_id], "show_before_close");
     assert!(
         show.status.success(),
         "show {last_id} failed: {}",
         show.stderr
     );
 
-    let close = run_br(&workspace, ["close", &last_id], "close");
+    let close = run_obr(&workspace, ["close", &last_id], "close");
     artifacts.record_command(
         "close",
         &close.stdout,
@@ -1151,10 +1172,10 @@ fn e2e_sync_import_force_preserves_integrity_and_close_works() {
 
 /// Regression coverage for the "rebuilt alternate DB" workflow seen during
 /// real planning sessions: create a sibling DB via
-/// `br --db <alt> sync --import-only --rebuild`, then continue working
+/// `obr --db <alt> sync --import-only --rebuild`, then continue working
 /// against that alternate DB family. Historically this was the matrix where
-/// freshly-created ids would sometimes appear in `br list` yet fail in
-/// `br show` / `br update` / `br dep add` with `Issue not found`.
+/// freshly-created ids would sometimes appear in `obr list` yet fail in
+/// `obr show` / `obr update` / `obr dep add` with `Issue not found`.
 ///
 /// The test keeps the rebuilt DB as the active target, then repeatedly:
 ///   1. creates a fresh bead in the rebuilt DB,
@@ -1170,10 +1191,10 @@ fn e2e_rebuilt_alt_db_preserves_fresh_lookup_and_mutation_paths() {
     const LOOP_COUNT: usize = 25;
 
     let _log = common::test_log("e2e_rebuilt_alt_db_preserves_fresh_lookup_and_mutation_paths");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     let mut artifacts = TestArtifacts::new(&workspace, "rebuilt_alt_db_fresh_lookup");
 
-    let init = run_br(
+    let init = run_obr(
         &workspace,
         ["init", "--prefix", "alt"],
         "init_alt_workspace",
@@ -1186,7 +1207,7 @@ fn e2e_rebuilt_alt_db_preserves_fresh_lookup_and_mutation_paths() {
     );
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let seed_a = run_br(
+    let seed_a = run_obr(
         &workspace,
         [
             "create",
@@ -1216,7 +1237,7 @@ fn e2e_rebuilt_alt_db_preserves_fresh_lookup_and_mutation_paths() {
         serde_json::from_str(&seed_a_payload).expect("seed A create json");
     let seed_a_id = seed_a_json["id"].as_str().expect("seed A id").to_string();
 
-    let seed_b = run_br(
+    let seed_b = run_obr(
         &workspace,
         [
             "create",
@@ -1246,7 +1267,7 @@ fn e2e_rebuilt_alt_db_preserves_fresh_lookup_and_mutation_paths() {
         serde_json::from_str(&seed_b_payload).expect("seed B create json");
     let seed_b_id = seed_b_json["id"].as_str().expect("seed B id").to_string();
 
-    let flush = run_br(
+    let flush = run_obr(
         &workspace,
         ["sync", "--flush-only"],
         "flush_before_alt_rebuild",
@@ -1259,12 +1280,11 @@ fn e2e_rebuilt_alt_db_preserves_fresh_lookup_and_mutation_paths() {
     );
     assert!(flush.status.success(), "flush failed: {}", flush.stderr);
 
-    let beads_dir = workspace.root.join(".beads");
-    let jsonl_path = beads_dir.join("issues.jsonl");
-    artifacts.capture_jsonl("before_alt_rebuild", &jsonl_path);
+    let obr_dir = workspace.root.join(".obr");
+    artifacts.capture_jsonl("before_alt_rebuild", &export_path(&workspace));
 
-    let alt_db = beads_dir.join("beads.rebuilt.db");
-    let rebuild = run_br(
+    let alt_db = obr_dir.join("beads.rebuilt.db");
+    let rebuild = run_obr(
         &workspace,
         [
             "--db",
@@ -1304,7 +1324,7 @@ fn e2e_rebuilt_alt_db_preserves_fresh_lookup_and_mutation_paths() {
         "rebuilt alternate DB must pass upstream sqlite3 integrity_check before we trust it.\noutput: {integrity_after_rebuild}"
     );
 
-    let dep_seed = run_br(
+    let dep_seed = run_obr(
         &workspace,
         [
             "--db",
@@ -1332,7 +1352,7 @@ fn e2e_rebuilt_alt_db_preserves_fresh_lookup_and_mutation_paths() {
 
     for i in 0..LOOP_COUNT {
         let title = format!("rebuilt alt lookup loop {i}");
-        let create = run_br(
+        let create = run_obr(
             &workspace,
             [
                 "--db",
@@ -1368,7 +1388,7 @@ fn e2e_rebuilt_alt_db_preserves_fresh_lookup_and_mutation_paths() {
             .expect("fresh issue id")
             .to_string();
 
-        let show = run_br(
+        let show = run_obr(
             &workspace,
             [
                 "--db",
@@ -1412,7 +1432,7 @@ fn e2e_rebuilt_alt_db_preserves_fresh_lookup_and_mutation_paths() {
             "show returned the wrong issue for {fresh_id} on loop {i}: {show_payload}"
         );
 
-        let update = run_br(
+        let update = run_obr(
             &workspace,
             [
                 "--db",
@@ -1445,7 +1465,7 @@ fn e2e_rebuilt_alt_db_preserves_fresh_lookup_and_mutation_paths() {
             update.stderr
         );
 
-        let dep_add = run_br(
+        let dep_add = run_obr(
             &workspace,
             [
                 "--db",
@@ -1479,7 +1499,7 @@ fn e2e_rebuilt_alt_db_preserves_fresh_lookup_and_mutation_paths() {
         );
 
         if i % 2 == 0 {
-            let defer = run_br(
+            let defer = run_obr(
                 &workspace,
                 [
                     "--db",
@@ -1527,7 +1547,7 @@ fn e2e_rebuilt_alt_db_preserves_fresh_lookup_and_mutation_paths() {
         "alternate DB must stay readable by upstream sqlite3 after repeated fresh-id mutations.\noutput: {integrity_after_loops}"
     );
 
-    artifacts.capture_jsonl("after_alt_db_loops", &jsonl_path);
+    artifacts.capture_jsonl("after_alt_db_loops", &export_path(&workspace));
     artifacts.persist();
 
     eprintln!(

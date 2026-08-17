@@ -4,7 +4,7 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, extract_json_payload, run_br};
+use common::cli::{ObrWorkspace, extract_json_payload, pin_jsonl, run_obr};
 use common::dataset_registry::{DatasetRegistry, IsolatedDataset, KnownDataset};
 use common::harness::{
     TestWorkspace, extract_json_payload as harness_extract_json,
@@ -31,18 +31,19 @@ fn parse_created_id(stdout: &str) -> String {
 #[test]
 fn e2e_label_add_single_verify_show() {
     let _log = common::test_log("e2e_label_add_single_verify_show");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    let create = run_obr(&workspace, ["create", "Test issue"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
     assert!(!id.is_empty(), "missing created id");
 
     // Add label
-    let add = run_br(&workspace, ["label", "add", &id, "bug"], "label_add");
+    let add = run_obr(&workspace, ["label", "add", &id, "bug"], "label_add");
     assert!(add.status.success(), "label add failed: {}", add.stderr);
     assert!(
         add.stdout.contains("Added label") || add.stdout.contains("bug"),
@@ -51,7 +52,7 @@ fn e2e_label_add_single_verify_show() {
     );
 
     // Verify via show --json
-    let show = run_br(&workspace, ["show", &id, "--json"], "show");
+    let show = run_obr(&workspace, ["show", &id, "--json"], "show");
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let show_payload = extract_json_payload(&show.stdout);
     let show_json: Vec<Value> = serde_json::from_str(&show_payload).expect("show json");
@@ -65,7 +66,7 @@ fn e2e_label_add_single_verify_show() {
     );
 
     // Verify via label list
-    let list = run_br(&workspace, ["label", "list", &id], "label_list");
+    let list = run_obr(&workspace, ["label", "list", &id], "label_list");
     assert!(list.status.success(), "label list failed: {}", list.stderr);
     assert!(list.stdout.contains("bug"), "label not in list output");
 }
@@ -74,29 +75,30 @@ fn e2e_label_add_single_verify_show() {
 #[test]
 fn e2e_label_add_multiple_to_same_issue() {
     let _log = common::test_log("e2e_label_add_multiple_to_same_issue");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(&workspace, ["create", "Multi-label issue"], "create");
+    let create = run_obr(&workspace, ["create", "Multi-label issue"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
     // Add first label
-    let add1 = run_br(&workspace, ["label", "add", &id, "bug"], "add1");
+    let add1 = run_obr(&workspace, ["label", "add", &id, "bug"], "add1");
     assert!(add1.status.success(), "label add 1 failed: {}", add1.stderr);
 
     // Add second label
-    let add2 = run_br(&workspace, ["label", "add", &id, "urgent"], "add2");
+    let add2 = run_obr(&workspace, ["label", "add", &id, "urgent"], "add2");
     assert!(add2.status.success(), "label add 2 failed: {}", add2.stderr);
 
     // Add third label
-    let add3 = run_br(&workspace, ["label", "add", &id, "frontend"], "add3");
+    let add3 = run_obr(&workspace, ["label", "add", &id, "frontend"], "add3");
     assert!(add3.status.success(), "label add 3 failed: {}", add3.stderr);
 
     // Verify all labels present
-    let list = run_br(&workspace, ["label", "list", &id, "--json"], "list_labels");
+    let list = run_obr(&workspace, ["label", "list", &id, "--json"], "list_labels");
     assert!(list.status.success(), "label list failed: {}", list.stderr);
     let labels_payload = extract_json_payload(&list.stdout);
     let labels: Vec<String> = serde_json::from_str(&labels_payload).expect("labels json");
@@ -115,23 +117,24 @@ fn e2e_label_add_multiple_to_same_issue() {
 #[test]
 fn e2e_label_remove_verify() {
     let _log = common::test_log("e2e_label_remove_verify");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(&workspace, ["create", "Label remove test"], "create");
+    let create = run_obr(&workspace, ["create", "Label remove test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
     // Add labels
-    let add1 = run_br(&workspace, ["label", "add", &id, "bug"], "add1");
+    let add1 = run_obr(&workspace, ["label", "add", &id, "bug"], "add1");
     assert!(add1.status.success(), "add failed: {}", add1.stderr);
-    let add2 = run_br(&workspace, ["label", "add", &id, "urgent"], "add2");
+    let add2 = run_obr(&workspace, ["label", "add", &id, "urgent"], "add2");
     assert!(add2.status.success(), "add failed: {}", add2.stderr);
 
     // Remove one label
-    let remove = run_br(&workspace, ["label", "remove", &id, "bug"], "remove");
+    let remove = run_obr(&workspace, ["label", "remove", &id, "bug"], "remove");
     assert!(remove.status.success(), "remove failed: {}", remove.stderr);
     assert!(
         remove.stdout.contains("Removed") || remove.stdout.contains("removed"),
@@ -140,7 +143,7 @@ fn e2e_label_remove_verify() {
     );
 
     // Verify removed
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["label", "list", &id, "--json"],
         "list_after_remove",
@@ -162,13 +165,14 @@ fn e2e_label_remove_verify() {
 #[test]
 fn e2e_label_list_all() {
     let _log = common::test_log("e2e_label_list_all");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     // Create multiple issues with different labels
-    let create1 = run_br(&workspace, ["create", "Issue 1"], "create1");
+    let create1 = run_obr(&workspace, ["create", "Issue 1"], "create1");
     assert!(
         create1.status.success(),
         "create1 failed: {}",
@@ -176,7 +180,7 @@ fn e2e_label_list_all() {
     );
     let id1 = parse_created_id(&create1.stdout);
 
-    let create2 = run_br(&workspace, ["create", "Issue 2"], "create2");
+    let create2 = run_obr(&workspace, ["create", "Issue 2"], "create2");
     assert!(
         create2.status.success(),
         "create2 failed: {}",
@@ -185,17 +189,17 @@ fn e2e_label_list_all() {
     let id2 = parse_created_id(&create2.stdout);
 
     // Add labels
-    run_br(&workspace, ["label", "add", &id1, "bug"], "add_bug1");
-    run_br(&workspace, ["label", "add", &id1, "urgent"], "add_urgent1");
-    run_br(
+    run_obr(&workspace, ["label", "add", &id1, "bug"], "add_bug1");
+    run_obr(&workspace, ["label", "add", &id1, "urgent"], "add_urgent1");
+    run_obr(
         &workspace,
         ["label", "add", &id2, "feature"],
         "add_feature2",
     );
-    run_br(&workspace, ["label", "add", &id2, "urgent"], "add_urgent2");
+    run_obr(&workspace, ["label", "add", &id2, "urgent"], "add_urgent2");
 
     // List all unique labels
-    let list_all = run_br(&workspace, ["label", "list-all", "--json"], "list_all");
+    let list_all = run_obr(&workspace, ["label", "list-all", "--json"], "list_all");
     assert!(
         list_all.status.success(),
         "list-all failed: {}",
@@ -219,29 +223,30 @@ fn e2e_label_list_all() {
 #[test]
 fn e2e_label_add_same_to_multiple_issues() {
     let _log = common::test_log("e2e_label_add_same_to_multiple_issues");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     // Create issues
-    let create1 = run_br(&workspace, ["create", "Issue A"], "create1");
-    let create2 = run_br(&workspace, ["create", "Issue B"], "create2");
-    let create3 = run_br(&workspace, ["create", "Issue C"], "create3");
+    let create1 = run_obr(&workspace, ["create", "Issue A"], "create1");
+    let create2 = run_obr(&workspace, ["create", "Issue B"], "create2");
+    let create3 = run_obr(&workspace, ["create", "Issue C"], "create3");
     let id1 = parse_created_id(&create1.stdout);
     let id2 = parse_created_id(&create2.stdout);
     let id3 = parse_created_id(&create3.stdout);
 
     // Add same label to all
-    let add1 = run_br(&workspace, ["label", "add", &id1, "shared-label"], "add1");
-    let add2 = run_br(&workspace, ["label", "add", &id2, "shared-label"], "add2");
-    let add3 = run_br(&workspace, ["label", "add", &id3, "shared-label"], "add3");
+    let add1 = run_obr(&workspace, ["label", "add", &id1, "shared-label"], "add1");
+    let add2 = run_obr(&workspace, ["label", "add", &id2, "shared-label"], "add2");
+    let add3 = run_obr(&workspace, ["label", "add", &id3, "shared-label"], "add3");
     assert!(add1.status.success(), "add1 failed: {}", add1.stderr);
     assert!(add2.status.success(), "add2 failed: {}", add2.stderr);
     assert!(add3.status.success(), "add3 failed: {}", add3.stderr);
 
     // Verify via list-all
-    let list_all = run_br(&workspace, ["label", "list-all", "--json"], "list_all");
+    let list_all = run_obr(&workspace, ["label", "list-all", "--json"], "list_all");
     assert!(
         list_all.status.success(),
         "list-all failed: {}",
@@ -265,13 +270,14 @@ fn e2e_label_add_same_to_multiple_issues() {
 #[test]
 fn e2e_label_add_nonexistent_issue_error() {
     let _log = common::test_log("e2e_label_add_nonexistent_issue_error");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     // Try to add label to non-existent issue
-    let add = run_br(
+    let add = run_obr(
         &workspace,
         ["label", "add", "nonexistent-id", "bug"],
         "add_nonexistent",
@@ -288,17 +294,18 @@ fn e2e_label_add_nonexistent_issue_error() {
 #[test]
 fn e2e_label_remove_nonexistent_noop() {
     let _log = common::test_log("e2e_label_remove_nonexistent_noop");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    let create = run_obr(&workspace, ["create", "Test issue"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
     // Remove label that doesn't exist - should succeed (no-op)
-    let remove = run_br(
+    let remove = run_obr(
         &workspace,
         ["label", "remove", &id, "nonexistent-label"],
         "remove_nonexistent",
@@ -319,17 +326,18 @@ fn e2e_label_remove_nonexistent_noop() {
 #[test]
 fn e2e_label_invalid_format_error() {
     let _log = common::test_log("e2e_label_invalid_format_error");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    let create = run_obr(&workspace, ["create", "Test issue"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
     // Try to add label with spaces (invalid)
-    let add_space = run_br(&workspace, ["label", "add", &id, "has space"], "add_space");
+    let add_space = run_obr(&workspace, ["label", "add", &id, "has space"], "add_space");
     assert!(
         !add_space.status.success(),
         "label with space should fail: {}",
@@ -337,7 +345,7 @@ fn e2e_label_invalid_format_error() {
     );
 
     // Try to add label with @ (invalid)
-    let add_at = run_br(&workspace, ["label", "add", &id, "invalid@char"], "add_at");
+    let add_at = run_obr(&workspace, ["label", "add", &id, "invalid@char"], "add_at");
     assert!(
         !add_at.status.success(),
         "label with @ should fail: {}",
@@ -345,7 +353,7 @@ fn e2e_label_invalid_format_error() {
     );
 
     // Try to add empty label
-    let add_empty = run_br(&workspace, ["label", "add", &id, ""], "add_empty");
+    let add_empty = run_obr(&workspace, ["label", "add", &id, ""], "add_empty");
     assert!(
         !add_empty.status.success(),
         "empty label should fail: {}",
@@ -361,17 +369,18 @@ fn e2e_label_invalid_format_error() {
 #[test]
 fn e2e_label_special_characters() {
     let _log = common::test_log("e2e_label_special_characters");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(&workspace, ["create", "Special char test"], "create");
+    let create = run_obr(&workspace, ["create", "Special char test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
     // Labels with allowed special characters
-    let add_dash = run_br(
+    let add_dash = run_obr(
         &workspace,
         ["label", "add", &id, "high-priority"],
         "add_dash",
@@ -382,7 +391,7 @@ fn e2e_label_special_characters() {
         add_dash.stderr
     );
 
-    let add_underscore = run_br(
+    let add_underscore = run_obr(
         &workspace,
         ["label", "add", &id, "needs_review"],
         "add_underscore",
@@ -393,7 +402,7 @@ fn e2e_label_special_characters() {
         add_underscore.stderr
     );
 
-    let add_colon = run_br(
+    let add_colon = run_obr(
         &workspace,
         ["label", "add", &id, "team:backend"],
         "add_colon",
@@ -405,7 +414,7 @@ fn e2e_label_special_characters() {
     );
 
     // Verify all present
-    let list = run_br(&workspace, ["label", "list", &id, "--json"], "list");
+    let list = run_obr(&workspace, ["label", "list", &id, "--json"], "list");
     assert!(list.status.success(), "list failed: {}", list.stderr);
     let labels_payload = extract_json_payload(&list.stdout);
     let labels: Vec<String> = serde_json::from_str(&labels_payload).expect("labels json");
@@ -418,18 +427,19 @@ fn e2e_label_special_characters() {
 #[test]
 fn e2e_label_very_long_name() {
     let _log = common::test_log("e2e_label_very_long_name");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(&workspace, ["create", "Long label test"], "create");
+    let create = run_obr(&workspace, ["create", "Long label test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
     // Create a very long label (100 characters)
     let long_label = "a".repeat(100);
-    let add = run_br(&workspace, ["label", "add", &id, &long_label], "add_long");
+    let add = run_obr(&workspace, ["label", "add", &id, &long_label], "add_long");
     assert!(
         !add.status.success(),
         "overlong label should fail validation: {}",
@@ -441,24 +451,25 @@ fn e2e_label_very_long_name() {
 #[test]
 fn e2e_label_case_sensitivity() {
     let _log = common::test_log("e2e_label_case_sensitivity");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(&workspace, ["create", "Case test"], "create");
+    let create = run_obr(&workspace, ["create", "Case test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
     // Add both lowercase and uppercase versions
-    let add_lower = run_br(&workspace, ["label", "add", &id, "bug"], "add_lower");
+    let add_lower = run_obr(&workspace, ["label", "add", &id, "bug"], "add_lower");
     assert!(
         add_lower.status.success(),
         "add lowercase failed: {}",
         add_lower.stderr
     );
 
-    let add_upper = run_br(&workspace, ["label", "add", &id, "BUG"], "add_upper");
+    let add_upper = run_obr(&workspace, ["label", "add", &id, "BUG"], "add_upper");
     assert!(
         add_upper.status.success(),
         "add uppercase failed: {}",
@@ -466,7 +477,7 @@ fn e2e_label_case_sensitivity() {
     );
 
     // Both should exist (case-sensitive)
-    let list = run_br(&workspace, ["label", "list", &id, "--json"], "list");
+    let list = run_obr(&workspace, ["label", "list", &id, "--json"], "list");
     assert!(list.status.success(), "list failed: {}", list.stderr);
     let labels_payload = extract_json_payload(&list.stdout);
     let labels: Vec<String> = serde_json::from_str(&labels_payload).expect("labels json");
@@ -485,21 +496,22 @@ fn e2e_label_case_sensitivity() {
 #[test]
 fn e2e_label_on_closed_issue() {
     let _log = common::test_log("e2e_label_on_closed_issue");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(&workspace, ["create", "Closeable issue"], "create");
+    let create = run_obr(&workspace, ["create", "Closeable issue"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
     // Close the issue
-    let close = run_br(&workspace, ["close", &id], "close");
+    let close = run_obr(&workspace, ["close", &id], "close");
     assert!(close.status.success(), "close failed: {}", close.stderr);
 
     // Add label to closed issue - should work
-    let add = run_br(
+    let add = run_obr(
         &workspace,
         ["label", "add", &id, "archived"],
         "add_to_closed",
@@ -511,7 +523,7 @@ fn e2e_label_on_closed_issue() {
     );
 
     // Verify
-    let list = run_br(&workspace, ["label", "list", &id, "--json"], "list_closed");
+    let list = run_obr(&workspace, ["label", "list", &id, "--json"], "list_closed");
     assert!(list.status.success(), "list failed: {}", list.stderr);
     let labels_payload = extract_json_payload(&list.stdout);
     let labels: Vec<String> = serde_json::from_str(&labels_payload).expect("labels json");
@@ -529,17 +541,18 @@ fn e2e_label_on_closed_issue() {
 #[test]
 fn e2e_label_add_json_output() {
     let _log = common::test_log("e2e_label_add_json_output");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(&workspace, ["create", "JSON output test"], "create");
+    let create = run_obr(&workspace, ["create", "JSON output test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
     // Add with JSON output
-    let add = run_br(
+    let add = run_obr(
         &workspace,
         ["label", "add", &id, "json-test", "--json"],
         "add_json",
@@ -557,24 +570,25 @@ fn e2e_label_add_json_output() {
 #[test]
 fn e2e_label_add_duplicate() {
     let _log = common::test_log("e2e_label_add_duplicate");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(&workspace, ["create", "Duplicate test"], "create");
+    let create = run_obr(&workspace, ["create", "Duplicate test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
     // Add label first time
-    let add1 = run_br(&workspace, ["label", "add", &id, "dup", "--json"], "add1");
+    let add1 = run_obr(&workspace, ["label", "add", &id, "dup", "--json"], "add1");
     assert!(add1.status.success(), "add1 failed: {}", add1.stderr);
     let payload1 = extract_json_payload(&add1.stdout);
     let results1: Vec<Value> = serde_json::from_str(&payload1).expect("add1 json");
     assert_eq!(results1[0]["status"], "added");
 
     // Add same label again
-    let add2 = run_br(&workspace, ["label", "add", &id, "dup", "--json"], "add2");
+    let add2 = run_obr(&workspace, ["label", "add", &id, "dup", "--json"], "add2");
     assert!(add2.status.success(), "add2 failed: {}", add2.stderr);
     let payload2 = extract_json_payload(&add2.stdout);
     let results2: Vec<Value> = serde_json::from_str(&payload2).expect("add2 json");
@@ -585,22 +599,23 @@ fn e2e_label_add_duplicate() {
 #[test]
 fn e2e_label_rename() {
     let _log = common::test_log("e2e_label_rename");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     // Create issues with same label
-    let create1 = run_br(&workspace, ["create", "Issue 1"], "create1");
-    let create2 = run_br(&workspace, ["create", "Issue 2"], "create2");
+    let create1 = run_obr(&workspace, ["create", "Issue 1"], "create1");
+    let create2 = run_obr(&workspace, ["create", "Issue 2"], "create2");
     let id1 = parse_created_id(&create1.stdout);
     let id2 = parse_created_id(&create2.stdout);
 
-    run_br(&workspace, ["label", "add", &id1, "old-name"], "add1");
-    run_br(&workspace, ["label", "add", &id2, "old-name"], "add2");
+    run_obr(&workspace, ["label", "add", &id1, "old-name"], "add1");
+    run_obr(&workspace, ["label", "add", &id2, "old-name"], "add2");
 
     // Rename label
-    let rename = run_br(
+    let rename = run_obr(
         &workspace,
         ["label", "rename", "old-name", "new-name", "--json"],
         "rename",
@@ -613,7 +628,7 @@ fn e2e_label_rename() {
     assert_eq!(rename_result["affected_issues"], 2);
 
     // Verify old label gone, new label present
-    let list1 = run_br(&workspace, ["label", "list", &id1, "--json"], "list1");
+    let list1 = run_obr(&workspace, ["label", "list", &id1, "--json"], "list1");
     let labels1_payload = extract_json_payload(&list1.stdout);
     let labels1: Vec<String> = serde_json::from_str(&labels1_payload).expect("labels1 json");
     assert!(
@@ -630,20 +645,21 @@ fn e2e_label_rename() {
 #[test]
 fn e2e_label_rename_rejects_long_new_name() {
     let _log = common::test_log("e2e_label_rename_rejects_long_new_name");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(&workspace, ["create", "Rename validation test"], "create");
+    let create = run_obr(&workspace, ["create", "Rename validation test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
-    let add = run_br(&workspace, ["label", "add", &id, "old-name"], "add_old");
+    let add = run_obr(&workspace, ["label", "add", &id, "old-name"], "add_old");
     assert!(add.status.success(), "add failed: {}", add.stderr);
 
     let long_label = "a".repeat(100);
-    let rename = run_br(
+    let rename = run_obr(
         &workspace,
         ["label", "rename", "old-name", &long_label, "--json"],
         "rename_long_label",
@@ -659,24 +675,25 @@ fn e2e_label_rename_rejects_long_new_name() {
 #[test]
 fn e2e_label_persistence_jsonl() {
     let _log = common::test_log("e2e_label_persistence_jsonl");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(&workspace, ["create", "Persistence test"], "create");
+    let create = run_obr(&workspace, ["create", "Persistence test"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
     // Add labels
-    run_br(&workspace, ["label", "add", &id, "persisted"], "add");
+    run_obr(&workspace, ["label", "add", &id, "persisted"], "add");
 
     // Export to JSONL
-    let export = run_br(&workspace, ["sync", "--flush-only"], "export");
+    let export = run_obr(&workspace, ["sync", "--flush-only"], "export");
     assert!(export.status.success(), "export failed: {}", export.stderr);
 
     // Read JSONL and verify labels
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     let jsonl_content = std::fs::read_to_string(&jsonl_path).expect("read jsonl");
 
     // Find the line for our issue
@@ -702,9 +719,9 @@ fn e2e_label_persistence_jsonl() {
 // These tests use the full E2E harness with artifact logging and the dataset
 // registry to test label commands against real datasets.
 
-/// Check if the beads_rust dataset is available (has beads.db)
-fn beads_rust_dataset_available() -> bool {
-    DatasetRegistry::new().is_available(KnownDataset::BeadsRust)
+/// Check if the obr dataset is available (has obr.db)
+fn obr_dataset_available() -> bool {
+    DatasetRegistry::new().is_available(KnownDataset::Obr)
 }
 
 /// Test label list-all with TestWorkspace harness (fresh workspace with artifacts)
@@ -714,33 +731,33 @@ fn e2e_harness_label_list_all_fresh() {
     let mut ws = TestWorkspace::new("e2e_labels", "harness_label_list_all_fresh");
 
     // Initialize workspace
-    let init = ws.init_br();
+    let init = ws.init_obr();
     init.assert_success();
 
     // Create issues with labels
-    let create1 = ws.run_br(["create", "Issue with labels A"], "create1");
+    let create1 = ws.run_obr(["create", "Issue with labels A"], "create1");
     create1.assert_success();
     let id1 = harness_parse_id(&create1.stdout);
 
-    let create2 = ws.run_br(["create", "Issue with labels B"], "create2");
+    let create2 = ws.run_obr(["create", "Issue with labels B"], "create2");
     create2.assert_success();
     let id2 = harness_parse_id(&create2.stdout);
 
     // Add various labels
-    let add1 = ws.run_br(["label", "add", &id1, "bug"], "add_bug");
+    let add1 = ws.run_obr(["label", "add", &id1, "bug"], "add_bug");
     add1.assert_success();
 
-    let add2 = ws.run_br(["label", "add", &id1, "urgent"], "add_urgent");
+    let add2 = ws.run_obr(["label", "add", &id1, "urgent"], "add_urgent");
     add2.assert_success();
 
-    let add3 = ws.run_br(["label", "add", &id2, "feature"], "add_feature");
+    let add3 = ws.run_obr(["label", "add", &id2, "feature"], "add_feature");
     add3.assert_success();
 
-    let add4 = ws.run_br(["label", "add", &id2, "bug"], "add_bug2");
+    let add4 = ws.run_obr(["label", "add", &id2, "bug"], "add_bug2");
     add4.assert_success();
 
     // Test list-all command
-    let list_all = ws.run_br(["label", "list-all", "--json"], "list_all");
+    let list_all = ws.run_obr(["label", "list-all", "--json"], "list_all");
     list_all.assert_success();
 
     // Verify JSON output shape
@@ -782,33 +799,31 @@ fn e2e_harness_label_list_all_fresh() {
     ws.finish(true);
 }
 
-/// Test label list-all with real dataset (beads_rust)
+/// Test label list-all with real dataset (obr)
 #[test]
 fn e2e_harness_label_list_all_real_dataset() {
     use std::process::Command;
     let _log = common::test_log("e2e_harness_label_list_all_real_dataset");
 
-    if !beads_rust_dataset_available() {
-        eprintln!(
-            "Skipping e2e_harness_label_list_all_real_dataset: beads_rust dataset not available"
-        );
+    if !obr_dataset_available() {
+        eprintln!("Skipping e2e_harness_label_list_all_real_dataset: obr dataset not available");
         return;
     }
 
-    // Create isolated copy of beads_rust dataset
-    let isolated = IsolatedDataset::from_dataset(KnownDataset::BeadsRust)
-        .expect("should create isolated beads_rust");
+    // Create isolated copy of obr dataset
+    let isolated =
+        IsolatedDataset::from_dataset(KnownDataset::Obr).expect("should create isolated obr");
     isolated
         .migrate_to_current_schema()
-        .expect("migrate isolated beads_rust dataset");
+        .expect("migrate isolated obr dataset");
 
     // Run list-all on the isolated dataset
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("br"))
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("obr"))
         .args(["label", "list-all", "--json"])
         .current_dir(isolated.workspace_root())
         .env("NO_COLOR", "1")
         .output()
-        .expect("run br label list-all");
+        .expect("run obr label list-all");
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -844,7 +859,7 @@ fn e2e_harness_label_list_all_real_dataset() {
     }
 
     // Log result for debugging
-    eprintln!("Found {} labels in beads_rust dataset", labels.len());
+    eprintln!("Found {} labels in obr dataset", labels.len());
 }
 
 /// Test label rename with TestWorkspace harness (fresh workspace with artifacts)
@@ -854,34 +869,34 @@ fn e2e_harness_label_rename_fresh() {
     let mut ws = TestWorkspace::new("e2e_labels", "harness_label_rename_fresh");
 
     // Initialize workspace
-    let init = ws.init_br();
+    let init = ws.init_obr();
     init.assert_success();
 
     // Create issues with the label we'll rename
-    let create1 = ws.run_br(["create", "Issue for rename test 1"], "create1");
+    let create1 = ws.run_obr(["create", "Issue for rename test 1"], "create1");
     create1.assert_success();
     let id1 = harness_parse_id(&create1.stdout);
 
-    let create2 = ws.run_br(["create", "Issue for rename test 2"], "create2");
+    let create2 = ws.run_obr(["create", "Issue for rename test 2"], "create2");
     create2.assert_success();
     let id2 = harness_parse_id(&create2.stdout);
 
-    let create3 = ws.run_br(["create", "Issue without target label"], "create3");
+    let create3 = ws.run_obr(["create", "Issue without target label"], "create3");
     create3.assert_success();
     let id3 = harness_parse_id(&create3.stdout);
 
     // Add labels
-    let add1 = ws.run_br(["label", "add", &id1, "old-label"], "add_old1");
+    let add1 = ws.run_obr(["label", "add", &id1, "old-label"], "add_old1");
     add1.assert_success();
 
-    let add2 = ws.run_br(["label", "add", &id2, "old-label"], "add_old2");
+    let add2 = ws.run_obr(["label", "add", &id2, "old-label"], "add_old2");
     add2.assert_success();
 
-    let add3 = ws.run_br(["label", "add", &id3, "other-label"], "add_other");
+    let add3 = ws.run_obr(["label", "add", &id3, "other-label"], "add_other");
     add3.assert_success();
 
     // Rename the label
-    let rename = ws.run_br(
+    let rename = ws.run_obr(
         ["label", "rename", "old-label", "new-label", "--json"],
         "rename",
     );
@@ -897,7 +912,7 @@ fn e2e_harness_label_rename_fresh() {
     assert_eq!(result["affected_issues"], 2, "should affect 2 issues");
 
     // Verify old label is gone
-    let list_all = ws.run_br(["label", "list-all", "--json"], "list_all_after");
+    let list_all = ws.run_obr(["label", "list-all", "--json"], "list_all_after");
     list_all.assert_success();
 
     let list_payload = harness_extract_json(&list_all.stdout);
@@ -918,7 +933,7 @@ fn e2e_harness_label_rename_fresh() {
     assert_eq!(new_label["count"], 2, "new-label should have count=2");
 
     // Verify issues have the new label
-    let show1 = ws.run_br(["show", &id1, "--json"], "show1");
+    let show1 = ws.run_obr(["show", &id1, "--json"], "show1");
     show1.assert_success();
     let show1_payload = harness_extract_json(&show1.stdout);
     let issues1: Vec<Value> = serde_json::from_str(&show1_payload).expect("show1 json");
@@ -935,34 +950,32 @@ fn e2e_harness_label_rename_fresh() {
     ws.finish(true);
 }
 
-/// Test label rename on real dataset (beads_rust)
+/// Test label rename on real dataset (obr)
 /// This test runs rename on an isolated copy of the real dataset
 #[test]
 fn e2e_harness_label_rename_real_dataset() {
     use std::process::Command;
     let _log = common::test_log("e2e_harness_label_rename_real_dataset");
 
-    if !beads_rust_dataset_available() {
-        eprintln!(
-            "Skipping e2e_harness_label_rename_real_dataset: beads_rust dataset not available"
-        );
+    if !obr_dataset_available() {
+        eprintln!("Skipping e2e_harness_label_rename_real_dataset: obr dataset not available");
         return;
     }
 
-    // Create isolated copy of beads_rust dataset
-    let isolated = IsolatedDataset::from_dataset(KnownDataset::BeadsRust)
-        .expect("should create isolated beads_rust");
+    // Create isolated copy of obr dataset
+    let isolated =
+        IsolatedDataset::from_dataset(KnownDataset::Obr).expect("should create isolated obr");
     isolated
         .migrate_to_current_schema()
-        .expect("migrate isolated beads_rust dataset");
+        .expect("migrate isolated obr dataset");
 
     // First, list all labels to find one we can rename
-    let list_output = Command::new(assert_cmd::cargo::cargo_bin!("br"))
+    let list_output = Command::new(assert_cmd::cargo::cargo_bin!("obr"))
         .args(["label", "list-all", "--json"])
         .current_dir(isolated.workspace_root())
         .env("NO_COLOR", "1")
         .output()
-        .expect("run br label list-all");
+        .expect("run obr label list-all");
 
     let list_stdout = String::from_utf8_lossy(&list_output.stdout).to_string();
     assert!(list_output.status.success(), "list-all failed");
@@ -982,12 +995,12 @@ fn e2e_harness_label_rename_real_dataset() {
     let new_name = format!("{old_name}-renamed");
 
     // Perform rename
-    let rename_output = Command::new(assert_cmd::cargo::cargo_bin!("br"))
+    let rename_output = Command::new(assert_cmd::cargo::cargo_bin!("obr"))
         .args(["label", "rename", old_name, &new_name, "--json"])
         .current_dir(isolated.workspace_root())
         .env("NO_COLOR", "1")
         .output()
-        .expect("run br label rename");
+        .expect("run obr label rename");
 
     let rename_stdout = String::from_utf8_lossy(&rename_output.stdout).to_string();
     let rename_stderr = String::from_utf8_lossy(&rename_output.stderr).to_string();
@@ -1009,12 +1022,12 @@ fn e2e_harness_label_rename_real_dataset() {
     );
 
     // Verify list-all shows new label, not old
-    let verify_output = Command::new(assert_cmd::cargo::cargo_bin!("br"))
+    let verify_output = Command::new(assert_cmd::cargo::cargo_bin!("obr"))
         .args(["label", "list-all", "--json"])
         .current_dir(isolated.workspace_root())
         .env("NO_COLOR", "1")
         .output()
-        .expect("run br label list-all verify");
+        .expect("run obr label list-all verify");
 
     let verify_stdout = String::from_utf8_lossy(&verify_output.stdout).to_string();
 
@@ -1036,11 +1049,11 @@ fn e2e_harness_label_list_all_empty() {
     let mut ws = TestWorkspace::new("e2e_labels", "harness_label_list_all_empty");
 
     // Initialize workspace
-    let init = ws.init_br();
+    let init = ws.init_obr();
     init.assert_success();
 
     // Test list-all on empty workspace (no issues, no labels)
-    let list_all = ws.run_br(["label", "list-all", "--json"], "list_all_empty");
+    let list_all = ws.run_obr(["label", "list-all", "--json"], "list_all_empty");
     list_all.assert_success();
 
     // Verify JSON output is empty array
@@ -1063,12 +1076,12 @@ fn e2e_harness_label_rename_nonexistent() {
     let mut ws = TestWorkspace::new("e2e_labels", "harness_label_rename_nonexistent");
 
     // Initialize workspace
-    let init = ws.init_br();
+    let init = ws.init_obr();
     init.assert_success();
 
     // Try to rename non-existent label
     // Expected behavior: success with affected_issues=0 (no-op)
-    let rename = ws.run_br(
+    let rename = ws.run_obr(
         ["label", "rename", "nonexistent", "newname", "--json"],
         "rename_nonexistent",
     );

@@ -34,16 +34,15 @@
 )]
 
 mod common;
-
-use beads_rust::coordination::{AgentMailAgentSnapshot, AgentMailReservationSnapshot};
-use beads_rust::franken_sync::Connection;
-use beads_rust::model::{Comment, Dependency, DependencyType, Issue, IssueType, Priority, Status};
-use beads_rust::storage::SqliteStorage;
-use beads_rust::util::hex_encode;
 use chrono::Utc;
 use common::binary_discovery::discover_binaries;
 use common::dataset_registry::KnownDataset;
 use fsqlite_types::SqliteValue;
+use obr::coordination::{AgentMailAgentSnapshot, AgentMailReservationSnapshot};
+use obr::franken_sync::Connection;
+use obr::model::{Comment, Dependency, DependencyType, Issue, IssueType, Priority, Status};
+use obr::storage::SqliteStorage;
+use obr::util::hex_encode;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -191,7 +190,7 @@ impl SyntheticConfig {
             issue_count: tier.issue_count(),
             dependency_density: tier.dependency_density(),
             seed: 42, // Reproducible by default
-            base_dataset: Some(KnownDataset::BeadsRust),
+            base_dataset: Some(KnownDataset::Obr),
             label_pool_size: 64,
             min_labels_per_issue: 0,
             max_labels_per_issue: 4,
@@ -227,7 +226,7 @@ impl SyntheticConfig {
             issue_count: ScaleTier::Million.issue_count(),
             dependency_density: ScaleTier::Million.dependency_density(),
             seed,
-            base_dataset: Some(KnownDataset::BeadsRust),
+            base_dataset: Some(KnownDataset::Obr),
             label_pool_size: 512,
             min_labels_per_issue: 1,
             max_labels_per_issue: 6,
@@ -331,11 +330,11 @@ pub struct GenerationHealth {
     pub jsonl_valid: bool,
     /// Number of valid JSONL issue records.
     pub jsonl_issue_count: usize,
-    /// `br sync --import-only --json` ran and succeeded.
+    /// `obr sync --import-only --json` ran and succeeded.
     pub sync_import_ok: bool,
-    /// `br doctor --json` ran and succeeded after import.
+    /// `obr doctor --json` ran and succeeded after import.
     pub doctor_ok: bool,
-    /// `br sync --status --json` reported no dirty DB/JSONL divergence.
+    /// `obr sync --status --json` reported no dirty DB/JSONL divergence.
     pub sync_status_clean: bool,
 }
 
@@ -371,7 +370,7 @@ pub struct SyntheticConfigSnapshot {
 pub struct SyntheticDataset {
     pub temp_dir: TempDir,
     pub root: PathBuf,
-    pub beads_dir: PathBuf,
+    pub obr_dir: PathBuf,
     pub manifest_path: PathBuf,
     pub config: SyntheticConfig,
     pub metrics: GenerationMetrics,
@@ -383,11 +382,11 @@ impl SyntheticDataset {
     /// # Errors
     ///
     /// Returns an error if the temporary workspace or any CLI command fails.
-    pub fn generate(config: SyntheticConfig, br_path: &Path) -> std::io::Result<Self> {
+    pub fn generate(config: SyntheticConfig, obr_path: &Path) -> std::io::Result<Self> {
         let start = Instant::now();
         let temp_dir = TempDir::new_in(common::cli::isolated_temp_root())?;
         let root = temp_dir.path().to_path_buf();
-        let beads_dir = root.join(".beads");
+        let obr_dir = root.join(".obr");
         let manifest_path = root.join("synthetic-corpus-manifest.json");
 
         // Create minimal git scaffold
@@ -395,34 +394,34 @@ impl SyntheticDataset {
         fs::write(root.join(".git").join("HEAD"), "ref: refs/heads/main\n")?;
 
         // Initialize beads
-        let init_output = Command::new(br_path) // ubs:ignore - benchmark harness executes only discovered br binaries
+        let init_output = Command::new(obr_path) // ubs:ignore - benchmark harness executes only discovered obr binaries
             .args(["init"])
             .current_dir(&root)
             .env("NO_COLOR", "1")
             .env("RUST_LOG", "error")
-            .env("PATH", common::cli::deduplicated_br_path())
+            .env("PATH", common::cli::deduplicated_obr_path())
             .output()?;
 
         if !init_output.status.success() {
             return Err(std::io::Error::other(format!(
-                "br init failed: {}",
+                "obr init failed: {}",
                 String::from_utf8_lossy(&init_output.stderr)
             )));
         }
 
-        let generated = write_synthetic_jsonl(&config, &beads_dir.join("issues.jsonl"))?;
-        let sync_import_ok = run_br_status(
-            br_path,
+        let generated = write_synthetic_jsonl(&config, &obr_dir.join("issues.jsonl"))?;
+        let sync_import_ok = run_obr_status(
+            obr_path,
             ["sync", "--import-only", "--json"],
             &root,
-            "br sync --import-only",
+            "obr sync --import-only",
         )?;
-        let doctor_ok = doctor_workspace_is_healthy(br_path, &root)?;
-        let sync_status_clean = sync_status_is_clean(br_path, &root)?;
-        let jsonl_health = validate_generated_jsonl(&beads_dir.join("issues.jsonl"))?;
+        let doctor_ok = doctor_workspace_is_healthy(obr_path, &root)?;
+        let sync_status_clean = sync_status_is_clean(obr_path, &root)?;
+        let jsonl_health = validate_generated_jsonl(&obr_dir.join("issues.jsonl"))?;
 
         let generation_ms = start.elapsed().as_millis();
-        let db_path = beads_dir.join("beads.db");
+        let db_path = obr_dir.join("obr.db");
         let db_size_bytes = fs::metadata(&db_path).map_or(0, |m| m.len());
 
         let metrics = GenerationMetrics {
@@ -448,7 +447,7 @@ impl SyntheticDataset {
         };
 
         let manifest = SyntheticCorpusManifest {
-            schema_version: "br.synthetic-corpus.v1".to_string(),
+            schema_version: "obr.synthetic-corpus.v1".to_string(),
             generator: "bench_synthetic_scale::write_synthetic_jsonl".to_string(),
             generated_at: Utc::now().to_rfc3339(),
             config: SyntheticConfigSnapshot::from(&config),
@@ -460,7 +459,7 @@ impl SyntheticDataset {
         Ok(Self {
             temp_dir,
             root,
-            beads_dir,
+            obr_dir: obr_dir,
             manifest_path,
             config,
             metrics,
@@ -479,36 +478,36 @@ impl SyntheticDataset {
     /// SQLite load fails.
     pub fn generate_direct_sqlite(
         config: SyntheticConfig,
-        br_path: &Path,
+        obr_path: &Path,
     ) -> std::io::Result<Self> {
         let start = Instant::now();
         let temp_dir = TempDir::new_in(common::cli::isolated_temp_root())?;
         let root = temp_dir.path().to_path_buf();
-        let beads_dir = root.join(".beads");
+        let obr_dir = root.join(".obr");
         let manifest_path = root.join("synthetic-corpus-manifest.json");
 
         fs::create_dir_all(root.join(".git"))?;
         fs::write(root.join(".git").join("HEAD"), "ref: refs/heads/main\n")?;
 
-        let init_output = Command::new(br_path) // ubs:ignore - benchmark harness executes only discovered br binaries
+        let init_output = Command::new(obr_path) // ubs:ignore - benchmark harness executes only discovered obr binaries
             .args(["init"])
             .current_dir(&root)
             .env("NO_COLOR", "1")
             .env("RUST_LOG", "error")
-            .env("PATH", common::cli::deduplicated_br_path())
+            .env("PATH", common::cli::deduplicated_obr_path())
             .output()?;
 
         if !init_output.status.success() {
             return Err(std::io::Error::other(format!(
-                "br init failed: {}",
+                "obr init failed: {}",
                 String::from_utf8_lossy(&init_output.stderr)
             )));
         }
 
-        let jsonl_path = beads_dir.join("issues.jsonl");
+        let jsonl_path = obr_dir.join("issues.jsonl");
         let generated = write_synthetic_jsonl(&config, &jsonl_path)?;
-        populate_sqlite_direct(&beads_dir.join("beads.db"), &jsonl_path)?;
-        let storage = sqlite_io(SqliteStorage::open(&beads_dir.join("beads.db")))?;
+        populate_sqlite_direct(&obr_dir.join("obr.db"), &jsonl_path)?;
+        let storage = sqlite_io(SqliteStorage::open(&obr_dir.join("obr.db")))?;
         let persisted_issue_count = sqlite_io(storage.count_issues())?;
         let jsonl_health = validate_generated_jsonl(&jsonl_path)?;
         if persisted_issue_count != generated.issue_count {
@@ -519,7 +518,7 @@ impl SyntheticDataset {
         }
 
         let generation_ms = start.elapsed().as_millis();
-        let db_path = beads_dir.join("beads.db");
+        let db_path = obr_dir.join("obr.db");
         let db_size_bytes = fs::metadata(&db_path).map_or(0, |m| m.len());
 
         let metrics = GenerationMetrics {
@@ -545,7 +544,7 @@ impl SyntheticDataset {
         };
 
         let manifest = SyntheticCorpusManifest {
-            schema_version: "br.synthetic-corpus.v1".to_string(),
+            schema_version: "obr.synthetic-corpus.v1".to_string(),
             generator: "bench_synthetic_scale::write_synthetic_jsonl+populate_sqlite_direct"
                 .to_string(),
             generated_at: Utc::now().to_rfc3339(),
@@ -558,7 +557,7 @@ impl SyntheticDataset {
         Ok(Self {
             temp_dir,
             root,
-            beads_dir,
+            obr_dir: obr_dir,
             manifest_path,
             config,
             metrics,
@@ -680,7 +679,7 @@ fn generate_synthetic_issue(
         id,
         title: generate_title(rng, index),
         description: Some(format!(
-            "Synthetic scale corpus issue {index}; seed={}; agents={}; generated for br large-workspace benchmarking.",
+            "Synthetic scale corpus issue {index}; seed={}; agents={}; generated for obr large-workspace benchmarking.",
             config.seed, config.simulated_agent_count
         )),
         status: if assignee.is_some() {
@@ -1029,23 +1028,23 @@ fn insert_issue_direct(conn: &Connection, issue: &Issue) -> std::io::Result<()> 
     Ok(())
 }
 
-fn run_br_status<const N: usize>(
-    br_path: &Path,
+fn run_obr_status<const N: usize>(
+    obr_path: &Path,
     args: [&str; N],
     workspace: &Path,
     label: &str,
 ) -> std::io::Result<bool> {
-    let output = Command::new(br_path) // ubs:ignore - benchmark harness executes only discovered br binaries
+    let output = Command::new(obr_path) // ubs:ignore - benchmark harness executes only discovered obr binaries
         .args(args)
         .current_dir(workspace)
         .env("NO_COLOR", "1")
         .env("RUST_LOG", "error")
-        // A host with `br` in more than one $PATH directory makes every
-        // spawned `br doctor` emit a `br_path_dupes` WARN, failing corpus
+        // A host with `obr` in more than one $PATH directory makes every
+        // spawned `obr doctor` emit a `obr_path_dupes` WARN, failing corpus
         // generation for a reason unrelated to the workspace under test.
         // Mirror tests/e2e_doctor_fixture_suite.rs and drop later
         // duplicates only.
-        .env("PATH", common::cli::deduplicated_br_path())
+        .env("PATH", common::cli::deduplicated_obr_path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()?;
@@ -1067,7 +1066,7 @@ fn doctor_workspace_is_healthy(br_path: &Path, workspace: &Path) -> std::io::Res
         .current_dir(workspace)
         .env("NO_COLOR", "1")
         .env("RUST_LOG", "error")
-        .env("PATH", common::cli::deduplicated_br_path())
+        .env("PATH", common::cli::deduplicated_obr_path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()?;
@@ -1101,20 +1100,20 @@ fn doctor_workspace_is_healthy(br_path: &Path, workspace: &Path) -> std::io::Res
     Ok(workspace_healthy && !has_error)
 }
 
-fn sync_status_is_clean(br_path: &Path, workspace: &Path) -> std::io::Result<bool> {
-    let output = Command::new(br_path) // ubs:ignore - benchmark harness executes only discovered br binaries
+fn sync_status_is_clean(obr_path: &Path, workspace: &Path) -> std::io::Result<bool> {
+    let output = Command::new(obr_path) // ubs:ignore - benchmark harness executes only discovered obr binaries
         .args(["sync", "--status", "--json"])
         .current_dir(workspace)
         .env("NO_COLOR", "1")
         .env("RUST_LOG", "error")
-        .env("PATH", common::cli::deduplicated_br_path())
+        .env("PATH", common::cli::deduplicated_obr_path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()?;
 
     if !output.status.success() {
         return Err(std::io::Error::other(format!(
-            "br sync --status failed: stdout={}; stderr={}",
+            "obr sync --status failed: stdout={}; stderr={}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         )));
@@ -1123,7 +1122,7 @@ fn sync_status_is_clean(br_path: &Path, workspace: &Path) -> std::io::Result<boo
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|err| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("invalid br sync --status JSON: {err}"),
+            format!("invalid obr sync --status JSON: {err}"),
         )
     })?;
 
@@ -1243,8 +1242,8 @@ pub struct SyntheticBenchmark {
     pub operations: Vec<OperationMetrics>,
     /// Summary statistics
     pub summary: BenchmarkSummary,
-    /// `br` binary path measured by the benchmark.
-    pub br_binary_path: String,
+    /// `obr` binary path measured by the benchmark.
+    pub obr_binary_path: String,
     /// Command that can reproduce this benchmark profile.
     pub reproduction_command: String,
     /// Timestamp
@@ -1320,14 +1319,14 @@ fn synthetic_graph_workloads(issue_count: usize) -> Vec<SyntheticWorkloadSpec> {
 
 /// Run a command and capture metrics.
 fn run_operation(
-    br_path: &Path,
+    obr_path: &Path,
     args: &[&str],
     workspace: &Path,
     operation: &str,
 ) -> OperationMetrics {
     let start = Instant::now();
 
-    let output = run_measured_br_command(br_path, args, workspace);
+    let output = run_measured_obr_command(obr_path, args, workspace);
 
     let duration = start.elapsed();
 
@@ -1375,15 +1374,40 @@ struct MeasuredCommandOutput {
     peak_rss_bytes: Option<u64>,
 }
 
-fn run_measured_br_command(
-    br_path: &Path,
+/// Whether `/usr/bin/time` is GNU time, which is the only variant that accepts the
+/// `-v` flag this harness parses RSS out of. Determined by asking it, once, rather
+/// than by inferring capability from the file's existence.
+fn gnu_time_supports_verbose() -> bool {
+    static SUPPORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SUPPORTED.get_or_init(|| {
+        if !Path::new("/usr/bin/time").is_file() {
+            return false;
+        }
+        Command::new("/usr/bin/time") // ubs:ignore - capability probe for the benchmark harness
+            .args(["-v", "true"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    })
+}
+
+fn run_measured_obr_command(
+    obr_path: &Path,
     args: &[&str],
     workspace: &Path,
 ) -> std::io::Result<MeasuredCommandOutput> {
-    if Path::new("/usr/bin/time").is_file() {
+    // Probe the CAPABILITY, not the path. `-v` is GNU time, and macOS ships BSD
+    // time at exactly /usr/bin/time — so an `is_file()` check passes there, the
+    // flag is rejected ("illegal option -- v"), obr is never executed, and every
+    // operation records as failed. That is not a product failure but it presents
+    // as one: the whole ten-operation set fails identically, because the metric
+    // has no way to say "the wrapper never ran the command" (obr-oz9).
+    if gnu_time_supports_verbose() {
         let output = Command::new("/usr/bin/time") // ubs:ignore - benchmark harness intentionally invokes GNU time for child RSS
             .arg("-v")
-            .arg(br_path)
+            .arg(obr_path)
             .args(args)
             .current_dir(workspace)
             .env("NO_COLOR", "1")
@@ -1400,12 +1424,12 @@ fn run_measured_br_command(
         });
     }
 
-    let output = Command::new(br_path) // ubs:ignore - benchmark harness executes only discovered br binaries
+    let output = Command::new(obr_path) // ubs:ignore - benchmark harness executes only discovered obr binaries
         .args(args)
         .current_dir(workspace)
         .env("NO_COLOR", "1")
         .env("RUST_LOG", "error")
-        .env("PATH", common::cli::deduplicated_br_path())
+        .env("PATH", common::cli::deduplicated_obr_path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()?;
@@ -1434,44 +1458,44 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 /// Run full benchmark suite on a synthetic dataset.
-fn benchmark_synthetic(dataset: &SyntheticDataset, br_path: &Path) -> SyntheticBenchmark {
+fn benchmark_synthetic(dataset: &SyntheticDataset, obr_path: &Path) -> SyntheticBenchmark {
     let start = Instant::now();
     let mut operations = Vec::new();
     let workspace = dataset.workspace_root();
 
     // Read operations
     operations.push(run_operation(
-        br_path,
+        obr_path,
         &["list", "--json"],
         workspace,
         "list",
     ));
     operations.push(run_operation(
-        br_path,
+        obr_path,
         &["list", "--status=open", "--json"],
         workspace,
         "list_open",
     ));
     operations.push(run_operation(
-        br_path,
+        obr_path,
         &["ready", "--json"],
         workspace,
         "ready",
     ));
     operations.push(run_operation(
-        br_path,
+        obr_path,
         &["stats", "--json"],
         workspace,
         "stats",
     ));
     operations.push(run_operation(
-        br_path,
+        obr_path,
         &["search", "test", "--json"],
         workspace,
         "search",
     ));
     operations.push(run_operation(
-        br_path,
+        obr_path,
         &["blocked", "--json"],
         workspace,
         "blocked",
@@ -1479,12 +1503,17 @@ fn benchmark_synthetic(dataset: &SyntheticDataset, br_path: &Path) -> SyntheticB
 
     for workload in synthetic_graph_workloads(dataset.config.issue_count) {
         let args: Vec<&str> = workload.args.iter().map(String::as_str).collect();
-        operations.push(run_operation(br_path, &args, workspace, workload.operation));
+        operations.push(run_operation(
+            obr_path,
+            &args,
+            workspace,
+            workload.operation,
+        ));
     }
 
     // Export operation
     operations.push(run_operation(
-        br_path,
+        obr_path,
         &["sync", "--flush-only", "--json"],
         workspace,
         "sync_flush",
@@ -1550,7 +1579,7 @@ fn benchmark_synthetic(dataset: &SyntheticDataset, br_path: &Path) -> SyntheticB
         generation: dataset.metrics.clone(),
         operations,
         summary,
-        br_binary_path: br_path.display().to_string(),
+        obr_binary_path: obr_path.display().to_string(),
         reproduction_command: reproduction_command_for(&dataset.config),
         timestamp,
     }
@@ -1706,7 +1735,7 @@ struct CoordinationGuardrail {
 struct CoordinationLargeSwarmEvidence {
     schema_version: String,
     generated_at: String,
-    br_binary_path: String,
+    obr_binary_path: String,
     reproduction_command: String,
     config: SyntheticConfigSnapshot,
     generation: GenerationMetrics,
@@ -1895,7 +1924,7 @@ fn normalize_coordination_output(format: &str, stdout: &[u8]) -> std::io::Result
 
 #[test]
 fn coordination_normalization_expands_safe_toon_key_folding() {
-    let toon = br#"schema_version: br.coordination.v1
+    let toon = br#"schema_version: obr.coordination.v1
 generated_at: "2026-05-08T00:00:00Z"
 summary:
   total_claims: 1
@@ -1997,14 +2026,14 @@ fn coordination_total_claims(value: &Value) -> Option<u64> {
         })
 }
 
-fn command_line_for(br_path: &Path, args: &[String]) -> String {
-    let mut parts = vec![br_path.display().to_string()];
+fn command_line_for(obr_path: &Path, args: &[String]) -> String {
+    let mut parts = vec![obr_path.display().to_string()];
     parts.extend(args.iter().cloned());
     parts.join(" ")
 }
 
 fn run_coordination_status_operation(
-    br_path: &Path,
+    obr_path: &Path,
     args: &[String],
     workspace: &Path,
     operation: &str,
@@ -2012,9 +2041,9 @@ fn run_coordination_status_operation(
 ) -> CoordinationOperationMetrics {
     let start = Instant::now();
     let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
-    let output = run_measured_br_command(br_path, &arg_refs, workspace);
+    let output = run_measured_obr_command(obr_path, &arg_refs, workspace);
     let duration_ms = start.elapsed().as_millis();
-    let command = command_line_for(br_path, args);
+    let command = command_line_for(obr_path, args);
 
     match output {
         Ok(out) => {
@@ -2177,11 +2206,11 @@ fn stress_synthetic_evidence_profile() {
         "Generating bounded synthetic evidence dataset ({} issues, {} simulated agents)...",
         config.issue_count, config.simulated_agent_count
     );
-    let dataset = SyntheticDataset::generate(config, &binaries.br.path)
+    let dataset = SyntheticDataset::generate(config, &binaries.obr.path)
         .expect("Failed to generate synthetic evidence dataset");
 
     eprintln!("Running bounded evidence benchmarks...");
-    let mut benchmark = benchmark_synthetic(&dataset, &binaries.br.path);
+    let mut benchmark = benchmark_synthetic(&dataset, &binaries.obr.path);
     benchmark.tier = "synthetic_evidence".to_string();
     benchmark.reproduction_command = evidence_reproduction_command_for(&dataset.config);
     let failed_operations = benchmark
@@ -2231,9 +2260,9 @@ fn stress_coordination_large_swarm_evidence() {
         "Generating coordination evidence dataset ({} issues, {} simulated agents)...",
         config.issue_count, config.simulated_agent_count
     );
-    let dataset = SyntheticDataset::generate_direct_sqlite(config, &binaries.br.path)
+    let dataset = SyntheticDataset::generate_direct_sqlite(config, &binaries.obr.path)
         .expect("Failed to generate coordination evidence dataset");
-    let claimed = collect_claimed_issues(&dataset.beads_dir.join("issues.jsonl"))
+    let claimed = collect_claimed_issues(&dataset.obr_dir.join("issues.jsonl"))
         .expect("collect claimed synthetic issues");
 
     assert_eq!(dataset.metrics.issue_count, issue_count);
@@ -2306,7 +2335,7 @@ fn stress_coordination_large_swarm_evidence() {
 
     eprintln!("Running coordination status JSON evidence command...");
     let json_operation = run_coordination_status_operation(
-        &binaries.br.path,
+        &binaries.obr.path,
         &json_args,
         dataset.workspace_root(),
         "coordination_status_json",
@@ -2314,7 +2343,7 @@ fn stress_coordination_large_swarm_evidence() {
     );
     eprintln!("Running coordination status TOON evidence command...");
     let toon_operation = run_coordination_status_operation(
-        &binaries.br.path,
+        &binaries.obr.path,
         &toon_args,
         dataset.workspace_root(),
         "coordination_status_toon",
@@ -2384,9 +2413,9 @@ fn stress_coordination_large_swarm_evidence() {
     };
 
     let evidence = CoordinationLargeSwarmEvidence {
-        schema_version: "br.coordination-large-swarm-evidence.v1".to_string(),
+        schema_version: "obr.coordination-large-swarm-evidence.v1".to_string(),
         generated_at: Utc::now().to_rfc3339(),
-        br_binary_path: binaries.br.path.display().to_string(),
+        obr_binary_path: binaries.obr.path.display().to_string(),
         reproduction_command: coordination_evidence_reproduction_command_for(&dataset.config),
         config: SyntheticConfigSnapshot::from(&dataset.config),
         generation: dataset.metrics.clone(),
@@ -2439,11 +2468,11 @@ fn stress_synthetic_small() {
         config.issue_count
     );
 
-    let dataset = SyntheticDataset::generate(config, &binaries.br.path)
+    let dataset = SyntheticDataset::generate(config, &binaries.obr.path)
         .expect("Failed to generate synthetic dataset");
 
     eprintln!("Running benchmarks...");
-    let benchmark = benchmark_synthetic(&dataset, &binaries.br.path);
+    let benchmark = benchmark_synthetic(&dataset, &binaries.obr.path);
     print_benchmark(&benchmark);
 
     // Write results
@@ -2474,11 +2503,11 @@ fn stress_synthetic_medium() {
         config.issue_count
     );
 
-    let dataset = SyntheticDataset::generate(config, &binaries.br.path)
+    let dataset = SyntheticDataset::generate(config, &binaries.obr.path)
         .expect("Failed to generate synthetic dataset");
 
     eprintln!("Running benchmarks...");
-    let benchmark = benchmark_synthetic(&dataset, &binaries.br.path);
+    let benchmark = benchmark_synthetic(&dataset, &binaries.obr.path);
     print_benchmark(&benchmark);
 
     // Write results
@@ -2509,11 +2538,11 @@ fn stress_synthetic_large() {
         config.issue_count
     );
 
-    let dataset = SyntheticDataset::generate(config, &binaries.br.path)
+    let dataset = SyntheticDataset::generate(config, &binaries.obr.path)
         .expect("Failed to generate synthetic dataset");
 
     eprintln!("Running benchmarks...");
-    let benchmark = benchmark_synthetic(&dataset, &binaries.br.path);
+    let benchmark = benchmark_synthetic(&dataset, &binaries.obr.path);
     print_benchmark(&benchmark);
 
     // Write results
@@ -2544,11 +2573,11 @@ fn stress_synthetic_xlarge() {
         config.issue_count
     );
 
-    let dataset = SyntheticDataset::generate(config, &binaries.br.path)
+    let dataset = SyntheticDataset::generate(config, &binaries.obr.path)
         .expect("Failed to generate synthetic dataset");
 
     eprintln!("Running benchmarks...");
-    let benchmark = benchmark_synthetic(&dataset, &binaries.br.path);
+    let benchmark = benchmark_synthetic(&dataset, &binaries.obr.path);
     print_benchmark(&benchmark);
 
     // Write results
@@ -2582,11 +2611,11 @@ fn stress_synthetic_million() {
         config.issue_count, config.simulated_agent_count
     );
 
-    let dataset = SyntheticDataset::generate(config, &binaries.br.path)
+    let dataset = SyntheticDataset::generate(config, &binaries.obr.path)
         .expect("Failed to generate synthetic million-agent dataset");
 
     eprintln!("Running benchmarks...");
-    let benchmark = benchmark_synthetic(&dataset, &binaries.br.path);
+    let benchmark = benchmark_synthetic(&dataset, &binaries.obr.path);
     print_benchmark(&benchmark);
 
     let output_dir = PathBuf::from("target/benchmark-results");
@@ -2620,10 +2649,10 @@ fn stress_synthetic_all() {
             config.issue_count
         );
 
-        match SyntheticDataset::generate(config, &binaries.br.path) {
+        match SyntheticDataset::generate(config, &binaries.obr.path) {
             Ok(dataset) => {
                 eprintln!("[{}] Running benchmarks...", tier.name());
-                let benchmark = benchmark_synthetic(&dataset, &binaries.br.path);
+                let benchmark = benchmark_synthetic(&dataset, &binaries.obr.path);
                 print_benchmark(&benchmark);
                 all_benchmarks.push(benchmark);
             }
@@ -2762,7 +2791,7 @@ fn synthetic_graph_workloads_cover_skewed_and_wide_profiles() {
 #[test]
 fn parse_time_max_rss_bytes_reads_gnu_time_output() {
     let stderr = "\
-Command being timed: \"br list --json\"\n\
+Command being timed: \"obr list --json\"\n\
 \tUser time (seconds): 0.03\n\
 \tMaximum resident set size (kbytes): 12345\n\
 \tExit status: 0\n";
@@ -2773,8 +2802,8 @@ Command being timed: \"br list --json\"\n\
 #[test]
 fn sha256_hex_hashes_stdout_for_evidence() {
     assert_eq!(
-        sha256_hex(b"br evidence\n"),
-        "8dfb2f8fd989532fa7371e6787180e687f541d91995e9a8c27378bc3afbd5406"
+        sha256_hex(b"obr evidence\n"),
+        "802c397a096b54d79e3c49a07cd6c427c5959629ccb58cacaf49ebf4e4188e1d"
     );
 }
 
@@ -2817,10 +2846,10 @@ fn synthetic_ci_profile_benchmarks_graph_projection_workloads() {
     let config = SyntheticConfig::ci_profile(101)
         .with_issue_count(96)
         .with_dag_skew(2.0);
-    let dataset = SyntheticDataset::generate(config, &binaries.br.path)
+    let dataset = SyntheticDataset::generate(config, &binaries.obr.path)
         .expect("generate CI synthetic corpus");
 
-    let benchmark = benchmark_synthetic(&dataset, &binaries.br.path);
+    let benchmark = benchmark_synthetic(&dataset, &binaries.obr.path);
     let failed_operations = benchmark
         .operations
         .iter()
@@ -2833,8 +2862,8 @@ fn synthetic_ci_profile_benchmarks_graph_projection_workloads() {
     );
     assert_eq!(benchmark.config.issue_count, 96);
     assert_eq!(
-        benchmark.br_binary_path,
-        binaries.br.path.display().to_string()
+        benchmark.obr_binary_path,
+        binaries.obr.path.display().to_string()
     );
     assert!(
         benchmark
@@ -2889,10 +2918,10 @@ fn synthetic_ci_profile_generates_valid_reproducible_manifest() {
     let binaries = discover_binaries().expect("Binary discovery failed");
     let config = SyntheticConfig::ci_profile(99).with_issue_count(96);
 
-    let first = SyntheticDataset::generate(config.clone(), &binaries.br.path)
+    let first = SyntheticDataset::generate(config.clone(), &binaries.obr.path)
         .expect("generate first CI synthetic corpus");
     let second =
-        SyntheticDataset::generate(config, &binaries.br.path).expect("generate second CI corpus");
+        SyntheticDataset::generate(config, &binaries.obr.path).expect("generate second CI corpus");
 
     assert_eq!(first.metrics.issue_count, 96);
     assert_eq!(first.metrics.health.jsonl_issue_count, 96);
@@ -2915,7 +2944,7 @@ fn synthetic_ci_profile_generates_valid_reproducible_manifest() {
     let manifest = fs::read_to_string(&first.manifest_path).expect("read corpus manifest");
     let manifest: SyntheticCorpusManifest =
         serde_json::from_str(&manifest).expect("parse corpus manifest");
-    assert_eq!(manifest.schema_version, "br.synthetic-corpus.v1");
+    assert_eq!(manifest.schema_version, "obr.synthetic-corpus.v1");
     assert_eq!(manifest.config.seed, 99);
     assert_eq!(manifest.metrics.content_hash, first.metrics.content_hash);
     assert_eq!(manifest.metrics.load_strategy, "sync_import");
@@ -2931,7 +2960,7 @@ fn direct_sqlite_profile_marks_bypassed_sync_health() {
     let binaries = discover_binaries().expect("Binary discovery failed");
     let config = SyntheticConfig::ci_profile(101).with_issue_count(32);
 
-    let dataset = SyntheticDataset::generate_direct_sqlite(config, &binaries.br.path)
+    let dataset = SyntheticDataset::generate_direct_sqlite(config, &binaries.obr.path)
         .expect("generate direct SQLite synthetic corpus");
 
     assert_eq!(dataset.metrics.issue_count, 32);

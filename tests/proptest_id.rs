@@ -12,7 +12,7 @@ use std::collections::HashSet;
 use std::fmt::Write as _;
 use tracing::info;
 
-use beads_rust::util::id::{
+use obr::util::id::{
     IdConfig, IdGenerator, compute_id_hash, generate_id_seed, is_valid_id_format, parse_id,
 };
 

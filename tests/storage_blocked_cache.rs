@@ -11,9 +11,9 @@
 
 mod common;
 
-use beads_rust::model::{DependencyType, Status};
-use beads_rust::storage::{IssueUpdate, ReadyFilters, ReadySortPolicy, SqliteStorage};
 use common::{fixtures, test_db};
+use obr::model::{DependencyType, Status};
+use obr::storage::{IssueUpdate, ReadyFilters, ReadySortPolicy, SqliteStorage};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -759,7 +759,7 @@ fn deep_chain_beyond_50_levels_blocks_all_descendants() {
     storage.create_issue(&blocker, "tester").unwrap();
 
     // Build a chain of CHAIN_LEN issues: node-0 -> node-1 -> ... -> node-(CHAIN_LEN-1)
-    let mut chain_issues: Vec<beads_rust::model::Issue> = Vec::with_capacity(CHAIN_LEN);
+    let mut chain_issues: Vec<obr::model::Issue> = Vec::with_capacity(CHAIN_LEN);
     for i in 0..CHAIN_LEN {
         let issue = fixtures::issue(&format!("deep75-node-{i}"));
         storage.create_issue(&issue, "tester").unwrap();

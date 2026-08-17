@@ -8,9 +8,9 @@
 
 #![allow(clippy::items_after_statements)]
 
-use beads_rust::model::{DependencyType, Issue, IssueType, Priority, Status};
-use beads_rust::storage::SqliteStorage;
 use chrono::Utc;
+use obr::model::{DependencyType, Issue, IssueType, Priority, Status};
+use obr::storage::SqliteStorage;
 use proptest::prelude::*;
 
 fn make_test_issue(id: &str) -> Issue {

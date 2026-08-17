@@ -33,7 +33,7 @@ cd "$target_dir"
 ids=$(python3 <<'PY'
 import json
 ids = []
-with open(".beads/issues.jsonl", "r", encoding="utf-8") as f:
+with open(".obr/issues.jsonl", "r", encoding="utf-8") as f:
     for line in f:
         line = line.strip()
         if not line or line.startswith("{\"merge_state"):
@@ -56,7 +56,7 @@ valid_owner="${id_array[0]}"
 valid_target="${id_array[1]}"
 external_owner="${id_array[2]}"
 
-sha256sum .beads/issues.jsonl | awk '{print $1}' > .fixture_jsonl_pre_sha256
+sha256sum .obr/issues.jsonl | awk '{print $1}' > .fixture_jsonl_pre_sha256
 {
   echo "$valid_owner"
   echo "$valid_target"
@@ -66,7 +66,7 @@ sha256sum .beads/issues.jsonl | awk '{print $1}' > .fixture_jsonl_pre_sha256
 python3 - "$valid_owner" "$valid_target" "$external_owner" <<'PY'
 import sqlite3, sys
 valid_owner, valid_target, external_owner = sys.argv[1], sys.argv[2], sys.argv[3]
-conn = sqlite3.connect(".beads/beads.db")
+conn = sqlite3.connect(".obr/obr.db")
 cur = conn.cursor()
 cur.execute("PRAGMA foreign_keys = OFF")
 rows = [

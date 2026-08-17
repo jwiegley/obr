@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # tests/e2e_scripts/orphans_with_logging.sh
 #
-# beads_rust-750p: e2e harness for `br orphans` with detailed structured
+# beads_rust-750p: e2e harness for `obr orphans` with detailed structured
 # logging. Sets up a workspace with a JSONL newer than the DB, then runs
-# `br orphans --json` with RUST_LOG=info and verifies the auto-import
+# `obr orphans --json` with RUST_LOG=info and verifies the auto-import
 # happened before the scan.
 #
 # Exit codes:
@@ -16,62 +16,76 @@ set -euo pipefail
 LOG_TS=$(date -u +%Y%m%dT%H%M%SZ)
 SUMMARY="/tmp/orphans_with_logging_${LOG_TS}.summary.txt"
 log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$SUMMARY"; }
-fail() { log "FAIL: $*"; exit 1; }
+fail() {
+	log "FAIL: $*"
+	exit 1
+}
 
 log "=== orphans_with_logging.sh START ts=${LOG_TS} ==="
 
-if [[ -n "${BR_BIN:-}" ]]; then BR="$BR_BIN"
-elif [[ -n "${CARGO_TARGET_DIR:-}" && -x "$CARGO_TARGET_DIR/release/br" ]]; then BR="$CARGO_TARGET_DIR/release/br"
-elif command -v br >/dev/null 2>&1; then BR=$(command -v br)
-else log "ERROR: br not found"; exit 2
+if [[ -n "${OBR_BIN:-${BR_BIN:-}}" ]]; then
+	BR="${OBR_BIN:-$BR_BIN}"
+elif [[ -n "${CARGO_TARGET_DIR:-}" && -x "$CARGO_TARGET_DIR/release/obr" ]]; then
+	BR="$CARGO_TARGET_DIR/release/obr"
+elif command -v obr >/dev/null 2>&1; then
+	BR=$(command -v obr)
+else
+	log "ERROR: obr not found"
+	exit 2
 fi
-command -v jq >/dev/null 2>&1 || { log "ERROR: jq missing"; exit 2; }
-command -v git >/dev/null 2>&1 || { log "ERROR: git missing"; exit 2; }
+command -v jq >/dev/null 2>&1 || {
+	log "ERROR: jq missing"
+	exit 2
+}
+command -v git >/dev/null 2>&1 || {
+	log "ERROR: git missing"
+	exit 2
+}
 
 WORK=$(mktemp -d)
 cd "$WORK"
 log "  workspace: $WORK"
 
-# Phase 1: git init + br init
-log "Phase 1: git init + br init --prefix br"
+# Phase 1: git init + obr init
+log "Phase 1: git init + obr init --prefix obr"
 git init -q
 git config user.email "test@example.com"
 git config user.name "Test User"
-"$BR" init --prefix br >/dev/null 2>&1 || fail "br init"
+"$BR" init --prefix obr >/dev/null 2>&1 || fail "obr init"
 
 # Phase 2: create + commit a reference
 log "Phase 2: create issue + commit referencing it"
 CREATE_OUT=$("$BR" create "Open issue referenced in commit" -t task 2>&1)
-# Default prefix from `br init --prefix br` is `br-` so match that
-ID=$(echo "$CREATE_OUT" | grep -oE 'br-[a-z0-9-]+' | head -1 || true)
+# Default prefix from `obr init --prefix obr` is `obr-` so match that
+ID=$(echo "$CREATE_OUT" | grep -oE 'obr-[a-z0-9-]+' | head -1 || true)
 [[ -n "$ID" ]] || fail "extract created ID from: $CREATE_OUT"
 log "  created: $ID"
 
-echo "init" > README.md
+echo "init" >README.md
 git add . >/dev/null
 git commit -m "initial" -q
-echo "commit" >> README.md
+echo "commit" >>README.md
 git add . >/dev/null
 git commit -m "feat: implement $ID open work" -q
 
-# Phase 3: br orphans (open issue should appear)
-log "Phase 3: br orphans --json (open ID should appear)"
-RUST_LOG=info ORPH=$("$BR" orphans --json 2>&1)
+# Phase 3: obr orphans (open issue should appear)
+log "Phase 3: obr orphans --json (open ID should appear)"
+ORPH=$(RUST_LOG=info "$BR" orphans --json 2>&1)
 echo "$ORPH" | grep -q "$ID" || fail "open ID $ID not in orphans output: $ORPH"
 log "  [OK] open ID $ID found in orphan list"
 
 # Phase 4: rewrite JSONL to mark the issue closed (simulating a git pull)
 log "Phase 4: edit JSONL to close the issue (simulate git pull)"
-JSONL=".beads/issues.jsonl"
+JSONL=".obr/issues.jsonl"
 [[ -f "$JSONL" ]] || fail "JSONL missing: $JSONL"
 TMPF=$(mktemp)
-jq -c "if .id == \"$ID\" then .status = \"closed\" | .closed_at = \"2099-01-01T00:00:00Z\" | .updated_at = \"2099-01-01T00:00:00Z\" | .close_reason = \"Closed via JSONL edit\" else . end" "$JSONL" > "$TMPF"
+jq -c "if .id == \"$ID\" then .status = \"closed\" | .closed_at = \"2099-01-01T00:00:00Z\" | .updated_at = \"2099-01-01T00:00:00Z\" | .close_reason = \"Closed via JSONL edit\" else . end" "$JSONL" >"$TMPF"
 mv "$TMPF" "$JSONL"
 log "  [OK] JSONL rewritten with future timestamp + closed status"
 
-# Phase 5: br orphans (should auto-import then see the issue is now closed → no orphans)
-log "Phase 5: br orphans --json (auto-import should kick in; closed ID should NOT appear)"
-RUST_LOG=info ORPH2=$("$BR" orphans --json 2>&1)
+# Phase 5: obr orphans (should auto-import then see the issue is now closed → no orphans)
+log "Phase 5: obr orphans --json (auto-import should kick in; closed ID should NOT appear)"
+ORPH2=$(RUST_LOG=info "$BR" orphans --json 2>&1)
 log "  output: $ORPH2"
 COUNT=$(echo "$ORPH2" | jq 'length' 2>/dev/null || echo "parse-error")
 [[ "$COUNT" == "0" ]] || fail "expected 0 orphans after JSONL close; got $COUNT (output: $ORPH2)"

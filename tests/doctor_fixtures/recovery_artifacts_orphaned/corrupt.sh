@@ -2,7 +2,7 @@
 # Fixture: recovery_artifacts_orphaned
 # FM: fm-state_files-recovery-artifacts-orphaned (P3)
 #
-# Plants stale .beads/.br_recovery/ artifacts from prior repair runs (rebuild-
+# Plants stale .obr/recovery/ artifacts from prior repair runs (rebuild-
 # failed, .bad_, verification-failed). Detection via db.recovery_artifacts
 # surfaces the count; current binary does not auto-prune (P3 cleanup gap).
 
@@ -14,10 +14,10 @@ mkdir -p "$target_dir"
 cd "$target_dir"
 "$tool_bin" init >/dev/null 2>&1
 
-mkdir -p .beads/.br_recovery
-: > .beads/.br_recovery/beads.db.20250101_000000_aaaaa.bad_corruption
-: > .beads/.br_recovery/beads.db.20250101_000001_bbbbb.bak
-: > .beads/.br_recovery/rebuild-failed-20250102.json
+mkdir -p .obr/recovery
+: > .obr/recovery/obr.db.20250101_000000_aaaaa.bad_corruption
+: > .obr/recovery/obr.db.20250101_000001_bbbbb.bak
+: > .obr/recovery/rebuild-failed-20250102.json
 
 if [ -e .fixture_baseline ]; then
   echo "fixture baseline already exists; expected a fresh workspace" >&2

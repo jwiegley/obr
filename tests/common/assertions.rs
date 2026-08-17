@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-use beads_rust::model::Status;
-use beads_rust::storage::SqliteStorage;
+use obr::model::Status;
+use obr::storage::SqliteStorage;
 use tracing::info;
 
 pub fn assert_issue_exists(storage: &SqliteStorage, id: &str) {

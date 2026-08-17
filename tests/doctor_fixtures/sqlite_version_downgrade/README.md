@@ -2,11 +2,11 @@
 
 - **FM**: `fm-schemas-sqlite-version-downgrade`
 - **Detector**: `refuse_gates.schema_version_downgrade`
-- **Detect**: stamps `.beads/beads.db` with `PRAGMA user_version = 99`, above
-  the binary's compiled schema version. `br doctor --repair --json` must refuse
+- **Detect**: stamps `.obr/obr.db` with `PRAGMA user_version = 99`, above
+  the binary's compiled schema version. `obr doctor --repair --json` must refuse
   before creating a repair run or invoking any fixer.
 - **Repair contract**: refuse-unsafe only. Doctor must not downgrade, rebuild,
-  migrate, or otherwise mutate a database from a newer br schema.
+  migrate, or otherwise mutate a database from a newer obr schema.
 - **Round-trip**: repair and undo are no-ops for the live database bytes; the
   header remains at `user_version == 99`.
 - **Expected exit codes**:

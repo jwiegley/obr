@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc bf40b72b744e5097ac104e835ce7d86644ad7e2e66f93e6794c903860f336c2b # shrinks to stem = "a"
+cc 56e8ea716c498690dc6683d030c48a2dacdd1a0119c8a5be8bbb6c3455cbcca6 # shrinks to stem = "a"

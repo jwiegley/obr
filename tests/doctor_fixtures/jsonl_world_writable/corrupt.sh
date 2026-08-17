@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fixture: jsonl_world_writable
 # FM: fm-permissions-jsonl-world-writable (P2) — security concern
-# when .beads/issues.jsonl is world-writable.
+# when .obr/issues.jsonl is world-writable.
 #
 # Initialises a workspace, sync flushes JSONL, then chmods the file
 # to 0o666 to set the world-write bit. Doctor's
@@ -23,14 +23,14 @@ cd "$target_dir"
 
 # Capture JSONL bytes pre-corruption so we can assert they're
 # untouched throughout (Op::Chmod only changes mode, not bytes).
-sha256sum .beads/issues.jsonl | awk '{print $1}' > .fixture_jsonl_pre_sha256
+sha256sum .obr/issues.jsonl | awk '{print $1}' > .fixture_jsonl_pre_sha256
 
 # Set world-write bit.
-chmod 0666 .beads/issues.jsonl
+chmod 0666 .obr/issues.jsonl
 
 # Snapshot the corrupted mode so post_undo can verify byte-
 # deterministic restore.
-python3 - .beads/issues.jsonl > .fixture_pre_mode <<'PY'
+python3 - .obr/issues.jsonl > .fixture_pre_mode <<'PY'
 import os
 import sys
 

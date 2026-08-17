@@ -23,16 +23,16 @@ assert_missing_warning() {
 }
 
 assert_anchor_absent() {
-  if [ -e .beads/beads.base.jsonl ]; then
-    echo "ASSERT FAIL[$stage]: .beads/beads.base.jsonl unexpectedly exists" >&2
-    ls -l .beads/beads.base.jsonl >&2
+  if [ -e .obr/merge.base.jsonl ]; then
+    echo "ASSERT FAIL[$stage]: .obr/merge.base.jsonl unexpectedly exists" >&2
+    ls -l .obr/merge.base.jsonl >&2
     exit 1
   fi
 }
 
 assert_metadata_preserved() {
   local value
-  value=$(sqlite3 .beads/beads.db \
+  value=$(sqlite3 .obr/obr.db \
     "SELECT value FROM metadata WHERE key='last_export_time' ORDER BY rowid DESC LIMIT 1;")
   if [ "$value" != "2026-05-01T00:00:00Z" ]; then
     echo "ASSERT FAIL[$stage]: metadata.last_export_time changed to '$value'" >&2

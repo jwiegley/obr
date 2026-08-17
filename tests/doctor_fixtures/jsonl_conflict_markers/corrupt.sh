@@ -2,7 +2,7 @@
 # Fixture: jsonl_conflict_markers
 # FM: fm-state_files-jsonl-conflict-markers (P0) — detect-only in current binary
 #
-# Plants git merge conflict markers in .beads/issues.jsonl. Currently the
+# Plants git merge conflict markers in .obr/issues.jsonl. Currently the
 # refuse_gate / sync_conflict_markers check trips and `--repair` either refuses
 # (exit 4 RefusedUnsafe) or leaves the conflict alone. Fixture asserts
 # detection; post_repair asserts the markers remain (no destructive auto-fix
@@ -16,7 +16,7 @@ mkdir -p "$target_dir"
 cd "$target_dir"
 "$tool_bin" init >/dev/null 2>&1
 
-cat > .beads/issues.jsonl <<'EOF'
+cat > .obr/issues.jsonl <<'EOF'
 <<<<<<< HEAD
 {"id":"test-1","title":"left","status":"open"}
 =======

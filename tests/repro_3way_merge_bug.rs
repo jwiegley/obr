@@ -6,11 +6,11 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, run_br};
+use common::cli::{ObrWorkspace, pin_jsonl, run_obr};
 use std::fs;
 
-fn create_issue_id(workspace: &BrWorkspace, title: &str, label: &str) -> String {
-    let create = run_br(workspace, ["--json", "create", title, "-t", "task"], label);
+fn create_issue_id(workspace: &ObrWorkspace, title: &str, label: &str) -> String {
+    let create = run_obr(workspace, ["--json", "create", title, "-t", "task"], label);
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     let created_issue: serde_json::Value =
@@ -23,27 +23,28 @@ fn create_issue_id(workspace: &BrWorkspace, title: &str, label: &str) -> String 
 
 #[test]
 fn repro_3way_merge_data_loss() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // 1. Initialize beads
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed");
+    pin_jsonl(&workspace.root.join(".obr"));
 
     // 2. Create an issue
     let issue_id = create_issue_id(&workspace, "Test issue", "create");
 
     // 3. Sync to JSONL (creates base snapshot)
-    let sync1 = run_br(&workspace, ["sync", "--flush-only"], "sync1");
+    let sync1 = run_obr(&workspace, ["sync", "--flush-only"], "sync1");
     assert!(sync1.status.success(), "sync1 failed");
-    let beads_dir = workspace.root.join(".beads");
-    let jsonl_path = beads_dir.join("issues.jsonl");
-    let base_snapshot_path = beads_dir.join("beads.base.jsonl");
+    let obr_dir = workspace.root.join(".obr");
+    let jsonl_path = obr_dir.join("issues.jsonl");
+    let base_snapshot_path = obr_dir.join("merge.base.jsonl");
     let base_jsonl = fs::read_to_string(&jsonl_path).expect("read base jsonl");
     fs::write(&base_snapshot_path, &base_jsonl).expect("seed base snapshot");
 
     // 4. Modify labels LOCALLY (Left side of merge), keeping JSONL at the base
     // snapshot so this is a true local-only relation change.
-    let label_local = run_br(
+    let label_local = run_obr(
         &workspace,
         ["--no-auto-flush", "label", "add", &issue_id, "local-tag"],
         "label_local",
@@ -73,7 +74,7 @@ fn repro_3way_merge_data_loss() {
     // Left (DB): labels=["local-tag"], desc=""
     // Right (JSONL): labels=[], desc="External description"
 
-    let merge = run_br(&workspace, ["sync", "--merge"], "merge");
+    let merge = run_obr(&workspace, ["sync", "--merge"], "merge");
     assert!(
         !merge.status.success(),
         "manual merge should stop instead of choosing a lossy side: stdout={} stderr={}",
@@ -89,7 +90,7 @@ fn repro_3way_merge_data_loss() {
     // 7. Verify the failed merge preserved both sides for explicit operator
     // resolution: DB still has the local tag, JSONL still has the external
     // description.
-    let show = run_br(
+    let show = run_obr(
         &workspace,
         ["--allow-stale", "show", &issue_id, "--json"],
         "show_after_conflict",
@@ -121,10 +122,11 @@ fn repro_3way_merge_data_loss() {
 
 #[test]
 fn repro_merge_base_snapshot_matches_finalized_export_with_notes() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init_base_finalized");
+    let init = run_obr(&workspace, ["init"], "init_base_finalized");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     let issue_id = create_issue_id(
         &workspace,
@@ -132,16 +134,16 @@ fn repro_merge_base_snapshot_matches_finalized_export_with_notes() {
         "create_base_finalized",
     );
 
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "flush_base_finalized");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "flush_base_finalized");
     assert!(flush.status.success(), "flush failed: {}", flush.stderr);
 
-    let beads_dir = workspace.root.join(".beads");
-    let jsonl_path = beads_dir.join("issues.jsonl");
-    let base_snapshot_path = beads_dir.join("beads.base.jsonl");
+    let obr_dir = workspace.root.join(".obr");
+    let jsonl_path = obr_dir.join("issues.jsonl");
+    let base_snapshot_path = obr_dir.join("merge.base.jsonl");
     let original_jsonl = fs::read_to_string(&jsonl_path).expect("read original jsonl");
     fs::write(&base_snapshot_path, &original_jsonl).expect("seed base snapshot");
 
-    let local_update = run_br(
+    let local_update = run_obr(
         &workspace,
         [
             "update",
@@ -168,7 +170,7 @@ fn repro_merge_base_snapshot_matches_finalized_export_with_notes() {
     )
     .expect("write external jsonl");
 
-    let merge = run_br(
+    let merge = run_obr(
         &workspace,
         ["sync", "--merge", "--force"],
         "merge_base_finalized",
@@ -200,24 +202,25 @@ fn repro_merge_base_snapshot_matches_finalized_export_with_notes() {
 
 #[test]
 fn repro_merge_tolerates_base_only_deleted_issue_absent_from_db() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     let issue_id = create_issue_id(&workspace, "Current issue", "create");
 
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "flush");
     assert!(flush.status.success(), "flush failed: {}", flush.stderr);
 
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     let issue_json = fs::read_to_string(&jsonl_path).expect("read issues jsonl");
     let mut phantom_issue: serde_json::Value =
         serde_json::from_str(issue_json.trim()).expect("parse current issue json");
     phantom_issue["id"] = serde_json::Value::String("second-9u2".to_string());
     phantom_issue["external_ref"] = serde_json::Value::Null;
 
-    let base_snapshot_path = workspace.root.join(".beads").join("beads.base.jsonl");
+    let base_snapshot_path = workspace.root.join(".obr").join("merge.base.jsonl");
     fs::write(
         &base_snapshot_path,
         format!(
@@ -227,10 +230,10 @@ fn repro_merge_tolerates_base_only_deleted_issue_absent_from_db() {
     )
     .expect("write base snapshot");
 
-    let merge = run_br(&workspace, ["sync", "--merge"], "merge");
+    let merge = run_obr(&workspace, ["sync", "--merge"], "merge");
     assert!(merge.status.success(), "merge failed: {}", merge.stderr);
 
-    let show = run_br(&workspace, ["show", &issue_id, "--json"], "show");
+    let show = run_obr(&workspace, ["show", &issue_id, "--json"], "show");
     assert!(show.status.success(), "show failed: {}", show.stderr);
 
     let final_issue_list: serde_json::Value =

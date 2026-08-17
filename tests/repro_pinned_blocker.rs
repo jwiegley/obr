@@ -1,6 +1,6 @@
-use beads_rust::model::{Issue, IssueType, Priority, Status};
-use beads_rust::storage::SqliteStorage;
 use chrono::Utc;
+use obr::model::{Issue, IssueType, Priority, Status};
+use obr::storage::SqliteStorage;
 
 fn make_issue(id: &str, title: &str, status: Status) -> Issue {
     Issue {

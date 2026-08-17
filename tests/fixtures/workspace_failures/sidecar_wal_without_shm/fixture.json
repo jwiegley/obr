@@ -18,7 +18,7 @@
     },
     {
       "surface": "doctor --repair",
-      "outcome": "repair_noop"
+      "outcome": "repair_applied"
     },
     {
       "surface": "sync --status",
@@ -27,8 +27,11 @@
   ],
   "source_hint": "Locks the FrankenSQLite 0.3.1 contract that WAL-without-SHM is expected because the WAL index is process-local.",
   "notes": [
-    "The database file itself is healthy and every surface must remain operable.",
-    "Doctor reports the layout as informational and must not quarantine the WAL.",
-    "The opposite SHM-without-WAL layout remains covered by orphan_shm_sidecar as a real degraded mismatch."
+    "The database file itself is healthy and the WAL-only layout is not a fault: `check_database_sidecars` records the missing SHM as informational, and the reliability audit reports no anomaly at all. That is why the classification is healthy rather than degraded, and why the WAL must never be quarantined here.",
+    "The WAL payload is intentionally synthetic and small.",
+    "The opposite SHM-without-WAL layout remains covered by orphan_shm_sidecar as a real degraded mismatch.",
+    "This fixture's `.obr/.gitignore` was refreshed to the single `*` line `obr init` writes. Every other workspace_failures fixture still ships the enumerated beads-era list, which obr's `gitignore.obr_inner_present` check warns on — harmless where the fixture is degraded for a real reason, but here it was the only thing keeping `doctor` from exiting 0, and `infer_classification` derives `degraded` from a reports_errors doctor. The fixture models a sidecar layout, not a stale ignore file.",
+    "The port considered keeping the pre-0.3.2 degraded posture on the theory that the shipped 42-byte plain-text `-wal` is provably not a WAL (`config::wal_magic_is_valid`) and would brick the open. Replaying it disproved that: the workspace opens, `schema.tables`, `sqlite.integrity_check` and `db.write_probe` are all ok, and the audit is empty. The upstream reclassification is the one that matches what the engine actually does.",
+    "`sync --status` reports in_sync: `prepare_current_wal_without_shm` rebuilds the database at the current schema from the fixture's own JSONL before the surfaces run, so the 5-issue/1-issue split the checked-in payload used to carry no longer reaches this test. `doctor --repair` still reports repair_applied (it quarantines the restored WAL), which is the one place this fixture and upstream's manifest disagree, and it is checked by workspace_failure_replay_core_write_surfaces_match_expected_posture."
   ]
 }

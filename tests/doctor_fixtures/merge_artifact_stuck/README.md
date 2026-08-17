@@ -5,11 +5,11 @@
 - **Detect**: `jsonl.merge_artifacts` check goes to `warn`
 - **Repair contract**: SAFETY — `--repair` quarantines the stuck
   `.{base,left,right}.jsonl` artifacts (excluding the canonical
-  `beads.base.jsonl` sync anchor) under
-  `<run-dir>/quarantine/.beads/` via the `mutate()` chokepoint
+  `merge.base.jsonl` sync anchor) under
+  `<run-dir>/quarantine/.obr/` via the `mutate()` chokepoint
   (Op::Rename). Per AGENTS.md RULE 1, the fixer NEVER deletes — it
   renames so `doctor undo <run-id>` byte-reverses the quarantine.
-- **Round-trip**: corrupt → `--repair` → artifacts gone from .beads/ →
+- **Round-trip**: corrupt → `--repair` → artifacts gone from .obr/ →
   `doctor undo latest` → artifacts restored.
 - **Idempotence**: a second `--repair` finds no artifacts and is a no-op
   (zero actions.jsonl lines under REPLAY_IDEMPOTENCE=1).

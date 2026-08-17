@@ -21,7 +21,7 @@ cd "$target_dir"
 printf '%s\n' \
   "INSERT INTO metadata(key, value) VALUES('jsonl_content_hash', 'dup-row-1');" \
   "INSERT INTO metadata(key, value) VALUES('jsonl_content_hash', 'dup-row-2');" \
-  | sqlite3 .beads/beads.db
+  | sqlite3 .obr/obr.db
 
 if [ -e .fixture_baseline ]; then
   echo "fixture baseline already exists; expected a fresh workspace" >&2

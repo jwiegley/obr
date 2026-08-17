@@ -1,7 +1,9 @@
 mod common;
 
-use beads_rust::storage::SqliteStorage;
-use common::cli::{BrWorkspace, extract_json_payload, run_br, run_br_with_env};
+use common::cli::{
+    ObrWorkspace, export_path, extract_json_payload, pin_jsonl, run_obr, run_obr_with_env,
+};
+use obr::storage::SqliteStorage;
 use serde_json::Value;
 use std::fs;
 
@@ -17,7 +19,7 @@ fn parse_created_id(stdout: &str) -> String {
 }
 
 fn create_issue_with_description(
-    workspace: &BrWorkspace,
+    workspace: &ObrWorkspace,
     title: &str,
     issue_type: Option<&str>,
     description: Option<&str>,
@@ -32,22 +34,22 @@ fn create_issue_with_description(
         args.push("--description".to_string());
         args.push(text.to_string());
     }
-    let create = run_br(workspace, args, label);
+    let create = run_obr(workspace, args, label);
     assert!(create.status.success(), "create failed: {}", create.stderr);
     parse_created_id(&create.stdout)
 }
 
-fn run_lint_json(workspace: &BrWorkspace, mut args: Vec<String>, label: &str) -> Value {
+fn run_lint_json(workspace: &ObrWorkspace, mut args: Vec<String>, label: &str) -> Value {
     args.push("--json".to_string());
-    let lint = run_br(workspace, args, label);
+    let lint = run_obr(workspace, args, label);
     assert!(lint.status.success(), "lint json failed: {}", lint.stderr);
     let payload = extract_json_payload(&lint.stdout);
     serde_json::from_str(&payload).expect("parse lint json")
 }
 
-fn overwrite_local_tombstone_title(workspace: &BrWorkspace, id: &str, title: &str) {
-    let db_path = workspace.root.join(".beads").join("beads.db");
-    let storage = SqliteStorage::open(&db_path).expect("open local beads db");
+fn overwrite_local_tombstone_title(workspace: &ObrWorkspace, id: &str, title: &str) {
+    let db_path = workspace.root.join(".obr").join("obr.db");
+    let storage = SqliteStorage::open(&db_path).expect("open local obr db");
     let mut issue = storage
         .get_issue(id)
         .expect("read issue from db")
@@ -64,13 +66,13 @@ fn overwrite_local_tombstone_title(workspace: &BrWorkspace, id: &str, title: &st
 }
 
 fn assert_issue_title_and_clean_sync_state(
-    workspace: &BrWorkspace,
+    workspace: &ObrWorkspace,
     id: &str,
     expected_title: &str,
     show_label: &str,
     status_label: &str,
 ) {
-    let show = run_br(workspace, ["show", id, "--json"], show_label);
+    let show = run_obr(workspace, ["show", id, "--json"], show_label);
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let payload = extract_json_payload(&show.stdout);
     let json: Value = serde_json::from_str(&payload).expect("parse show json");
@@ -83,7 +85,7 @@ fn assert_issue_title_and_clean_sync_state(
     assert_eq!(record["status"].as_str(), Some("tombstone"));
     assert_eq!(record["title"].as_str(), Some(expected_title));
 
-    let status = run_br(workspace, ["sync", "--status", "--json"], status_label);
+    let status = run_obr(workspace, ["sync", "--status", "--json"], status_label);
     assert!(status.status.success(), "status failed: {}", status.stderr);
     let payload = extract_json_payload(&status.stdout);
     let json: Value = serde_json::from_str(&payload).expect("parse status json");
@@ -97,54 +99,56 @@ fn assert_issue_title_and_clean_sync_state(
 #[test]
 fn e2e_error_handling() {
     let _log = common::test_log("e2e_error_handling");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let list_uninit = run_br(&workspace, ["list"], "list_uninitialized");
+    let list_uninit = run_obr(&workspace, ["list"], "list_uninitialized");
     assert!(!list_uninit.status.success());
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Bad status"], "create");
+    let create = run_obr(&workspace, ["create", "Bad status"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
-    let bad_priority = run_br(
+    let bad_priority = run_obr(
         &workspace,
         ["list", "--priority-min", "9"],
         "list_bad_priority",
     );
     assert!(!bad_priority.status.success());
 
-    let bad_ready_priority = run_br(
+    let bad_ready_priority = run_obr(
         &workspace,
         ["ready", "--priority", "9"],
         "ready_bad_priority",
     );
     assert!(!bad_ready_priority.status.success());
 
-    let bad_label = run_br(
+    let bad_label = run_obr(
         &workspace,
         ["update", &id, "--add-label", "bad label"],
         "update_bad_label",
     );
     assert!(!bad_label.status.success());
 
-    let show_missing = run_br(&workspace, ["show", "bd-doesnotexist"], "show_missing");
+    let show_missing = run_obr(&workspace, ["show", "bd-doesnotexist"], "show_missing");
     assert!(!show_missing.status.success());
 
-    let delete_missing = run_br(&workspace, ["delete", "bd-doesnotexist"], "delete_missing");
+    let delete_missing = run_obr(&workspace, ["delete", "bd-doesnotexist"], "delete_missing");
     assert!(!delete_missing.status.success());
 
-    let beads_dir = workspace.root.join(".beads");
-    let issues_path = beads_dir.join("issues.jsonl");
+    // Conflict markers in the workspace's default export artifact must make
+    // import fail. This is the default flow, so it follows whatever format
+    // `obr init` seeded (Org today) rather than pinning JSONL.
+    let conflicted_export = export_path(&workspace);
     fs::write(
-        &issues_path,
+        &conflicted_export,
         "<<<<<<< HEAD\n{}\n=======\n{}\n>>>>>>> branch\n",
     )
-    .expect("write conflict jsonl");
+    .expect("write conflicted export");
 
-    let sync_bad = run_br(&workspace, ["sync", "--import-only"], "sync_bad_jsonl");
+    let sync_bad = run_obr(&workspace, ["sync", "--import-only"], "sync_bad_export");
     assert!(!sync_bad.status.success());
 }
 
@@ -152,12 +156,12 @@ fn e2e_error_handling() {
 fn e2e_sync_force_import_keeps_jsonl_authoritative_for_existing_tombstones() {
     let _log =
         common::test_log("e2e_sync_force_import_keeps_jsonl_authoritative_for_existing_tombstones");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "JSONL tombstone title", "--json"],
         "create",
@@ -167,21 +171,21 @@ fn e2e_sync_force_import_keeps_jsonl_authoritative_for_existing_tombstones() {
         serde_json::from_str(&extract_json_payload(&create.stdout)).expect("create json");
     let id = created["id"].as_str().expect("issue id").to_string();
 
-    let flush_open = run_br(&workspace, ["sync", "--flush-only"], "flush_open");
+    let flush_open = run_obr(&workspace, ["sync", "--flush-only"], "flush_open");
     assert!(
         flush_open.status.success(),
         "flush open failed: {}",
         flush_open.stderr
     );
 
-    let delete = run_br(
+    let delete = run_obr(
         &workspace,
         ["delete", &id, "--force", "--no-auto-flush"],
         "delete",
     );
     assert!(delete.status.success(), "delete failed: {}", delete.stderr);
 
-    let flush_tombstone = run_br(&workspace, ["sync", "--flush-only"], "flush_tombstone");
+    let flush_tombstone = run_obr(&workspace, ["sync", "--flush-only"], "flush_tombstone");
     assert!(
         flush_tombstone.status.success(),
         "flush tombstone failed: {}",
@@ -190,7 +194,7 @@ fn e2e_sync_force_import_keeps_jsonl_authoritative_for_existing_tombstones() {
 
     overwrite_local_tombstone_title(&workspace, &id, "stale local tombstone title");
 
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--force", "--json"],
         "force_import",
@@ -214,12 +218,12 @@ fn e2e_sync_force_import_keeps_jsonl_authoritative_for_existing_tombstones() {
 fn e2e_sync_rebuild_keeps_jsonl_authoritative_for_existing_tombstones() {
     let _log =
         common::test_log("e2e_sync_rebuild_keeps_jsonl_authoritative_for_existing_tombstones");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "JSONL tombstone title", "--json"],
         "create",
@@ -229,21 +233,21 @@ fn e2e_sync_rebuild_keeps_jsonl_authoritative_for_existing_tombstones() {
         serde_json::from_str(&extract_json_payload(&create.stdout)).expect("create json");
     let id = created["id"].as_str().expect("issue id").to_string();
 
-    let flush_open = run_br(&workspace, ["sync", "--flush-only"], "flush_open");
+    let flush_open = run_obr(&workspace, ["sync", "--flush-only"], "flush_open");
     assert!(
         flush_open.status.success(),
         "flush open failed: {}",
         flush_open.stderr
     );
 
-    let delete = run_br(
+    let delete = run_obr(
         &workspace,
         ["delete", &id, "--force", "--no-auto-flush"],
         "delete",
     );
     assert!(delete.status.success(), "delete failed: {}", delete.stderr);
 
-    let flush_tombstone = run_br(&workspace, ["sync", "--flush-only"], "flush_tombstone");
+    let flush_tombstone = run_obr(&workspace, ["sync", "--flush-only"], "flush_tombstone");
     assert!(
         flush_tombstone.status.success(),
         "flush tombstone failed: {}",
@@ -252,7 +256,7 @@ fn e2e_sync_rebuild_keeps_jsonl_authoritative_for_existing_tombstones() {
 
     overwrite_local_tombstone_title(&workspace, &id, "stale local tombstone title");
 
-    let rebuild = run_br(
+    let rebuild = run_obr(
         &workspace,
         ["sync", "--import-only", "--rebuild", "--json"],
         "rebuild_import",
@@ -275,18 +279,18 @@ fn e2e_sync_rebuild_keeps_jsonl_authoritative_for_existing_tombstones() {
 #[test]
 fn e2e_update_tombstone_rejected() {
     let _log = common::test_log("e2e_update_tombstone_rejected");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "To delete", "--json"], "create");
+    let create = run_obr(&workspace, ["create", "To delete", "--json"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let created: Value =
         serde_json::from_str(&extract_json_payload(&create.stdout)).expect("create json");
     let id = created["id"].as_str().expect("issue id");
 
-    let delete = run_br(
+    let delete = run_obr(
         &workspace,
         [
             "delete",
@@ -299,7 +303,7 @@ fn e2e_update_tombstone_rejected() {
     );
     assert!(delete.status.success(), "delete failed: {}", delete.stderr);
 
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         ["update", id, "--status", "open", "--json"],
         "update_tombstone",
@@ -317,7 +321,7 @@ fn e2e_update_tombstone_rejected() {
         "error should explain that tombstones cannot be updated"
     );
 
-    let show = run_br(&workspace, ["show", id, "--json"], "show_tombstone");
+    let show = run_obr(&workspace, ["show", id, "--json"], "show_tombstone");
     assert!(show.status.success(), "show failed: {}", show.stderr);
     let show_json: Value =
         serde_json::from_str(&extract_json_payload(&show.stdout)).expect("show json");
@@ -327,18 +331,18 @@ fn e2e_update_tombstone_rejected() {
 #[test]
 fn e2e_update_invalid_parent_does_not_partially_apply_other_changes() {
     let _log = common::test_log("e2e_update_invalid_parent_does_not_partially_apply_other_changes");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Original title", "--json"], "create");
+    let create = run_obr(&workspace, ["create", "Original title", "--json"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let created: Value =
         serde_json::from_str(&extract_json_payload(&create.stdout)).expect("create json");
     let id = created["id"].as_str().expect("issue id").to_string();
 
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         [
             "update",
@@ -355,7 +359,7 @@ fn e2e_update_invalid_parent_does_not_partially_apply_other_changes() {
         "invalid parent update should fail"
     );
 
-    let show = run_br(
+    let show = run_obr(
         &workspace,
         ["show", &id, "--json"],
         "show_after_invalid_parent",
@@ -370,12 +374,12 @@ fn e2e_update_invalid_parent_does_not_partially_apply_other_changes() {
 #[test]
 fn e2e_update_self_parent_does_not_partially_apply_other_changes() {
     let _log = common::test_log("e2e_update_self_parent_does_not_partially_apply_other_changes");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Self parent target", "--json"],
         "create",
@@ -385,14 +389,14 @@ fn e2e_update_self_parent_does_not_partially_apply_other_changes() {
         serde_json::from_str(&extract_json_payload(&create.stdout)).expect("create json");
     let id = created["id"].as_str().expect("issue id").to_string();
 
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         ["update", &id, "--status", "in_progress", "--parent", &id],
         "update_self_parent",
     );
     assert!(!update.status.success(), "self parent update should fail");
 
-    let show = run_br(
+    let show = run_obr(
         &workspace,
         ["show", &id, "--json"],
         "show_after_self_parent",
@@ -407,12 +411,12 @@ fn e2e_update_self_parent_does_not_partially_apply_other_changes() {
 #[test]
 fn e2e_dependency_errors() {
     let _log = common::test_log("e2e_dependency_errors");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let issue_a = run_br(&workspace, ["create", "Issue A"], "create_a");
+    let issue_a = run_obr(&workspace, ["create", "Issue A"], "create_a");
     assert!(
         issue_a.status.success(),
         "create A failed: {}",
@@ -420,7 +424,7 @@ fn e2e_dependency_errors() {
     );
     let id_a = parse_created_id(&issue_a.stdout);
 
-    let issue_b = run_br(&workspace, ["create", "Issue B"], "create_b");
+    let issue_b = run_obr(&workspace, ["create", "Issue B"], "create_b");
     assert!(
         issue_b.status.success(),
         "create B failed: {}",
@@ -428,25 +432,25 @@ fn e2e_dependency_errors() {
     );
     let id_b = parse_created_id(&issue_b.stdout);
 
-    let self_dep = run_br(&workspace, ["dep", "add", &id_a, &id_a], "dep_self");
+    let self_dep = run_obr(&workspace, ["dep", "add", &id_a, &id_a], "dep_self");
     assert!(!self_dep.status.success(), "self dependency should fail");
 
-    let add = run_br(&workspace, ["dep", "add", &id_a, &id_b], "dep_add");
+    let add = run_obr(&workspace, ["dep", "add", &id_a, &id_b], "dep_add");
     assert!(add.status.success(), "dep add failed: {}", add.stderr);
 
-    let cycle = run_br(&workspace, ["dep", "add", &id_b, &id_a], "dep_cycle");
+    let cycle = run_obr(&workspace, ["dep", "add", &id_b, &id_a], "dep_cycle");
     assert!(!cycle.status.success(), "cycle dependency should fail");
 }
 
 #[test]
 fn e2e_dep_add_blocks_ignores_non_blocking_cycle_edges() {
     let _log = common::test_log("e2e_dep_add_blocks_ignores_non_blocking_cycle_edges");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let issue_a = run_br(&workspace, ["create", "Issue A"], "create_a");
+    let issue_a = run_obr(&workspace, ["create", "Issue A"], "create_a");
     assert!(
         issue_a.status.success(),
         "create A failed: {}",
@@ -454,7 +458,7 @@ fn e2e_dep_add_blocks_ignores_non_blocking_cycle_edges() {
     );
     let id_a = parse_created_id(&issue_a.stdout);
 
-    let issue_b = run_br(&workspace, ["create", "Issue B"], "create_b");
+    let issue_b = run_obr(&workspace, ["create", "Issue B"], "create_b");
     assert!(
         issue_b.status.success(),
         "create B failed: {}",
@@ -462,7 +466,7 @@ fn e2e_dep_add_blocks_ignores_non_blocking_cycle_edges() {
     );
     let id_b = parse_created_id(&issue_b.stdout);
 
-    let related = run_br(
+    let related = run_obr(
         &workspace,
         ["dep", "add", &id_a, &id_b, "--type", "related"],
         "dep_related",
@@ -473,7 +477,7 @@ fn e2e_dep_add_blocks_ignores_non_blocking_cycle_edges() {
         related.stderr
     );
 
-    let blocks = run_br(
+    let blocks = run_obr(
         &workspace,
         ["dep", "add", &id_b, &id_a, "--type", "blocks"],
         "dep_blocks",
@@ -488,22 +492,22 @@ fn e2e_dep_add_blocks_ignores_non_blocking_cycle_edges() {
 #[test]
 fn e2e_sync_invalid_orphans() {
     let _log = common::test_log("e2e_sync_invalid_orphans");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Sync issue"], "create");
+    let create = run_obr(&workspace, ["create", "Sync issue"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(
         flush.status.success(),
         "sync flush failed: {}",
         flush.stderr
     );
 
-    let bad_orphans = run_br(
+    let bad_orphans = run_obr(
         &workspace,
         ["sync", "--import-only", "--force", "--orphans", "weird"],
         "sync_bad_orphans",
@@ -518,12 +522,14 @@ fn e2e_sync_invalid_orphans() {
 fn e2e_sync_rename_prefix_applies_after_missing_db_recovery_with_force() {
     let _log =
         common::test_log("e2e_sync_rename_prefix_applies_after_missing_db_recovery_with_force");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    // Exercises rename-prefix import of a hand-edited JSONL artifact.
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let set_prefix = run_br(
+    let set_prefix = run_obr(
         &workspace,
         ["config", "set", "issue_prefix=target"],
         "config_set_issue_prefix",
@@ -534,7 +540,7 @@ fn e2e_sync_rename_prefix_applies_after_missing_db_recovery_with_force() {
         set_prefix.stderr
     );
 
-    let create = run_br(&workspace, ["create", "Seed issue"], "create");
+    let create = run_obr(&workspace, ["create", "Seed issue"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let original_id = parse_created_id(&create.stdout);
     let mismatched_id = format!(
@@ -545,19 +551,19 @@ fn e2e_sync_rename_prefix_applies_after_missing_db_recovery_with_force() {
             .expect("created issue id should include a prefix")
     );
 
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(
         flush.status.success(),
         "sync flush failed: {}",
         flush.stderr
     );
 
-    let issues_path = workspace.root.join(".beads").join("issues.jsonl");
+    let issues_path = workspace.root.join(".obr").join("issues.jsonl");
     let jsonl = fs::read_to_string(&issues_path).expect("read issues jsonl");
     fs::write(&issues_path, jsonl.replace(&original_id, &mismatched_id)).expect("rewrite jsonl");
 
-    let alt_db = workspace.root.join(".beads").join("auto-rebuilt-alt.db");
-    let result = run_br(
+    let alt_db = workspace.root.join(".obr").join("auto-rebuilt-alt.db");
+    let result = run_obr(
         &workspace,
         [
             "--db",
@@ -605,12 +611,14 @@ fn e2e_sync_rename_prefix_applies_after_missing_db_recovery_with_force() {
 fn e2e_sync_rename_prefix_applies_after_missing_db_recovery_without_force() {
     let _log =
         common::test_log("e2e_sync_rename_prefix_applies_after_missing_db_recovery_without_force");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    // Exercises rename-prefix import of a hand-edited JSONL artifact.
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let set_prefix = run_br(
+    let set_prefix = run_obr(
         &workspace,
         ["config", "set", "issue_prefix=target"],
         "config_set_issue_prefix",
@@ -621,7 +629,7 @@ fn e2e_sync_rename_prefix_applies_after_missing_db_recovery_without_force() {
         set_prefix.stderr
     );
 
-    let create = run_br(&workspace, ["create", "Seed issue"], "create");
+    let create = run_obr(&workspace, ["create", "Seed issue"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let original_id = parse_created_id(&create.stdout);
     let mismatched_id = format!(
@@ -632,22 +640,22 @@ fn e2e_sync_rename_prefix_applies_after_missing_db_recovery_without_force() {
             .expect("created issue id should include a prefix")
     );
 
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(
         flush.status.success(),
         "sync flush failed: {}",
         flush.stderr
     );
 
-    let issues_path = workspace.root.join(".beads").join("issues.jsonl");
+    let issues_path = workspace.root.join(".obr").join("issues.jsonl");
     let jsonl = fs::read_to_string(&issues_path).expect("read issues jsonl");
     fs::write(&issues_path, jsonl.replace(&original_id, &mismatched_id)).expect("rewrite jsonl");
 
     let alt_db = workspace
         .root
-        .join(".beads")
+        .join(".obr")
         .join("auto-rebuilt-plain-alt.db");
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         [
             "--db",
@@ -700,11 +708,11 @@ fn e2e_sync_rename_prefix_preserves_id_remainder_and_reports_mapping() {
     // collision, and report every rewrite as a `prefix_renames` mapping.
     let _log =
         common::test_log("e2e_sync_rename_prefix_preserves_id_remainder_and_reports_mapping");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
-    let set_prefix = run_br(
+    let set_prefix = run_obr(
         &workspace,
         ["config", "set", "issue_prefix=target"],
         "config_set_issue_prefix",
@@ -716,7 +724,7 @@ fn e2e_sync_rename_prefix_preserves_id_remainder_and_reports_mapping() {
     );
 
     let make = |title: &str, label: &str| {
-        let create = run_br(&workspace, ["create", title], label);
+        let create = run_obr(&workspace, ["create", title], label);
         assert!(create.status.success(), "create failed: {}", create.stderr);
         parse_created_id(&create.stdout)
     };
@@ -735,13 +743,13 @@ fn e2e_sync_rename_prefix_preserves_id_remainder_and_reports_mapping() {
         remainder(&id_occupant),
     );
 
-    let dep = run_br(
+    let dep = run_obr(
         &workspace,
         ["dep", "add", &id_slugged, &id_doubled],
         "dep_add",
     );
     assert!(dep.status.success(), "dep add failed: {}", dep.stderr);
-    let comment = run_br(
+    let comment = run_obr(
         &workspace,
         ["comments", "add", &id_slugged, "note before rename"],
         "comments_add",
@@ -752,7 +760,7 @@ fn e2e_sync_rename_prefix_preserves_id_remainder_and_reports_mapping() {
         comment.stderr
     );
 
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(
         flush.status.success(),
         "sync flush failed: {}",
@@ -762,7 +770,7 @@ fn e2e_sync_rename_prefix_preserves_id_remainder_and_reports_mapping() {
     // Rewrite the exported ids into a foreign prefix: a plain mismatch, a
     // doubled prefix, and a challenger whose preserved id would collide with
     // the occupant that keeps its matching `target-` id.
-    let issues_path = workspace.root.join(".beads").join("issues.jsonl");
+    let issues_path = workspace.root.join(".obr").join("issues.jsonl");
     let jsonl = fs::read_to_string(&issues_path).expect("read issues jsonl");
     let old_slugged = format!("legacy-{rem_slugged}");
     let old_doubled = format!("legacy-legacy-{rem_doubled}");
@@ -773,8 +781,8 @@ fn e2e_sync_rename_prefix_preserves_id_remainder_and_reports_mapping() {
         .replace(&id_challenger, &old_challenger);
     fs::write(&issues_path, rewritten).expect("rewrite jsonl");
 
-    let alt_db = workspace.root.join(".beads").join("rename-receipt-alt.db");
-    let result = run_br(
+    let alt_db = workspace.root.join(".obr").join("rename-receipt-alt.db");
+    let result = run_obr(
         &workspace,
         [
             "--db",
@@ -887,16 +895,18 @@ fn e2e_auto_flush_skips_silently_overwriting_conflict_markered_jsonl() {
     // operator to fix.
     let _log =
         common::test_log("e2e_auto_flush_skips_silently_overwriting_conflict_markered_jsonl");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    // Conflict-marker semantics inside a JSONL artifact.
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(&workspace, ["create", "Seed"], "create");
+    let create = run_obr(&workspace, ["create", "Seed"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue_id = parse_created_id(&create.stdout);
 
-    let seed_flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush_seed");
+    let seed_flush = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush_seed");
     assert!(
         seed_flush.status.success(),
         "initial flush failed: {}",
@@ -904,7 +914,7 @@ fn e2e_auto_flush_skips_silently_overwriting_conflict_markered_jsonl() {
     );
 
     // Drop the JSONL into a half-resolved merge-conflict state.
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     let clean = fs::read_to_string(&jsonl_path).expect("read jsonl");
     let conflicted = format!("<<<<<<< HEAD\n{clean}=======\n{clean}>>>>>>> branch\n");
     fs::write(&jsonl_path, &conflicted).expect("write conflicted jsonl");
@@ -914,7 +924,7 @@ fn e2e_auto_flush_skips_silently_overwriting_conflict_markered_jsonl() {
     // defense (auto-import's conflict-markers scan) is bypassed. The
     // mutation should still succeed against the DB, but auto-flush must
     // NOT overwrite the conflict-markered JSONL.
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         ["--no-auto-import", "update", &issue_id, "--priority", "1"],
         "update_no_auto_import",
@@ -936,23 +946,23 @@ fn e2e_auto_flush_skips_silently_overwriting_conflict_markered_jsonl() {
 #[test]
 fn e2e_auto_flush_failure_is_visible_in_json_mode() {
     let _log = common::test_log("e2e_auto_flush_failure_is_visible_in_json_mode");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Visible flush debt"], "create");
+    let create = run_obr(&workspace, ["create", "Visible flush debt"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue_id = parse_created_id(&create.stdout);
 
     let bad_jsonl = workspace
         .root
-        .join(".beads")
-        .join("beads.db")
+        .join(".obr")
+        .join("obr.db")
         .join("issues.jsonl");
     let bad_jsonl = bad_jsonl.to_string_lossy().to_string();
 
-    let update = run_br_with_env(
+    let update = run_obr_with_env(
         &workspace,
         [
             "--json",
@@ -962,7 +972,7 @@ fn e2e_auto_flush_failure_is_visible_in_json_mode() {
             "--priority",
             "1",
         ],
-        [("BEADS_JSONL", bad_jsonl.as_str())],
+        [("OBR_JSONL", bad_jsonl.as_str())],
         "update_bad_auto_flush_jsonl",
     );
     assert!(
@@ -988,7 +998,7 @@ fn e2e_auto_flush_failure_is_visible_in_json_mode() {
     assert!(
         warning["warning"]["recovery"]
             .as_str()
-            .is_some_and(|recovery| recovery.contains("br sync --flush-only")),
+            .is_some_and(|recovery| recovery.contains("obr sync --flush-only")),
         "warning should tell operators how to repair export debt: {}",
         update.stderr
     );
@@ -1001,21 +1011,23 @@ fn e2e_auto_flush_failure_is_visible_in_json_mode() {
 
 #[test]
 fn e2e_sync_flush_checks_conflict_markers_before_noop_short_circuit() {
-    // Regression: `br sync --flush-only` can return early when the DB has
+    // Regression: `obr sync --flush-only` can return early when the DB has
     // nothing dirty. That early return must not hide unresolved JSONL merge
     // markers, because a user running sync for safety should still be told
     // the working tree contains an unresolved beads data conflict.
     let _log = common::test_log("e2e_sync_flush_checks_conflict_markers_before_noop_short_circuit");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    // Conflict-marker semantics inside a JSONL artifact.
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(&workspace, ["create", "Seed"], "create");
+    let create = run_obr(&workspace, ["create", "Seed"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let _ = parse_created_id(&create.stdout);
 
-    let first_flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush_initial");
+    let first_flush = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush_initial");
     assert!(
         first_flush.status.success(),
         "initial flush should succeed: {}",
@@ -1024,7 +1036,7 @@ fn e2e_sync_flush_checks_conflict_markers_before_noop_short_circuit() {
 
     // Simulate a merge conflict by wrapping the clean JSONL in conflict
     // markers, as if `git merge` left the file in a half-resolved state.
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     let clean = fs::read_to_string(&jsonl_path).expect("read jsonl");
     let conflicted = format!("<<<<<<< HEAD\n{clean}=======\n{clean}>>>>>>> branch\n");
     fs::write(&jsonl_path, &conflicted).expect("write conflicted jsonl");
@@ -1032,7 +1044,7 @@ fn e2e_sync_flush_checks_conflict_markers_before_noop_short_circuit() {
 
     // A subsequent no-op flush must refuse with a conflict-markers error
     // before taking the "nothing to do" short-circuit.
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(
         !flush.status.success(),
         "flush should fail when JSONL contains conflict markers: stdout={} stderr={}",
@@ -1065,7 +1077,7 @@ fn e2e_sync_flush_checks_conflict_markers_before_noop_short_circuit() {
 #[test]
 #[allow(clippy::too_many_lines)]
 fn e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation() {
-    // Regression: `br sync --import-only --rebuild` on an existing DB used
+    // Regression: `obr sync --import-only --rebuild` on an existing DB used
     // to lose tombstones that had not yet been flushed to JSONL. The
     // in-place path preserves them via `snapshot_tombstones` +
     // `restore_preserved_issues` across `reset_data_tables`, but the new
@@ -1076,17 +1088,19 @@ fn e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation() {
     // after.
     let _log =
         common::test_log("e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    // Tombstone semantics are asserted against JSONL export records.
+    pin_jsonl(&workspace.root.join(".obr"));
 
     // Create two issues so the rebuild has content to preserve.
-    let keep = run_br(&workspace, ["create", "Keep"], "create_keep");
+    let keep = run_obr(&workspace, ["create", "Keep"], "create_keep");
     assert!(keep.status.success(), "create keep failed: {}", keep.stderr);
     let keep_id = parse_created_id(&keep.stdout);
 
-    let delete = run_br(&workspace, ["create", "Delete"], "create_delete");
+    let delete = run_obr(&workspace, ["create", "Delete"], "create_delete");
     assert!(
         delete.status.success(),
         "create delete failed: {}",
@@ -1095,7 +1109,7 @@ fn e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation() {
     let delete_id = parse_created_id(&delete.stdout);
 
     // Flush both as open so the JSONL reflects the pre-deletion state.
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(
         flush.status.success(),
         "sync flush failed: {}",
@@ -1104,7 +1118,7 @@ fn e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation() {
 
     // Delete one issue WITHOUT flushing: the tombstone only lives in the
     // DB, the JSONL still shows `delete_id` as open.
-    let delete_cmd = run_br(
+    let delete_cmd = run_obr(
         &workspace,
         ["delete", &delete_id, "--force", "--no-auto-flush"],
         "delete_no_flush",
@@ -1117,7 +1131,7 @@ fn e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation() {
 
     // Run --rebuild. The delegation path fires because the DB exists, no
     // rename was requested, and the JSONL is available.
-    let rebuild = run_br(
+    let rebuild = run_obr(
         &workspace,
         ["sync", "--import-only", "--rebuild", "--json"],
         "sync_rebuild",
@@ -1128,11 +1142,11 @@ fn e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation() {
         rebuild.stderr
     );
 
-    // The surviving tombstone must still be queryable via `br show`. If the
+    // The surviving tombstone must still be queryable via `obr show`. If the
     // delegation had silently wiped it, `show` would either report
     // "Issue not found" or return the resurrected-as-open version from the
     // JSONL.
-    let show = run_br(&workspace, ["show", &delete_id, "--json"], "show_tombstone");
+    let show = run_obr(&workspace, ["show", &delete_id, "--json"], "show_tombstone");
     assert!(
         show.status.success(),
         "tombstone lookup failed after --rebuild: {}",
@@ -1153,7 +1167,7 @@ fn e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation() {
     );
 
     // The kept issue must still be open.
-    let show_keep = run_br(&workspace, ["show", &keep_id, "--json"], "show_keep");
+    let show_keep = run_obr(&workspace, ["show", &keep_id, "--json"], "show_keep");
     assert!(
         show_keep.status.success(),
         "keep lookup failed: {}",
@@ -1173,7 +1187,7 @@ fn e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation() {
     // deletion back to JSONL instead of incorrectly reporting "Nothing to
     // export". Without this, the rebuilt DB and JSONL silently diverge until
     // a future import/rebuild cycle resurrects the supposedly deleted issue.
-    let status = run_br(
+    let status = run_obr(
         &workspace,
         ["sync", "--status", "--json"],
         "status_after_rebuild",
@@ -1191,7 +1205,7 @@ fn e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation() {
         "the preserved tombstone should stay dirty until it is flushed"
     );
 
-    let flush_after_rebuild = run_br(
+    let flush_after_rebuild = run_obr(
         &workspace,
         ["sync", "--flush-only", "--json"],
         "flush_after_rebuild",
@@ -1209,7 +1223,7 @@ fn e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation() {
         "flush should report the single preserved tombstone dirty flag it cleared"
     );
 
-    let issues_path = workspace.root.join(".beads").join("issues.jsonl");
+    let issues_path = workspace.root.join(".obr").join("issues.jsonl");
     let jsonl = fs::read_to_string(&issues_path).expect("read rebuilt issues jsonl");
     let exported_issue_states: Vec<(String, String)> = jsonl
         .lines()
@@ -1240,7 +1254,7 @@ fn e2e_sync_rebuild_preserves_unflushed_tombstones_across_delegation() {
         exported_issue_states
     );
 
-    let status_after_flush = run_br(
+    let status_after_flush = run_obr(
         &workspace,
         ["sync", "--status", "--json"],
         "status_after_flush",
@@ -1269,12 +1283,14 @@ fn e2e_sync_rebuild_with_rename_prefix_keeps_renamed_issues() {
     // rewrote the IDs the import just inserted, since the set-difference
     // comparison is no longer semantically meaningful.
     let _log = common::test_log("e2e_sync_rebuild_with_rename_prefix_keeps_renamed_issues");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    // Exercises rename-prefix import of a hand-edited JSONL artifact.
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let set_prefix = run_br(
+    let set_prefix = run_obr(
         &workspace,
         ["config", "set", "issue_prefix=target"],
         "config_set_issue_prefix",
@@ -1285,7 +1301,7 @@ fn e2e_sync_rebuild_with_rename_prefix_keeps_renamed_issues() {
         set_prefix.stderr
     );
 
-    let create = run_br(&workspace, ["create", "Seed issue"], "create");
+    let create = run_obr(&workspace, ["create", "Seed issue"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let original_id = parse_created_id(&create.stdout);
     let mismatched_id = format!(
@@ -1296,18 +1312,18 @@ fn e2e_sync_rebuild_with_rename_prefix_keeps_renamed_issues() {
             .expect("created issue id should include a prefix")
     );
 
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(
         flush.status.success(),
         "sync flush failed: {}",
         flush.stderr
     );
 
-    let issues_path = workspace.root.join(".beads").join("issues.jsonl");
+    let issues_path = workspace.root.join(".obr").join("issues.jsonl");
     let jsonl = fs::read_to_string(&issues_path).expect("read issues jsonl");
     fs::write(&issues_path, jsonl.replace(&original_id, &mismatched_id)).expect("rewrite jsonl");
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         [
             "sync",
@@ -1339,7 +1355,7 @@ fn e2e_sync_rebuild_with_rename_prefix_keeps_renamed_issues() {
         "orphan cleanup must not run when --rename-prefix rewrote IDs; otherwise every renamed issue is wiped"
     );
 
-    let db_path = workspace.root.join(".beads").join("beads.db");
+    let db_path = workspace.root.join(".obr").join("obr.db");
     let storage = SqliteStorage::open(&db_path).expect("open rebuilt db");
     assert_eq!(
         storage.count_all_issues().expect("count issues"),
@@ -1362,15 +1378,15 @@ fn e2e_sync_rebuild_with_rename_prefix_keeps_renamed_issues() {
 #[test]
 fn e2e_sync_auto_rebuild_plain_import_reports_recovery_result() {
     let _log = common::test_log("e2e_sync_auto_rebuild_plain_import_reports_recovery_result");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Seed issue"], "create");
+    let create = run_obr(&workspace, ["create", "Seed issue"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(
         flush.status.success(),
         "sync flush failed: {}",
@@ -1379,9 +1395,9 @@ fn e2e_sync_auto_rebuild_plain_import_reports_recovery_result() {
 
     let alt_db = workspace
         .root
-        .join(".beads")
+        .join(".obr")
         .join("auto-rebuilt-report-alt.db");
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         [
             "--db",
@@ -1420,12 +1436,14 @@ fn e2e_sync_rename_prefix_clears_duplicate_external_ref_after_missing_db_recover
     let _log = common::test_log(
         "e2e_sync_rename_prefix_clears_duplicate_external_ref_after_missing_db_recovery",
     );
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    // Exercises rename-prefix import of a hand-edited JSONL artifact.
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let set_prefix = run_br(
+    let set_prefix = run_obr(
         &workspace,
         ["config", "set", "issue_prefix=target"],
         "config_set_issue_prefix",
@@ -1436,7 +1454,7 @@ fn e2e_sync_rename_prefix_clears_duplicate_external_ref_after_missing_db_recover
         set_prefix.stderr
     );
 
-    let first = run_br(
+    let first = run_obr(
         &workspace,
         ["create", "First issue", "--external-ref", "EXT-DUP"],
         "create_first",
@@ -1448,7 +1466,7 @@ fn e2e_sync_rename_prefix_clears_duplicate_external_ref_after_missing_db_recover
     );
     let first_id = parse_created_id(&first.stdout);
 
-    let second = run_br(&workspace, ["create", "Second issue"], "create_second");
+    let second = run_obr(&workspace, ["create", "Second issue"], "create_second");
     assert!(
         second.status.success(),
         "create second failed: {}",
@@ -1456,14 +1474,14 @@ fn e2e_sync_rename_prefix_clears_duplicate_external_ref_after_missing_db_recover
     );
     let second_id = parse_created_id(&second.stdout);
 
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(
         flush.status.success(),
         "sync flush failed: {}",
         flush.stderr
     );
 
-    let issues_path = workspace.root.join(".beads").join("issues.jsonl");
+    let issues_path = workspace.root.join(".obr").join("issues.jsonl");
     let updated = fs::read_to_string(&issues_path)
         .expect("read issues jsonl")
         .lines()
@@ -1480,9 +1498,9 @@ fn e2e_sync_rename_prefix_clears_duplicate_external_ref_after_missing_db_recover
 
     let alt_db = workspace
         .root
-        .join(".beads")
+        .join(".obr")
         .join("auto-rebuilt-duplicate-extref-alt.db");
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         [
             "--db",
@@ -1544,12 +1562,14 @@ fn e2e_sync_rename_prefix_failed_import_restores_original_corrupt_db_family() {
     let _log = common::test_log(
         "e2e_sync_rename_prefix_failed_import_restores_original_corrupt_db_family",
     );
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    // Exercises rename-prefix import of a hand-authored malformed JSONL artifact.
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let set_prefix = run_br(
+    let set_prefix = run_obr(
         &workspace,
         ["config", "set", "issue_prefix=target"],
         "config_set_issue_prefix",
@@ -1560,17 +1580,17 @@ fn e2e_sync_rename_prefix_failed_import_restores_original_corrupt_db_family() {
         set_prefix.stderr
     );
 
-    let issues_path = workspace.root.join(".beads").join("issues.jsonl");
+    let issues_path = workspace.root.join(".obr").join("issues.jsonl");
     fs::write(&issues_path, "{\"id\":\"broken\"\n").expect("write malformed jsonl");
 
     let alt_db = workspace
         .root
-        .join(".beads")
+        .join(".obr")
         .join("deferred-recovery-restore-alt.db");
     let original_bytes = b"not a sqlite database but should be restored".to_vec();
     fs::write(&alt_db, &original_bytes).expect("write corrupt alt db");
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         [
             "--db",
@@ -1606,12 +1626,12 @@ fn e2e_sync_rename_prefix_validation_failure_restores_original_corrupt_db_family
     let _log = common::test_log(
         "e2e_sync_rename_prefix_validation_failure_restores_original_corrupt_db_family",
     );
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let set_prefix = run_br(
+    let set_prefix = run_obr(
         &workspace,
         ["config", "set", "issue_prefix=target"],
         "config_set_issue_prefix",
@@ -1631,21 +1651,21 @@ fn e2e_sync_rename_prefix_validation_failure_restores_original_corrupt_db_family
     )
     .expect("write external jsonl");
 
-    let metadata_path = workspace.root.join(".beads").join("metadata.json");
+    let metadata_path = workspace.root.join(".obr").join("metadata.json");
     let metadata_json = format!(
-        r#"{{"database":"beads.db","jsonl_export":"{}"}}"#,
+        r#"{{"database":"obr.db","jsonl_export":"{}"}}"#,
         external_jsonl.display()
     );
     fs::write(&metadata_path, metadata_json).expect("write metadata");
 
     let alt_db = workspace
         .root
-        .join(".beads")
+        .join(".obr")
         .join("deferred-recovery-validation-restore-alt.db");
     let original_bytes = b"not a sqlite database but should survive validation failure".to_vec();
     fs::write(&alt_db, &original_bytes).expect("write corrupt alt db");
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         [
             "--db",
@@ -1682,9 +1702,9 @@ fn e2e_sync_rename_prefix_validation_failure_restores_original_corrupt_db_family
 fn e2e_sync_rename_prefix_validation_failure_does_not_create_missing_db() {
     let _log =
         common::test_log("e2e_sync_rename_prefix_validation_failure_does_not_create_missing_db");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let external_dir = workspace.root.join("external-jsonl");
@@ -1696,23 +1716,23 @@ fn e2e_sync_rename_prefix_validation_failure_does_not_create_missing_db() {
     )
     .expect("write external jsonl");
 
-    let metadata_path = workspace.root.join(".beads").join("metadata.json");
+    let metadata_path = workspace.root.join(".obr").join("metadata.json");
     let metadata_json = format!(
-        r#"{{"database":"beads.db","jsonl_export":"{}"}}"#,
+        r#"{{"database":"obr.db","jsonl_export":"{}"}}"#,
         external_jsonl.display()
     );
     fs::write(&metadata_path, metadata_json).expect("write metadata");
 
     let alt_db = workspace
         .root
-        .join(".beads")
+        .join(".obr")
         .join("deferred-recovery-validation-missing-alt.db");
     assert!(
         !alt_db.exists(),
         "precondition: alternate db should start missing"
     );
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         [
             "--db",
@@ -1747,12 +1767,14 @@ fn e2e_sync_rename_prefix_validation_failure_does_not_create_missing_db() {
 fn e2e_sync_rename_prefix_import_failure_does_not_leave_missing_db_created() {
     let _log =
         common::test_log("e2e_sync_rename_prefix_import_failure_does_not_leave_missing_db_created");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    // Exercises rename-prefix import of a hand-authored malformed JSONL artifact.
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let set_prefix = run_br(
+    let set_prefix = run_obr(
         &workspace,
         ["config", "set", "issue_prefix=target"],
         "config_set_issue_prefix",
@@ -1763,19 +1785,19 @@ fn e2e_sync_rename_prefix_import_failure_does_not_leave_missing_db_created() {
         set_prefix.stderr
     );
 
-    let issues_path = workspace.root.join(".beads").join("issues.jsonl");
+    let issues_path = workspace.root.join(".obr").join("issues.jsonl");
     fs::write(&issues_path, "{\"id\":\"broken\"\n").expect("write malformed jsonl");
 
     let alt_db = workspace
         .root
-        .join(".beads")
+        .join(".obr")
         .join("deferred-recovery-import-missing-alt.db");
     assert!(
         !alt_db.exists(),
         "precondition: alternate db should start missing"
     );
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         [
             "--db",
@@ -1807,17 +1829,19 @@ fn e2e_sync_rename_prefix_import_failure_does_not_leave_missing_db_created() {
 #[test]
 fn e2e_sync_export_guards() {
     let _log = common::test_log("e2e_sync_export_guards");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let beads_dir = workspace.root.join(".beads");
-    let issues_path = beads_dir.join("issues.jsonl");
+    let obr_dir = workspace.root.join(".obr");
+    // The guards are driven by hand-authored JSONL export records.
+    pin_jsonl(&obr_dir);
+    let issues_path = obr_dir.join("issues.jsonl");
 
     // Empty DB guard: JSONL has content but DB has zero issues.
     fs::write(&issues_path, "{\"id\":\"bd-ghost\"}\n").expect("write jsonl");
-    let flush_guard = run_br(&workspace, ["sync", "--flush-only"], "sync_flush_guard");
+    let flush_guard = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush_guard");
     assert!(
         !flush_guard.status.success(),
         "expected empty DB guard failure"
@@ -1832,10 +1856,10 @@ fn e2e_sync_export_guards() {
     fs::write(&issues_path, "").expect("reset jsonl");
 
     // Stale DB guard: JSONL has an ID missing from DB.
-    let create = run_br(&workspace, ["create", "Stale guard issue"], "create_stale");
+    let create = run_obr(&workspace, ["create", "Stale guard issue"], "create_stale");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush_seed");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush_seed");
     assert!(
         flush.status.success(),
         "sync flush failed: {}",
@@ -1848,7 +1872,7 @@ fn e2e_sync_export_guards() {
     fs::write(&issues_path, contents).expect("append jsonl");
 
     // Use --no-auto-import and --allow-stale to prevent bd-missing from being imported into DB
-    let create2 = run_br(
+    let create2 = run_obr(
         &workspace,
         ["create", "Dirty issue", "--no-auto-import", "--allow-stale"],
         "create_dirty",
@@ -1860,7 +1884,7 @@ fn e2e_sync_export_guards() {
     );
 
     // The flush should fail because JSONL has bd-missing but DB doesn't
-    let flush_stale = run_br(&workspace, ["sync", "--flush-only"], "sync_flush_stale");
+    let flush_stale = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush_stale");
     assert!(
         !flush_stale.status.success(),
         "expected stale DB guard failure"
@@ -1876,9 +1900,9 @@ fn e2e_sync_export_guards() {
 #[test]
 fn e2e_ambiguous_id() {
     let _log = common::test_log("e2e_ambiguous_id");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let mut ids: Vec<String> = Vec::new();
@@ -1887,7 +1911,7 @@ fn e2e_ambiguous_id() {
 
     while ambiguous_prefix.is_none() && attempt < 30 {
         let title = format!("Ambiguous {attempt}");
-        let create = run_br(&workspace, ["create", &title], "create_ambiguous");
+        let create = run_obr(&workspace, ["create", &title], "create_ambiguous");
         assert!(create.status.success(), "create failed: {}", create.stderr);
         let id = parse_created_id(&create.stdout);
         ids.push(id);
@@ -1917,23 +1941,23 @@ fn e2e_ambiguous_id() {
 
     let ambiguous_input = ambiguous_prefix.expect("failed to find ambiguous prefix");
 
-    let show = run_br(&workspace, ["show", &ambiguous_input], "show_ambiguous");
+    let show = run_obr(&workspace, ["show", &ambiguous_input], "show_ambiguous");
     assert!(!show.status.success(), "ambiguous id should fail");
 }
 
 #[test]
 fn e2e_lint_before_init_fails() {
     let _log = common::test_log("e2e_lint_before_init_fails");
-    let workspace = BrWorkspace::new();
-    let lint = run_br(&workspace, ["lint"], "lint_before_init");
+    let workspace = ObrWorkspace::new();
+    let lint = run_obr(&workspace, ["lint"], "lint_before_init");
     assert!(!lint.status.success());
 }
 
 #[test]
 fn e2e_lint_clean_output_when_no_warnings() {
     let _log = common::test_log("e2e_lint_clean_output_when_no_warnings");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "lint_clean_init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "lint_clean_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let description = "## Acceptance Criteria\n- done";
@@ -1945,7 +1969,7 @@ fn e2e_lint_clean_output_when_no_warnings() {
         "lint_clean_create",
     );
 
-    let lint = run_br(&workspace, ["lint"], "lint_clean_run");
+    let lint = run_obr(&workspace, ["lint"], "lint_clean_run");
     assert!(
         lint.status.success(),
         "lint should succeed: {}",
@@ -1957,8 +1981,8 @@ fn e2e_lint_clean_output_when_no_warnings() {
 #[test]
 fn e2e_lint_bug_missing_sections_json() {
     let _log = common::test_log("e2e_lint_bug_missing_sections_json");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "lint_bug_init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "lint_bug_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     create_issue_with_description(
@@ -1986,8 +2010,8 @@ fn e2e_lint_bug_missing_sections_json() {
 #[test]
 fn e2e_lint_multiple_issues_aggregate_warnings() {
     let _log = common::test_log("e2e_lint_multiple_issues_aggregate_warnings");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "lint_multi_init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "lint_multi_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     create_issue_with_description(
@@ -2013,8 +2037,8 @@ fn e2e_lint_multiple_issues_aggregate_warnings() {
 #[test]
 fn e2e_lint_text_output_exit_code() {
     let _log = common::test_log("e2e_lint_text_output_exit_code");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "lint_text_init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "lint_text_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     create_issue_with_description(
@@ -2025,7 +2049,7 @@ fn e2e_lint_text_output_exit_code() {
         "lint_text_bug",
     );
 
-    let lint = run_br(&workspace, ["lint"], "lint_text_run");
+    let lint = run_obr(&workspace, ["lint"], "lint_text_run");
     assert!(!lint.status.success());
     assert!(lint.stdout.contains("Template warnings"));
 }
@@ -2033,8 +2057,8 @@ fn e2e_lint_text_output_exit_code() {
 #[test]
 fn e2e_lint_status_all_includes_closed() {
     let _log = common::test_log("e2e_lint_status_all_includes_closed");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "lint_closed_init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "lint_closed_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let id = create_issue_with_description(
@@ -2045,7 +2069,7 @@ fn e2e_lint_status_all_includes_closed() {
         "lint_closed_bug",
     );
 
-    let close = run_br(
+    let close = run_obr(
         &workspace,
         ["close", &id, "--reason", "done"],
         "lint_closed_close",
@@ -2067,8 +2091,8 @@ fn e2e_lint_status_all_includes_closed() {
 #[test]
 fn e2e_lint_type_filter_limits_results() {
     let _log = common::test_log("e2e_lint_type_filter_limits_results");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "lint_type_init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "lint_type_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     create_issue_with_description(
@@ -2098,8 +2122,8 @@ fn e2e_lint_type_filter_limits_results() {
 #[test]
 fn e2e_lint_ids_only_lints_selected() {
     let _log = common::test_log("e2e_lint_ids_only_lints_selected");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "lint_ids_init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "lint_ids_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let bug_id = create_issue_with_description(
@@ -2129,8 +2153,8 @@ fn e2e_lint_ids_only_lints_selected() {
 #[test]
 fn e2e_lint_skips_types_without_required_sections() {
     let _log = common::test_log("e2e_lint_skips_types_without_required_sections");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "lint_skip_init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "lint_skip_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     create_issue_with_description(
@@ -2185,10 +2209,10 @@ fn verify_error_structure(json: &Value) -> bool {
 #[test]
 fn e2e_structured_error_not_initialized() {
     let _log = common::test_log("e2e_structured_error_not_initialized");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Don't init - test NOT_INITIALIZED error
-    let result = run_br(&workspace, ["list", "--json"], "list_not_init_json");
+    let result = run_obr(&workspace, ["list", "--json"], "list_not_init_json");
     assert!(!result.status.success());
     assert_eq!(result.status.code(), Some(2), "exit code should be 2");
 
@@ -2198,12 +2222,12 @@ fn e2e_structured_error_not_initialized() {
     let error = &json["error"];
     assert_eq!(error["code"], "NOT_INITIALIZED");
     assert!(!error["retryable"].as_bool().unwrap());
-    assert!(error["hint"].as_str().unwrap().contains("br init"));
+    assert!(error["hint"].as_str().unwrap().contains("obr init"));
 }
 
 #[test]
 fn e2e_partially_applied_close_batch_does_not_exit_zero() {
-    // The process-level half of the defect. `br close <blocked> <closeable>`
+    // The process-level half of the defect. `obr close <blocked> <closeable>`
     // exited 0 while printing "Warning: Skipped ..." and leaving the blocked
     // issue untouched, because the terminal error was gated on
     // `closed_count == 0`. docs/agent/ERRORS.md tells callers to parse stdout
@@ -2214,11 +2238,11 @@ fn e2e_partially_applied_close_batch_does_not_exit_zero() {
     // then reads the record back rather than trusting the output. Under the old
     // predicate it fails at the exit-code assertion with `Some(0)`.
     let _log = common::test_log("e2e_partially_applied_close_batch_does_not_exit_zero");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "partial_close_init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "partial_close_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let blocker = run_br(
+    let blocker = run_obr(
         &workspace,
         ["create", "Blocker issue", "-p", "2"],
         "partial_close_create_blocker",
@@ -2230,7 +2254,7 @@ fn e2e_partially_applied_close_batch_does_not_exit_zero() {
     );
     let blocker_id = parse_created_id(&blocker.stdout);
 
-    let blocked = run_br(
+    let blocked = run_obr(
         &workspace,
         ["create", "Blocked issue", "-p", "2"],
         "partial_close_create_blocked",
@@ -2242,7 +2266,7 @@ fn e2e_partially_applied_close_batch_does_not_exit_zero() {
     );
     let blocked_id = parse_created_id(&blocked.stdout);
 
-    let free = run_br(
+    let free = run_obr(
         &workspace,
         ["create", "Independently closeable issue", "-p", "2"],
         "partial_close_create_free",
@@ -2250,7 +2274,7 @@ fn e2e_partially_applied_close_batch_does_not_exit_zero() {
     assert!(free.status.success(), "free create failed: {}", free.stderr);
     let free_id = parse_created_id(&free.stdout);
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &workspace,
         ["dep", "add", &blocked_id, &blocker_id],
         "partial_close_dep_add",
@@ -2262,7 +2286,7 @@ fn e2e_partially_applied_close_batch_does_not_exit_zero() {
     );
 
     // One id is refused, the other closes. The batch is partially applied.
-    let close = run_br(
+    let close = run_obr(
         &workspace,
         ["close", &blocked_id, &free_id, "--reason", "partial batch"],
         "partial_close_batch",
@@ -2283,7 +2307,7 @@ fn e2e_partially_applied_close_batch_does_not_exit_zero() {
     );
 
     // The record is the authority, not the transcript: one closed, one refused.
-    let show_blocked = run_br(
+    let show_blocked = run_obr(
         &workspace,
         ["show", &blocked_id, "--json"],
         "partial_close_show_blocked",
@@ -2299,7 +2323,7 @@ fn e2e_partially_applied_close_batch_does_not_exit_zero() {
         show_blocked.stdout
     );
 
-    let show_free = run_br(
+    let show_free = run_obr(
         &workspace,
         ["show", &free_id, "--json"],
         "partial_close_show_free",
@@ -2320,23 +2344,23 @@ fn e2e_partially_applied_close_batch_does_not_exit_zero() {
 #[allow(clippy::too_many_lines)]
 fn e2e_transition_required_fields_are_structured_fresh_and_atomic() {
     let _log = common::test_log("e2e_transition_required_fields_are_structured_fresh_and_atomic");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "required_fields_init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "required_fields_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
-    let issue = run_br(
+    let issue = run_obr(
         &workspace,
         ["create", "Review candidate"],
         "required_fields_create",
     );
     assert!(issue.status.success(), "create failed: {}", issue.stderr);
     let id = parse_created_id(&issue.stdout);
-    let claim = run_br(
+    let claim = run_obr(
         &workspace,
         ["update", &id, "--status", "in_progress"],
         "required_fields_claim",
     );
     assert!(claim.status.success(), "claim failed: {}", claim.stderr);
-    let old_comment = run_br(
+    let old_comment = run_obr(
         &workspace,
         [
             "comments",
@@ -2354,7 +2378,7 @@ fn e2e_transition_required_fields_are_structured_fresh_and_atomic() {
     );
 
     fs::write(
-        workspace.root.join(".beads").join("policy.yaml"),
+        workspace.root.join(".obr").join("policy.yaml"),
         r#"
 workflow:
   required_fields:
@@ -2365,7 +2389,7 @@ workflow:
     )
     .expect("write required-fields policy");
 
-    let missing_comment = run_br(
+    let missing_comment = run_obr(
         &workspace,
         [
             "update",
@@ -2394,7 +2418,7 @@ workflow:
         "transition_comment"
     );
 
-    let unchecked = run_br(
+    let unchecked = run_obr(
         &workspace,
         [
             "update",
@@ -2412,7 +2436,7 @@ workflow:
     assert!(unchecked.stderr.contains("acceptance criteria"));
     assert!(unchecked.stderr.contains("unchecked"));
 
-    let storage = SqliteStorage::open(&workspace.root.join(".beads").join("beads.db"))
+    let storage = SqliteStorage::open(&workspace.root.join(".obr").join("obr.db"))
         .expect("open storage after rejected transitions");
     let unchanged = storage.get_issue(&id).unwrap().unwrap();
     assert_eq!(unchanged.status.as_str(), "in_progress");
@@ -2420,7 +2444,7 @@ workflow:
     assert_eq!(storage.get_comments(&id).unwrap().len(), 1);
     drop(storage);
 
-    let accepted = run_br(
+    let accepted = run_obr(
         &workspace,
         [
             "update",
@@ -2439,7 +2463,7 @@ workflow:
         "update failed: {}",
         accepted.stderr
     );
-    let storage = SqliteStorage::open(&workspace.root.join(".beads").join("beads.db"))
+    let storage = SqliteStorage::open(&workspace.root.join(".obr").join("obr.db"))
         .expect("open storage after accepted transition");
     let transitioned = storage.get_issue(&id).unwrap().unwrap();
     assert_eq!(transitioned.status.as_str(), "in_review");
@@ -2455,19 +2479,19 @@ workflow:
 #[test]
 fn e2e_workflow_capacity_rejection_is_structured_and_atomic() {
     let _log = common::test_log("e2e_workflow_capacity_rejection_is_structured_and_atomic");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "capacity_init");
+    let init = run_obr(&workspace, ["init"], "capacity_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let active = run_br(
+    let active = run_obr(
         &workspace,
         ["create", "Already active"],
         "capacity_create_active",
     );
     assert!(active.status.success(), "create failed: {}", active.stderr);
     let active_id = parse_created_id(&active.stdout);
-    let activate = run_br(
+    let activate = run_obr(
         &workspace,
         ["update", &active_id, "--status", "in_progress"],
         "capacity_activate",
@@ -2478,7 +2502,7 @@ fn e2e_workflow_capacity_rejection_is_structured_and_atomic() {
         activate.stderr
     );
 
-    let candidate = run_br(
+    let candidate = run_obr(
         &workspace,
         ["create", "Candidate"],
         "capacity_create_candidate",
@@ -2491,7 +2515,7 @@ fn e2e_workflow_capacity_rejection_is_structured_and_atomic() {
     let candidate_id = parse_created_id(&candidate.stdout);
 
     fs::write(
-        workspace.root.join(".beads").join("policy.yaml"),
+        workspace.root.join(".obr").join("policy.yaml"),
         r"
 workflow:
   statuses: [open, in_progress, closed]
@@ -2503,7 +2527,7 @@ workflow:
     )
     .expect("write capacity policy");
 
-    let rejected = run_br(
+    let rejected = run_obr(
         &workspace,
         [
             "update",
@@ -2533,7 +2557,7 @@ workflow:
     assert_eq!(error["context"]["prospective"], 2);
     assert_eq!(error["context"]["hard_limit"], 1);
 
-    let show = run_br(
+    let show = run_obr(
         &workspace,
         ["show", &candidate_id, "--json"],
         "capacity_show_unchanged",
@@ -2548,9 +2572,9 @@ workflow:
 #[test]
 fn e2e_workflow_capacity_batch_rejection_rolls_back_every_issue() {
     let _log = common::test_log("e2e_workflow_capacity_batch_rejection_rolls_back_every_issue");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "capacity_batch_init");
+    let init = run_obr(&workspace, ["init"], "capacity_batch_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let active_id = create_issue_with_description(
@@ -2560,7 +2584,7 @@ fn e2e_workflow_capacity_batch_rejection_rolls_back_every_issue() {
         None,
         "capacity_batch_active",
     );
-    let activate = run_br(
+    let activate = run_obr(
         &workspace,
         ["update", &active_id, "--status", "in_progress"],
         "capacity_batch_activate",
@@ -2586,7 +2610,7 @@ fn e2e_workflow_capacity_batch_rejection_rolls_back_every_issue() {
         "capacity_batch_second",
     );
     fs::write(
-        workspace.root.join(".beads").join("policy.yaml"),
+        workspace.root.join(".obr").join("policy.yaml"),
         r"
 workflow:
   statuses: [open, in_progress, closed]
@@ -2598,7 +2622,7 @@ workflow:
     )
     .expect("write capacity policy");
 
-    let rejected = run_br(
+    let rejected = run_obr(
         &workspace,
         [
             "update",
@@ -2624,7 +2648,7 @@ workflow:
         (&first_id, "First candidate", "capacity_batch_show_first"),
         (&second_id, "Second candidate", "capacity_batch_show_second"),
     ] {
-        let show = run_br(&workspace, ["show", id, "--json"], label);
+        let show = run_obr(&workspace, ["show", id, "--json"], label);
         assert!(show.status.success(), "show failed: {}", show.stderr);
         let shown: Value =
             serde_json::from_str(&extract_json_payload(&show.stdout)).expect("show json");
@@ -2636,9 +2660,9 @@ workflow:
 #[test]
 fn e2e_workflow_capacity_soft_limit_emits_structured_batch_warning() {
     let _log = common::test_log("e2e_workflow_capacity_soft_limit_emits_structured_batch_warning");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "capacity_soft_init");
+    let init = run_obr(&workspace, ["init"], "capacity_soft_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
     let first_id = create_issue_with_description(
         &workspace,
@@ -2655,7 +2679,7 @@ fn e2e_workflow_capacity_soft_limit_emits_structured_batch_warning() {
         "capacity_soft_second",
     );
     fs::write(
-        workspace.root.join(".beads").join("policy.yaml"),
+        workspace.root.join(".obr").join("policy.yaml"),
         r"
 workflow:
   statuses: [open, in_progress, closed]
@@ -2668,7 +2692,7 @@ workflow:
     )
     .expect("write capacity policy");
 
-    let updated = run_br(
+    let updated = run_obr(
         &workspace,
         [
             "update",
@@ -2713,12 +2737,12 @@ fn e2e_workflow_capacity_create_preserves_legacy_shape_until_warning_exists() {
     let _log = common::test_log(
         "e2e_workflow_capacity_create_preserves_legacy_shape_until_warning_exists",
     );
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "capacity_create_shape_init");
+    let init = run_obr(&workspace, ["init"], "capacity_create_shape_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
     fs::write(
-        workspace.root.join(".beads").join("policy.yaml"),
+        workspace.root.join(".obr").join("policy.yaml"),
         r"
 workflow:
   statuses: [open, closed]
@@ -2731,7 +2755,7 @@ workflow:
     )
     .expect("write capacity policy");
 
-    let first = run_br(
+    let first = run_obr(
         &workspace,
         ["create", "Below soft limit", "--json"],
         "capacity_create_below_soft",
@@ -2751,7 +2775,7 @@ workflow:
     assert!(first_payload.get("created").is_none());
     assert!(first_payload.get("warnings").is_none());
 
-    let second = run_br(
+    let second = run_obr(
         &workspace,
         ["create", "Reaches soft limit", "--json"],
         "capacity_create_at_soft",
@@ -2785,14 +2809,14 @@ workflow:
 #[test]
 fn e2e_workflow_capacity_leaf_work_excludes_aggregate_parents_and_reports_rollup() {
     // GitHub #384 phase 3, end to end: an epic -> parent -> child chain
-    // occupies one leaf_work slot, not three, and `br show` reports the
+    // occupies one leaf_work slot, not three, and `obr show` reports the
     // parent's derived rollup without mutating its explicit status.
     let _log = common::test_log(
         "e2e_workflow_capacity_leaf_work_excludes_aggregate_parents_and_reports_rollup",
     );
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "capacity_leaf_init");
+    let init = run_obr(&workspace, ["init"], "capacity_leaf_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let epic_id =
@@ -2808,7 +2832,7 @@ fn e2e_workflow_capacity_leaf_work_excludes_aggregate_parents_and_reports_rollup
         (&parent_id, &epic_id, "capacity_leaf_dep_parent"),
         (&child_id, &parent_id, "capacity_leaf_dep_child"),
     ] {
-        let dep = run_br(
+        let dep = run_obr(
             &workspace,
             ["dep", "add", child, parent, "--type", "parent-child"],
             label,
@@ -2818,7 +2842,7 @@ fn e2e_workflow_capacity_leaf_work_excludes_aggregate_parents_and_reports_rollup
 
     // Activate the whole chain before the policy exists so the pre-existing
     // state is what hierarchy counting has to interpret.
-    let activate = run_br(
+    let activate = run_obr(
         &workspace,
         [
             "update",
@@ -2837,7 +2861,7 @@ fn e2e_workflow_capacity_leaf_work_excludes_aggregate_parents_and_reports_rollup
     );
 
     fs::write(
-        workspace.root.join(".beads").join("policy.yaml"),
+        workspace.root.join(".obr").join("policy.yaml"),
         r"
 workflow:
   statuses: [open, in_progress, closed]
@@ -2851,7 +2875,7 @@ workflow:
     )
     .expect("write hierarchy capacity policy");
 
-    let rejected = run_br(
+    let rejected = run_obr(
         &workspace,
         ["update", &fresh_id, "--status", "in_progress", "--json"],
         "capacity_leaf_reject",
@@ -2872,7 +2896,7 @@ workflow:
     assert_eq!(error["context"]["aggregate_parents_excluded"], 2);
 
     // The rejected transition left no trace.
-    let show_fresh = run_br(
+    let show_fresh = run_obr(
         &workspace,
         ["show", &fresh_id, "--json"],
         "capacity_leaf_show_fresh",
@@ -2882,7 +2906,7 @@ workflow:
     assert_eq!(fresh[0]["status"], "open");
 
     // The parent keeps its own status and gains a derived rollup.
-    let show_parent = run_br(
+    let show_parent = run_obr(
         &workspace,
         ["show", &parent_id, "--json"],
         "capacity_leaf_show_parent",
@@ -2894,7 +2918,7 @@ workflow:
     assert_eq!(parent[0]["rollup"]["descendants"]["in_progress"], 1);
 
     // A childless leaf has no rollup key at all.
-    let show_child = run_br(
+    let show_child = run_obr(
         &workspace,
         ["show", &child_id, "--json"],
         "capacity_leaf_show_child",
@@ -2907,12 +2931,12 @@ workflow:
 #[test]
 fn e2e_structured_error_issue_not_found() {
     let _log = common::test_log("e2e_structured_error_issue_not_found");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["show", "bd-nonexistent", "--json"],
         "show_missing_json",
@@ -2927,31 +2951,31 @@ fn e2e_structured_error_issue_not_found() {
     assert_eq!(error["code"], "ISSUE_NOT_FOUND");
     assert!(!error["retryable"].as_bool().unwrap());
     assert!(error["context"]["searched_id"].is_string());
-    assert!(error["hint"].as_str().unwrap().contains("br list"));
+    assert!(error["hint"].as_str().unwrap().contains("obr list"));
 }
 
 #[test]
 fn e2e_structured_error_cycle_detected() {
     let _log = common::test_log("e2e_structured_error_cycle_detected");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let create_a = run_br(&workspace, ["create", "Issue A"], "create_a");
+    let create_a = run_obr(&workspace, ["create", "Issue A"], "create_a");
     assert!(create_a.status.success());
     let id_a = parse_created_id(&create_a.stdout);
 
-    let create_b = run_br(&workspace, ["create", "Issue B"], "create_b");
+    let create_b = run_obr(&workspace, ["create", "Issue B"], "create_b");
     assert!(create_b.status.success());
     let id_b = parse_created_id(&create_b.stdout);
 
     // A depends on B
-    let dep_add = run_br(&workspace, ["dep", "add", &id_a, &id_b], "dep_add");
+    let dep_add = run_obr(&workspace, ["dep", "add", &id_a, &id_b], "dep_add");
     assert!(dep_add.status.success());
 
     // B depends on A - would create cycle
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["dep", "add", &id_b, &id_a, "--json"],
         "dep_cycle_json",
@@ -2971,16 +2995,16 @@ fn e2e_structured_error_cycle_detected() {
 #[test]
 fn e2e_structured_error_self_dependency() {
     let _log = common::test_log("e2e_structured_error_self_dependency");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let create = run_br(&workspace, ["create", "Self dep issue"], "create");
+    let create = run_obr(&workspace, ["create", "Self dep issue"], "create");
     assert!(create.status.success());
     let id = parse_created_id(&create.stdout);
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["dep", "add", &id, &id, "--json"],
         "dep_self_json",
@@ -2999,9 +3023,9 @@ fn e2e_structured_error_self_dependency() {
 #[test]
 fn e2e_structured_error_ambiguous_id() {
     let _log = common::test_log("e2e_structured_error_ambiguous_id");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
     let mut ids: Vec<String> = Vec::new();
@@ -3011,7 +3035,7 @@ fn e2e_structured_error_ambiguous_id() {
     // Create issues until we have ambiguous IDs
     while ambiguous_prefix.is_none() && attempt < 30 {
         let title = format!("Structured test {attempt}");
-        let create = run_br(&workspace, ["create", &title], &format!("create_{attempt}"));
+        let create = run_obr(&workspace, ["create", &title], &format!("create_{attempt}"));
         assert!(create.status.success());
         let id = parse_created_id(&create.stdout);
         ids.push(id);
@@ -3039,7 +3063,7 @@ fn e2e_structured_error_ambiguous_id() {
 
     let prefix = ambiguous_prefix.expect("failed to create ambiguous IDs");
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["show", &prefix, "--json"],
         "show_ambiguous_json",
@@ -3059,17 +3083,19 @@ fn e2e_structured_error_ambiguous_id() {
 #[test]
 fn e2e_structured_error_jsonl_parse() {
     let _log = common::test_log("e2e_structured_error_jsonl_parse");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
     // Create malformed JSONL
-    let beads_dir = workspace.root.join(".beads");
-    let issues_path = beads_dir.join("issues.jsonl");
+    let obr_dir = workspace.root.join(".obr");
+    // JSONL parse errors are a JSONL-format concern.
+    pin_jsonl(&obr_dir);
+    let issues_path = obr_dir.join("issues.jsonl");
     fs::write(&issues_path, "{ not valid json\n").expect("write bad jsonl");
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["sync", "--import-only", "--json"],
         "import_bad_json",
@@ -3093,21 +3119,23 @@ fn e2e_structured_error_jsonl_parse() {
 #[test]
 fn e2e_structured_error_conflict_markers() {
     let _log = common::test_log("e2e_structured_error_conflict_markers");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
     // Create JSONL with conflict markers
-    let beads_dir = workspace.root.join(".beads");
-    let issues_path = beads_dir.join("issues.jsonl");
+    let obr_dir = workspace.root.join(".obr");
+    // Conflict-marker semantics inside a JSONL artifact.
+    pin_jsonl(&obr_dir);
+    let issues_path = obr_dir.join("issues.jsonl");
     fs::write(
         &issues_path,
         "<<<<<<< HEAD\n{\"id\":\"bd-abc\"}\n=======\n{\"id\":\"bd-def\"}\n>>>>>>> branch\n",
     )
     .expect("write conflict jsonl");
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["sync", "--import-only", "--json"],
         "import_conflict_json",
@@ -3124,12 +3152,14 @@ fn e2e_structured_error_conflict_markers() {
 #[test]
 fn e2e_sync_flush_refuses_to_overwrite_conflict_markers() {
     let _log = common::test_log("e2e_sync_flush_refuses_to_overwrite_conflict_markers");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    // Conflict-marker semantics inside a JSONL artifact.
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Flush conflict seed", "--no-auto-flush"],
         "create_seed",
@@ -3137,21 +3167,21 @@ fn e2e_sync_flush_refuses_to_overwrite_conflict_markers() {
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let id = parse_created_id(&create.stdout);
 
-    let first_flush = run_br(&workspace, ["sync", "--flush-only"], "first_flush");
+    let first_flush = run_obr(&workspace, ["sync", "--flush-only"], "first_flush");
     assert!(
         first_flush.status.success(),
         "initial flush failed: {}",
         first_flush.stderr
     );
 
-    let issues_path = workspace.root.join(".beads").join("issues.jsonl");
+    let issues_path = workspace.root.join(".obr").join("issues.jsonl");
     let original_jsonl = fs::read_to_string(&issues_path).expect("read initial jsonl");
     assert!(
         original_jsonl.contains("Flush conflict seed"),
         "initial flush should export the seed issue"
     );
 
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         [
             "update",
@@ -3170,7 +3200,7 @@ fn e2e_sync_flush_refuses_to_overwrite_conflict_markers() {
     );
     fs::write(&issues_path, &conflicted_jsonl).expect("write conflicted jsonl");
 
-    let refused_flush = run_br(
+    let refused_flush = run_obr(
         &workspace,
         ["sync", "--flush-only", "--json"],
         "refused_flush",
@@ -3204,13 +3234,13 @@ fn e2e_sync_flush_refuses_to_overwrite_conflict_markers() {
 #[test]
 fn e2e_custom_type_accepted() {
     let _log = common::test_log("e2e_custom_type_accepted");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
     // Custom types are accepted (not rejected as invalid)
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["create", "Test issue", "--type", "custom_type", "--json"],
         "create_custom_type_json",
@@ -3233,13 +3263,13 @@ fn e2e_custom_type_accepted() {
 #[test]
 fn e2e_structured_error_invalid_priority() {
     let _log = common::test_log("e2e_structured_error_invalid_priority");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
     // Test invalid priority (out of 0-4 range)
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["create", "Test issue", "--priority", "10", "--json"],
         "create_invalid_priority_json",
@@ -3265,10 +3295,10 @@ fn e2e_structured_error_invalid_priority() {
 #[test]
 fn e2e_error_text_mode_no_color() {
     let _log = common::test_log("e2e_error_text_mode_no_color");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Test NOT_INITIALIZED error in no-color mode
-    let result = run_br(&workspace, ["list", "--no-color"], "list_not_init_no_color");
+    let result = run_obr(&workspace, ["list", "--no-color"], "list_not_init_no_color");
     assert!(!result.status.success());
 
     // Output should not contain ANSI escape codes
@@ -3285,13 +3315,13 @@ fn e2e_error_text_mode_no_color() {
 #[test]
 fn e2e_error_text_vs_json_parity() {
     let _log = common::test_log("e2e_error_text_vs_json_parity");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
     // Same error in text mode
-    let text_result = run_br(
+    let text_result = run_obr(
         &workspace,
         ["show", "bd-nonexistent", "--no-color"],
         "show_missing_text",
@@ -3299,7 +3329,7 @@ fn e2e_error_text_vs_json_parity() {
     assert!(!text_result.status.success());
 
     // Same error in JSON mode
-    let json_result = run_br(
+    let json_result = run_obr(
         &workspace,
         ["show", "bd-nonexistent", "--json"],
         "show_missing_json",
@@ -3330,18 +3360,18 @@ fn e2e_error_text_vs_json_parity() {
 #[test]
 fn e2e_error_multiple_errors_same_exit_code() {
     let _log = common::test_log("e2e_error_multiple_errors_same_exit_code");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    let create = run_obr(&workspace, ["create", "Test issue"], "create");
     assert!(create.status.success());
     let _id = parse_created_id(&create.stdout);
 
     // Validation errors should return exit code 4
     // Note: invalid type is NOT tested here because custom types are allowed
-    let invalid_priority = run_br(
+    let invalid_priority = run_obr(
         &workspace,
         ["create", "Test", "--priority", "99", "--json"],
         "invalid_priority",
@@ -3357,21 +3387,21 @@ fn e2e_error_multiple_errors_same_exit_code() {
 #[test]
 fn e2e_error_exit_code_categories() {
     let _log = common::test_log("e2e_error_exit_code_categories");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Exit code 2: Database/initialization errors
-    let not_init = run_br(&workspace, ["list", "--json"], "not_init");
+    let not_init = run_obr(&workspace, ["list", "--json"], "not_init");
     assert_eq!(
         not_init.status.code(),
         Some(2),
         "NOT_INITIALIZED should be exit 2"
     );
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
     // Exit code 3: Issue errors
-    let not_found = run_br(&workspace, ["show", "bd-missing", "--json"], "not_found");
+    let not_found = run_obr(&workspace, ["show", "bd-missing", "--json"], "not_found");
     assert_eq!(
         not_found.status.code(),
         Some(3),
@@ -3381,11 +3411,11 @@ fn e2e_error_exit_code_categories() {
     // Exit code 4: Validation errors (already tested above)
 
     // Exit code 5: Dependency errors
-    let create = run_br(&workspace, ["create", "Self dep"], "create_self");
+    let create = run_obr(&workspace, ["create", "Self dep"], "create_self");
     assert!(create.status.success());
     let id = parse_created_id(&create.stdout);
 
-    let self_dep = run_br(&workspace, ["dep", "add", &id, &id, "--json"], "self_dep");
+    let self_dep = run_obr(&workspace, ["dep", "add", &id, &id, "--json"], "self_dep");
     assert_eq!(
         self_dep.status.code(),
         Some(5),
@@ -3398,17 +3428,17 @@ fn e2e_error_exit_code_categories() {
 #[test]
 fn e2e_structured_error_label_validation() {
     let _log = common::test_log("e2e_structured_error_label_validation");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    let create = run_obr(&workspace, ["create", "Test issue"], "create");
     assert!(create.status.success());
     let id = parse_created_id(&create.stdout);
 
     // Test label with invalid characters (spaces not allowed)
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["update", &id, "--add-label", "bad label", "--json"],
         "update_bad_label_json",
@@ -3432,18 +3462,18 @@ fn e2e_structured_error_label_validation() {
 #[test]
 fn e2e_structured_error_label_too_long() {
     let _log = common::test_log("e2e_structured_error_label_too_long");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    let create = run_obr(&workspace, ["create", "Test issue"], "create");
     assert!(create.status.success());
     let id = parse_created_id(&create.stdout);
 
     // Create a label that exceeds 50 characters
     let long_label = "a".repeat(60);
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["update", &id, "--add-label", &long_label, "--json"],
         "update_long_label_json",
@@ -3461,18 +3491,18 @@ fn e2e_structured_error_label_too_long() {
 #[test]
 fn e2e_structured_error_dependency_target_not_found() {
     let _log = common::test_log("e2e_structured_error_dependency_target_not_found");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    let create = run_obr(&workspace, ["create", "Test issue"], "create");
     assert!(create.status.success());
     let id = parse_created_id(&create.stdout);
 
     // Try to add dependency on non-existent issue
     // The implementation returns ISSUE_NOT_FOUND for missing dependency targets
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["dep", "add", &id, "bd-nonexistent", "--json"],
         "dep_missing_target_json",
@@ -3502,25 +3532,25 @@ fn e2e_structured_error_dependency_target_not_found() {
 #[test]
 fn e2e_dependency_idempotent_duplicate() {
     let _log = common::test_log("e2e_dependency_idempotent_duplicate");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let create_a = run_br(&workspace, ["create", "Issue A"], "create_a");
+    let create_a = run_obr(&workspace, ["create", "Issue A"], "create_a");
     assert!(create_a.status.success());
     let id_a = parse_created_id(&create_a.stdout);
 
-    let create_b = run_br(&workspace, ["create", "Issue B"], "create_b");
+    let create_b = run_obr(&workspace, ["create", "Issue B"], "create_b");
     assert!(create_b.status.success());
     let id_b = parse_created_id(&create_b.stdout);
 
     // Add dependency first time - should succeed
-    let dep_add = run_br(&workspace, ["dep", "add", &id_a, &id_b], "dep_add_first");
+    let dep_add = run_obr(&workspace, ["dep", "add", &id_a, &id_b], "dep_add_first");
     assert!(dep_add.status.success());
 
     // Add same dependency again - should succeed (idempotent) with status "exists"
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["dep", "add", &id_a, &id_b, "--json"],
         "dep_add_duplicate_json",
@@ -3547,20 +3577,22 @@ fn e2e_dependency_idempotent_duplicate() {
 #[test]
 fn e2e_dependency_metadata_flag_persists_to_jsonl() {
     let _log = common::test_log("e2e_dependency_metadata_flag_persists_to_jsonl");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
+    // Asserts on the JSONL export record shape for dependency metadata.
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create_a = run_br(&workspace, ["create", "Issue A"], "create_a");
+    let create_a = run_obr(&workspace, ["create", "Issue A"], "create_a");
     assert!(create_a.status.success());
     let id_a = parse_created_id(&create_a.stdout);
 
-    let create_b = run_br(&workspace, ["create", "Issue B"], "create_b");
+    let create_b = run_obr(&workspace, ["create", "Issue B"], "create_b");
     assert!(create_b.status.success());
     let id_b = parse_created_id(&create_b.stdout);
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &workspace,
         [
             "dep",
@@ -3578,10 +3610,10 @@ fn e2e_dependency_metadata_flag_persists_to_jsonl() {
         dep_add.stderr
     );
 
-    let sync = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    let sync = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(sync.status.success(), "sync failed: {}", sync.stderr);
 
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     let contents = fs::read_to_string(&jsonl_path).expect("read issues jsonl");
     let issue = contents
         .lines()
@@ -3601,20 +3633,20 @@ fn e2e_dependency_metadata_flag_persists_to_jsonl() {
 #[test]
 fn e2e_dependency_remove_json_reports_removed_type() {
     let _log = common::test_log("e2e_dependency_remove_json_reports_removed_type");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let create_a = run_br(&workspace, ["create", "Issue A"], "create_a");
+    let create_a = run_obr(&workspace, ["create", "Issue A"], "create_a");
     assert!(create_a.status.success());
     let id_a = parse_created_id(&create_a.stdout);
 
-    let create_b = run_br(&workspace, ["create", "Issue B"], "create_b");
+    let create_b = run_obr(&workspace, ["create", "Issue B"], "create_b");
     assert!(create_b.status.success());
     let id_b = parse_created_id(&create_b.stdout);
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &workspace,
         ["dep", "add", &id_a, &id_b, "--type", "waits-for"],
         "dep_add_waits_for",
@@ -3625,7 +3657,7 @@ fn e2e_dependency_remove_json_reports_removed_type() {
         dep_add.stderr
     );
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["dep", "remove", &id_a, &id_b, "--json"],
         "dep_remove_json",
@@ -3645,26 +3677,26 @@ fn e2e_dependency_remove_json_reports_removed_type() {
 #[test]
 fn e2e_delete_with_dependents_preview() {
     let _log = common::test_log("e2e_delete_with_dependents_preview");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let create_a = run_br(&workspace, ["create", "Issue A"], "create_a");
+    let create_a = run_obr(&workspace, ["create", "Issue A"], "create_a");
     assert!(create_a.status.success());
     let id_a = parse_created_id(&create_a.stdout);
 
-    let create_b = run_br(&workspace, ["create", "Issue B"], "create_b");
+    let create_b = run_obr(&workspace, ["create", "Issue B"], "create_b");
     assert!(create_b.status.success());
     let id_b = parse_created_id(&create_b.stdout);
 
     // B depends on A
-    let dep_add = run_br(&workspace, ["dep", "add", &id_b, &id_a], "dep_add");
+    let dep_add = run_obr(&workspace, ["dep", "add", &id_b, &id_a], "dep_add");
     assert!(dep_add.status.success());
 
     // Delete A (which has B as dependent) - shows preview mode warning
     // The command exits 0 (preview mode) but warns about dependents
-    let result = run_br(&workspace, ["delete", &id_a], "delete_with_deps");
+    let result = run_obr(&workspace, ["delete", &id_a], "delete_with_deps");
     assert!(
         result.status.success(),
         "delete with dependents should show preview"
@@ -3679,7 +3711,7 @@ fn e2e_delete_with_dependents_preview() {
     );
 
     // Issue should still exist after preview
-    let show = run_br(&workspace, ["show", &id_a], "show_after_preview");
+    let show = run_obr(&workspace, ["show", &id_a], "show_after_preview");
     assert!(
         show.status.success(),
         "issue should still exist after preview"
@@ -3689,20 +3721,20 @@ fn e2e_delete_with_dependents_preview() {
 #[test]
 fn e2e_delete_json_sorts_deleted_ids() {
     let _log = common::test_log("e2e_delete_json_sorts_deleted_ids");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let create_a = run_br(&workspace, ["create", "Delete A"], "create_delete_a");
+    let create_a = run_obr(&workspace, ["create", "Delete A"], "create_delete_a");
     assert!(create_a.status.success());
     let id_a = parse_created_id(&create_a.stdout);
 
-    let create_b = run_br(&workspace, ["create", "Delete B"], "create_delete_b");
+    let create_b = run_obr(&workspace, ["create", "Delete B"], "create_delete_b");
     assert!(create_b.status.success());
     let id_b = parse_created_id(&create_b.stdout);
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["delete", &id_b, &id_a, "--json"],
         "delete_json_sorted_ids",
@@ -3729,20 +3761,20 @@ fn e2e_delete_json_sorts_deleted_ids() {
 #[test]
 fn e2e_delete_dry_run_sorts_requested_ids() {
     let _log = common::test_log("e2e_delete_dry_run_sorts_requested_ids");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let create_a = run_br(&workspace, ["create", "Dry Run A"], "create_dry_run_a");
+    let create_a = run_obr(&workspace, ["create", "Dry Run A"], "create_dry_run_a");
     assert!(create_a.status.success());
     let id_a = parse_created_id(&create_a.stdout);
 
-    let create_b = run_br(&workspace, ["create", "Dry Run B"], "create_dry_run_b");
+    let create_b = run_obr(&workspace, ["create", "Dry Run B"], "create_dry_run_b");
     assert!(create_b.status.success());
     let id_b = parse_created_id(&create_b.stdout);
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["delete", &id_b, &id_a, "--dry-run"],
         "delete_dry_run_sorted_ids",
@@ -3769,12 +3801,12 @@ fn e2e_delete_dry_run_sorts_requested_ids() {
 #[test]
 fn e2e_delete_dry_run_json_returns_structured_preview() {
     let _log = common::test_log("e2e_delete_dry_run_json_returns_structured_preview");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let create_a = run_br(
+    let create_a = run_obr(
         &workspace,
         ["create", "Dry Run JSON A"],
         "create_dry_run_json_a",
@@ -3782,7 +3814,7 @@ fn e2e_delete_dry_run_json_returns_structured_preview() {
     assert!(create_a.status.success());
     let id_a = parse_created_id(&create_a.stdout);
 
-    let create_b = run_br(
+    let create_b = run_obr(
         &workspace,
         ["create", "Dry Run JSON B"],
         "create_dry_run_json_b",
@@ -3790,7 +3822,7 @@ fn e2e_delete_dry_run_json_returns_structured_preview() {
     assert!(create_b.status.success());
     let id_b = parse_created_id(&create_b.stdout);
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["delete", &id_b, &id_a, "--dry-run", "--json"],
         "delete_dry_run_json",
@@ -3817,27 +3849,27 @@ fn e2e_delete_dry_run_json_returns_structured_preview() {
 #[test]
 fn e2e_delete_with_dependents_json_returns_structured_preview() {
     let _log = common::test_log("e2e_delete_with_dependents_json_returns_structured_preview");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let create_a = run_br(&workspace, ["create", "Issue A"], "create_a_json_preview");
+    let create_a = run_obr(&workspace, ["create", "Issue A"], "create_a_json_preview");
     assert!(create_a.status.success());
     let id_a = parse_created_id(&create_a.stdout);
 
-    let create_b = run_br(&workspace, ["create", "Issue B"], "create_b_json_preview");
+    let create_b = run_obr(&workspace, ["create", "Issue B"], "create_b_json_preview");
     assert!(create_b.status.success());
     let id_b = parse_created_id(&create_b.stdout);
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &workspace,
         ["dep", "add", &id_b, &id_a],
         "dep_add_json_preview",
     );
     assert!(dep_add.status.success());
 
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["delete", &id_a, "--json"],
         "delete_with_dependents_json_preview",
@@ -3862,20 +3894,20 @@ fn e2e_delete_with_dependents_json_returns_structured_preview() {
 #[test]
 fn e2e_delete_ignores_non_blocking_related_dependencies() {
     let _log = common::test_log("e2e_delete_ignores_non_blocking_related_dependencies");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let create_anchor = run_br(&workspace, ["create", "Anchor"], "create_anchor");
+    let create_anchor = run_obr(&workspace, ["create", "Anchor"], "create_anchor");
     assert!(create_anchor.status.success());
     let anchor_id = parse_created_id(&create_anchor.stdout);
 
-    let create_related = run_br(&workspace, ["create", "Related"], "create_related");
+    let create_related = run_obr(&workspace, ["create", "Related"], "create_related");
     assert!(create_related.status.success());
     let related_id = parse_created_id(&create_related.stdout);
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &workspace,
         ["dep", "add", &related_id, &anchor_id, "--type", "related"],
         "dep_add_related",
@@ -3886,7 +3918,7 @@ fn e2e_delete_ignores_non_blocking_related_dependencies() {
         dep_add.stderr
     );
 
-    let delete = run_br(
+    let delete = run_obr(
         &workspace,
         ["delete", &anchor_id, "--json"],
         "delete_related_edge_json",
@@ -3906,20 +3938,20 @@ fn e2e_delete_ignores_non_blocking_related_dependencies() {
 #[test]
 fn e2e_delete_child_with_parent_child_dependency_previews_parent() {
     let _log = common::test_log("e2e_delete_child_with_parent_child_dependency_previews_parent");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let create_parent = run_br(&workspace, ["create", "Parent"], "create_parent");
+    let create_parent = run_obr(&workspace, ["create", "Parent"], "create_parent");
     assert!(create_parent.status.success());
     let parent_id = parse_created_id(&create_parent.stdout);
 
-    let create_child = run_br(&workspace, ["create", "Child"], "create_child");
+    let create_child = run_obr(&workspace, ["create", "Child"], "create_child");
     assert!(create_child.status.success());
     let child_id = parse_created_id(&create_child.stdout);
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &workspace,
         [
             "dep",
@@ -3937,7 +3969,7 @@ fn e2e_delete_child_with_parent_child_dependency_previews_parent() {
         dep_add.stderr
     );
 
-    let delete = run_br(
+    let delete = run_obr(
         &workspace,
         ["delete", &child_id, "--json"],
         "delete_child_parent_child_json",
@@ -3962,12 +3994,12 @@ fn e2e_delete_child_with_parent_child_dependency_previews_parent() {
 #[test]
 fn e2e_delete_hard_json_reports_removed_labels_and_events() {
     let _log = common::test_log("e2e_delete_hard_json_reports_removed_labels_and_events");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Delete counters issue"],
         "create_delete_counters",
@@ -3975,7 +4007,7 @@ fn e2e_delete_hard_json_reports_removed_labels_and_events() {
     assert!(create.status.success());
     let issue_id = parse_created_id(&create.stdout);
 
-    let label_add = run_br(
+    let label_add = run_obr(
         &workspace,
         ["label", "add", &issue_id, "triage"],
         "label_add_delete_counters",
@@ -3986,7 +4018,7 @@ fn e2e_delete_hard_json_reports_removed_labels_and_events() {
         label_add.stderr
     );
 
-    let delete = run_br(
+    let delete = run_obr(
         &workspace,
         ["delete", &issue_id, "--hard", "--json"],
         "delete_hard_counters_json",
@@ -4005,17 +4037,17 @@ fn e2e_delete_hard_json_reports_removed_labels_and_events() {
 #[test]
 fn e2e_validation_error_empty_label() {
     let _log = common::test_log("e2e_validation_error_empty_label");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    let create = run_obr(&workspace, ["create", "Test issue"], "create");
     assert!(create.status.success());
     let id = parse_created_id(&create.stdout);
 
     // Empty label should fail validation
-    let result = run_br(
+    let result = run_obr(
         &workspace,
         ["update", &id, "--add-label", "", "--json"],
         "update_empty_label_json",
@@ -4027,19 +4059,19 @@ fn e2e_validation_error_empty_label() {
 #[test]
 fn e2e_validation_special_characters_in_label() {
     let _log = common::test_log("e2e_validation_special_characters_in_label");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    let create = run_obr(&workspace, ["create", "Test issue"], "create");
     assert!(create.status.success());
     let id = parse_created_id(&create.stdout);
 
     // Valid labels (alphanumeric, hyphen, underscore, colon)
     let valid_labels = ["bug", "feat-1", "scope:subsystem", "test_case"];
     for label in valid_labels {
-        let result = run_br(
+        let result = run_obr(
             &workspace,
             ["update", &id, "--add-label", label],
             &format!("add_label_{}", label.replace(':', "_")),
@@ -4053,14 +4085,14 @@ fn e2e_validation_special_characters_in_label() {
     }
 
     // Create a new issue for testing invalid labels (to avoid label conflict)
-    let create2 = run_br(&workspace, ["create", "Test issue 2"], "create2");
+    let create2 = run_obr(&workspace, ["create", "Test issue 2"], "create2");
     assert!(create2.status.success());
     let id2 = parse_created_id(&create2.stdout);
 
     // Invalid labels (special characters not allowed)
     let invalid_labels = ["@mention", "has/slash", "with.dot", "emoji🎉"];
     for label in invalid_labels {
-        let result = run_br(
+        let result = run_obr(
             &workspace,
             ["update", &id2, "--add-label", label, "--json"],
             &format!("add_invalid_label_{}", label.len()),
@@ -4076,17 +4108,17 @@ fn e2e_validation_special_characters_in_label() {
 #[test]
 fn e2e_error_text_json_parity_validation() {
     let _log = common::test_log("e2e_error_text_json_parity_validation");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let create = run_br(&workspace, ["create", "Test issue"], "create");
+    let create = run_obr(&workspace, ["create", "Test issue"], "create");
     assert!(create.status.success());
     let id = parse_created_id(&create.stdout);
 
     // Same validation error in text mode
-    let text_result = run_br(
+    let text_result = run_obr(
         &workspace,
         ["update", &id, "--add-label", "bad label", "--no-color"],
         "label_error_text",
@@ -4094,7 +4126,7 @@ fn e2e_error_text_json_parity_validation() {
     assert!(!text_result.status.success());
 
     // Same validation error in JSON mode
-    let json_result = run_br(
+    let json_result = run_obr(
         &workspace,
         ["update", &id, "--add-label", "bad label", "--json"],
         "label_error_json",
@@ -4118,7 +4150,7 @@ fn e2e_error_text_json_parity_validation() {
 
 #[test]
 fn e2e_sync_merge_detects_conflict_markers_in_base_snapshot() {
-    // Regression: `execute_merge` loads `beads.base.jsonl` via
+    // Regression: `execute_merge` loads `merge.base.jsonl` via
     // `load_base_snapshot` *before* scanning the main JSONL for conflict
     // markers. If the base snapshot itself contained unresolved
     // `<<<<<<<` / `=======` / `>>>>>>>` regions (a rare but possible state
@@ -4128,30 +4160,32 @@ fn e2e_sync_merge_detects_conflict_markers_in_base_snapshot() {
     // helpful "merge conflict markers detected" diagnostic. The fix
     // scans the base snapshot for markers before attempting to parse.
     let _log = common::test_log("e2e_sync_merge_detects_conflict_markers_in_base_snapshot");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    // `merge.base.jsonl` is a JSONL artifact; the main export must match it.
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(&workspace, ["create", "Seed"], "create");
+    let create = run_obr(&workspace, ["create", "Seed"], "create");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // First flush so the JSONL is valid and the main sync path won't
     // short-circuit before the merge code runs.
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(flush.status.success(), "flush failed: {}", flush.stderr);
 
     // Build a base snapshot that contains merge-conflict markers as if a
-    // user committed `beads.base.jsonl` and then hit a botched `git merge`.
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    // user committed `merge.base.jsonl` and then hit a botched `git merge`.
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     let clean = fs::read_to_string(&jsonl_path).expect("read jsonl");
-    let base_path = workspace.root.join(".beads").join("beads.base.jsonl");
+    let base_path = workspace.root.join(".obr").join("merge.base.jsonl");
     let conflicted = format!("<<<<<<< HEAD\n{clean}=======\n{clean}>>>>>>> branch\n");
     fs::write(&base_path, &conflicted).expect("write conflicted base snapshot");
 
     // Merge must refuse with a conflict-markers diagnostic instead of a
     // generic "Invalid JSON in base snapshot" parse error.
-    let merge = run_br(&workspace, ["sync", "--merge"], "sync_merge");
+    let merge = run_obr(&workspace, ["sync", "--merge"], "sync_merge");
     assert!(
         !merge.status.success(),
         "merge should fail when base snapshot contains conflict markers: stdout={} stderr={}",
@@ -4178,13 +4212,13 @@ fn e2e_sync_merge_detects_conflict_markers_in_base_snapshot() {
 #[test]
 fn e2e_json_failure_emits_parseable_json_on_stdout() {
     let _log = common::test_log("e2e_json_failure_emits_parseable_json_on_stdout");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // A failing command in --json mode: showing a non-existent issue.
-    let show = run_br(
+    let show = run_obr(
         &workspace,
         ["show", "bd-doesnotexist", "--json"],
         "show_missing_json",
@@ -4218,7 +4252,7 @@ fn e2e_json_failure_emits_parseable_json_on_stdout() {
     );
 
     // The HUMAN-mode counterpart keeps the error on stderr (stdout stays clean).
-    let human = run_br(
+    let human = run_obr(
         &workspace,
         ["show", "bd-doesnotexist"],
         "show_missing_human",
@@ -4240,18 +4274,18 @@ fn e2e_sync_rebuild_accepts_legacy_prefixed_ids_without_renaming() {
     // Regression for GitHub #440: on a migrated workspace whose issues.jsonl
     // mixes legacy `<project>-<n>` ids with `bd-*` ids, ANY path that
     // re-ingests the workspace's own sidecar (automatic post-write recovery,
-    // `br sync --import-only --rebuild`) used to fail with
+    // `obr sync --import-only --rebuild`) used to fail with
     // "Prefix mismatch at line N: expected 'bd', found issue '<legacy id>'",
     // blocking every CLI write path. The configured prefix is the default for
     // NEW ids, not a project-wide invariant: recovery must round-trip mixed
     // prefixes untouched, exactly like auto-import and reconcile already do.
     let _log = common::test_log("e2e_sync_rebuild_accepts_legacy_prefixed_ids_without_renaming");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let legacy_seed = run_br(&workspace, ["create", "Legacy seed"], "create_legacy");
+    let legacy_seed = run_obr(&workspace, ["create", "Legacy seed"], "create_legacy");
     assert!(
         legacy_seed.status.success(),
         "create failed: {}",
@@ -4259,11 +4293,11 @@ fn e2e_sync_rebuild_accepts_legacy_prefixed_ids_without_renaming() {
     );
     let original_id = parse_created_id(&legacy_seed.stdout);
 
-    let native = run_br(&workspace, ["create", "Native seed"], "create_native");
+    let native = run_obr(&workspace, ["create", "Native seed"], "create_native");
     assert!(native.status.success(), "create failed: {}", native.stderr);
     let native_id = parse_created_id(&native.stdout);
 
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "sync_flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(
         flush.status.success(),
         "sync flush failed: {}",
@@ -4274,7 +4308,7 @@ fn e2e_sync_rebuild_accepts_legacy_prefixed_ids_without_renaming() {
     // to a legacy project-scoped prefix that does not match the configured
     // `bd` prefix.
     let legacy_id = "midas_edge-0077";
-    let issues_path = workspace.root.join(".beads").join("issues.jsonl");
+    let issues_path = workspace.root.join(".obr").join("issues.jsonl");
     let jsonl = fs::read_to_string(&issues_path).expect("read issues jsonl");
     assert!(
         jsonl.contains(&original_id),
@@ -4284,7 +4318,7 @@ fn e2e_sync_rebuild_accepts_legacy_prefixed_ids_without_renaming() {
 
     // Delegated rebuild runs the exact same repair path automatic post-write
     // recovery uses (`recover_database_from_jsonl`).
-    let rebuild = run_br(
+    let rebuild = run_obr(
         &workspace,
         [
             "sync",
@@ -4304,7 +4338,7 @@ fn e2e_sync_rebuild_accepts_legacy_prefixed_ids_without_renaming() {
     );
 
     // The legacy id must survive verbatim (no rename), alongside the native id.
-    let show_legacy = run_br(&workspace, ["show", legacy_id, "--json"], "show_legacy");
+    let show_legacy = run_obr(&workspace, ["show", legacy_id, "--json"], "show_legacy");
     assert!(
         show_legacy.status.success(),
         "legacy-prefixed issue must be queryable after rebuild: {}",
@@ -4327,7 +4361,7 @@ fn e2e_sync_rebuild_accepts_legacy_prefixed_ids_without_renaming() {
         "legacy id must round-trip unchanged through recovery"
     );
 
-    let show_native = run_br(&workspace, ["show", &native_id, "--json"], "show_native");
+    let show_native = run_obr(&workspace, ["show", &native_id, "--json"], "show_native");
     assert!(
         show_native.status.success(),
         "native-prefixed issue must survive the rebuild: {}",
@@ -4335,7 +4369,7 @@ fn e2e_sync_rebuild_accepts_legacy_prefixed_ids_without_renaming() {
     );
 
     // And a subsequent write on the mixed-prefix workspace must work.
-    let comment = run_br(
+    let comment = run_obr(
         &workspace,
         ["comments", "add", legacy_id, "still writable"],
         "comment_after_rebuild",

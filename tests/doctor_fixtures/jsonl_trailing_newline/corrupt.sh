@@ -22,13 +22,13 @@ cd "$target_dir"
 "$tool_bin" sync --flush-only >/dev/null 2>&1
 
 # Capture the trailing-newline baseline — post_repair must match this.
-sha256sum .beads/issues.jsonl | awk '{print $1}' > .fixture_jsonl_post_repair_sha256
+sha256sum .obr/issues.jsonl | awk '{print $1}' > .fixture_jsonl_post_repair_sha256
 
 # Strip the trailing newline if present. Python is used because POSIX
 # `truncate -s -1` is GNU-specific and not guaranteed in CI.
 python3 - <<'PY'
 import os
-path = ".beads/issues.jsonl"
+path = ".obr/issues.jsonl"
 with open(path, "rb") as f:
     data = f.read()
 if data.endswith(b"\n"):
@@ -37,10 +37,10 @@ if data.endswith(b"\n"):
 PY
 
 # Snapshot the corrupted bytes — post_undo must match this.
-sha256sum .beads/issues.jsonl | awk '{print $1}' > .fixture_jsonl_pre_sha256
+sha256sum .obr/issues.jsonl | awk '{print $1}' > .fixture_jsonl_pre_sha256
 
 # Sanity check: last byte must NOT be \n right now.
-last_byte=$(tail -c 1 .beads/issues.jsonl | xxd -p)
+last_byte=$(tail -c 1 .obr/issues.jsonl | xxd -p)
 if [ "$last_byte" = "0a" ]; then
   echo "corrupt: failed to strip trailing newline (last byte still 0x0a)" >&2
   exit 1

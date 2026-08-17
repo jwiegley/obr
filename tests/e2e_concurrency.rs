@@ -10,9 +10,9 @@
 mod common;
 
 use assert_cmd::Command;
-use beads_rust::franken_sync::Connection;
 use common::dataset_registry::{DatasetRegistry, IsolatedDataset, KnownDataset};
 use fsqlite_types::SqliteValue;
+use obr::franken_sync::Connection;
 use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
@@ -30,9 +30,9 @@ const WRITE_LOCK_WAIT_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(5);
 const WRITE_LOCK_WAIT_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const CONTENTION_SUCCESS_LOCK_TIMEOUT_MS: &str = "1000";
 
-/// Result of running a br command.
+/// Result of running a obr command.
 #[derive(Debug)]
-struct BrResult {
+struct ObrResult {
     stdout: String,
     stderr: String,
     success: bool,
@@ -40,27 +40,27 @@ struct BrResult {
     _duration: Duration,
 }
 
-fn should_clear_inherited_br_env(key: &OsStr) -> bool {
+fn should_clear_inherited_obr_env(key: &OsStr) -> bool {
     let key = key.to_string_lossy();
     key.starts_with("BD_")
         || key.starts_with("BEADS_")
         || matches!(
             key.as_ref(),
-            "BR_OUTPUT_FORMAT" | "TOON_DEFAULT_FORMAT" | "TOON_STATS"
+            "OBR_OUTPUT_FORMAT" | "TOON_DEFAULT_FORMAT" | "TOON_STATS"
         )
 }
 
-fn clear_inherited_br_env(cmd: &mut Command) {
+fn clear_inherited_obr_env(cmd: &mut Command) {
     for (key, _) in std::env::vars_os() {
-        if should_clear_inherited_br_env(&key) {
+        if should_clear_inherited_obr_env(&key) {
             cmd.env_remove(&key);
         }
     }
 }
 
-fn clear_inherited_br_env_std(cmd: &mut StdCommand) {
+fn clear_inherited_obr_env_std(cmd: &mut StdCommand) {
     for (key, _) in std::env::vars_os() {
-        if should_clear_inherited_br_env(&key) {
+        if should_clear_inherited_obr_env(&key) {
             cmd.env_remove(&key);
         }
     }
@@ -71,25 +71,25 @@ fn isolated_temp_dir(label: &str) -> TempDir {
         .unwrap_or_else(|error| panic!("create {label}: {error}"))
 }
 
-fn spawn_br_child_in_dir<I, S>(root: &Path, args: I) -> std::process::Child
+fn spawn_obr_child_in_dir<I, S>(root: &Path, args: I) -> std::process::Child
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let mut cmd = StdCommand::new(assert_cmd::cargo::cargo_bin!("br"));
+    let mut cmd = StdCommand::new(assert_cmd::cargo::cargo_bin!("obr"));
     cmd.current_dir(root);
     cmd.args(args);
-    clear_inherited_br_env_std(&mut cmd);
+    clear_inherited_obr_env_std(&mut cmd);
     cmd.env("NO_COLOR", "1");
     cmd.env("RUST_LOG", "error");
     cmd.env("RUST_BACKTRACE", "1");
     cmd.env("HOME", root);
-    // Hermetic $PATH: dual `br` installs otherwise trip the br_path_dupes
+    // Hermetic $PATH: dual `obr` installs otherwise trip the obr_path_dupes
     // doctor warning inside spawned doctor runs (beads_rust-ozdh class).
-    cmd.env("PATH", common::cli::deduplicated_br_path());
+    cmd.env("PATH", common::cli::deduplicated_obr_path());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
-    cmd.spawn().expect("spawn br child")
+    cmd.spawn().expect("spawn obr child")
 }
 
 #[cfg(target_os = "linux")]
@@ -150,17 +150,17 @@ fn wait_for_child_to_block_on_write_lock(child: &mut std::process::Child, label:
     }
 }
 
-/// Run br command in a specific directory.
-fn run_br_in_dir<I, S>(root: &PathBuf, args: I) -> BrResult
+/// Run obr command in a specific directory.
+fn run_obr_in_dir<I, S>(root: &PathBuf, args: I) -> ObrResult
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    run_br_in_dir_with_env(root, args, std::iter::empty::<(String, String)>())
+    run_obr_in_dir_with_env(root, args, std::iter::empty::<(String, String)>())
 }
 
-/// Run br command in a specific directory with environment overrides.
-fn run_br_in_dir_with_env<I, S, E, K, V>(root: &PathBuf, args: I, env_vars: E) -> BrResult
+/// Run obr command in a specific directory with environment overrides.
+fn run_obr_in_dir_with_env<I, S, E, K, V>(root: &PathBuf, args: I, env_vars: E) -> ObrResult
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
@@ -169,22 +169,22 @@ where
     V: AsRef<OsStr>,
 {
     let start = Instant::now();
-    let mut cmd = Command::cargo_bin("br").expect("find br binary");
+    let mut cmd = Command::cargo_bin("obr").expect("find obr binary");
     cmd.current_dir(root);
     cmd.args(args);
-    clear_inherited_br_env(&mut cmd);
+    clear_inherited_obr_env(&mut cmd);
     // Hermetic defaults; explicit env_vars below may override RUST_LOG.
     cmd.env("RUST_LOG", "error");
-    cmd.env("PATH", common::cli::deduplicated_br_path());
+    cmd.env("PATH", common::cli::deduplicated_obr_path());
     cmd.envs(env_vars);
     cmd.env("NO_COLOR", "1");
     cmd.env("RUST_BACKTRACE", "1");
     cmd.env("HOME", root);
 
-    let output = cmd.output().expect("run br");
+    let output = cmd.output().expect("run obr");
     let duration = start.elapsed();
 
-    BrResult {
+    ObrResult {
         stdout: String::from_utf8_lossy(&output.stdout).to_string(),
         stderr: String::from_utf8_lossy(&output.stderr).to_string(),
         success: output.status.success(),
@@ -206,7 +206,7 @@ fn parse_created_id(stdout: &str) -> String {
         .to_string()
 }
 
-fn is_expected_contention_failure(result: &BrResult) -> bool {
+fn is_expected_contention_failure(result: &ObrResult) -> bool {
     let combined = format!("{} {}", result.stdout, result.stderr).to_lowercase();
     !result.success
         && (combined.contains("busy")
@@ -223,7 +223,7 @@ fn is_expected_contention_failure(result: &BrResult) -> bool {
         && !combined.contains("panic")
 }
 
-fn has_integrity_failure_signal(result: &BrResult) -> bool {
+fn has_integrity_failure_signal(result: &ObrResult) -> bool {
     if contains_integrity_failure_signal(&result.stderr) {
         return true;
     }
@@ -242,7 +242,7 @@ fn contains_integrity_failure_signal(output: &str) -> bool {
         || output.contains("panic")
 }
 
-fn assert_no_integrity_failure_signals(role: &str, results: &[BrResult]) {
+fn assert_no_integrity_failure_signals(role: &str, results: &[ObrResult]) {
     let mut integrity_failures = Vec::new();
 
     for (index, result) in results.iter().enumerate() {
@@ -261,7 +261,7 @@ fn assert_no_integrity_failure_signals(role: &str, results: &[BrResult]) {
     );
 }
 
-fn assert_only_success_or_contention(role: &str, results: &[BrResult]) -> usize {
+fn assert_only_success_or_contention(role: &str, results: &[ObrResult]) -> usize {
     let mut success_count = 0;
     let mut unexpected_failures = Vec::new();
 
@@ -286,8 +286,8 @@ fn assert_only_success_or_contention(role: &str, results: &[BrResult]) -> usize 
 }
 
 fn issue_title_count(root: &Path, title: &str) -> i64 {
-    let db_path = root.join(".beads").join("beads.db");
-    let conn = Connection::open(db_path.to_string_lossy().into_owned()).expect("open beads db");
+    let db_path = root.join(".obr").join("obr.db");
+    let conn = Connection::open(db_path.to_string_lossy().into_owned()).expect("open obr db");
     let rows = conn
         .query_with_params(
             "SELECT COUNT(*) FROM issues WHERE title = ?",
@@ -318,7 +318,7 @@ fn extract_json_payload(stdout: &str) -> String {
     stdout.trim().to_string()
 }
 
-/// Parse issues list from `br list --json` stdout, handling both the legacy
+/// Parse issues list from `obr list --json` stdout, handling both the legacy
 /// plain-array format and the current paginated envelope format:
 /// `{"issues": [...], "total": N, "limit": N, "offset": 0, "has_more": false}`.
 fn extract_issues_array(stdout: &str) -> Vec<serde_json::Value> {
@@ -336,7 +336,7 @@ fn extract_issues_array(stdout: &str) -> Vec<serde_json::Value> {
     Vec::new()
 }
 
-/// Assert that `br doctor` reports the workspace as healthy.
+/// Assert that `obr doctor` reports the workspace as healthy.
 ///
 /// If the initial check fails with only recoverable storage-layer issues, this
 /// runs `doctor --repair`, which checkpoints the WAL and reconciles derived
@@ -344,12 +344,12 @@ fn extract_issues_array(stdout: &str) -> Vec<serde_json::Value> {
 /// still fails, so a successful repair exit code means the workspace is clean.
 /// Unrecoverable failures surface the original report.
 fn assert_doctor_healthy(root: &PathBuf) {
-    let doctor = run_br_in_dir(root, ["doctor", "--json"]);
+    let doctor = run_obr_in_dir(root, ["doctor", "--json"]);
     if doctor.success {
         return;
     }
     // Attempt auto-repair (checkpoint WAL, quarantine anomalous sidecars).
-    let repair = run_br_in_dir(root, ["doctor", "--repair", "--json"]);
+    let repair = run_obr_in_dir(root, ["doctor", "--repair", "--json"]);
     assert!(
         repair.success,
         "doctor failed after contention and --repair could not recover it:\n\
@@ -360,7 +360,7 @@ fn assert_doctor_healthy(root: &PathBuf) {
 }
 
 fn assert_doctor_has_no_page_anomalies(root: &PathBuf, label: &str) {
-    let doctor = run_br_in_dir(root, ["doctor", "--json"]);
+    let doctor = run_obr_in_dir(root, ["doctor", "--json"]);
     assert!(
         doctor.success,
         "{label}: doctor failed: stdout={} stderr={}",
@@ -408,7 +408,7 @@ fn assert_doctor_has_no_page_anomalies(root: &PathBuf, label: &str) {
 }
 
 fn assert_upstream_sqlite_integrity_ok(root: &Path, label: &str) {
-    let db_path = root.join(".beads").join("beads.db");
+    let db_path = root.join(".obr").join("obr.db");
     let output = StdCommand::new("sqlite3")
         .arg(&db_path)
         .arg("PRAGMA integrity_check;")
@@ -433,7 +433,7 @@ fn assert_upstream_sqlite_integrity_ok(root: &Path, label: &str) {
 }
 
 fn create_routes_file(root: &Path, entries: &[(&str, &Path)]) {
-    let routes_path = root.join(".beads").join("routes.jsonl");
+    let routes_path = root.join(".obr").join("routes.jsonl");
     let content = entries
         .iter()
         .map(|(prefix, path)| {
@@ -449,7 +449,7 @@ fn create_routes_file(root: &Path, entries: &[(&str, &Path)]) {
 
 fn configure_external_route(main_root: &Path, external_root: &Path) {
     fs::write(
-        external_root.join(".beads").join("config.yaml"),
+        external_root.join(".obr").join("config.yaml"),
         "issue_prefix: ext\n",
     )
     .expect("write external config");
@@ -467,13 +467,13 @@ fn e2e_killed_writer_waiting_on_write_lock_does_not_poison_workspace() {
     let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
-    let init = run_br_in_dir(&root, ["init"]);
+    let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
-    let seed = run_br_in_dir(&root, ["create", "Seed before killed writer"]);
+    let seed = run_obr_in_dir(&root, ["create", "Seed before killed writer"]);
     assert!(seed.success, "seed create failed: {}", seed.stderr);
 
-    let lock_path = root.join(".beads").join(".write.lock");
+    let lock_path = root.join(".obr").join(".write.lock");
     let write_lock = OpenOptions::new()
         .read(true)
         .write(true)
@@ -483,7 +483,7 @@ fn e2e_killed_writer_waiting_on_write_lock_does_not_poison_workspace() {
         .expect("open .write.lock");
     write_lock.lock().expect("hold .write.lock");
 
-    let mut blocked_writer = spawn_br_child_in_dir(
+    let mut blocked_writer = spawn_obr_child_in_dir(
         &root,
         ["create", "Killed while waiting for write lock", "--json"],
     );
@@ -499,14 +499,14 @@ fn e2e_killed_writer_waiting_on_write_lock_does_not_poison_workspace() {
     );
     drop(write_lock);
 
-    let after = run_br_in_dir(&root, ["create", "After killed writer", "--json"]);
+    let after = run_obr_in_dir(&root, ["create", "After killed writer", "--json"]);
     assert!(
         after.success,
         "post-kill writer failed: stdout={} stderr={}",
         after.stdout, after.stderr
     );
 
-    let list = run_br_in_dir(&root, ["--no-auto-import", "list", "--json"]);
+    let list = run_obr_in_dir(&root, ["--no-auto-import", "list", "--json"]);
     assert!(
         list.success,
         "list after killed writer failed: {}",
@@ -549,13 +549,13 @@ fn e2e_mutating_command_fails_when_write_lock_path_unusable() {
     let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
-    let init = run_br_in_dir(&root, ["init"]);
+    let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
-    let lock_path = root.join(".beads").join(".write.lock");
+    let lock_path = root.join(".obr").join(".write.lock");
     fs::create_dir_all(&lock_path).expect("replace write lock path with directory");
 
-    let create = run_br_in_dir(
+    let create = run_obr_in_dir(
         &root,
         ["create", "Should not bypass broken write lock", "--json"],
     );
@@ -566,10 +566,13 @@ fn e2e_mutating_command_fails_when_write_lock_path_unusable() {
     );
     let combined = format!("{}{}", create.stdout, create.stderr);
     assert!(
-        (combined.contains("Refusing unsafe workspace write lock path")
-            || combined.contains("Failed to open write lock"))
+        // A directory at the lock leaf is caught by `open_and_lock_regular_file`'s
+        // `symlink_metadata` guard, which runs before the open — so this is the
+        // one message the route can produce, and pinning it keeps the test from
+        // passing on a generic open failure that would mean something else.
+        combined.contains("Refusing unsafe workspace write lock path")
             && combined.contains(".write.lock"),
-        "error should explain the unusable write lock path: {combined}"
+        "error should refuse the unusable write lock path: {combined}"
     );
 
     assert_eq!(
@@ -590,10 +593,10 @@ fn e2e_write_lock_contention_respects_lock_timeout() {
     let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
-    let init = run_br_in_dir(&root, ["init"]);
+    let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
-    let lock_path = root.join(".beads").join(".write.lock");
+    let lock_path = root.join(".obr").join(".write.lock");
     let write_lock = OpenOptions::new()
         .read(true)
         .write(true)
@@ -604,7 +607,7 @@ fn e2e_write_lock_contention_respects_lock_timeout() {
     write_lock.lock().expect("hold .write.lock");
 
     let start = Instant::now();
-    let create = run_br_in_dir(
+    let create = run_obr_in_dir(
         &root,
         [
             "--lock-timeout",
@@ -634,7 +637,7 @@ fn e2e_write_lock_contention_respects_lock_timeout() {
     );
 
     drop(write_lock);
-    let after = run_br_in_dir(&root, ["create", "After write lock timeout", "--json"]);
+    let after = run_obr_in_dir(&root, ["create", "After write lock timeout", "--json"]);
     assert!(
         after.success,
         "workspace should accept writes after lock release: stdout={} stderr={}",
@@ -642,8 +645,18 @@ fn e2e_write_lock_contention_respects_lock_timeout() {
     );
 }
 
-/// Flat doctor surfaces must classify a genuinely held advisory lock before
-/// live inspection, without using inode age or recommending inode replacement.
+/// Flat doctor surfaces must classify a genuinely held advisory lock, and the
+/// MUTATING ones must refuse before touching anything, without using inode age
+/// or recommending inode replacement.
+///
+/// `obr-m6m` split this in two. A read-only `obr doctor` no longer takes the
+/// workspace write lock, so it no longer refuses under a live owner: it
+/// inspects and REPORTS the owner through the `write_lock` probe. That is the
+/// point of the change — the probe used to answer "held by a live process" on
+/// every workspace because it collided with the lock its own caller held, so
+/// this is the first arrangement in which "a live process holds it" is a real
+/// observation. `--repair` / `--repair-indexes` still take the lock and still
+/// refuse with `concurrency_lost`, and neither surface may mutate a byte.
 #[test]
 #[cfg(unix)]
 #[allow(clippy::incompatible_msrv)]
@@ -655,16 +668,21 @@ fn e2e_doctor_reports_live_write_lock_without_mutating_workspace() {
     let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
-    let init = run_br_in_dir(&root, ["init"]);
+    let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
-    let seed = run_br_in_dir(&root, ["create", "Lock evidence seed", "--json"]);
+    let seed = run_obr_in_dir(&root, ["create", "Lock evidence seed", "--json"]);
     assert!(seed.success, "seed failed: {}", seed.stderr);
 
-    let lock_path = root.join(".beads/.write.lock");
-    let db_path = root.join(".beads/beads.db");
-    let jsonl_path = root.join(".beads/issues.jsonl");
+    let lock_path = root.join(".obr/.write.lock");
+    let db_path = root.join(".obr/obr.db");
+    // Class B: doctor's refusal to mutate is the subject, so witness the
+    // default (Org) export; the artifact's format is incidental here. Ask for
+    // the surface rather than naming it — this test spent an unknown number of
+    // releases dead at exactly this line, panicking on a hard-coded
+    // `.obr/issues.org` after the tracked surface moved out of `.obr/`.
+    let export_path = obr::config::computed_surface_path(&root);
     let db_before = fs::read(&db_path).expect("read database before contention");
-    let jsonl_before = fs::read(&jsonl_path).expect("read JSONL before contention");
+    let export_before = fs::read(&export_path).expect("read export before contention");
     let inode_before = fs::metadata(&lock_path).expect("stat lock").ino();
 
     let write_lock = OpenOptions::new()
@@ -676,37 +694,61 @@ fn e2e_doctor_reports_live_write_lock_without_mutating_workspace() {
         .expect("open .write.lock");
     write_lock.lock().expect("hold .write.lock");
 
-    for (args, robot_triage) in [
-        (vec!["--lock-timeout", "0", "doctor", "--json"], false),
-        (
-            vec!["--lock-timeout", "0", "doctor", "--robot-triage"],
-            true,
-        ),
-        (
-            vec![
-                "--lock-timeout",
-                "0",
-                "doctor",
-                "--robot-triage",
-                "--repair",
-            ],
-            true,
-        ),
-        (
-            vec![
-                "--lock-timeout",
-                "0",
-                "doctor",
-                "--robot-triage",
-                "--repair-indexes",
-            ],
-            true,
-        ),
+    // Read-only doctor now INSPECTS through a live owner and reports it. Force
+    // the probe branch: the seeded lock file is seconds old, and a fresh file
+    // short-circuits as "not stale" before any probe runs — so with the
+    // default threshold this surface would answer nothing about the owner at
+    // all, and an assertion on the reason string would be unfallible.
+    let read_only = run_obr_in_dir_with_env(
+        &root,
+        ["--lock-timeout", "0", "doctor", "--json"],
+        [("OBR_DOCTOR_STALE_LOCK_THRESHOLD_SECS", "0")],
+    );
+    assert_eq!(
+        read_only.exit_code,
+        Some(0),
+        "read-only doctor must inspect a workspace another process is writing: stdout={} stderr={}",
+        read_only.stdout,
+        read_only.stderr
+    );
+    let payload: serde_json::Value =
+        serde_json::from_str(&read_only.stdout).expect("read-only doctor JSON");
+    let lock_check = payload["checks"]
+        .as_array()
+        .and_then(|checks| checks.iter().find(|check| check["name"] == "write_lock"))
+        .expect("write_lock check while the owner holds the lock");
+    assert_eq!(lock_check["status"], "ok", "{lock_check}");
+    assert_eq!(
+        lock_check["details"]["reason"], "probe_would_block_live_holder",
+        "a genuinely held lock must be reported as held: {lock_check}"
+    );
+    assert_eq!(
+        lock_check["details"]["finding_id"], "fm-concurrency_primitives-orphaned-write-lock",
+        "{lock_check}"
+    );
+
+    // The mutating surfaces still take the lock, so they still refuse before
+    // inspecting anything.
+    for args in [
+        vec![
+            "--lock-timeout",
+            "0",
+            "doctor",
+            "--robot-triage",
+            "--repair",
+        ],
+        vec![
+            "--lock-timeout",
+            "0",
+            "doctor",
+            "--robot-triage",
+            "--repair-indexes",
+        ],
     ] {
-        let doctor = run_br_in_dir(&root, args);
+        let doctor = run_obr_in_dir(&root, args);
         assert!(
             !doctor.success,
-            "doctor must not inspect through a live owner: stdout={} stderr={}",
+            "repairing doctor must not mutate through a live owner: stdout={} stderr={}",
             doctor.stdout, doctor.stderr
         );
         assert_eq!(
@@ -725,72 +767,64 @@ fn e2e_doctor_reports_live_write_lock_without_mutating_workspace() {
             payload.get("workspace_health").is_none(),
             "uninspected workspace must not receive a health value: {payload}"
         );
-        if robot_triage {
-            assert_eq!(
-                payload["schema_version"], "br.doctor.triage.v1",
-                "{payload}"
-            );
-            for key in [
-                "summary",
-                "findings",
-                "actions_planned",
-                "recommended_command",
-                "capabilities_url",
-                "robot_docs_command",
-                "quick_ref",
-            ] {
-                assert!(
-                    payload.get(key).is_some(),
-                    "robot triage contract is missing {key}: {payload}"
-                );
-            }
-            assert_eq!(payload["quick_ref"]["healthy"], 0, "{payload}");
-            assert_eq!(payload["quick_ref"]["warn"], 1, "{payload}");
-            assert_eq!(payload["quick_ref"]["error"], 0, "{payload}");
-            assert_eq!(
-                payload["findings"][0]["id"], "fm-concurrency_primitives-orphaned-write-lock",
-                "{payload}"
-            );
-            assert_eq!(payload["reason"], "live_owner", "{payload}");
-        } else {
-            assert_eq!(payload["checks"][0]["name"], "write_lock", "{payload}");
-            assert_eq!(
-                payload["checks"][0]["details"]["reason"], "live_owner",
-                "{payload}"
-            );
-            assert_eq!(
-                payload["checks"][0]["details"]["finding_id"],
-                "fm-concurrency_primitives-orphaned-write-lock",
-                "{payload}"
-            );
+        assert_eq!(
+            payload["schema_version"], "obr.doctor.triage.v1",
+            "{payload}"
+        );
+        for key in [
+            "summary",
+            "findings",
+            "actions_planned",
+            "recommended_command",
+            "capabilities_url",
+            "robot_docs_command",
+            "quick_ref",
+        ] {
             assert!(
-                payload["checks"][0]["details"]["remediation"]
-                    .as_str()
-                    .is_some_and(|message| message.contains("do not move or delete")),
-                "{payload}"
+                payload.get(key).is_some(),
+                "robot triage contract is missing {key}: {payload}"
             );
         }
+        assert_eq!(payload["quick_ref"]["healthy"], 0, "{payload}");
+        assert_eq!(payload["quick_ref"]["warn"], 1, "{payload}");
+        assert_eq!(payload["quick_ref"]["error"], 0, "{payload}");
         assert_eq!(
-            fs::metadata(&lock_path)
-                .expect("stat lock after doctor")
-                .ino(),
-            inode_before,
-            "doctor must not replace the lock inode"
+            payload["findings"][0]["id"], "fm-concurrency_primitives-orphaned-write-lock",
+            "{payload}"
         );
-        assert_eq!(
-            fs::read(&db_path).expect("read database after contention"),
-            db_before,
-            "doctor must not inspect or mutate the database after lock refusal"
-        );
-        assert_eq!(
-            fs::read(&jsonl_path).expect("read JSONL after contention"),
-            jsonl_before,
-            "doctor must not mutate JSONL after lock refusal"
-        );
+        assert_eq!(payload["reason"], "live_owner", "{payload}");
     }
 
+    // Neither the read-only inspection nor the refused repairs may have
+    // touched a byte. This is asserted once, after both, against the state
+    // captured before the owner took the lock.
+    assert_eq!(
+        fs::metadata(&lock_path)
+            .expect("stat lock after doctor")
+            .ino(),
+        inode_before,
+        "doctor must not replace the lock inode"
+    );
+    assert_eq!(
+        fs::read(&db_path).expect("read database after contention"),
+        db_before,
+        "doctor must not mutate the database while another process owns the lock"
+    );
+    assert_eq!(
+        fs::read(&export_path).expect("read export after contention"),
+        export_before,
+        "doctor must not mutate the export while another process owns the lock"
+    );
+
     drop(write_lock);
-    let recovery = run_br_in_dir(&root, ["doctor", "--json"]);
+    // Same threshold override, same reason: a fresh lock file never reaches
+    // the probe, so without this the recovery assertion below could not tell
+    // "free" from "held" and would pass either way.
+    let recovery = run_obr_in_dir_with_env(
+        &root,
+        ["doctor", "--json"],
+        [("OBR_DOCTOR_STALE_LOCK_THRESHOLD_SECS", "0")],
+    );
     assert!(
         matches!(recovery.exit_code, Some(0 | 1)),
         "doctor should resume inspection after owner release without a hard failure: \
@@ -806,8 +840,13 @@ fn e2e_doctor_reports_live_write_lock_without_mutating_workspace() {
         .and_then(|checks| checks.iter().find(|check| check["name"] == "write_lock"))
         .expect("write_lock check after recovery");
     assert_eq!(lock_check["status"], "ok", "{lock_check}");
+    // obr-m6m: this demanded `persistent_advisory_inode`, a classification
+    // emitted nowhere in `src/` and catalogued in
+    // docs/research/upgrade/DECISIONS.md as never implemented. The released
+    // lock is free and the probe says so; pairing this with the held-lock
+    // assertion above is what makes either one mean anything.
     assert_eq!(
-        lock_check["details"]["reason"], "persistent_advisory_inode",
+        lock_check["details"]["reason"], "probe_acquired_free",
         "{lock_check}"
     );
 }
@@ -824,17 +863,21 @@ fn e2e_read_command_auto_import_waits_for_write_lock() {
     let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
-    let init = run_br_in_dir(&root, ["init"]);
+    let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
-    let seed = run_br_in_dir(&root, ["create", "Seed before auto-import"]);
+    // Class A: JSONL-specific machinery — the stale-import fixture below is a
+    // hand-edited JSONL row.
+    let obr_dir = root.join(".obr");
+    common::cli::pin_jsonl(&obr_dir);
+
+    let seed = run_obr_in_dir(&root, ["create", "Seed before auto-import"]);
     assert!(seed.success, "seed create failed: {}", seed.stderr);
 
-    let flush = run_br_in_dir(&root, ["sync", "--flush-only"]);
+    let flush = run_obr_in_dir(&root, ["sync", "--flush-only"]);
     assert!(flush.success, "flush failed: {}", flush.stderr);
 
-    let beads_dir = root.join(".beads");
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let jsonl_path = obr_dir.join("issues.jsonl");
     let jsonl = fs::read_to_string(&jsonl_path).expect("read issues jsonl");
     let mut issue: serde_json::Value = serde_json::from_str(jsonl.trim()).expect("parse issue");
     issue["title"] = serde_json::Value::String("Imported while waiting for write lock".to_string());
@@ -848,7 +891,7 @@ fn e2e_read_command_auto_import_waits_for_write_lock() {
     )
     .expect("write stale jsonl");
 
-    let lock_path = beads_dir.join(".write.lock");
+    let lock_path = obr_dir.join(".write.lock");
     let write_lock = OpenOptions::new()
         .read(true)
         .write(true)
@@ -858,7 +901,7 @@ fn e2e_read_command_auto_import_waits_for_write_lock() {
         .expect("open .write.lock");
     write_lock.lock().expect("hold .write.lock");
 
-    let mut blocked_list = spawn_br_child_in_dir(&root, ["list", "--json"]);
+    let mut blocked_list = spawn_obr_child_in_dir(&root, ["list", "--json"]);
     wait_for_child_to_block_on_write_lock(&mut blocked_list, "auto-import list");
 
     blocked_list.kill().expect("kill blocked list");
@@ -871,7 +914,7 @@ fn e2e_read_command_auto_import_waits_for_write_lock() {
     );
     drop(write_lock);
 
-    let list = run_br_in_dir(&root, ["list", "--json"]);
+    let list = run_obr_in_dir(&root, ["list", "--json"]);
     assert!(
         list.success,
         "list after releasing write lock failed: {}",
@@ -898,18 +941,18 @@ fn e2e_read_command_witness_refresh_waits_for_write_lock() {
     let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
-    let init = run_br_in_dir(&root, ["init"]);
+    let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
-    let seed = run_br_in_dir(&root, ["create", "Seed before witness refresh"]);
+    let seed = run_obr_in_dir(&root, ["create", "Seed before witness refresh"]);
     assert!(seed.success, "seed create failed: {}", seed.stderr);
 
-    let flush = run_br_in_dir(&root, ["sync", "--flush-only"]);
+    let flush = run_obr_in_dir(&root, ["sync", "--flush-only"]);
     assert!(flush.success, "flush failed: {}", flush.stderr);
 
-    let beads_dir = root.join(".beads");
-    let db_path = beads_dir.join("beads.db");
-    let conn = Connection::open(db_path.to_string_lossy().into_owned()).expect("open beads db");
+    let obr_dir = root.join(".obr");
+    let db_path = obr_dir.join("obr.db");
+    let conn = Connection::open(db_path.to_string_lossy().into_owned()).expect("open obr db");
     conn.execute("DELETE FROM metadata WHERE key = 'jsonl_size'")
         .expect("delete jsonl_size witness");
     conn.execute("INSERT INTO metadata (key, value) VALUES ('jsonl_size', '0')")
@@ -927,7 +970,7 @@ fn e2e_read_command_witness_refresh_waits_for_write_lock() {
     .expect("write stale jsonl_content_hash witness");
     drop(conn);
 
-    let lock_path = beads_dir.join(".write.lock");
+    let lock_path = obr_dir.join(".write.lock");
     let write_lock = OpenOptions::new()
         .read(true)
         .write(true)
@@ -937,7 +980,7 @@ fn e2e_read_command_witness_refresh_waits_for_write_lock() {
         .expect("open .write.lock");
     write_lock.lock().expect("hold .write.lock");
 
-    let mut blocked_search = spawn_br_child_in_dir(&root, ["search", "Seed", "--json"]);
+    let mut blocked_search = spawn_obr_child_in_dir(&root, ["search", "Seed", "--json"]);
     wait_for_child_to_block_on_write_lock(&mut blocked_search, "witness-refresh search");
 
     drop(write_lock);
@@ -967,7 +1010,7 @@ fn e2e_concurrent_writes_succeed_with_retry() {
     let root = temp_dir.path().to_path_buf();
 
     // Initialize workspace
-    let init = run_br_in_dir(&root, ["init"]);
+    let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
     // Create a barrier to synchronize thread start
@@ -985,7 +1028,7 @@ fn e2e_concurrent_writes_succeed_with_retry() {
     // remote worker load instead of depending on the ambient default.
     let handle1 = thread::spawn(move || {
         barrier1.wait();
-        run_br_in_dir(
+        run_obr_in_dir(
             &root1_clone,
             ["--lock-timeout", "1000", "create", "Issue from thread 1"],
         )
@@ -993,7 +1036,7 @@ fn e2e_concurrent_writes_succeed_with_retry() {
 
     let handle2 = thread::spawn(move || {
         barrier2.wait();
-        run_br_in_dir(
+        run_obr_in_dir(
             &root2_clone,
             ["--lock-timeout", "1000", "create", "Issue from thread 2"],
         )
@@ -1031,7 +1074,7 @@ fn e2e_concurrent_writes_succeed_with_retry() {
 
     // Verify successful issues were created. Use --no-auto-import to avoid
     // SYNC_CONFLICT when JSONL is newer than the DB after concurrent flushes.
-    let list = run_br_in_dir(&root, ["--no-auto-import", "list", "--json"]);
+    let list = run_obr_in_dir(&root, ["--no-auto-import", "list", "--json"]);
     assert!(list.success, "list failed: {}", list.stderr);
     let issues = extract_issues_array(&list.stdout);
     assert!(
@@ -1061,11 +1104,11 @@ fn e2e_lock_timeout_behavior() {
     let root = temp_dir.path().to_path_buf();
 
     // Initialize workspace
-    let init = run_br_in_dir(&root, ["init"]);
+    let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
     // Create an issue first
-    let create = run_br_in_dir(&root, ["create", "Seed issue"]);
+    let create = run_obr_in_dir(&root, ["create", "Seed issue"]);
     assert!(create.success, "create seed failed: {}", create.stderr);
     let seed_id = parse_created_id(&create.stdout);
 
@@ -1085,7 +1128,7 @@ fn e2e_lock_timeout_behavior() {
         barrier1.wait();
         for i in 0..10 {
             let title = format!("Update {i}");
-            run_br_in_dir(&root1_clone, ["update", &seed_id_clone, "--title", &title]);
+            run_obr_in_dir(&root1_clone, ["update", &seed_id_clone, "--title", &title]);
             thread::sleep(Duration::from_millis(50));
         }
     });
@@ -1096,7 +1139,7 @@ fn e2e_lock_timeout_behavior() {
         // Small delay to let the first thread start
         thread::sleep(Duration::from_millis(25));
         let start = Instant::now();
-        let result = run_br_in_dir(
+        let result = run_obr_in_dir(
             &root2_clone,
             ["--lock-timeout", "1", "create", "Low timeout issue"],
         );
@@ -1147,12 +1190,12 @@ fn e2e_concurrent_reads_succeed() {
     let root = temp_dir.path().to_path_buf();
 
     // Initialize and create some issues
-    let init = run_br_in_dir(&root, ["init"]);
+    let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
     let mut ids = Vec::new();
     for i in 0..5 {
-        let create = run_br_in_dir(&root, ["create", &format!("Issue {i}")]);
+        let create = run_obr_in_dir(&root, ["create", &format!("Issue {i}")]);
         assert!(create.success, "create {i} failed: {}", create.stderr);
         ids.push(parse_created_id(&create.stdout));
     }
@@ -1171,9 +1214,9 @@ fn e2e_concurrent_reads_succeed() {
             let start = Instant::now();
 
             // Mix of read operations
-            let list = run_br_in_dir(&root_clone, ["list", "--json"]);
-            let show = run_br_in_dir(&root_clone, ["show", &issue_id, "--json"]);
-            let stats = run_br_in_dir(&root_clone, ["stats", "--json"]);
+            let list = run_obr_in_dir(&root_clone, ["list", "--json"]);
+            let show = run_obr_in_dir(&root_clone, ["show", &issue_id, "--json"]);
+            let stats = run_obr_in_dir(&root_clone, ["stats", "--json"]);
 
             let elapsed = start.elapsed();
             (i, list, show, stats, elapsed)
@@ -1211,19 +1254,18 @@ fn e2e_parallel_read_only_commands_serialize_without_busy_on_drop() {
     let _log = common::test_log("e2e_parallel_read_only_commands_serialize_without_busy_on_drop");
 
     let registry = DatasetRegistry::new();
-    if !registry.is_available(KnownDataset::BeadsRust) {
-        eprintln!("skipping: beads_rust dataset is unavailable in this environment");
+    if !registry.is_available(KnownDataset::Obr) {
+        eprintln!("skipping: obr dataset is unavailable in this environment");
         return;
     }
 
-    let isolated =
-        IsolatedDataset::from_dataset(KnownDataset::BeadsRust).expect("copy beads_rust dataset");
+    let isolated = IsolatedDataset::from_dataset(KnownDataset::Obr).expect("copy obr dataset");
     isolated
         .migrate_to_current_schema()
-        .expect("migrate isolated beads_rust dataset");
+        .expect("migrate isolated obr dataset");
     let root = isolated.root.clone();
 
-    let create = run_br_in_dir(
+    let create = run_obr_in_dir(
         &root,
         [
             "--no-auto-import",
@@ -1250,7 +1292,7 @@ fn e2e_parallel_read_only_commands_serialize_without_busy_on_drop() {
             let mut failures = Vec::new();
             for iteration in 0..6 {
                 let result = if worker % 2 == 0 {
-                    run_br_in_dir(
+                    run_obr_in_dir(
                         &root_clone,
                         [
                             "--lock-timeout",
@@ -1262,7 +1304,7 @@ fn e2e_parallel_read_only_commands_serialize_without_busy_on_drop() {
                         ],
                     )
                 } else {
-                    run_br_in_dir(
+                    run_obr_in_dir(
                         &root_clone,
                         [
                             "--lock-timeout",
@@ -1314,17 +1356,17 @@ fn e2e_lock_timeout_timing() {
     let root = temp_dir.path().to_path_buf();
 
     // Initialize workspace
-    let init = run_br_in_dir(&root, ["init"]);
+    let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
     // Create a seed issue
-    let create = run_br_in_dir(&root, ["create", "Seed"]);
+    let create = run_obr_in_dir(&root, ["create", "Seed"]);
     assert!(create.success, "create failed: {}", create.stderr);
 
     // Test with a 500ms timeout (should complete quickly without contention)
     let timeout_ms = 500;
     let start = Instant::now();
-    let result = run_br_in_dir(
+    let result = run_obr_in_dir(
         &root,
         ["--lock-timeout", &timeout_ms.to_string(), "list", "--json"],
     );
@@ -1354,7 +1396,7 @@ fn e2e_write_serialization() {
     let root = temp_dir.path().to_path_buf();
 
     // Initialize
-    let init = run_br_in_dir(&root, ["init"]);
+    let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
     let start = Instant::now();
@@ -1369,7 +1411,7 @@ fn e2e_write_serialization() {
         let handle = thread::spawn(move || {
             barrier_clone.wait();
             let thread_start = Instant::now();
-            let result = run_br_in_dir(
+            let result = run_obr_in_dir(
                 &root_clone,
                 [
                     "--lock-timeout",
@@ -1422,7 +1464,7 @@ fn e2e_write_serialization() {
 
     // Verify all successful writes persist. Use --no-auto-import to avoid
     // SYNC_CONFLICT when concurrent flushes leave JSONL ahead of DB.
-    let list = run_br_in_dir(&root, ["--no-auto-import", "list", "--json"]);
+    let list = run_obr_in_dir(&root, ["--no-auto-import", "list", "--json"]);
     assert!(list.success, "final list failed: {}", list.stderr);
     let issues = extract_issues_array(&list.stdout);
     assert!(
@@ -1454,11 +1496,11 @@ fn e2e_mixed_read_write_concurrency() {
     let root = temp_dir.path().to_path_buf();
 
     // Initialize with some existing data
-    let init = run_br_in_dir(&root, ["init"]);
+    let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
     for i in 0..3 {
-        let create = run_br_in_dir(&root, ["create", &format!("Existing issue {i}")]);
+        let create = run_obr_in_dir(&root, ["create", &format!("Existing issue {i}")]);
         assert!(create.success, "create {i} failed");
     }
 
@@ -1476,7 +1518,7 @@ fn e2e_mixed_read_write_concurrency() {
             // This reader deliberately opts out of both startup mutations, so
             // it exercises the current-schema read-only connection instead of
             // competing with writers for the workspace authority.
-            let result = run_br_in_dir(
+            let result = run_obr_in_dir(
                 &root_clone,
                 [
                     "--no-auto-import",
@@ -1501,7 +1543,7 @@ fn e2e_mixed_read_write_concurrency() {
         let handle = thread::spawn(move || {
             barrier_clone.wait();
             let start = Instant::now();
-            let result = run_br_in_dir(&root_clone, ["create", &format!("New issue {i}")]);
+            let result = run_obr_in_dir(&root_clone, ["create", &format!("New issue {i}")]);
             let elapsed = start.elapsed();
             ("writer", i, result, elapsed)
         });
@@ -1539,7 +1581,7 @@ fn e2e_mixed_read_write_concurrency() {
 
     // Verify final state. Use --no-auto-import to avoid SYNC_CONFLICT when
     // JSONL is newer than the DB after concurrent flushes.
-    let list = run_br_in_dir(&root, ["--no-auto-import", "list", "--json"]);
+    let list = run_obr_in_dir(&root, ["--no-auto-import", "list", "--json"]);
     assert!(list.success, "final list failed: {}", list.stderr);
 
     // All successful writers should persist; explicit contention failures are acceptable.
@@ -1564,10 +1606,10 @@ fn e2e_interleaved_command_families_remain_bounded() {
     let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
-    let init = run_br_in_dir(&root, ["init"]);
+    let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
-    let create = run_br_in_dir(&root, ["create", "Interleaved seed issue"]);
+    let create = run_obr_in_dir(&root, ["create", "Interleaved seed issue"]);
     assert!(create.success, "create seed failed: {}", create.stderr);
     let seed_id = parse_created_id(&create.stdout);
 
@@ -1582,7 +1624,7 @@ fn e2e_interleaved_command_families_remain_bounded() {
             barrier.wait();
             let mut results = Vec::new();
             for idx in 0..4 {
-                results.push(run_br_in_dir(
+                results.push(run_obr_in_dir(
                     &root,
                     [
                         "--lock-timeout",
@@ -1606,7 +1648,7 @@ fn e2e_interleaved_command_families_remain_bounded() {
             let mut results = Vec::new();
             for idx in 0..4 {
                 let title = format!("Interleaved title {idx}");
-                results.push(run_br_in_dir(
+                results.push(run_obr_in_dir(
                     &root,
                     ["--lock-timeout", "1", "update", &seed_id, "--title", &title],
                 ));
@@ -1625,7 +1667,7 @@ fn e2e_interleaved_command_families_remain_bounded() {
             let mut results = Vec::new();
             for idx in 0..4 {
                 let label = format!("lane-{idx}");
-                results.push(run_br_in_dir(
+                results.push(run_obr_in_dir(
                     &root,
                     ["--lock-timeout", "1", "label", "add", &seed_id, &label],
                 ));
@@ -1644,7 +1686,7 @@ fn e2e_interleaved_command_families_remain_bounded() {
             let mut results = Vec::new();
             for idx in 0..4 {
                 let body = format!("bounded comment {idx}");
-                results.push(run_br_in_dir(
+                results.push(run_obr_in_dir(
                     &root,
                     ["--lock-timeout", "1", "comments", "add", &seed_id, &body],
                 ));
@@ -1685,21 +1727,21 @@ fn e2e_interleaved_command_families_remain_bounded() {
 
     // Use --no-auto-import for post-contention reads to avoid SYNC_CONFLICT
     // when concurrent flushes leave JSONL ahead of the DB.
-    let show = run_br_in_dir(&root, ["--no-auto-import", "show", &seed_id_arc, "--json"]);
+    let show = run_obr_in_dir(&root, ["--no-auto-import", "show", &seed_id_arc, "--json"]);
     assert!(
         show.success,
         "show after contention failed: {}",
         show.stderr
     );
 
-    let list = run_br_in_dir(&root, ["--no-auto-import", "list", "--json"]);
+    let list = run_obr_in_dir(&root, ["--no-auto-import", "list", "--json"]);
     assert!(
         list.success,
         "list after contention failed: {}",
         list.stderr
     );
 
-    let stats = run_br_in_dir(&root, ["--no-auto-import", "stats", "--json"]);
+    let stats = run_obr_in_dir(&root, ["--no-auto-import", "stats", "--json"]);
     assert!(
         stats.success,
         "stats after contention failed: {}",
@@ -1719,9 +1761,9 @@ fn e2e_routed_external_mutation_succeeds_during_local_updates() {
     let main_root = main_temp.path().to_path_buf();
     let external_root = external_temp.path().to_path_buf();
 
-    let init_main = run_br_in_dir(&main_root, ["init"]);
+    let init_main = run_obr_in_dir(&main_root, ["init"]);
     assert!(init_main.success, "init main failed: {}", init_main.stderr);
-    let init_external = run_br_in_dir(&external_root, ["init"]);
+    let init_external = run_obr_in_dir(&external_root, ["init"]);
     assert!(
         init_external.success,
         "init external failed: {}",
@@ -1730,7 +1772,7 @@ fn e2e_routed_external_mutation_succeeds_during_local_updates() {
 
     configure_external_route(&main_root, &external_root);
 
-    let create_local = run_br_in_dir(&main_root, ["create", "Local issue under mutation"]);
+    let create_local = run_obr_in_dir(&main_root, ["create", "Local issue under mutation"]);
     assert!(
         create_local.success,
         "create local failed: {}",
@@ -1738,7 +1780,7 @@ fn e2e_routed_external_mutation_succeeds_during_local_updates() {
     );
     let local_id = parse_created_id(&create_local.stdout);
 
-    let create_external = run_br_in_dir(&external_root, ["create", "External routed issue"]);
+    let create_external = run_obr_in_dir(&external_root, ["create", "External routed issue"]);
     assert!(
         create_external.success,
         "create external failed: {}",
@@ -1764,7 +1806,7 @@ fn e2e_routed_external_mutation_succeeds_during_local_updates() {
             let mut results = Vec::new();
             for idx in 0..8 {
                 let title = format!("Local routed contention title {idx}");
-                results.push(run_br_in_dir(
+                results.push(run_obr_in_dir(
                     &main_root,
                     [
                         "--lock-timeout",
@@ -1790,7 +1832,7 @@ fn e2e_routed_external_mutation_succeeds_during_local_updates() {
             let mut results = Vec::new();
             for idx in 0..8 {
                 let body = format!("routed external comment {idx}");
-                results.push(run_br_in_dir(
+                results.push(run_obr_in_dir(
                     &main_root,
                     [
                         "--lock-timeout",
@@ -1825,7 +1867,7 @@ fn e2e_routed_external_mutation_succeeds_during_local_updates() {
         "expected at least one successful routed external comment"
     );
 
-    let show_external = run_br_in_dir(&main_root, ["show", &external_id_arc, "--json"]);
+    let show_external = run_obr_in_dir(&main_root, ["show", &external_id_arc, "--json"]);
     assert!(
         show_external.success,
         "routed show after contention failed: {}",
@@ -1841,7 +1883,7 @@ fn e2e_routed_external_mutation_succeeds_during_local_updates() {
         comments.len()
     );
 
-    let show_local = run_br_in_dir(&main_root, ["show", &local_id_arc, "--json"]);
+    let show_local = run_obr_in_dir(&main_root, ["show", &local_id_arc, "--json"]);
     assert!(
         show_local.success,
         "local show after routed mutation failed: {}",
@@ -1849,7 +1891,7 @@ fn e2e_routed_external_mutation_succeeds_during_local_updates() {
     );
 }
 
-/// Test that background sync-status checks touching `.beads/` remain readable
+/// Test that background sync-status checks touching `.obr/` remain readable
 /// while mutating commands are auto-flushing JSONL.
 #[test]
 fn e2e_sync_status_observer_stays_available_during_writes() {
@@ -1858,7 +1900,7 @@ fn e2e_sync_status_observer_stays_available_during_writes() {
     let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
-    let init = run_br_in_dir(&root, ["init"]);
+    let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
     let barrier = Arc::new(Barrier::new(2));
@@ -1871,7 +1913,7 @@ fn e2e_sync_status_observer_stays_available_during_writes() {
             barrier.wait();
             let mut results = Vec::new();
             for idx in 0..6 {
-                results.push(run_br_in_dir(
+                results.push(run_obr_in_dir(
                     &root,
                     ["create", &format!("background observer issue {idx}")],
                 ));
@@ -1888,7 +1930,7 @@ fn e2e_sync_status_observer_stays_available_during_writes() {
             barrier.wait();
             let mut results = Vec::new();
             for _ in 0..6 {
-                results.push(run_br_in_dir(
+                results.push(run_obr_in_dir(
                     &root,
                     [
                         "--lock-timeout",
@@ -1921,7 +1963,7 @@ fn e2e_sync_status_observer_stays_available_during_writes() {
         "expected at least one successful sync --status observation"
     );
 
-    let list = run_br_in_dir(&root, ["list", "--json"]);
+    let list = run_obr_in_dir(&root, ["list", "--json"]);
     assert!(list.success, "final list failed: {}", list.stderr);
     let issues = extract_issues_array(&list.stdout);
     assert_eq!(issues.len(), 6, "expected all writer issues to persist");
@@ -1939,15 +1981,15 @@ fn e2e_lock_error_reporting() {
     let root = temp_dir.path().to_path_buf();
 
     // Initialize
-    let init = run_br_in_dir(&root, ["init"]);
+    let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
     // Create a seed issue
-    let create = run_br_in_dir(&root, ["create", "Lock test issue"]);
+    let create = run_obr_in_dir(&root, ["create", "Lock test issue"]);
     assert!(create.success, "create failed: {}", create.stderr);
 
     // Normal operation should report no lock issues
-    let list = run_br_in_dir(&root, ["list", "--json"]);
+    let list = run_obr_in_dir(&root, ["list", "--json"]);
     assert!(list.success, "list failed: {}", list.stderr);
     assert!(
         !list.stderr.to_lowercase().contains("lock"),
@@ -1965,10 +2007,10 @@ fn e2e_interleaved_command_families_preserve_workspace_integrity() {
     let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
-    let init = run_br_in_dir(&root, ["init"]);
+    let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
-    let seed = run_br_in_dir(&root, ["create", "Concurrency seed issue"]);
+    let seed = run_obr_in_dir(&root, ["create", "Concurrency seed issue"]);
     assert!(seed.success, "seed create failed: {}", seed.stderr);
     let issue_id = parse_created_id(&seed.stdout);
     assert!(!issue_id.is_empty(), "missing seed issue id");
@@ -1989,7 +2031,7 @@ fn e2e_interleaved_command_families_preserve_workspace_integrity() {
                 "create".to_string(),
                 format!("Agent-created issue {i}"),
             ];
-            results.push(run_br_in_dir(&create_root, args));
+            results.push(run_obr_in_dir(&create_root, args));
             thread::sleep(Duration::from_millis(10));
         }
         results
@@ -2014,7 +2056,7 @@ fn e2e_interleaved_command_families_preserve_workspace_integrity() {
                 comment_issue_id.as_ref().clone(),
                 format!("agent-note-{i}"),
             ];
-            results.push(run_br_in_dir(&comment_root, args));
+            results.push(run_obr_in_dir(&comment_root, args));
             thread::sleep(Duration::from_millis(10));
         }
         results
@@ -2037,7 +2079,7 @@ fn e2e_interleaved_command_families_preserve_workspace_integrity() {
                 label_issue_id.as_ref().clone(),
                 format!("contended-{i}"),
             ];
-            results.push(run_br_in_dir(&label_root, args));
+            results.push(run_obr_in_dir(&label_root, args));
             thread::sleep(Duration::from_millis(10));
         }
         results
@@ -2071,7 +2113,7 @@ fn e2e_interleaved_command_families_preserve_workspace_integrity() {
                     "--json".to_string(),
                 ],
             };
-            results.push(run_br_in_dir(&reader_root, args));
+            results.push(run_obr_in_dir(&reader_root, args));
             thread::sleep(Duration::from_millis(5));
         }
         results
@@ -2107,7 +2149,7 @@ fn e2e_interleaved_command_families_preserve_workspace_integrity() {
     assert_doctor_healthy(&root);
 
     // Use --no-auto-import to avoid SYNC_CONFLICT from concurrent flushes.
-    let list = run_br_in_dir(&root, ["--no-auto-import", "list", "--json"]);
+    let list = run_obr_in_dir(&root, ["--no-auto-import", "list", "--json"]);
     assert!(
         list.success,
         "list failed after contention: {}",
@@ -2121,7 +2163,7 @@ fn e2e_interleaved_command_families_preserve_workspace_integrity() {
         issues.len()
     );
 
-    let comments = run_br_in_dir(
+    let comments = run_obr_in_dir(
         &root,
         ["--no-auto-import", "comments", "list", &issue_id, "--json"],
     );
@@ -2140,7 +2182,7 @@ fn e2e_interleaved_command_families_preserve_workspace_integrity() {
         comment_json.len()
     );
 
-    let labels = run_br_in_dir(
+    let labels = run_obr_in_dir(
         &root,
         ["--no-auto-import", "label", "list", &issue_id, "--json"],
     );
@@ -2158,7 +2200,7 @@ fn e2e_interleaved_command_families_preserve_workspace_integrity() {
         label_json.len()
     );
 
-    let show = run_br_in_dir(&root, ["--no-auto-import", "show", &issue_id, "--json"]);
+    let show = run_obr_in_dir(&root, ["--no-auto-import", "show", &issue_id, "--json"]);
     assert!(
         show.success,
         "show failed after contention: {}",
@@ -2177,15 +2219,15 @@ fn e2e_external_access_and_background_status_are_bounded_during_mutation() {
     let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
-    let init = run_br_in_dir(&root, ["init"]);
+    let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
-    let seed = run_br_in_dir(&root, ["create", "External access seed issue"]);
+    let seed = run_obr_in_dir(&root, ["create", "External access seed issue"]);
     assert!(seed.success, "seed create failed: {}", seed.stderr);
     let issue_id = parse_created_id(&seed.stdout);
     assert!(!issue_id.is_empty(), "missing seed issue id");
 
-    let beads_dir = Arc::new(root.join(".beads").display().to_string());
+    let obr_dir = Arc::new(root.join(".obr").display().to_string());
     let external_temp_dir = isolated_temp_dir("external temp dir");
     let external_root = Arc::new(external_temp_dir.path().to_path_buf());
 
@@ -2205,14 +2247,14 @@ fn e2e_external_access_and_background_status_are_bounded_during_mutation() {
                 "create".to_string(),
                 format!("local-mutation-{i}"),
             ];
-            results.push(run_br_in_dir(&writer_root, args));
+            results.push(run_obr_in_dir(&writer_root, args));
             thread::sleep(Duration::from_millis(8));
         }
         results
     });
 
     let read_root = Arc::clone(&external_root);
-    let read_beads_dir = Arc::clone(&beads_dir);
+    let read_obr_dir = Arc::clone(&obr_dir);
     let read_issue_id = Arc::clone(&shared_issue_id);
     let read_barrier = Arc::clone(&barrier);
     let external_reader = thread::spawn(move || {
@@ -2235,10 +2277,10 @@ fn e2e_external_access_and_background_status_are_bounded_during_mutation() {
                     "--json".to_string(),
                 ]
             };
-            results.push(run_br_in_dir_with_env(
+            results.push(run_obr_in_dir_with_env(
                 &read_root,
                 args,
-                [("BEADS_DIR", read_beads_dir.as_str())],
+                [("OBR_DIR", read_obr_dir.as_str())],
             ));
             thread::sleep(Duration::from_millis(6));
         }
@@ -2246,7 +2288,7 @@ fn e2e_external_access_and_background_status_are_bounded_during_mutation() {
     });
 
     let status_root = Arc::clone(&external_root);
-    let status_beads_dir = Arc::clone(&beads_dir);
+    let status_obr_dir = Arc::clone(&obr_dir);
     let status_barrier = Arc::clone(&barrier);
     let background_status = thread::spawn(move || {
         status_barrier.wait();
@@ -2259,10 +2301,10 @@ fn e2e_external_access_and_background_status_are_bounded_during_mutation() {
                 "--status".to_string(),
                 "--json".to_string(),
             ];
-            results.push(run_br_in_dir_with_env(
+            results.push(run_obr_in_dir_with_env(
                 &status_root,
                 args,
-                [("BEADS_DIR", status_beads_dir.as_str())],
+                [("OBR_DIR", status_obr_dir.as_str())],
             ));
             thread::sleep(Duration::from_millis(6));
         }
@@ -2285,7 +2327,7 @@ fn e2e_external_access_and_background_status_are_bounded_during_mutation() {
     );
     assert!(
         reader_successes > 0,
-        "expected at least one successful external BEADS_DIR access"
+        "expected at least one successful external OBR_DIR access"
     );
     assert!(
         status_successes > 0,
@@ -2294,7 +2336,7 @@ fn e2e_external_access_and_background_status_are_bounded_during_mutation() {
 
     assert_doctor_healthy(&root);
 
-    let status = run_br_in_dir(&root, ["sync", "--status", "--json"]);
+    let status = run_obr_in_dir(&root, ["sync", "--status", "--json"]);
     assert!(
         status.success,
         "sync --status failed after contention: stdout={} stderr={}",
@@ -2302,7 +2344,7 @@ fn e2e_external_access_and_background_status_are_bounded_during_mutation() {
     );
 
     // Use --no-auto-import to avoid SYNC_CONFLICT from concurrent flushes.
-    let list = run_br_in_dir(&root, ["--no-auto-import", "list", "--json"]);
+    let list = run_obr_in_dir(&root, ["--no-auto-import", "list", "--json"]);
     assert!(
         list.success,
         "list failed after contention: {}",
@@ -2330,22 +2372,22 @@ fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
     let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
-    let init = run_br_in_dir(&root, ["init"]);
+    let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
-    let claim_issue = run_br_in_dir(&root, ["create", "Claim target"]);
+    let claim_issue = run_obr_in_dir(&root, ["create", "Claim target"]);
     assert!(claim_issue.success, "create claim target failed");
     let claim_id = parse_created_id(&claim_issue.stdout);
 
-    let defer_issue = run_br_in_dir(&root, ["create", "Deferred target"]);
+    let defer_issue = run_obr_in_dir(&root, ["create", "Deferred target"]);
     assert!(defer_issue.success, "create defer target failed");
     let defer_id = parse_created_id(&defer_issue.stdout);
 
-    let comment_issue = run_br_in_dir(&root, ["create", "Comment target"]);
+    let comment_issue = run_obr_in_dir(&root, ["create", "Comment target"]);
     assert!(comment_issue.success, "create comment target failed");
     let comment_id = parse_created_id(&comment_issue.stdout);
 
-    let label_issue = run_br_in_dir(&root, ["create", "Label target"]);
+    let label_issue = run_obr_in_dir(&root, ["create", "Label target"]);
     assert!(label_issue.success, "create label target failed");
     let label_id = parse_created_id(&label_issue.stdout);
 
@@ -2373,7 +2415,7 @@ fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
                     "--claim".to_string(),
                     "--json".to_string(),
                 ];
-                results.push(run_br_in_dir(&root, args));
+                results.push(run_obr_in_dir(&root, args));
                 thread::sleep(Duration::from_millis(10));
             }
             results
@@ -2401,7 +2443,7 @@ fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
                     "2026-12-01T00:00:00Z".to_string(),
                     "--json".to_string(),
                 ];
-                results.push(run_br_in_dir(&root, args));
+                results.push(run_obr_in_dir(&root, args));
                 thread::sleep(Duration::from_millis(10));
             }
             results
@@ -2430,7 +2472,7 @@ fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
                     comment_id.clone(),
                     format!("actor-note-{i}"),
                 ];
-                results.push(run_br_in_dir(&root, args));
+                results.push(run_obr_in_dir(&root, args));
                 thread::sleep(Duration::from_millis(10));
             }
             results
@@ -2457,7 +2499,7 @@ fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
                     label_id.clone(),
                     format!("actor-lane-{i}"),
                 ];
-                results.push(run_br_in_dir(&root, args));
+                results.push(run_obr_in_dir(&root, args));
                 thread::sleep(Duration::from_millis(10));
             }
             results
@@ -2493,7 +2535,7 @@ fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
                         "--json".to_string(),
                     ],
                 };
-                results.push(run_br_in_dir(&root, args));
+                results.push(run_obr_in_dir(&root, args));
                 thread::sleep(Duration::from_millis(5));
             }
             results
@@ -2535,7 +2577,7 @@ fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
 
     assert_doctor_healthy(&root);
 
-    let claim_show = run_br_in_dir(&root, ["--no-auto-import", "show", &claim_id, "--json"]);
+    let claim_show = run_obr_in_dir(&root, ["--no-auto-import", "show", &claim_id, "--json"]);
     assert!(
         claim_show.success,
         "show claim target failed: {}",
@@ -2547,7 +2589,7 @@ fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
     assert_eq!(claim_json[0]["assignee"].as_str(), Some("alice"));
 
     // Use --no-auto-import for post-contention reads to avoid SYNC_CONFLICT.
-    let defer_show = run_br_in_dir(&root, ["--no-auto-import", "show", &defer_id, "--json"]);
+    let defer_show = run_obr_in_dir(&root, ["--no-auto-import", "show", &defer_id, "--json"]);
     assert!(
         defer_show.success,
         "show defer target failed: {}",
@@ -2564,7 +2606,7 @@ fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
         "unexpected defer_until value: {defer_until}"
     );
 
-    let comments = run_br_in_dir(
+    let comments = run_obr_in_dir(
         &root,
         [
             "--no-auto-import",
@@ -2596,7 +2638,7 @@ fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
         comments.stdout
     );
 
-    let labels = run_br_in_dir(
+    let labels = run_obr_in_dir(
         &root,
         ["--no-auto-import", "label", "list", &label_id, "--json"],
     );
@@ -2614,7 +2656,7 @@ fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
         label_json.len()
     );
 
-    let list = run_br_in_dir(&root, ["--no-auto-import", "list", "--json"]);
+    let list = run_obr_in_dir(&root, ["--no-auto-import", "list", "--json"]);
     assert!(
         list.success,
         "list failed after actor contention: {}",
@@ -2636,27 +2678,27 @@ fn e2e_close_update_reopen_preserve_blocked_cache_integrity() {
     let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
-    let init = run_br_in_dir(&root, ["init"]);
+    let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
     let mut close_ids = Vec::new();
     for idx in 0..6 {
-        let created = run_br_in_dir(&root, ["create", &format!("Close target {idx}")]);
+        let created = run_obr_in_dir(&root, ["create", &format!("Close target {idx}")]);
         assert!(created.success, "create close target {idx} failed");
         close_ids.push(parse_created_id(&created.stdout));
     }
 
     let mut reopen_ids = Vec::new();
     for idx in 0..3 {
-        let created = run_br_in_dir(&root, ["create", &format!("Reopen target {idx}")]);
+        let created = run_obr_in_dir(&root, ["create", &format!("Reopen target {idx}")]);
         assert!(created.success, "create reopen target {idx} failed");
         let issue_id = parse_created_id(&created.stdout);
-        let closed = run_br_in_dir(&root, ["close", &issue_id, "--reason", "seed closed"]);
+        let closed = run_obr_in_dir(&root, ["close", &issue_id, "--reason", "seed closed"]);
         assert!(closed.success, "seed close {idx} failed: {}", closed.stderr);
         reopen_ids.push(issue_id);
     }
 
-    let update_issue = run_br_in_dir(&root, ["create", "Update target"]);
+    let update_issue = run_obr_in_dir(&root, ["create", "Update target"]);
     assert!(update_issue.success, "create update target failed");
     let update_id = parse_created_id(&update_issue.stdout);
 
@@ -2681,7 +2723,7 @@ fn e2e_close_update_reopen_preserve_blocked_cache_integrity() {
                     "cache regression stress".to_string(),
                     "--json".to_string(),
                 ];
-                results.push(run_br_in_dir(&root, args));
+                results.push(run_obr_in_dir(&root, args));
                 thread::sleep(Duration::from_millis(10));
             }
             results
@@ -2706,7 +2748,7 @@ fn e2e_close_update_reopen_preserve_blocked_cache_integrity() {
                     format!("Update target {idx}"),
                     "--json".to_string(),
                 ];
-                results.push(run_br_in_dir(&root, args));
+                results.push(run_obr_in_dir(&root, args));
                 thread::sleep(Duration::from_millis(10));
             }
             results
@@ -2732,7 +2774,7 @@ fn e2e_close_update_reopen_preserve_blocked_cache_integrity() {
                     format!("reopen round {idx}"),
                     "--json".to_string(),
                 ];
-                results.push(run_br_in_dir(&root, args));
+                results.push(run_obr_in_dir(&root, args));
                 thread::sleep(Duration::from_millis(10));
             }
             results
@@ -2768,7 +2810,7 @@ fn e2e_close_update_reopen_preserve_blocked_cache_integrity() {
                         "--json".to_string(),
                     ],
                 };
-                results.push(run_br_in_dir(&root, args));
+                results.push(run_obr_in_dir(&root, args));
                 thread::sleep(Duration::from_millis(5));
             }
             results
@@ -2809,7 +2851,7 @@ fn e2e_close_update_reopen_preserve_blocked_cache_integrity() {
 
     assert_doctor_healthy(&root);
 
-    let update_show = run_br_in_dir(&root, ["--no-auto-import", "show", &update_id, "--json"]);
+    let update_show = run_obr_in_dir(&root, ["--no-auto-import", "show", &update_id, "--json"]);
     assert!(
         update_show.success,
         "show update target failed: {}",
@@ -2817,12 +2859,12 @@ fn e2e_close_update_reopen_preserve_blocked_cache_integrity() {
     );
 
     for issue_id in close_ids.iter().take(2) {
-        let show = run_br_in_dir(&root, ["--no-auto-import", "show", issue_id, "--json"]);
+        let show = run_obr_in_dir(&root, ["--no-auto-import", "show", issue_id, "--json"]);
         assert!(show.success, "show close target failed: {}", show.stderr);
     }
 
     for issue_id in &reopen_ids {
-        let show = run_br_in_dir(&root, ["--no-auto-import", "show", issue_id, "--json"]);
+        let show = run_obr_in_dir(&root, ["--no-auto-import", "show", issue_id, "--json"]);
         assert!(show.success, "show reopen target failed: {}", show.stderr);
     }
 }
@@ -2837,12 +2879,12 @@ fn e2e_parallel_mixed_db_commands_preserve_sqlite_integrity() {
     let temp_dir = isolated_temp_dir("temp dir");
     let root = temp_dir.path().to_path_buf();
 
-    let init = run_br_in_dir(&root, ["init"]);
+    let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
     let mut issue_ids = Vec::new();
     for idx in 0..14 {
-        let created = run_br_in_dir(&root, ["create", &format!("ts2 mixed issue {idx}")]);
+        let created = run_obr_in_dir(&root, ["create", &format!("ts2 mixed issue {idx}")]);
         assert!(
             created.success,
             "seed create {idx} failed: stdout={} stderr={}",
@@ -2873,7 +2915,7 @@ fn e2e_parallel_mixed_db_commands_preserve_sqlite_integrity() {
                     (idx % 5).to_string(),
                     "--json".to_string(),
                 ];
-                results.push(run_br_in_dir(&root, args));
+                results.push(run_obr_in_dir(&root, args));
                 thread::sleep(Duration::from_millis(5));
             }
             results
@@ -2897,7 +2939,7 @@ fn e2e_parallel_mixed_db_commands_preserve_sqlite_integrity() {
                     issue_ids[idx - 1].clone(),
                     "--json".to_string(),
                 ];
-                results.push(run_br_in_dir(&root, args));
+                results.push(run_obr_in_dir(&root, args));
                 thread::sleep(Duration::from_millis(5));
             }
             results
@@ -2918,7 +2960,7 @@ fn e2e_parallel_mixed_db_commands_preserve_sqlite_integrity() {
                     format!("ts2 mixed concurrent create {idx}"),
                     "--json".to_string(),
                 ];
-                results.push(run_br_in_dir(&root, args));
+                results.push(run_obr_in_dir(&root, args));
                 thread::sleep(Duration::from_millis(5));
             }
             results
@@ -2961,7 +3003,7 @@ fn e2e_parallel_mixed_db_commands_preserve_sqlite_integrity() {
                         "--json".to_string(),
                     ],
                 };
-                results.push(run_br_in_dir(&root, args));
+                results.push(run_obr_in_dir(&root, args));
                 thread::sleep(Duration::from_millis(5));
             }
             results
@@ -2988,14 +3030,14 @@ fn e2e_parallel_mixed_db_commands_preserve_sqlite_integrity() {
     assert_upstream_sqlite_integrity_ok(&root, "after mixed parallel DB load");
 
     for round in 0..4 {
-        let status = run_br_in_dir(&root, ["status", "--no-activity", "--json"]);
+        let status = run_obr_in_dir(&root, ["status", "--no-activity", "--json"]);
         assert!(
             status.success,
             "post-load status round {round} failed: stdout={} stderr={}",
             status.stdout, status.stderr
         );
 
-        let doctor = run_br_in_dir(&root, ["doctor", "--json"]);
+        let doctor = run_obr_in_dir(&root, ["doctor", "--json"]);
         assert!(
             doctor.success,
             "post-load doctor round {round} failed: stdout={} stderr={}",
@@ -3026,13 +3068,13 @@ fn e2e_parallel_writes_preserve_large_description_and_freelist() {
     let temp_dir = isolated_temp_dir("large-description concurrency temp dir");
     let root = temp_dir.path().to_path_buf();
 
-    let init = run_br_in_dir(&root, ["init"]);
+    let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
 
     let description = overflow_page_description();
     assert!(description.len() > 14_000);
 
-    let created = run_br_in_dir(
+    let created = run_obr_in_dir(
         &root,
         [
             "create",
@@ -3061,7 +3103,7 @@ fn e2e_parallel_writes_preserve_large_description_and_freelist() {
                 (0..12)
                     .map(|index| {
                         if index % 2 == 0 {
-                            run_br_in_dir(
+                            run_obr_in_dir(
                                 &root,
                                 [
                                     "--lock-timeout",
@@ -3074,7 +3116,7 @@ fn e2e_parallel_writes_preserve_large_description_and_freelist() {
                                 ],
                             )
                         } else {
-                            run_br_in_dir(
+                            run_obr_in_dir(
                                 &root,
                                 [
                                     "--lock-timeout",
@@ -3103,7 +3145,7 @@ fn e2e_parallel_writes_preserve_large_description_and_freelist() {
         assert_no_integrity_failure_signals("overflow writer", &results);
     }
 
-    let show = run_br_in_dir(&root, ["--no-auto-import", "show", &issue_id, "--json"]);
+    let show = run_obr_in_dir(&root, ["--no-auto-import", "show", &issue_id, "--json"]);
     assert!(
         show.success,
         "large issue vanished after writes: stdout={} stderr={}",
@@ -3113,7 +3155,7 @@ fn e2e_parallel_writes_preserve_large_description_and_freelist() {
         serde_json::from_str(&extract_json_payload(&show.stdout)).expect("show JSON");
     assert_eq!(shown[0]["description"].as_str(), Some(description.as_str()));
 
-    let jsonl = fs::read_to_string(root.join(".beads/issues.jsonl")).expect("read JSONL");
+    let jsonl = fs::read_to_string(root.join(".obr/issues.jsonl")).expect("read JSONL");
     let exported = jsonl
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -3138,9 +3180,9 @@ fn e2e_routed_access_remains_bounded_while_remote_workspace_mutates() {
     let main_root = main_temp_dir.path().to_path_buf();
     let external_root = external_temp_dir.path().to_path_buf();
 
-    let init_main = run_br_in_dir(&main_root, ["init"]);
+    let init_main = run_obr_in_dir(&main_root, ["init"]);
     assert!(init_main.success, "main init failed: {}", init_main.stderr);
-    let init_external = run_br_in_dir(&external_root, ["init"]);
+    let init_external = run_obr_in_dir(&external_root, ["init"]);
     assert!(
         init_external.success,
         "external init failed: {}",
@@ -3149,11 +3191,11 @@ fn e2e_routed_access_remains_bounded_while_remote_workspace_mutates() {
 
     configure_external_route(&main_root, &external_root);
 
-    let local_issue = run_br_in_dir(&main_root, ["create", "Local routed contention target"]);
+    let local_issue = run_obr_in_dir(&main_root, ["create", "Local routed contention target"]);
     assert!(local_issue.success, "create local issue failed");
     let local_id = parse_created_id(&local_issue.stdout);
 
-    let external_issue = run_br_in_dir(
+    let external_issue = run_obr_in_dir(
         &external_root,
         ["create", "External routed contention target"],
     );
@@ -3177,7 +3219,7 @@ fn e2e_routed_access_remains_bounded_while_remote_workspace_mutates() {
                     "create".to_string(),
                     format!("local-route-write-{i}"),
                 ];
-                results.push(run_br_in_dir(&main_root, args));
+                results.push(run_obr_in_dir(&main_root, args));
                 thread::sleep(Duration::from_millis(8));
             }
             results
@@ -3203,7 +3245,7 @@ fn e2e_routed_access_remains_bounded_while_remote_workspace_mutates() {
                     format!("remote-mutation-{i}"),
                     "--json".to_string(),
                 ];
-                results.push(run_br_in_dir(&external_root, args));
+                results.push(run_obr_in_dir(&external_root, args));
                 thread::sleep(Duration::from_millis(8));
             }
             results
@@ -3238,7 +3280,7 @@ fn e2e_routed_access_remains_bounded_while_remote_workspace_mutates() {
                         "remote-route".to_string(),
                     ]
                 };
-                results.push(run_br_in_dir(&main_root, args));
+                results.push(run_obr_in_dir(&main_root, args));
                 thread::sleep(Duration::from_millis(6));
             }
             results
@@ -3270,7 +3312,7 @@ fn e2e_routed_access_remains_bounded_while_remote_workspace_mutates() {
     assert_doctor_healthy(&main_root);
 
     // Use --no-auto-import for post-contention reads to avoid SYNC_CONFLICT.
-    let routed_show = run_br_in_dir(
+    let routed_show = run_obr_in_dir(
         &main_root,
         ["--no-auto-import", "show", &external_id, "--json"],
     );
@@ -3290,7 +3332,7 @@ fn e2e_routed_access_remains_bounded_while_remote_workspace_mutates() {
         "expected remote title mutation, got: {routed_title}"
     );
 
-    let external_labels = run_br_in_dir(
+    let external_labels = run_obr_in_dir(
         &external_root,
         ["--no-auto-import", "label", "list", &external_id, "--json"],
     );
@@ -3310,7 +3352,7 @@ fn e2e_routed_access_remains_bounded_while_remote_workspace_mutates() {
         );
     }
 
-    let local_show = run_br_in_dir(
+    let local_show = run_obr_in_dir(
         &main_root,
         ["--no-auto-import", "show", &local_id, "--json"],
     );
@@ -3320,7 +3362,7 @@ fn e2e_routed_access_remains_bounded_while_remote_workspace_mutates() {
         local_show.stderr
     );
 
-    let main_status = run_br_in_dir(&main_root, ["sync", "--status", "--json"]);
+    let main_status = run_obr_in_dir(&main_root, ["sync", "--status", "--json"]);
     assert!(
         main_status.success,
         "sync --status failed after routed contention: stdout={} stderr={}",

@@ -1,7 +1,7 @@
 {
   "name": "orphaned_lock_file",
   "family": "external_interference",
-  "description": "The workspace includes an orphaned .beads.lock file left behind by a killed process or external sync tool.",
+  "description": "The workspace includes an orphaned .obr.lock file left behind by a killed process or external sync tool.",
   "expected_classification": "degraded",
   "expected_command_outcomes": [
     {

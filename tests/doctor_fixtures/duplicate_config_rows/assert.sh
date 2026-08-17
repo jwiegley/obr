@@ -30,15 +30,15 @@ case "$stage" in
         ;;
     esac
     nrows=$(printf '%s\n' "SELECT COUNT(*) FROM config WHERE key='fixture.dup_test';" \
-              | sqlite3 .beads/beads.db 2>/dev/null || echo 0)
+              | sqlite3 .obr/obr.db 2>/dev/null || echo 0)
     if [ "$nrows" -gt 1 ]; then
       echo "ASSERT FAIL[$stage]: duplicate config row count still $nrows (expected 0 or 1)" >&2
       exit 1
     fi
     ;;
   post_undo)
-    [ -f .beads/beads.db ] || {
-      echo "ASSERT FAIL[$stage]: beads.db gone after undo" >&2
+    [ -f .obr/obr.db ] || {
+      echo "ASSERT FAIL[$stage]: obr.db gone after undo" >&2
       exit 1
     }
     ;;

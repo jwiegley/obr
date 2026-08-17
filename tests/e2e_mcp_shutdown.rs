@@ -9,24 +9,24 @@ use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
-fn should_clear_inherited_br_env(key: &OsStr) -> bool {
+fn should_clear_inherited_obr_env(key: &OsStr) -> bool {
     let key = key.to_string_lossy();
     key.starts_with("BD_")
         || key.starts_with("BEADS_")
         || matches!(
             key.as_ref(),
-            "BR_DISABLE_READ_ONLY_FAST_OPEN"
-                | "BR_OUTPUT_FORMAT"
+            "OBR_DISABLE_READ_ONLY_FAST_OPEN"
+                | "OBR_OUTPUT_FORMAT"
                 | "TOON_DEFAULT_FORMAT"
                 | "TOON_STATS"
         )
 }
 
-fn br_command(root: &Path) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_br"));
+fn obr_command(root: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_obr"));
     command.current_dir(root);
     for (key, _) in std::env::vars_os() {
-        if should_clear_inherited_br_env(&key) {
+        if should_clear_inherited_obr_env(&key) {
             command.env_remove(key);
         }
     }
@@ -81,7 +81,7 @@ fn wait_with_timeout(mut child: Child, timeout: Duration) -> Output {
                     assert_eq!(
                         output.status.code(),
                         Some(130),
-                        "br serve did not exit within {timeout:?} after SIGINT and stdin close; \
+                        "obr serve did not exit within {timeout:?} after SIGINT and stdin close; \
                          after SIGTERM it exited with {}\nstdout:\n{}\nstderr:\n{}",
                         output.status,
                         String::from_utf8_lossy(&output.stdout),
@@ -103,7 +103,7 @@ fn wait_with_timeout(mut child: Child, timeout: Duration) -> Output {
             assert_eq!(
                 output.status.code(),
                 Some(130),
-                "br serve did not exit within {timeout:?} after SIGINT and stdin close; \
+                "obr serve did not exit within {timeout:?} after SIGINT and stdin close; \
                  forced cleanup ended with {}\nstdout:\n{}\nstderr:\n{}",
                 output.status,
                 String::from_utf8_lossy(&output.stdout),
@@ -121,32 +121,32 @@ fn serve_sigint_returns_through_main_and_preserves_reopenable_db() {
     let root = temp.path();
 
     assert_success(
-        &br_command(root)
+        &obr_command(root)
             .args(["init", "--prefix", "mcp"])
             .output()
-            .expect("run br init"),
+            .expect("run obr init"),
         "init",
     );
     assert_success(
-        &br_command(root)
+        &obr_command(root)
             .args(["create", "shutdown checkpoint proof", "--json"])
             .output()
-            .expect("run br create"),
+            .expect("run obr create"),
         "create",
     );
 
-    let mut child = br_command(root)
+    let mut child = obr_command(root)
         .args(["serve", "--actor", "mcp-shutdown-test"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn br serve");
+        .expect("spawn obr serve");
 
     thread::sleep(Duration::from_millis(200));
     assert!(
-        child.try_wait().expect("poll br serve").is_none(),
-        "br serve exited before SIGINT"
+        child.try_wait().expect("poll obr serve").is_none(),
+        "obr serve exited before SIGINT"
     );
 
     send_sigint(child.id());
@@ -159,19 +159,19 @@ fn serve_sigint_returns_through_main_and_preserves_reopenable_db() {
     assert_eq!(
         output.status.code(),
         Some(130),
-        "serve must return through br main's cooperative shutdown path\nstdout:\n{}\nstderr:\n{}",
+        "serve must return through obr main's cooperative shutdown path\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     assert_success(
-        &br_command(root)
+        &obr_command(root)
             .args(["list", "--json"])
             .output()
             .expect("reopen DB after serve shutdown"),
         "list after shutdown",
     );
     assert_success(
-        &br_command(root)
+        &obr_command(root)
             .args(["sync", "--status", "--json"])
             .output()
             .expect("check sync health after serve shutdown"),

@@ -3,7 +3,7 @@
 - **FM**: `fm-caches_indexes-db-bloat-vs-jsonl`
 - **Detector**: `db_bloat`
 - **Severity**: warn
-- **Repair contract**: `br doctor --repair` is detect-only by default. The
+- **Repair contract**: `obr doctor --repair` is detect-only by default. The
   fixture opts into `--unsafe-auto-fix --only fm-caches_indexes-db-bloat-vs-jsonl`
   so the harness exercises the explicit VACUUM path without weakening the
   doctor's normal safety posture.

@@ -1,7 +1,7 @@
 # db_missing_with_jsonl
 
 - **FM**: `fm-state_files-empty-or-truncated-database` (P1) — the
-  SQLite file family is missing entirely while `.beads/issues.jsonl`
+  SQLite file family is missing entirely while `.obr/issues.jsonl`
   survives (crash mid-recovery, overzealous cleanup, partial clone).
 - **Subsystem**: state_files
 - **Detect**: `db.exists` reports `error` ("Missing database file")

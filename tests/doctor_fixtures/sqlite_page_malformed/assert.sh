@@ -29,15 +29,15 @@ case "$stage" in
       exit 1
     fi
     # Seed bead should survive rebuild.
-    n=$("$tool_bin" list --json 2>/dev/null | jq 'length' 2>/dev/null || echo 0)
+    n=$("$tool_bin" list --json 2>/dev/null | jq '.issues | length' 2>/dev/null || echo 0)
     if [ -z "$n" ] || [ "$n" -lt 1 ]; then
       echo "ASSERT FAIL[$stage]: rebuilt DB lost all issues" >&2
       exit 1
     fi
     ;;
   post_undo)
-    [ -f .beads/beads.db ] || {
-      echo "ASSERT FAIL[$stage]: beads.db missing after undo" >&2
+    [ -f .obr/obr.db ] || {
+      echo "ASSERT FAIL[$stage]: obr.db missing after undo" >&2
       exit 1
     }
     ;;

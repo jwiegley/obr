@@ -1,2 +1,0 @@
-1600264a1f3525cc10b296b7d17aeac5b1f9416f79df25d35f0117e818d1324d  tests/artifacts/perf/beads-perf-20260504T-swarm-capacity-planning/report.md
-9751a960ebfa98011019ed4f02e72e1ab80233a1937eaaaf6cbdf37b6cc54870  tests/artifacts/perf/beads-perf-20260504T-swarm-capacity-planning/report.json

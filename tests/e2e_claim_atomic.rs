@@ -1,8 +1,8 @@
 //! Atomic claim guard tests — verifies TOCTOU-safe claiming via IMMEDIATE transactions.
 
-use beads_rust::model::{Priority, Status};
-use beads_rust::storage::{IssueUpdate, SqliteStorage};
 use chrono::{TimeZone, Utc};
+use obr::model::{Priority, Status};
+use obr::storage::{IssueUpdate, SqliteStorage};
 use std::path::Path;
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -10,12 +10,12 @@ use std::thread;
 /// Helper to create a minimal issue for testing.
 fn seed_issue(storage: &mut SqliteStorage, id: &str, assignee: Option<&str>) {
     let t = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
-    let issue = beads_rust::model::Issue {
+    let issue = obr::model::Issue {
         id: id.to_string(),
         title: format!("Test issue {id}"),
         status: Status::Open,
         priority: Priority(2),
-        issue_type: beads_rust::model::IssueType::Task,
+        issue_type: obr::model::IssueType::Task,
         created_at: t,
         updated_at: t,
         assignee: assignee.map(str::to_string),
@@ -182,7 +182,7 @@ fn test_claim_empty_string_assignee_treated_as_unassigned() {
 #[allow(clippy::needless_collect)]
 fn test_concurrent_claim_exactly_one_wins() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let db_path = tmp.path().join("beads.db");
+    let db_path = tmp.path().join("obr.db");
 
     // Seed the issue
     {
@@ -234,7 +234,7 @@ fn test_concurrent_claim_exactly_one_wins() {
 #[test]
 fn test_concurrent_claim_different_issues_both_succeed() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let db_path = tmp.path().join("beads.db");
+    let db_path = tmp.path().join("obr.db");
 
     {
         let mut storage = SqliteStorage::open(&db_path).unwrap();

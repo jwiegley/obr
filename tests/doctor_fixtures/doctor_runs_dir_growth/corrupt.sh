@@ -34,7 +34,7 @@ mkdir -p .doctor/runs
 for i in $(seq -w 1 55); do
   run_dir=".doctor/runs/2024-01-01T00-00-${i}Z__seed${i}"
   mkdir -p "$run_dir"
-  printf '{"schema_version":"br.doctor.report.v1","run_id":"seed%s","exit_code":0}\n' "$i" > "$run_dir/report.json"
+  printf '{"schema_version":"obr.doctor.report.v1","run_id":"seed%s","exit_code":0}\n' "$i" > "$run_dir/report.json"
   : > "$run_dir/actions.jsonl"
   touch -d "2024-01-01T00:00:00Z" "$run_dir" "$run_dir/report.json" "$run_dir/actions.jsonl"
 done

@@ -1,0 +1,2 @@
+# obr keeps only per-machine cache here; nothing under .obr/ is tracked.
+*

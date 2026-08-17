@@ -24,16 +24,16 @@ case "$stage" in
     # above is the load-bearing evidence the planted state was observed.
     ;;
   post_repair)
-    # The orphan SHM should be gone from .beads/ (either deleted or quarantined
-    # under .br_recovery/). DB itself must still exist and be queryable.
-    [ ! -f .beads/beads.db-shm ] || {
+    # The orphan SHM should be gone from .obr/ (either deleted or quarantined
+    # under recovery/). DB itself must still exist and be queryable.
+    [ ! -f .obr/obr.db-shm ] || {
       # Acceptable if it now has a paired WAL.
-      [ -f .beads/beads.db-wal ] || {
-        echo "ASSERT FAIL[$stage]: stale shm sidecar still bare in .beads/" >&2
+      [ -f .obr/obr.db-wal ] || {
+        echo "ASSERT FAIL[$stage]: stale shm sidecar still bare in .obr/" >&2
         exit 1
       }
     }
-    [ -f .beads/beads.db ] || { echo "ASSERT FAIL[$stage]: beads.db missing after --repair" >&2; exit 1; }
+    [ -f .obr/obr.db ] || { echo "ASSERT FAIL[$stage]: obr.db missing after --repair" >&2; exit 1; }
     # Doctor should no longer flag db.sidecars as error.
     out=$("$tool_bin" doctor --json 2>/dev/null) || true
     status=$(echo "$out" | jq -r '.checks[] | select(.name == "db.sidecars") | .status')
@@ -48,7 +48,7 @@ case "$stage" in
     # We accept either restored>=0 (no failures). The harness verifies the
     # exit status separately; here we only assert the workspace is still
     # usable.
-    [ -f .beads/beads.db ] || { echo "ASSERT FAIL[$stage]: beads.db gone after undo" >&2; exit 1; }
+    [ -f .obr/obr.db ] || { echo "ASSERT FAIL[$stage]: obr.db gone after undo" >&2; exit 1; }
     ;;
   *)
     echo "unknown stage: $stage" >&2

@@ -2,7 +2,7 @@
 # Fixture: routes_jsonl_corrupt
 # FM: fm-routes_external-routes-jsonl-corrupt (P1) — detect-only.
 #
-# Plants a `.beads/routes.jsonl` with two well-formed lines and one
+# Plants a `.obr/routes.jsonl` with two well-formed lines and one
 # malformed line. The new `routes_jsonl` detector (pass-2) must flag
 # it at warn level reporting the bad line number. `--repair` must not
 # silently rewrite the file — operator intent is unknowable.
@@ -17,10 +17,10 @@ cd "$target_dir"
 
 # Plant routes.jsonl with mixed valid/invalid content. Line 1 is
 # well-formed, line 2 is invalid JSON, line 3 is well-formed.
-cat > .beads/routes.jsonl <<'JSONL'
+cat > .obr/routes.jsonl <<'JSONL'
 {"prefix":"api-","path":"../api"}
 {not json at all}
-{"prefix":"ops-","path":"/srv/projects/ops/.beads"}
+{"prefix":"ops-","path":"/srv/projects/ops/.obr"}
 JSONL
 
 if [ -e .fixture_baseline ]; then

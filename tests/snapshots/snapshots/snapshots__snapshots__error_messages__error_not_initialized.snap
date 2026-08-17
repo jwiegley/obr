@@ -2,5 +2,5 @@
 source: tests/snapshots/error_messages.rs
 expression: normalize_output(&output.stderr)
 ---
-Error: Beads not initialized: run 'br init' first
-Hint: Run: br init
+Error: Obr not initialized: run 'obr init' first
+Hint: Run: obr init

@@ -4,23 +4,23 @@
 //! empty database…" / "Refusing to export stale database…").
 //!
 //! Armed state reproduction (the documented happy path that destroyed data):
-//! 1. `br sync --import-only` sees >=1 local record that differs from JSONL
+//! 1. `obr sync --import-only` sees >=1 local record that differs from JSONL
 //!    where local wins -> `needs_flush=true` persisted, no dirty rows.
 //! 2. A git merge fast-forwards a JSONL containing issues the local DB has
 //!    never seen.
-//! 3. `br sync --flush-only` must REFUSE (naming the would-be-lost issues),
+//! 3. `obr sync --flush-only` must REFUSE (naming the would-be-lost issues),
 //!    not silently rewrite the JSONL without them.
 //!
 //! The one legitimate reason `needs_flush` previously needed force semantics
-//! is `br delete --hard` (purge): the DB intentionally holds fewer issues
+//! is `obr delete --hard` (purge): the DB intentionally holds fewer issues
 //! than the JSONL. That flow is covered here too and must keep working via
 //! explicit purged-ID tracking rather than a blanket force.
 
 mod common;
 
-use beads_rust::franken_sync::Connection;
-use common::cli::{BrWorkspace, run_br};
+use common::cli::{ObrWorkspace, pin_jsonl, run_obr};
 use fsqlite_types::SqliteValue;
+use obr::franken_sync::Connection;
 use serde_json::Value;
 use std::fs;
 
@@ -66,14 +66,15 @@ const MERGED_ISSUE_LINE: &str = "{\"id\":\"bd-merged1\",\"title\":\"Merged from 
 
 /// Arm `needs_flush=true` with zero dirty rows, then merge a JSONL record the
 /// DB has never seen. Returns the workspace and the issues.jsonl path.
-fn armed_workspace_with_merged_issue() -> (BrWorkspace, std::path::PathBuf) {
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "init");
+fn armed_workspace_with_merged_issue() -> (ObrWorkspace, std::path::PathBuf) {
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let issues_path = workspace.root.join(".beads").join("issues.jsonl");
+    let issues_path = workspace.root.join(".obr").join("issues.jsonl");
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         [
             "create",
@@ -87,7 +88,7 @@ fn armed_workspace_with_merged_issue() -> (BrWorkspace, std::path::PathBuf) {
     let local_id = parse_created_id(&create.stdout);
     assert!(!local_id.is_empty(), "no id in: {}", create.stdout);
 
-    let flush = run_br(
+    let flush = run_obr(
         &workspace,
         ["sync", "--flush-only", "--no-auto-import"],
         "seed_flush",
@@ -100,7 +101,7 @@ fn armed_workspace_with_merged_issue() -> (BrWorkspace, std::path::PathBuf) {
 
     // Step 1: make the JSONL copy of the local issue stale, import, local wins.
     make_jsonl_record_stale(&issues_path, &local_id);
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--no-auto-flush"],
         "arming_import",
@@ -109,7 +110,7 @@ fn armed_workspace_with_merged_issue() -> (BrWorkspace, std::path::PathBuf) {
 
     // The import must have armed needs_flush without any dirty rows;
     // status --json exposes both counters.
-    let status = run_br(
+    let status = run_obr(
         &workspace,
         [
             "sync",
@@ -138,7 +139,7 @@ fn e2e_flush_only_needs_flush_does_not_destroy_merged_issues() {
     let (workspace, issues_path) = armed_workspace_with_merged_issue();
 
     // Step 3: the recommended pre-commit flush must refuse, not clobber.
-    let flush = run_br(
+    let flush = run_obr(
         &workspace,
         ["sync", "--flush-only", "--no-auto-import"],
         "post_merge_flush",
@@ -166,7 +167,7 @@ fn e2e_flush_only_needs_flush_does_not_destroy_merged_issues() {
     );
 
     // Recovery: import the merged JSONL, then the flush succeeds losslessly.
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--no-auto-flush"],
         "recovery_import",
@@ -176,7 +177,7 @@ fn e2e_flush_only_needs_flush_does_not_destroy_merged_issues() {
         "recovery import failed: {}",
         import.stderr
     );
-    let flush2 = run_br(
+    let flush2 = run_obr(
         &workspace,
         ["sync", "--flush-only", "--no-auto-import"],
         "recovery_flush",
@@ -202,7 +203,7 @@ fn e2e_auto_flush_needs_flush_does_not_destroy_merged_issues() {
 
     // A mutating command with auto-flush enabled (but auto-import disabled,
     // as in `git pull` racing a command) must not clobber bd-merged1.
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         [
             "create",
@@ -221,25 +222,26 @@ fn e2e_auto_flush_needs_flush_does_not_destroy_merged_issues() {
 }
 
 /// Regression guard for the legitimate flow the old conflation served:
-/// `br delete --hard` purges an issue from the DB, and the subsequent flush
+/// `obr delete --hard` purges an issue from the DB, and the subsequent flush
 /// must still be allowed to write a JSONL with fewer issues (pruning exactly
 /// the purged IDs) without tripping the stale-database guard.
 #[test]
 fn e2e_hard_delete_flush_still_prunes_purged_issues() {
     let _log = common::test_log("e2e_hard_delete_flush_still_prunes_purged_issues");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let issues_path = workspace.root.join(".beads").join("issues.jsonl");
+    let issues_path = workspace.root.join(".obr").join("issues.jsonl");
 
-    let keep = run_br(
+    let keep = run_obr(
         &workspace,
         ["create", "Keeper", "--no-auto-flush", "--no-auto-import"],
         "create_keeper",
     );
     assert!(keep.status.success(), "create failed: {}", keep.stderr);
-    let victim = run_br(
+    let victim = run_obr(
         &workspace,
         ["create", "Victim", "--no-auto-flush", "--no-auto-import"],
         "create_victim",
@@ -248,7 +250,7 @@ fn e2e_hard_delete_flush_still_prunes_purged_issues() {
     let victim_id = parse_created_id(&victim.stdout);
     assert!(!victim_id.is_empty(), "no id in: {}", victim.stdout);
 
-    let flush = run_br(
+    let flush = run_obr(
         &workspace,
         ["sync", "--flush-only", "--no-auto-import"],
         "seed_flush",
@@ -267,7 +269,7 @@ fn e2e_hard_delete_flush_still_prunes_purged_issues() {
 
     // Soft-delete then purge with auto-flush disabled so the explicit
     // flush-only path is the one that has to prune the purged ID.
-    let del = run_br(
+    let del = run_obr(
         &workspace,
         [
             "delete",
@@ -279,7 +281,7 @@ fn e2e_hard_delete_flush_still_prunes_purged_issues() {
         "soft_delete",
     );
     assert!(del.status.success(), "delete failed: {}", del.stderr);
-    let purge = run_br(
+    let purge = run_obr(
         &workspace,
         [
             "delete",
@@ -297,7 +299,7 @@ fn e2e_hard_delete_flush_still_prunes_purged_issues() {
         purge.stderr
     );
 
-    let flush2 = run_br(
+    let flush2 = run_obr(
         &workspace,
         ["sync", "--flush-only", "--no-auto-import"],
         "post_purge_flush",
@@ -324,23 +326,23 @@ fn e2e_hard_delete_flush_still_prunes_purged_issues() {
 fn e2e_hard_delete_removes_capacity_occupancy_and_preserves_db_health() {
     let _log =
         common::test_log("e2e_hard_delete_removes_capacity_occupancy_and_preserves_db_health");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(&workspace, ["create", "Occupied victim"], "create_victim");
+    let create = run_obr(&workspace, ["create", "Occupied victim"], "create_victim");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let victim_id = parse_created_id(&create.stdout);
     assert!(!victim_id.is_empty(), "no id in: {}", create.stdout);
 
-    let occupy = run_br(
+    let occupy = run_obr(
         &workspace,
         ["update", &victim_id, "--status", "in_progress"],
         "occupy_victim",
     );
     assert!(occupy.status.success(), "update failed: {}", occupy.stderr);
 
-    let db_path = workspace.root.join(".beads/beads.db");
+    let db_path = workspace.root.join(".obr/obr.db");
     {
         let conn = Connection::open(db_path.to_string_lossy().into_owned())
             .expect("open database before purge");
@@ -358,7 +360,7 @@ fn e2e_hard_delete_removes_capacity_occupancy_and_preserves_db_health() {
         assert_eq!(count, 1, "status transition must seed occupancy evidence");
     }
 
-    let purge = run_br(
+    let purge = run_obr(
         &workspace,
         ["delete", &victim_id, "--force", "--hard"],
         "hard_delete_occupied_victim",
@@ -406,7 +408,7 @@ fn e2e_hard_delete_removes_capacity_occupancy_and_preserves_db_health() {
         );
     }
 
-    let reconcile = run_br(
+    let reconcile = run_obr(
         &workspace,
         ["sync", "--reconcile-additive", "--robot"],
         "reconcile_after_hard_delete",

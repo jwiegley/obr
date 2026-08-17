@@ -4,7 +4,7 @@ expression: normalize_output(&output.stdout)
 ---
 Create a new issue
 
-Usage: br create [OPTIONS] [TITLE]
+Usage: obr create [OPTIONS] [TITLE]
 
 Arguments:
   [TITLE]
@@ -74,7 +74,7 @@ Options:
       --ID-REDACTED <AGENT_CONTEXT>
           Set the initial `agent_context` ID-REDACTED JSON (beads_rust#408).
 
-          Accepts the same forms as `br update --ID-REDACTED`: inline JSON, `@path/to/file.json`, or `@path/to/file.yaml` (normalized to JSON). An empty string leaves the field unset. Invalid context is rejected before any issue, event, or JSONL record is created.
+          Accepts the same forms as `obr update --ID-REDACTED`: inline JSON, `@path/to/file.json`, or `@path/to/file.yaml` (normalized to JSON). An empty string leaves the field unset. Invalid context is rejected before any issue, event, or JSONL record is created.
 
       --ID-REDACTED
           Preview without creating
@@ -86,22 +86,22 @@ Options:
           Create issues from a markdown file (bulk import)
 
       --ID-REDACTED <NAME>
-          Tier 1 attribution: agent name (env: BR_AGENT_NAME). Recorded only
+          Tier 1 attribution: agent name (env: OBR_AGENT_NAME). Recorded only
 
-          [env: BR_AGENT_NAME=]
+          [env: OBR_AGENT_NAME=]
 
       --harness <HARNESS>
-          Tier 1 attribution: harness identifier (env: BR_HARNESS). Recorded only
+          Tier 1 attribution: harness identifier (env: OBR_HARNESS). Recorded only
 
-          [env: BR_HARNESS=]
+          [env: OBR_HARNESS=]
 
       --model <MODEL>
-          Tier 1 attribution: model identifier (env: BR_MODEL). Recorded only
+          Tier 1 attribution: model identifier (env: OBR_MODEL). Recorded only
 
-          [env: BR_MODEL=]
+          [env: OBR_MODEL=]
 
       --db <DB>
-          Database path (ID-REDACTED .beads/*.db if not set)
+          Database path (ID-REDACTED .obr/*.db if not set)
 
       --actor <ACTOR>
           Actor name for audit trail
@@ -110,7 +110,7 @@ Options:
           Output as JSON
 
       --ID-REDACTED
-          Force direct mode (no daemon) - effectively no-op in br v1
+          Force direct mode (no daemon) - effectively no-op in obr v1
 
       --ID-REDACTED
           Skip auto JSONL export

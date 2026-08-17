@@ -1,8 +1,0 @@
-cbec91ae42b8f062ebbffb3ac562b58847057ba56a472d251429d11df44ba1db  /data/projects/beads_rust/tests/artifacts/perf/beads-perf-20260504T-redundant-label-filter/final/list-export-baseline.json
-cbec91ae42b8f062ebbffb3ac562b58847057ba56a472d251429d11df44ba1db  /data/projects/beads_rust/tests/artifacts/perf/beads-perf-20260504T-redundant-label-filter/final/list-export-candidate.json
-2953a7defa431547a9bb3acb7504405f1a3ba3c68b969c1c87ef70cfd348b92b  /data/projects/beads_rust/tests/artifacts/perf/beads-perf-20260504T-redundant-label-filter/final/search-export-baseline.json
-2953a7defa431547a9bb3acb7504405f1a3ba3c68b969c1c87ef70cfd348b92b  /data/projects/beads_rust/tests/artifacts/perf/beads-perf-20260504T-redundant-label-filter/final/search-export-candidate.json
-8e6da35f4f3c754eec2bc0e1372bda240f8ec2de91e03948c4ad129c28994c10  /data/projects/beads_rust/tests/artifacts/perf/beads-perf-20260504T-redundant-label-filter/final/list-lane-00-baseline.json
-8e6da35f4f3c754eec2bc0e1372bda240f8ec2de91e03948c4ad129c28994c10  /data/projects/beads_rust/tests/artifacts/perf/beads-perf-20260504T-redundant-label-filter/final/list-lane-00-candidate.json
-c697dda59abfa0eda0771dda235bb57522fdd6a782671291a0e71693ee23863d  /data/projects/beads_rust/tests/artifacts/perf/beads-perf-20260504T-redundant-label-filter/final/search-lane-00-baseline.json
-c697dda59abfa0eda0771dda235bb57522fdd6a782671291a0e71693ee23863d  /data/projects/beads_rust/tests/artifacts/perf/beads-perf-20260504T-redundant-label-filter/final/search-lane-00-candidate.json

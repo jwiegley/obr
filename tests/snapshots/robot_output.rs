@@ -1,4 +1,4 @@
-use super::common::cli::{BrWorkspace, run_br};
+use super::common::cli::{ObrWorkspace, run_obr};
 use super::init_workspace;
 use insta::assert_snapshot;
 use regex::Regex;
@@ -14,7 +14,7 @@ use std::sync::LazyLock;
 // INSTA_UPDATE=always rch exec -- cargo test --test snapshots robot_golden
 //
 // Review the resulting tests/snapshots/snapshots/*.snap diffs before
-// committing. The br ready fixture is fully deterministic and unmasked. The bv
+// committing. The obr ready fixture is fully deterministic and unmasked. The bv
 // outputs are normalized only for wall-clock metadata, elapsed timings,
 // external bv version/reporting hints, stale-day wording, and score fields that
 // include current-date urgency.
@@ -78,12 +78,13 @@ struct BvRun {
     status: ExitStatus,
 }
 
-fn init_robot_golden_workspace() -> BrWorkspace {
+fn init_robot_golden_workspace() -> ObrWorkspace {
     let workspace = init_workspace();
-    let jsonl_path = workspace.root.join(".beads/issues.jsonl");
+    super::common::cli::pin_jsonl(&workspace.root.join(".obr"));
+    let jsonl_path = workspace.root.join(".obr/issues.jsonl");
     fs::write(jsonl_path, ROBOT_JSONL_FIXTURE).expect("write robot JSONL fixture");
 
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--json"],
         "robot_golden_import",
@@ -98,14 +99,14 @@ fn init_robot_golden_workspace() -> BrWorkspace {
     workspace
 }
 
-fn clear_inherited_br_env(command: &mut std::process::Command) {
+fn clear_inherited_obr_env(command: &mut std::process::Command) {
     for (key, _) in std::env::vars_os() {
         let key_str = key.to_string_lossy();
         if key_str.starts_with("BD_")
             || key_str.starts_with("BEADS_")
             || matches!(
                 key_str.as_ref(),
-                "BR_OUTPUT_FORMAT" | "TOON_DEFAULT_FORMAT" | "TOON_STATS"
+                "OBR_OUTPUT_FORMAT" | "TOON_DEFAULT_FORMAT" | "TOON_STATS"
             )
         {
             command.env_remove(key);
@@ -143,9 +144,32 @@ fn assert_bv_golden_version() -> bool {
     );
     true
 }
+/// `bv` (`Dicklesworthstone/beads_viewer`) is a separate third-party Go tool,
+/// not an earlier spelling of this binary, and no workflow installs it. The
+/// three goldens below capture output `bv` emits; `obr` has no `--robot-next`,
+/// `--robot-triage` or `--robot-plan` surface and cannot regenerate them. Report
+/// why `bv` is unusable so those tests skip with a reason instead of panicking
+/// inside [`run_bv`].
+fn bv_skip_reason() -> Option<String> {
+    match std::process::Command::new("bv")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+    {
+        // Spawning succeeded, so `bv` is installed. Its exit status is not
+        // inspected here: these goldens assert on `bv`'s real behaviour, and
+        // asserting anything about `--version` would add a second contract.
+        Ok(_) => None,
+        Err(error) => Some(format!(
+            "`bv` is not runnable ({error}); install \
+             https://github.com/Dicklesworthstone/beads_viewer to refresh these goldens"
+        )),
+    }
+}
 
 /// Returns `None` when `bv` is not installed (caller skips the golden).
-fn run_bv<I, S>(workspace: &BrWorkspace, args: I) -> Option<BvRun>
+fn run_bv<I, S>(workspace: &ObrWorkspace, args: I) -> Option<BvRun>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
@@ -156,7 +180,7 @@ where
     let mut command = std::process::Command::new("bv");
     command.current_dir(&workspace.root);
     command.args(args);
-    clear_inherited_br_env(&mut command);
+    clear_inherited_obr_env(&mut command);
     command.env("NO_COLOR", "1");
     command.env("CI", "1");
 
@@ -274,7 +298,7 @@ fn normalize_bv_robot_output_masks_data_hash() {
 fn robot_golden_ready_output() {
     let workspace = init_robot_golden_workspace();
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         [
             "ready",
@@ -298,6 +322,10 @@ fn robot_golden_ready_output() {
 
 #[test]
 fn robot_golden_bv_next_output() {
+    if let Some(reason) = bv_skip_reason() {
+        eprintln!("Skipping bv robot golden: {reason}");
+        return;
+    }
     let workspace = init_robot_golden_workspace();
 
     let Some(output) = run_bv(&workspace, ["--robot-next"]) else {
@@ -316,6 +344,10 @@ fn robot_golden_bv_next_output() {
 
 #[test]
 fn robot_golden_bv_triage_output() {
+    if let Some(reason) = bv_skip_reason() {
+        eprintln!("Skipping bv robot golden: {reason}");
+        return;
+    }
     let workspace = init_robot_golden_workspace();
 
     let Some(output) = run_bv(&workspace, ["--robot-triage"]) else {
@@ -334,6 +366,10 @@ fn robot_golden_bv_triage_output() {
 
 #[test]
 fn robot_golden_bv_plan_output() {
+    if let Some(reason) = bv_skip_reason() {
+        eprintln!("Skipping bv robot golden: {reason}");
+        return;
+    }
     let workspace = init_robot_golden_workspace();
 
     let Some(output) = run_bv(&workspace, ["--robot-plan"]) else {

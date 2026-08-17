@@ -1,4 +1,4 @@
-use super::common::cli::{BrWorkspace, run_br};
+use super::common::cli::{ObrWorkspace, run_obr};
 use super::{create_issue, init_workspace, normalize_json};
 use insta::assert_snapshot;
 use regex::Regex;
@@ -201,7 +201,7 @@ fn assert_coordination_contract_coverage(document: &Value, context: &str) {
 }
 
 fn assert_schema_document_shape(document: &Value, context: &str) {
-    assert_eq!(document["tool"], "br", "{context} should identify br");
+    assert_eq!(document["tool"], "obr", "{context} should identify obr");
     assert_eq!(
         document["generated_at"], "GENERATED_AT",
         "{context} should have normalized generated_at"
@@ -291,7 +291,7 @@ struct SemanticParityCase<'a> {
 }
 
 struct LiveCommandFixture {
-    workspace: BrWorkspace,
+    workspace: ObrWorkspace,
     ready_id: String,
     blocked_id: String,
     blocker_id: String,
@@ -299,8 +299,8 @@ struct LiveCommandFixture {
     closed_id: String,
 }
 
-fn run_success(workspace: &BrWorkspace, args: &[&str], label: &str) {
-    let output = run_br(workspace, args, label);
+fn run_success(workspace: &ObrWorkspace, args: &[&str], label: &str) {
+    let output = run_obr(workspace, args, label);
     assert!(
         output.status.success(),
         "{label} failed for args {args:?}\nstdout:\n{}\nstderr:\n{}",
@@ -542,11 +542,11 @@ fn semantic_parity_cases(fixture: &LiveCommandFixture) -> Vec<SemanticParityCase
 }
 
 fn assert_json_toon_semantic_parity(
-    workspace: &BrWorkspace,
+    workspace: &ObrWorkspace,
     case: &SemanticParityCase<'_>,
 ) -> (Value, Value) {
     let label = case.name.replace(' ', "_");
-    let json_output = run_br(
+    let json_output = run_obr(
         workspace,
         case.json_args.iter().copied(),
         &format!("semantic_parity_{label}_json"),
@@ -561,7 +561,7 @@ fn assert_json_toon_semantic_parity(
     );
     let json = parse_json(&json_output.stdout, case.name);
 
-    let toon_output = run_br(
+    let toon_output = run_obr(
         workspace,
         case.toon_args.iter().copied(),
         &format!("semantic_parity_{label}_toon"),
@@ -804,9 +804,9 @@ fn assert_live_command_matches_schema(
 
 #[test]
 fn schema_document_golden_json_all() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["schema", "all", "--format", "json"],
         "schema_all_json_golden",
@@ -825,9 +825,9 @@ fn schema_document_golden_json_all() {
 
 #[test]
 fn schema_document_golden_toon_all() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let json_output = run_br(
+    let json_output = run_obr(
         &workspace,
         ["schema", "all", "--format", "json"],
         "schema_all_json_for_toon_golden",
@@ -840,7 +840,7 @@ fn schema_document_golden_toon_all() {
     let normalized_json = normalize_schema_json_output(&json_output.stdout);
     let json = parse_json(&normalized_json, "schema all --format json");
 
-    let toon_output = run_br(
+    let toon_output = run_obr(
         &workspace,
         ["schema", "all", "--format", "toon"],
         "schema_all_toon_golden",
@@ -861,7 +861,7 @@ fn schema_document_golden_toon_all() {
 #[test]
 fn schema_command_shapes_match_live_json_outputs() {
     let fixture = create_live_command_fixture();
-    let schema_output = run_br(
+    let schema_output = run_obr(
         &fixture.workspace,
         ["schema", "all", "--format", "json"],
         "schema_contract_schema_all",
@@ -874,7 +874,7 @@ fn schema_command_shapes_match_live_json_outputs() {
     let schema_document = parse_json(&schema_output.stdout, "schema all --format json");
 
     for case in live_command_cases(&fixture) {
-        let output = run_br(&fixture.workspace, case.args.iter().copied(), case.name);
+        let output = run_obr(&fixture.workspace, case.args.iter().copied(), case.name);
         assert!(
             output.status.success(),
             "command {:?} failed for args {:?}\nstdout:\n{}\nstderr:\n{}",
@@ -910,7 +910,7 @@ fn agent_json_and_toon_outputs_match_semantically() {
     // Update workflow: when an agent-facing JSON or TOON envelope changes,
     // update the command implementation first, run this semantic parity test,
     // then refresh visual snapshots only after this decoded-tree check is
-    // green. TOON must decode with safe path expansion because br emits safe
+    // green. TOON must decode with safe path expansion because obr emits safe
     // folded keys for token efficiency.
     let fixture = create_live_command_fixture();
 

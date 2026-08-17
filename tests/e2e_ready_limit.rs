@@ -1,14 +1,14 @@
 mod common;
-use common::cli::{BrWorkspace, parse_list_issues, run_br};
+use common::cli::{ObrWorkspace, parse_list_issues, run_obr};
 
 #[test]
 fn test_ready_limit_with_external_blockers() {
-    let workspace = BrWorkspace::new();
-    run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    run_obr(&workspace, ["init"], "init");
 
     // Create 10 issues
     for i in 1..=10 {
-        run_br(
+        run_obr(
             &workspace,
             ["create", &format!("Issue {i}")],
             &format!("create_{i}"),
@@ -22,8 +22,8 @@ fn test_ready_limit_with_external_blockers() {
 
     // We need actual IDs.
     // Assuming deterministic IDs or extracting them.
-    // For simplicity, let's just grep list output or use `br list --json` to get IDs.
-    let list = run_br(&workspace, ["list", "--json"], "list");
+    // For simplicity, let's just grep list output or use `obr list --json` to get IDs.
+    let list = run_obr(&workspace, ["list", "--json"], "list");
     let issues = parse_list_issues(&list.stdout);
 
     let mut ids: Vec<String> = issues
@@ -36,7 +36,7 @@ fn test_ready_limit_with_external_blockers() {
     assert_eq!(ids.len(), 10);
 
     for (i, id) in ids.iter().take(5).enumerate() {
-        run_br(
+        run_obr(
             &workspace,
             ["dep", "add", id.as_str(), "external:missing:dep"],
             &format!("block_{i}"),
@@ -45,7 +45,7 @@ fn test_ready_limit_with_external_blockers() {
 
     // Run ready with limit 5
     // We expect it to skip the 5 blocked ones and return the next 5.
-    let ready = run_br(&workspace, ["ready", "--limit", "5", "--json"], "ready");
+    let ready = run_obr(&workspace, ["ready", "--limit", "5", "--json"], "ready");
     let ready_issues: Vec<serde_json::Value> = serde_json::from_str(&ready.stdout).unwrap();
 
     // If bug exists, this will likely be 0 (or < 5).

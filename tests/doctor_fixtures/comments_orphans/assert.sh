@@ -16,7 +16,7 @@ cd "$target_dir"
 orphan_count() {
   python3 <<'PY'
 import sqlite3
-conn = sqlite3.connect(".beads/beads.db")
+conn = sqlite3.connect(".obr/obr.db")
 cur = conn.cursor()
 cur.execute(
     "SELECT COUNT(*) FROM comments c "
@@ -31,7 +31,7 @@ PY
 orphan_body() {
   python3 <<'PY'
 import sqlite3
-conn = sqlite3.connect(".beads/beads.db")
+conn = sqlite3.connect(".obr/obr.db")
 cur = conn.cursor()
 cur.execute("SELECT text FROM comments WHERE issue_id = 'bd-ghost-fixture'")
 row = cur.fetchone()
@@ -57,7 +57,7 @@ case "$stage" in
       exit 1
     fi
     # JSONL pre-state preserved.
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: JSONL bytes drifted during corrupt stage" >&2
@@ -83,7 +83,7 @@ case "$stage" in
     # SACRED INVARIANT: the JSONL bytes are byte-identical to the
     # pre-corruption state. Pruning unreachable orphan COMMENT rows
     # must NEVER touch JSONL.
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: JSONL bytes mutated by --repair (sacred invariant violation)" >&2
@@ -128,7 +128,7 @@ case "$stage" in
       exit 1
     fi
     # JSONL still byte-identical.
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: JSONL bytes drifted across undo" >&2

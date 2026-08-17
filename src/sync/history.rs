@@ -713,8 +713,7 @@ pub(crate) fn backup_before_jsonl_salvage(
         .unwrap_or("issues");
     let salvage_stem = format!("{target_stem}.pre-salvage");
     let wire_ext = crate::sync::org_bridge::ExportFormat::for_path(target_path).wire_extension();
-    let (backup_path, mut backup_file) =
-        create_backup_file(&history_dir, &salvage_stem, wire_ext)?;
+    let (backup_path, mut backup_file) = create_backup_file(&history_dir, &salvage_stem, wire_ext)?;
     let mut backup_guard = BackupFileGuard::new(backup_path.clone());
 
     io::copy(&mut source.reader(), &mut backup_file).map_err(BeadsError::Io)?;

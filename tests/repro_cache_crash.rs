@@ -1,13 +1,13 @@
 mod common;
 
-use beads_rust::model::{Issue, IssueType, Priority, Status};
-use beads_rust::storage::SqliteStorage;
 use chrono::Utc;
-use common::cli::{BrWorkspace, extract_json_payload, run_br};
+use common::cli::{ObrWorkspace, extract_json_payload, pin_jsonl, run_obr};
+use obr::model::{Issue, IssueType, Priority, Status};
+use obr::storage::SqliteStorage;
 use std::fs;
 
-fn create_issue_id(workspace: &BrWorkspace, title: &str, label: &str) -> String {
-    let create = run_br(workspace, ["--json", "create", title, "-t", "task"], label);
+fn create_issue_id(workspace: &ObrWorkspace, title: &str, label: &str) -> String {
+    let create = run_obr(workspace, ["--json", "create", title, "-t", "task"], label);
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     let created_issue: serde_json::Value =
@@ -273,16 +273,17 @@ fn test_rebuild_blocked_cache_is_idempotent_when_rows_already_exist() {
 
 #[test]
 fn repro_dep_add_parent_child_succeeds_db_backed_after_blocked_cache_exists() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     let root_id = create_issue_id(&workspace, "Root blocker", "create_root");
     let parent_id = create_issue_id(&workspace, "Parent issue", "create_parent");
     let child_id = create_issue_id(&workspace, "Child issue", "create_child");
 
-    let add_blocker = run_br(
+    let add_blocker = run_obr(
         &workspace,
         [
             "dep", "add", &parent_id, &root_id, "--type", "blocks", "--json",
@@ -295,7 +296,7 @@ fn repro_dep_add_parent_child_succeeds_db_backed_after_blocked_cache_exists() {
         add_blocker.stderr
     );
 
-    let add_parent_child = run_br(
+    let add_parent_child = run_obr(
         &workspace,
         [
             "dep",
@@ -323,19 +324,20 @@ fn repro_dep_add_parent_child_succeeds_db_backed_after_blocked_cache_exists() {
 
 #[test]
 fn repro_dep_add_parent_child_succeeds_no_db_after_blocked_cache_exists() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     let root_id = create_issue_id(&workspace, "Root blocker", "create_root");
     let parent_id = create_issue_id(&workspace, "Parent issue", "create_parent");
     let child_id = create_issue_id(&workspace, "Child issue", "create_child");
 
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "flush");
     assert!(flush.status.success(), "flush failed: {}", flush.stderr);
 
-    let add_blocker = run_br(
+    let add_blocker = run_obr(
         &workspace,
         [
             "dep", "add", &parent_id, &root_id, "--type", "blocks", "--no-db", "--json",
@@ -348,7 +350,7 @@ fn repro_dep_add_parent_child_succeeds_no_db_after_blocked_cache_exists() {
         add_blocker.stderr
     );
 
-    let add_parent_child = run_br(
+    let add_parent_child = run_obr(
         &workspace,
         [
             "dep",
@@ -368,7 +370,7 @@ fn repro_dep_add_parent_child_succeeds_no_db_after_blocked_cache_exists() {
         add_parent_child.stderr
     );
 
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     let child_record = fs::read_to_string(&jsonl_path)
         .expect("read issues.jsonl")
         .lines()

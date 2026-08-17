@@ -13,8 +13,8 @@ use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use tracing::info;
 
-use beads_rust::model::{Issue, IssueType, Priority, Status};
-use beads_rust::util::{ContentHashable, content_hash, content_hash_from_parts};
+use obr::model::{Issue, IssueType, Priority, Status};
+use obr::util::{ContentHashable, content_hash, content_hash_from_parts};
 
 /// Initialize test logging for proptest
 fn init_test_logging() {
@@ -138,7 +138,7 @@ fn length_prefixed_reference_content_hash(issue: &Issue) -> String {
     for _ in 0..12 {
         push_length_prefixed_field(&mut hasher, "");
     }
-    beads_rust::util::hex_encode(&hasher.finalize())
+    obr::util::hex_encode(&hasher.finalize())
 }
 
 fn push_length_prefixed_field(hasher: &mut Sha256, value: &str) {
@@ -496,7 +496,7 @@ fn hash_changes_with_issue_type() {
 }
 
 mod hex_encode_fuzz {
-    use beads_rust::util::hex_encode;
+    use obr::util::hex_encode;
     use proptest::prelude::*;
 
     proptest! {

@@ -1,6 +1,5 @@
 ---
 source: tests/snapshots/cli_output.rs
-assertion_line: 144
 expression: normalize_output(&output.stdout)
 ---
-br version X.Y.Z (BUILD)
+obr version X.Y.Z (BUILD)

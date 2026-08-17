@@ -22,14 +22,14 @@ done
 "$tool_bin" sync --flush-only >/dev/null 2>&1 || true
 
 # Append synthetic records — DB still has 5; JSONL grows to 7.
-cat >> .beads/issues.jsonl <<'JSONL'
+cat >> .obr/issues.jsonl <<'JSONL'
 {"id":"bd-9001","title":"appended-one","status":"open","priority":2,"issue_type":"task","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","assignee":null,"labels":[],"description":"","acceptance_criteria":"","dependencies":[],"epic_id":null,"discovered_by":null,"discovered_from":null,"source_repo":null,"design":null,"notes":null,"closed_at":null,"close_reason":null}
 {"id":"bd-9002","title":"appended-two","status":"open","priority":2,"issue_type":"task","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","assignee":null,"labels":[],"description":"","acceptance_criteria":"","dependencies":[],"epic_id":null,"discovered_by":null,"discovered_from":null,"source_repo":null,"design":null,"notes":null,"closed_at":null,"close_reason":null}
 JSONL
 
 # Bump JSONL mtime so freshness checks treat it as the newer authority.
 # Use Python instead of GNU-only `touch -d` for BSD/macOS fixture hosts.
-python3 - .beads/issues.jsonl <<'PY'
+python3 - .obr/issues.jsonl <<'PY'
 import os
 import sys
 import time

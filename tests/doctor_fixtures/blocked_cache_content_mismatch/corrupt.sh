@@ -36,7 +36,7 @@ b_id=$(echo "$ids" | sed -n 2p)
 printf '%s\n' \
   "DELETE FROM blocked_issues_cache;" \
   "INSERT INTO blocked_issues_cache(issue_id, blocked_by, blocked_at) VALUES ('br-9999', '[\"br-9998\"]', '2020-01-01T00:00:00Z');" \
-  | sqlite3 .beads/beads.db
+  | sqlite3 .obr/obr.db
 
 if [ -e .fixture_baseline ]; then
   echo "fixture baseline already exists; expected a fresh workspace" >&2

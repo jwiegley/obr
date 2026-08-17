@@ -3,14 +3,14 @@
 - **FM**: `fm-state_files-recovery-artifacts-orphaned` (P3) — aged-TTL variant
 - **Subsystem**: state_files
 - **Detect**: `db.recovery_artifacts.aged` check goes to `warn` when one or
-  more recovery artifacts under `.beads/.br_recovery/` (or sibling
+  more recovery artifacts under `.obr/recovery/` (or sibling
   `.bad_<TS>` files next to the live DB) have `mtime` older than 30 days
   (the `RECOVERY_AGED_TTL_DAYS` constant in `src/cli/commands/doctor.rs`).
   The existing `db.recovery_artifacts` info-only check ALSO fires
   enumerating ALL preserved artifacts — these are intentionally
   complementary surfaces.
 - **Repair contract**: SAFETY — `--repair` renames each aged artifact
-  into `<run-dir>/quarantine/.beads/.br_recovery/` via the `mutate()`
+  into `<run-dir>/quarantine/.obr/recovery/` via the `mutate()`
   chokepoint. **Recent artifacts (younger than the TTL) are preserved
   in place** because operators commonly need recent recovery backups
   for forensic value. Per AGENTS.md RULE 1: rename, never delete.

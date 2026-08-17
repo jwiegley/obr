@@ -10,14 +10,14 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, run_br};
+use common::cli::{ObrWorkspace, run_obr};
 use std::fs;
 use std::thread;
 use std::time::Duration;
 
 /// Helper to run sync --flush-only.
-fn sync_flush(workspace: &BrWorkspace) {
-    let sync = run_br(workspace, ["sync", "--flush-only"], "sync_flush");
+fn sync_flush(workspace: &ObrWorkspace) {
+    let sync = run_obr(workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(
         sync.status.success(),
         "sync should succeed: {}",
@@ -27,8 +27,8 @@ fn sync_flush(workspace: &BrWorkspace) {
 
 /// Helper to create an issue without auto-flush.
 /// This ensures the dirty flag is preserved for explicit sync calls.
-fn create_issue(workspace: &BrWorkspace, title: &str, label: &str) {
-    let create = run_br(workspace, ["--no-auto-flush", "create", title], label);
+fn create_issue(workspace: &ObrWorkspace, title: &str, label: &str) {
+    let create = run_obr(workspace, ["--no-auto-flush", "create", title], label);
     assert!(create.status.success(), "create failed: {}", create.stderr);
 }
 
@@ -38,11 +38,14 @@ fn create_issue(workspace: &BrWorkspace, title: &str, label: &str) {
 ///
 /// Note: We use --no-auto-flush to prevent automatic export after create,
 /// which would clear dirty flags and prevent the explicit sync from triggering backups.
-fn setup_workspace_with_jsonl() -> BrWorkspace {
-    let workspace = BrWorkspace::new();
+fn setup_workspace_with_jsonl() -> ObrWorkspace {
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    // This suite exercises history over a JSONL export (its helpers filter
+    // for .jsonl backups and hand-edit issues.jsonl) — Class A: pin.
+    common::cli::pin_jsonl(&workspace.root.join(".obr"));
 
     // Create initial issue (with --no-auto-flush to control when export happens)
     create_issue(&workspace, "Initial issue", "create_initial");
@@ -54,8 +57,8 @@ fn setup_workspace_with_jsonl() -> BrWorkspace {
 }
 
 /// Read backup files from the history directory.
-fn list_backup_files(workspace: &BrWorkspace) -> Vec<String> {
-    let history_dir = workspace.root.join(".beads").join(".br_history");
+fn list_backup_files(workspace: &ObrWorkspace) -> Vec<String> {
+    let history_dir = workspace.root.join(".obr").join("history");
     if !history_dir.exists() {
         return vec![];
     }
@@ -86,14 +89,14 @@ fn list_backup_files(workspace: &BrWorkspace) -> Vec<String> {
 #[test]
 fn e2e_history_list_empty_initially() {
     let _log = common::test_log("e2e_history_list_empty_initially");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize workspace
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // List history - should be empty
-    let list = run_br(&workspace, ["history", "list"], "history_list_empty");
+    let list = run_obr(&workspace, ["history", "list"], "history_list_empty");
     assert!(
         list.status.success(),
         "history list failed: {}",
@@ -121,7 +124,7 @@ fn e2e_history_list_after_sync_creates_backup() {
     sync_flush(&workspace);
 
     // List history - should have at least one backup
-    let list = run_br(&workspace, ["history", "list"], "history_list_with_backup");
+    let list = run_obr(&workspace, ["history", "list"], "history_list_with_backup");
     assert!(
         list.status.success(),
         "history list failed: {}",
@@ -145,7 +148,7 @@ fn e2e_history_list_shows_backup_details() {
     sync_flush(&workspace);
 
     // List should show filename, size, timestamp
-    let list = run_br(&workspace, ["history", "list"], "history_list_details");
+    let list = run_obr(&workspace, ["history", "list"], "history_list_details");
     assert!(list.status.success());
 
     // Check output contains expected columns
@@ -172,7 +175,7 @@ fn e2e_history_multiple_backups_chronological_order() {
     }
 
     // List backups
-    let list = run_br(&workspace, ["history", "list"], "history_list_multiple");
+    let list = run_obr(&workspace, ["history", "list"], "history_list_multiple");
     assert!(list.status.success());
 
     let backups = list_backup_files(&workspace);
@@ -209,7 +212,7 @@ fn e2e_history_restore_backup() {
     create_issue(&workspace, "Issue after backup", "create_after_backup");
 
     // Restore the backup (with --force since issues.jsonl exists)
-    let restore = run_br(
+    let restore = run_obr(
         &workspace,
         ["history", "restore", backup_file, "--force"],
         "history_restore",
@@ -245,7 +248,7 @@ fn e2e_history_diff_shows_differences() {
     sync_flush(&workspace);
 
     // Diff should show a unified diff generated in-process.
-    let diff = run_br(&workspace, ["history", "diff", backup_file], "history_diff");
+    let diff = run_obr(&workspace, ["history", "diff", backup_file], "history_diff");
     assert!(diff.status.success(), "diff failed: {}", diff.stderr);
     assert!(
         diff.stdout.contains("--- ") && diff.stdout.contains("+++ ") && diff.stdout.contains("@@"),
@@ -277,7 +280,7 @@ fn e2e_history_prune_keeps_recent() {
     );
 
     // Prune keeping only 2
-    let prune = run_br(
+    let prune = run_obr(
         &workspace,
         ["history", "prune", "--keep", "2"],
         "history_prune",
@@ -301,10 +304,10 @@ fn e2e_history_prune_keeps_recent() {
 #[test]
 fn e2e_history_list_before_init_fails() {
     let _log = common::test_log("e2e_history_list_before_init_fails");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Try to list history without init
-    let list = run_br(&workspace, ["history", "list"], "history_no_init");
+    let list = run_obr(&workspace, ["history", "list"], "history_no_init");
     assert!(
         !list.status.success(),
         "history list should fail before init"
@@ -313,7 +316,7 @@ fn e2e_history_list_before_init_fails() {
         list.stderr.contains("not initialized")
             || list.stderr.contains("NotInitialized")
             || list.stderr.contains("not found")
-            || list.stderr.contains(".beads"),
+            || list.stderr.contains(".obr"),
         "error should mention initialization: {}",
         list.stderr
     );
@@ -322,13 +325,13 @@ fn e2e_history_list_before_init_fails() {
 #[test]
 fn e2e_history_restore_nonexistent_backup_fails() {
     let _log = common::test_log("e2e_history_restore_nonexistent_backup_fails");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     // Try to restore a non-existent backup
-    let restore = run_br(
+    let restore = run_obr(
         &workspace,
         ["history", "restore", "nonexistent.20990101_120000.jsonl"],
         "history_restore_missing",
@@ -360,7 +363,7 @@ fn e2e_history_restore_without_force_fails_when_exists() {
     let backup_file = &backups[0];
 
     // Try restore without --force (issues.jsonl exists)
-    let restore = run_br(
+    let restore = run_obr(
         &workspace,
         ["history", "restore", backup_file],
         "history_restore_no_force",
@@ -384,7 +387,7 @@ fn e2e_history_diff_nonexistent_backup_fails() {
     let workspace = setup_workspace_with_jsonl();
 
     // Try to diff a non-existent backup
-    let diff = run_br(
+    let diff = run_obr(
         &workspace,
         ["history", "diff", "nonexistent.20990101_120000.jsonl"],
         "history_diff_missing",
@@ -434,7 +437,7 @@ fn e2e_history_with_many_issues() {
 
     // Create many issues using --no-auto-flush to accumulate changes
     for i in 0..50 {
-        let create = run_br(
+        let create = run_obr(
             &workspace,
             ["--no-auto-flush", "create", &format!("Issue number {i}")],
             &format!("create_{i}"),
@@ -446,11 +449,11 @@ fn e2e_history_with_many_issues() {
     sync_flush(&workspace);
 
     // List should work
-    let list = run_br(&workspace, ["history", "list"], "history_list_many");
+    let list = run_obr(&workspace, ["history", "list"], "history_list_many");
     assert!(list.status.success(), "list failed: {}", list.stderr);
 
     // Verify the JSONL file exists and has content
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     if jsonl_path.exists() {
         let jsonl_size = fs::metadata(&jsonl_path).unwrap().len();
         assert!(jsonl_size > 0, "jsonl should have content after 50 issues");
@@ -460,13 +463,13 @@ fn e2e_history_with_many_issues() {
 #[test]
 fn e2e_history_default_command_is_list() {
     let _log = common::test_log("e2e_history_default_command_is_list");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    // Just `br history` should default to list
-    let history = run_br(&workspace, ["history"], "history_default");
+    // Just `obr history` should default to list
+    let history = run_obr(&workspace, ["history"], "history_default");
     assert!(
         history.status.success(),
         "history default failed: {}",
@@ -492,7 +495,7 @@ fn e2e_history_prune_with_older_than() {
     sync_flush(&workspace);
 
     // Prune with --older-than (backups are fresh, so nothing should be pruned)
-    let prune = run_br(
+    let prune = run_obr(
         &workspace,
         ["history", "prune", "--keep", "1", "--older-than", "1"],
         "history_prune_age",
@@ -529,11 +532,11 @@ fn e2e_history_restore_without_force_succeeds_when_no_current() {
     let backup_file = &backups[0];
 
     // Remove current issues.jsonl
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     fs::remove_file(&jsonl_path).expect("remove issues.jsonl");
 
     // Restore WITHOUT --force should succeed when no current file exists
-    let restore = run_br(
+    let restore = run_obr(
         &workspace,
         ["history", "restore", backup_file],
         "history_restore_no_current",
@@ -576,13 +579,13 @@ fn e2e_history_restore_verifies_content() {
     // Read backup content BEFORE restore
     let backup_path = workspace
         .root
-        .join(".beads")
-        .join(".br_history")
+        .join(".obr")
+        .join("history")
         .join(backup_file);
     let backup_content = fs::read_to_string(&backup_path).expect("read backup");
 
     // Restore the backup
-    let restore = run_br(
+    let restore = run_obr(
         &workspace,
         ["history", "restore", backup_file, "--force"],
         "history_restore_verify",
@@ -594,7 +597,7 @@ fn e2e_history_restore_verifies_content() {
     );
 
     // Verify restored content matches backup
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     let restored_content = fs::read_to_string(&jsonl_path).expect("read restored");
     assert_eq!(
         backup_content, restored_content,
@@ -620,11 +623,11 @@ fn e2e_history_diff_fails_when_no_current_jsonl() {
     let backup_file = &backups[0];
 
     // Remove current issues.jsonl
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     fs::remove_file(&jsonl_path).expect("remove issues.jsonl");
 
     // Diff should fail when current issues.jsonl doesn't exist
-    let diff = run_br(
+    let diff = run_obr(
         &workspace,
         ["history", "diff", backup_file],
         "history_diff_no_current",
@@ -670,7 +673,7 @@ fn e2e_history_prune_removes_oldest_backups() {
     let expected_kept: Vec<_> = backups_before.iter().rev().take(2).cloned().collect();
 
     // Prune to keep only 2 (with older_than=0 to force deletion of old ones)
-    let prune = run_br(
+    let prune = run_obr(
         &workspace,
         ["history", "prune", "--keep", "2", "--older-than", "0"],
         "history_prune_oldest",
@@ -708,7 +711,7 @@ fn e2e_history_list_json_output() {
     sync_flush(&workspace);
 
     // List with --json flag for JSON output
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["--json", "history", "list"],
         "history_list_json",
@@ -758,7 +761,7 @@ fn e2e_history_restore_json_output() {
     let backup_file = &backups[0];
 
     // Restore with --json flag for JSON output
-    let restore = run_br(
+    let restore = run_obr(
         &workspace,
         ["--json", "history", "restore", backup_file, "--force"],
         "history_restore_json",
@@ -799,7 +802,7 @@ fn e2e_history_diff_json_reports_internal_diff_status() {
     create_issue(&workspace, "New JSON diff issue", "create_json_diff_new");
     sync_flush(&workspace);
 
-    let diff = run_br(
+    let diff = run_obr(
         &workspace,
         ["--json", "history", "diff", backup_file],
         "history_diff_json",
@@ -838,7 +841,7 @@ fn e2e_history_prune_json_output() {
     sync_flush(&workspace);
 
     // Prune with --json flag for JSON output
-    let prune = run_br(
+    let prune = run_obr(
         &workspace,
         ["--json", "history", "prune", "--keep", "10"],
         "history_prune_json",
@@ -876,7 +879,7 @@ fn e2e_history_prune_max_bytes_keeps_only_oversized_newest_pair() {
         "fixture should contain at least three backups: {backups_before:?}"
     );
 
-    let prune = run_br(
+    let prune = run_obr(
         &workspace,
         [
             "--json",

@@ -1,6 +1,6 @@
 mod common;
 
-use common::cli::{BrWorkspace, extract_json_payload, run_br};
+use common::cli::{ObrWorkspace, extract_json_payload, run_obr};
 use serde_json::Value;
 use std::fs;
 
@@ -15,8 +15,8 @@ fn parse_created_id(stdout: &str) -> String {
         .to_string()
 }
 
-fn create_issue(workspace: &BrWorkspace, title: &str, priority: &str) -> String {
-    let result = run_br(
+fn create_issue(workspace: &ObrWorkspace, title: &str, priority: &str) -> String {
+    let result = run_obr(
         workspace,
         ["create", title, "-p", priority, "-t", "task"],
         "create_issue",
@@ -26,13 +26,13 @@ fn create_issue(workspace: &BrWorkspace, title: &str, priority: &str) -> String 
 }
 
 fn create_labeled_issue(
-    workspace: &BrWorkspace,
+    workspace: &ObrWorkspace,
     title: &str,
     priority: &str,
     label: &str,
 ) -> String {
     let issue_id = create_issue(workspace, title, priority);
-    let result = run_br(
+    let result = run_obr(
         workspace,
         ["update", &issue_id, "--add-label", label],
         "label_issue",
@@ -41,8 +41,8 @@ fn create_labeled_issue(
     issue_id
 }
 
-fn scheduler_json(workspace: &BrWorkspace, args: &[&str], label: &str) -> Value {
-    let result = run_br(workspace, args, label);
+fn scheduler_json(workspace: &ObrWorkspace, args: &[&str], label: &str) -> Value {
+    let result = run_obr(workspace, args, label);
     assert!(
         result.status.success(),
         "scheduler failed: {}",
@@ -107,7 +107,7 @@ fn assert_stale_scheduler_claim_evidence(assigned_row: &Value) {
         assigned_row["evidence"]["stale_claim"]["coordination_status_hint"]
             .as_str()
             .expect("coordination hint")
-            .contains("br coordination status")
+            .contains("obr coordination status")
     );
     assert_eq!(assigned_row["evidence"]["stale_claim"]["contribution"], 4);
     assert_eq!(
@@ -129,16 +129,16 @@ fn assert_stale_scheduler_claim_evidence(assigned_row: &Value) {
 #[test]
 fn scheduler_json_ranks_ready_bottlenecks_with_evidence() {
     let _log = common::test_log("scheduler_json_ranks_ready_bottlenecks_with_evidence");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let foundation = create_issue(&workspace, "Foundation task", "1");
     let ui = create_issue(&workspace, "Independent UI task", "1");
     let follow_on = create_issue(&workspace, "Depends on foundation", "2");
 
-    let label_foundation = run_br(
+    let label_foundation = run_obr(
         &workspace,
         ["update", &foundation, "--add-label", "core"],
         "label_foundation",
@@ -148,14 +148,14 @@ fn scheduler_json_ranks_ready_bottlenecks_with_evidence() {
         "label foundation failed: {}",
         label_foundation.stderr
     );
-    let label_ui = run_br(&workspace, ["update", &ui, "--add-label", "ui"], "label_ui");
+    let label_ui = run_obr(&workspace, ["update", &ui, "--add-label", "ui"], "label_ui");
     assert!(
         label_ui.status.success(),
         "label ui failed: {}",
         label_ui.stderr
     );
 
-    let dep = run_br(
+    let dep = run_obr(
         &workspace,
         ["dep", "add", &follow_on, &foundation],
         "add_dependency",
@@ -169,7 +169,7 @@ fn scheduler_json_ranks_ready_bottlenecks_with_evidence() {
     );
     let recommendations = json["recommendations"].as_array().expect("recommendations");
 
-    assert_eq!(json["schema"], "br.scheduler.v1");
+    assert_eq!(json["schema"], "obr.scheduler.v1");
     assert_eq!(json["candidate_count"], 2);
     assert_eq!(recommendations.len(), 2);
     assert_eq!(recommendations[0]["issue"]["id"], foundation);
@@ -201,12 +201,12 @@ fn scheduler_json_ranks_ready_bottlenecks_with_evidence() {
 #[test]
 fn scheduler_surfaces_a_custom_only_ready_status_group() {
     let _log = common::test_log("scheduler_surfaces_a_custom_only_ready_status_group");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
     let candidate = create_issue(&workspace, "Rework candidate", "1");
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         ["update", &candidate, "--status", "rework"],
         "candidate_to_rework",
@@ -216,7 +216,7 @@ fn scheduler_surfaces_a_custom_only_ready_status_group() {
         "update to rework failed: {}",
         update.stderr
     );
-    let policy_path = workspace.root.join(".beads").join("policy.yaml");
+    let policy_path = workspace.root.join(".obr").join("policy.yaml");
     fs::write(
         policy_path,
         "workflow:\n  status_groups:\n    ready: [rework]\n",
@@ -236,9 +236,9 @@ fn scheduler_surfaces_a_custom_only_ready_status_group() {
 #[test]
 fn scheduler_candidate_limit_refills_after_external_blockers() {
     let _log = common::test_log("scheduler_candidate_limit_refills_after_external_blockers");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let blocked_one = create_issue(&workspace, "Blocked external one", "0");
@@ -247,7 +247,7 @@ fn scheduler_candidate_limit_refills_after_external_blockers() {
     let free_two = create_issue(&workspace, "Free local two", "1");
 
     for (label, issue_id) in [("block_one", &blocked_one), ("block_two", &blocked_two)] {
-        let dep = run_br(
+        let dep = run_obr(
             &workspace,
             ["dep", "add", issue_id, "external:missing:capability"],
             label,
@@ -288,25 +288,25 @@ fn scheduler_candidate_limit_refills_after_external_blockers() {
 #[test]
 fn scheduler_candidate_limit_keeps_satisfied_external_prefix() {
     let _log = common::test_log("scheduler_candidate_limit_keeps_satisfied_external_prefix");
-    let workspace = BrWorkspace::new();
-    let external = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
+    let external = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init_main");
+    let init = run_obr(&workspace, ["init"], "init_main");
     assert!(init.status.success(), "init failed: {}", init.stderr);
-    let init_external = run_br(&external, ["init"], "init_external");
+    let init_external = run_obr(&external, ["init"], "init_external");
     assert!(
         init_external.status.success(),
         "external init failed: {}",
         init_external.stderr
     );
 
-    let config_path = workspace.root.join(".beads/config.yaml");
+    let config_path = workspace.root.join(".obr/config.yaml");
     let external_path = external.root.display();
     let config = format!("issue_prefix: bd\nexternal_projects:\n  extproj: \"{external_path}\"\n");
     fs::write(&config_path, config).expect("write config");
 
     let provider = create_labeled_issue(&external, "Provide auth", "1", "provides:auth");
-    let close = run_br(&external, ["close", &provider], "close_provider");
+    let close = run_obr(&external, ["close", &provider], "close_provider");
     assert!(
         close.status.success(),
         "external close failed: {}",
@@ -321,7 +321,7 @@ fn scheduler_candidate_limit_keeps_satisfied_external_prefix() {
         ("dep_external_one", &external_one),
         ("dep_external_two", &external_two),
     ] {
-        let dep = run_br(
+        let dep = run_obr(
             &workspace,
             ["dep", "add", issue_id, "external:extproj:auth"],
             label,
@@ -361,15 +361,15 @@ fn scheduler_candidate_limit_keeps_satisfied_external_prefix() {
 #[test]
 fn scheduler_stale_claim_and_fairness_evidence_are_parseable() {
     let _log = common::test_log("scheduler_stale_claim_and_fairness_evidence_are_parseable");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let assigned = create_issue(&workspace, "Assigned open task", "1");
     let unassigned = create_issue(&workspace, "Unassigned open task", "1");
 
-    let assign = run_br(
+    let assign = run_obr(
         &workspace,
         ["update", &assigned, "--assignee", "agent-a"],
         "assign_issue",
@@ -418,9 +418,9 @@ fn scheduler_stale_claim_and_fairness_evidence_are_parseable() {
 #[test]
 fn scheduler_wide_queue_diversifies_contention_domains() {
     let _log = common::test_log("scheduler_wide_queue_diversifies_contention_domains");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     for index in 0..5 {
@@ -463,22 +463,22 @@ fn scheduler_wide_queue_diversifies_contention_domains() {
 #[test]
 fn scheduler_cycle_fixture_stays_parseable_after_cycle_rejection() {
     let _log = common::test_log("scheduler_cycle_fixture_stays_parseable_after_cycle_rejection");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let root = create_issue(&workspace, "Cycle root", "1");
     let dependent = create_issue(&workspace, "Cycle dependent", "1");
 
-    let dep = run_br(
+    let dep = run_obr(
         &workspace,
         ["dep", "add", &dependent, &root],
         "add_cycle_base_dep",
     );
     assert!(dep.status.success(), "dep add failed: {}", dep.stderr);
 
-    let cycle = run_br(
+    let cycle = run_obr(
         &workspace,
         ["dep", "add", &root, &dependent],
         "reject_cycle_dep",
@@ -496,7 +496,7 @@ fn scheduler_cycle_fixture_stays_parseable_after_cycle_rejection() {
     );
     let recommendations = json["recommendations"].as_array().expect("recommendations");
 
-    assert_eq!(json["schema"], "br.scheduler.v1");
+    assert_eq!(json["schema"], "obr.scheduler.v1");
     assert_eq!(recommendations.len(), 1);
     assert_eq!(recommendations[0]["issue"]["id"], root);
     assert_eq!(
@@ -508,9 +508,9 @@ fn scheduler_cycle_fixture_stays_parseable_after_cycle_rejection() {
 #[test]
 fn scheduler_robot_output_has_stable_dry_run_shape() {
     let _log = common::test_log("scheduler_robot_output_has_stable_dry_run_shape");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
     let _id = create_labeled_issue(&workspace, "Robot parseable task", "2", "agents");
 
@@ -525,7 +525,7 @@ fn scheduler_robot_output_has_stable_dry_run_shape() {
         .first()
         .expect("recommendation");
 
-    assert_eq!(json["schema"], "br.scheduler.v1");
+    assert_eq!(json["schema"], "obr.scheduler.v1");
     assert_eq!(json["returned_count"], 1);
     assert!(json["generated_at"].is_string());
     assert_eq!(
@@ -557,13 +557,13 @@ fn scheduler_robot_output_has_stable_dry_run_shape() {
 #[test]
 fn scheduler_alias_emits_text_recommendations() {
     let _log = common::test_log("scheduler_alias_emits_text_recommendations");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
     let _id = create_issue(&workspace, "Standalone task", "2");
 
-    let result = run_br(&workspace, ["schedule", "--limit", "1"], "schedule_text");
+    let result = run_obr(&workspace, ["schedule", "--limit", "1"], "schedule_text");
     assert!(
         result.status.success(),
         "schedule failed: {}",

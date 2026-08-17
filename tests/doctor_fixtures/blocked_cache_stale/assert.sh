@@ -35,14 +35,14 @@ case "$stage" in
     fi
     # Marker must be cleared.
     marker=$(printf '%s\n' "SELECT value FROM metadata WHERE key='blocked_cache_state';" \
-              | sqlite3 .beads/beads.db 2>/dev/null || echo "")
+              | sqlite3 .obr/obr.db 2>/dev/null || echo "")
     if [ "$marker" = "stale" ]; then
       echo "ASSERT FAIL[$stage]: blocked_cache_state marker still 'stale'" >&2
       exit 1
     fi
     # Ghost row gone.
     ghost=$(printf '%s\n' "SELECT COUNT(*) FROM blocked_issues_cache WHERE issue_id='br-9999';" \
-              | sqlite3 .beads/beads.db 2>/dev/null || echo "")
+              | sqlite3 .obr/obr.db 2>/dev/null || echo "")
     if [ "$ghost" != "0" ]; then
       echo "ASSERT FAIL[$stage]: ghost cache row 'br-9999' still present (count=$ghost)" >&2
       exit 1
@@ -51,8 +51,8 @@ case "$stage" in
   post_undo)
     # Cache rebuild path is partially chokepointed — undo may report restored=0.
     # We only require the workspace is still queryable.
-    [ -f .beads/beads.db ] || {
-      echo "ASSERT FAIL[$stage]: beads.db gone after undo" >&2
+    [ -f .obr/obr.db ] || {
+      echo "ASSERT FAIL[$stage]: obr.db gone after undo" >&2
       exit 1
     }
     ;;

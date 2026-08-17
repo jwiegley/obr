@@ -872,8 +872,8 @@ mod tests {
         fs::write(test_dir.join("summary.json"), summary)?;
 
         // Create events.jsonl
-        let events = r#"{"timestamp":"2026-01-17T12:00:00Z","event_type":"command","label":"init","binary":"br","args":["init"],"cwd":"/tmp","exit_code":0,"success":true,"duration_ms":100,"stdout_len":50,"stderr_len":0}
-{"timestamp":"2026-01-17T12:00:01Z","event_type":"command","label":"create","binary":"br","args":["create","test"],"cwd":"/tmp","exit_code":0,"success":true,"duration_ms":200,"stdout_len":100,"stderr_len":0}"#;
+        let events = r#"{"timestamp":"2026-01-17T12:00:00Z","event_type":"command","label":"init","binary":"obr","args":["init"],"cwd":"/tmp","exit_code":0,"success":true,"duration_ms":100,"stdout_len":50,"stderr_len":0}
+{"timestamp":"2026-01-17T12:00:01Z","event_type":"command","label":"create","binary":"obr","args":["create","test"],"cwd":"/tmp","exit_code":0,"success":true,"duration_ms":200,"stdout_len":100,"stderr_len":0}"#;
         fs::write(test_dir.join("events.jsonl"), events)?;
 
         Ok(())

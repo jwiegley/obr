@@ -1,4 +1,4 @@
-//! Deterministic contention and replay lab for swarm-scale `br` workflows.
+//! Deterministic contention and replay lab for swarm-scale `obr` workflows.
 //!
 //! The CI profile intentionally stays small, but it emits the same trace schema
 //! as the manual 64+ worker profile. This gives future lock-combining,
@@ -15,8 +15,8 @@
 
 mod common;
 
-use beads_rust::util::hex_encode;
-use beads_rust::write_combining::{
+use obr::util::hex_encode;
+use obr::write_combining::{
     BatchLimits, CombinedOutputMode, CompatibleMutation, MutationEnvelope, plan_batch,
 };
 use serde::{Deserialize, Serialize};
@@ -32,9 +32,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
-const TRACE_SCHEMA_VERSION: &str = "br.contention-trace.v1";
-const REPLAY_REPORT_SCHEMA_VERSION: &str = "br.contention-replay-report.v1";
-const WRITE_COMBINING_PROJECTION_SCHEMA_VERSION: &str = "br.write-combining-projection.v1";
+const TRACE_SCHEMA_VERSION: &str = "obr.contention-trace.v1";
+const REPLAY_REPORT_SCHEMA_VERSION: &str = "obr.contention-replay-report.v1";
+const WRITE_COMBINING_PROJECTION_SCHEMA_VERSION: &str = "obr.write-combining-projection.v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct ContentionProfile {
@@ -219,7 +219,7 @@ fn run_contention_lab(profile: ContentionProfile) -> io::Result<ContentionRun> {
     let plan = build_plan(&profile);
     let plan_hash = hash_json(&plan)?;
 
-    let lock_path = root.join(".beads").join(".write.lock");
+    let lock_path = root.join(".obr").join(".write.lock");
     let write_lock = OpenOptions::new()
         .read(true)
         .write(true)
@@ -260,9 +260,9 @@ fn run_contention_lab(profile: ContentionProfile) -> io::Result<ContentionRun> {
     }
     events.sort_by_key(|event| event.event_index);
 
-    let doctor_run = run_br_command(&root, ["doctor", "--json"])?;
+    let doctor_run = run_obr_command(&root, ["doctor", "--json"])?;
     let doctor_ok = doctor_reports_no_errors(&doctor_run);
-    let sync_status = run_br_command(&root, ["sync", "--status", "--json"])?;
+    let sync_status = run_obr_command(&root, ["sync", "--status", "--json"])?;
     let sync_status_clean = sync_status.exit_code == 0 && sync_status_is_clean(&sync_status.stdout);
 
     let summary = summarize_events(&events, doctor_ok, sync_status_clean);
@@ -325,7 +325,7 @@ fn run_planned_command(
     lock_released_at_ms: &AtomicU64,
 ) -> io::Result<ContentionEvent> {
     let started_at_ms = elapsed_ms(trace_start);
-    let run = run_br_command(root, planned.command.iter().map(String::as_str))?;
+    let run = run_obr_command(root, planned.command.iter().map(String::as_str))?;
     let ended_at_ms = elapsed_ms(trace_start);
     let release_ms = lock_released_at_ms.load(Ordering::SeqCst);
     let lock_wait_ms = release_ms.saturating_sub(started_at_ms);
@@ -389,7 +389,7 @@ fn replay_contention_trace(trace: &ContentionTrace) -> io::Result<ReplayReport> 
 
     let mut events_replayed = 0;
     for event in &trace.events {
-        let run = run_br_command(&root, event.command.iter().map(String::as_str))?;
+        let run = run_obr_command(&root, event.command.iter().map(String::as_str))?;
         events_replayed += 1;
         if run.exit_code != event.exit_code {
             return Ok(ReplayReport {
@@ -410,7 +410,7 @@ fn replay_contention_trace(trace: &ContentionTrace) -> io::Result<ReplayReport> 
         }
     }
 
-    let list = run_br_command(&root, ["--no-auto-import", "list", "--json"])?;
+    let list = run_obr_command(&root, ["--no-auto-import", "list", "--json"])?;
     if list.exit_code != 0 {
         return Ok(replay_report_with_divergence(
             trace,
@@ -544,28 +544,28 @@ fn replay_report_with_divergence(
 }
 
 fn initialize_workspace(root: &Path) -> io::Result<()> {
-    let init = run_br_command(root, ["init"])?;
+    let init = run_obr_command(root, ["init"])?;
     if init.exit_code == 0 {
         Ok(())
     } else {
         Err(io::Error::other(format!(
-            "br init failed: stdout={} stderr={}",
+            "obr init failed: stdout={} stderr={}",
             String::from_utf8_lossy(&init.stdout),
             String::from_utf8_lossy(&init.stderr)
         )))
     }
 }
 
-fn run_br_command<I, S>(root: &Path, args: I) -> io::Result<CommandRun>
+fn run_obr_command<I, S>(root: &Path, args: I) -> io::Result<CommandRun>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
     let mut command =
-        assert_cmd::Command::cargo_bin("br").map_err(|err| io::Error::other(err.to_string()))?;
+        assert_cmd::Command::cargo_bin("obr").map_err(|err| io::Error::other(err.to_string()))?;
     command.current_dir(root);
     command.args(args);
-    clear_inherited_br_env(&mut command);
+    clear_inherited_obr_env(&mut command);
     command.env("NO_COLOR", "1");
     command.env("RUST_BACKTRACE", "1");
     command.env("HOME", root);
@@ -579,21 +579,21 @@ where
     })
 }
 
-fn clear_inherited_br_env(command: &mut assert_cmd::Command) {
+fn clear_inherited_obr_env(command: &mut assert_cmd::Command) {
     for (key, _) in std::env::vars_os() {
-        if should_clear_inherited_br_env(&key) {
+        if should_clear_inherited_obr_env(&key) {
             command.env_remove(key);
         }
     }
 }
 
-fn should_clear_inherited_br_env(key: &OsStr) -> bool {
+fn should_clear_inherited_obr_env(key: &OsStr) -> bool {
     let key = key.to_string_lossy();
     key.starts_with("BD_")
         || key.starts_with("BEADS_")
         || matches!(
             key.as_ref(),
-            "BR_OUTPUT_FORMAT" | "TOON_DEFAULT_FORMAT" | "TOON_STATS"
+            "OBR_OUTPUT_FORMAT" | "TOON_DEFAULT_FORMAT" | "TOON_STATS"
         )
 }
 
@@ -640,12 +640,12 @@ fn sync_status_is_clean(stdout: &[u8]) -> bool {
             .is_some_and(|db_newer| !db_newer)
 }
 
-/// Decide whether `br doctor --json` reports a workspace that is healthy
+/// Decide whether `obr doctor --json` reports a workspace that is healthy
 /// *enough* for the contention-replay assertion.
 ///
-/// `br doctor` intentionally exits `1` (`DoctorExitCode::FindingsPresent`)
+/// `obr doctor` intentionally exits `1` (`DoctorExitCode::FindingsPresent`)
 /// whenever **any** finding is present, including benign `warn`-level ones
-/// that are purely operator-environment conditions (duplicate `br` on
+/// that are purely operator-environment conditions (duplicate `obr` on
 /// `$PATH`, unset `RUST_LOG`, expected frankensqlite WAL/SHM sidecar shape,
 /// missing post-flush anchor, etc.). The exit-code contract is correct and
 /// must not change — but the assertion here only cares that forced write
@@ -743,7 +743,7 @@ fn contention_profiles_share_trace_schema_and_seeded_plan() {
     let manual = ContentionProfile::manual_64_worker_profile(seed);
 
     assert!(manual.worker_count >= 64);
-    assert_eq!(TRACE_SCHEMA_VERSION, "br.contention-trace.v1");
+    assert_eq!(TRACE_SCHEMA_VERSION, "obr.contention-trace.v1");
     assert_eq!(build_plan(&ci), build_plan(&ci));
     assert_eq!(build_plan(&manual), build_plan(&manual));
     assert_eq!(build_plan(&ci)[0].replay_seed, seed);

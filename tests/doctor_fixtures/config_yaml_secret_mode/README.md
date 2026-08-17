@@ -1,7 +1,7 @@
 # config_yaml_secret_mode
 
 - **FM**: `fm-permissions-config-yaml-mode-leaks-secrets` (P1) —
-  `.beads/config.yaml` is world-readable AND contains secret-shaped
+  `.obr/config.yaml` is world-readable AND contains secret-shaped
   keywords (`token`, `secret`, `password`, `api_key`, `private_key`).
 - **Subsystem**: permissions
 - **Detect**: `permissions.config_yaml_secrets` check goes to `warn`

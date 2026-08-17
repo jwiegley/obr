@@ -1,3 +1,0 @@
-work=/data/tmp/br-startup-cache-bench-183146-1614099
-cache=/data/tmp/br-startup-cache-dir-183146-1614099
-bin=/data/tmp/beads_rust_scheduler_final/release/br

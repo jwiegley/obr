@@ -18,9 +18,10 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, run_br};
+use common::cli::{ObrWorkspace, export_path, run_obr};
 use common::dataset_registry::{DatasetRegistry, IsolatedDataset, KnownDataset};
 use std::fs;
+use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
@@ -31,14 +32,14 @@ use std::time::Duration;
 /// Since #405 the exporter's stale-database guard refuses to flush over such
 /// a JSONL instead of silently dropping the unimported issues, so the lossless
 /// order is import-then-flush.
-fn sync_flush(workspace: &BrWorkspace) {
-    let import = run_br(workspace, ["sync", "--import-only"], "sync_import");
+fn sync_flush(workspace: &ObrWorkspace) {
+    let import = run_obr(workspace, ["sync", "--import-only"], "sync_import");
     assert!(
         import.status.success(),
         "import should succeed: {}",
         import.stderr
     );
-    let sync = run_br(workspace, ["sync", "--flush-only"], "sync_flush");
+    let sync = run_obr(workspace, ["sync", "--flush-only"], "sync_flush");
     assert!(
         sync.status.success(),
         "sync should succeed: {}",
@@ -47,17 +48,23 @@ fn sync_flush(workspace: &BrWorkspace) {
 }
 
 /// Helper to create an issue without auto-flush.
-fn create_issue(workspace: &BrWorkspace, title: &str, label: &str) {
-    let create = run_br(workspace, ["--no-auto-flush", "create", title], label);
+fn create_issue(workspace: &ObrWorkspace, title: &str, label: &str) {
+    let create = run_obr(workspace, ["--no-auto-flush", "create", title], label);
     assert!(create.status.success(), "create failed: {}", create.stderr);
 }
 
-/// Read backup files from the history directory.
-fn list_backup_files(workspace: &BrWorkspace) -> Vec<String> {
-    let history_dir = workspace.root.join(".beads").join(".br_history");
+/// Read backup files from the history directory for one export.
+///
+/// A history backup is named `<stem>.<timestamp>.<ext>` after the export it
+/// snapshots — `PLAN.<timestamp>.org` for the tracked surface,
+/// `issues.<timestamp>.jsonl` for a JSONL workspace — so each caller names the
+/// export its workspace uses rather than probing the directory.
+fn list_backup_files_for(workspace: &ObrWorkspace, stem: &str, extension: &str) -> Vec<String> {
+    let history_dir = workspace.root.join(".obr").join("history");
     if !history_dir.exists() {
         return vec![];
     }
+    let prefix = format!("{stem}.");
     let mut files: Vec<String> = fs::read_dir(&history_dir)
         .unwrap()
         .filter_map(Result::ok)
@@ -66,11 +73,11 @@ fn list_backup_files(workspace: &BrWorkspace) -> Vec<String> {
             let has_prefix = path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("issues."));
-            let has_jsonl = path
+                .is_some_and(|n| n.starts_with(&prefix));
+            let has_extension = path
                 .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"));
-            has_prefix && has_jsonl
+                .is_some_and(|ext| ext.eq_ignore_ascii_case(extension));
+            has_prefix && has_extension
         })
         .map(|e| e.file_name().to_string_lossy().to_string())
         .collect();
@@ -78,11 +85,27 @@ fn list_backup_files(workspace: &BrWorkspace) -> Vec<String> {
     files
 }
 
-/// Helper to set up a workspace with issues.jsonl already existing.
-fn setup_workspace_with_jsonl() -> BrWorkspace {
-    let workspace = BrWorkspace::new();
+/// Backups of the default export: the tracked surface (D-SURFACE).
+fn list_backup_files(workspace: &ObrWorkspace) -> Vec<String> {
+    let surface = export_path(workspace);
+    let stem = surface
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .expect("surface stem");
+    list_backup_files_for(workspace, stem, "org")
+}
 
-    let init = run_br(&workspace, ["init"], "init");
+/// Backups of a JSONL export, for workspaces materialized from a JSONL dataset
+/// fixture rather than from `obr init`.
+fn list_jsonl_backup_files(workspace: &ObrWorkspace) -> Vec<String> {
+    list_backup_files_for(workspace, "issues", "jsonl")
+}
+
+/// Helper to set up an initialized workspace whose default export already exists.
+fn setup_workspace() -> ObrWorkspace {
+    let workspace = ObrWorkspace::new();
+
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     create_issue(&workspace, "Initial issue", "create_initial");
@@ -92,14 +115,13 @@ fn setup_workspace_with_jsonl() -> BrWorkspace {
 }
 
 /// Read file content as bytes for comparison.
-fn read_file_bytes(workspace: &BrWorkspace, relative_path: &str) -> Vec<u8> {
-    let path = workspace.root.join(relative_path);
-    fs::read(&path).unwrap_or_default()
+fn read_file_bytes(path: &Path) -> Vec<u8> {
+    fs::read(path).unwrap_or_default()
 }
 
-/// Check if beads_rust dataset is available for testing.
+/// Check if obr dataset is available for testing.
 fn is_dataset_available() -> bool {
-    DatasetRegistry::new().is_available(KnownDataset::BeadsRust)
+    DatasetRegistry::new().is_available(KnownDataset::Obr)
 }
 
 // =============================================================================
@@ -109,7 +131,7 @@ fn is_dataset_available() -> bool {
 #[test]
 fn e2e_history_restore_verifies_content_integrity() {
     let _log = common::test_log("e2e_history_restore_verifies_content_integrity");
-    let workspace = setup_workspace_with_jsonl();
+    let workspace = setup_workspace();
 
     // Create issue to trigger backup
     create_issue(&workspace, "Issue before backup", "create_before");
@@ -135,13 +157,13 @@ fn e2e_history_restore_verifies_content_integrity() {
 
     let backup_path = workspace
         .root
-        .join(".beads")
-        .join(".br_history")
+        .join(".obr")
+        .join("history")
         .join(backup_file);
     let original_backup_content = fs::read(&backup_path).expect("read backup");
 
-    // Verify issues.jsonl has MORE lines than the backup (4 vs 2)
-    let current_content = read_file_bytes(&workspace, ".beads/issues.jsonl");
+    // Verify the live export has MORE lines than the backup (4 issues vs 2)
+    let current_content = read_file_bytes(&export_path(&workspace));
     let current_lines = current_content.iter().filter(|&&b| b == b'\n').count();
     let backup_lines = original_backup_content
         .iter()
@@ -153,7 +175,7 @@ fn e2e_history_restore_verifies_content_integrity() {
     );
 
     // Restore the backup
-    let restore = run_br(
+    let restore = run_obr(
         &workspace,
         ["history", "restore", backup_file, "--force"],
         "history_restore",
@@ -165,7 +187,7 @@ fn e2e_history_restore_verifies_content_integrity() {
     );
 
     // Verify restored content matches original backup exactly
-    let restored_content = read_file_bytes(&workspace, ".beads/issues.jsonl");
+    let restored_content = read_file_bytes(&export_path(&workspace));
     assert_eq!(
         restored_content, original_backup_content,
         "restored content should match original backup exactly"
@@ -175,7 +197,7 @@ fn e2e_history_restore_verifies_content_integrity() {
 #[test]
 fn e2e_history_restore_preserves_backup_file() {
     let _log = common::test_log("e2e_history_restore_preserves_backup_file");
-    let workspace = setup_workspace_with_jsonl();
+    let workspace = setup_workspace();
 
     // Create issue to trigger backup
     create_issue(&workspace, "Issue for preserve test", "create_preserve");
@@ -187,13 +209,13 @@ fn e2e_history_restore_preserves_backup_file() {
 
     let backup_path = workspace
         .root
-        .join(".beads")
-        .join(".br_history")
+        .join(".obr")
+        .join("history")
         .join(backup_file);
     let original_backup_content = fs::read(&backup_path).expect("read backup");
 
     // Restore the backup
-    let restore = run_br(
+    let restore = run_obr(
         &workspace,
         ["history", "restore", backup_file, "--force"],
         "history_restore",
@@ -212,7 +234,7 @@ fn e2e_history_restore_preserves_backup_file() {
 #[test]
 fn e2e_history_restore_json_output() {
     let _log = common::test_log("e2e_history_restore_json_output");
-    let workspace = setup_workspace_with_jsonl();
+    let workspace = setup_workspace();
 
     // Create issue to trigger backup
     create_issue(&workspace, "Issue for JSON test", "create_json");
@@ -223,7 +245,7 @@ fn e2e_history_restore_json_output() {
     let backup_file = &backups[0];
 
     // Restore with JSON output
-    let restore = run_br(
+    let restore = run_obr(
         &workspace,
         ["--json", "history", "restore", backup_file, "--force"],
         "history_restore_json",
@@ -264,7 +286,7 @@ fn e2e_history_restore_json_output() {
 #[test]
 fn e2e_history_restore_corrupt_backup_succeeds_copy() {
     let _log = common::test_log("e2e_history_restore_corrupt_backup_succeeds_copy");
-    let workspace = setup_workspace_with_jsonl();
+    let workspace = setup_workspace();
 
     // Create issue to trigger backup
     create_issue(&workspace, "Issue for corrupt test", "create_corrupt");
@@ -274,18 +296,18 @@ fn e2e_history_restore_corrupt_backup_succeeds_copy() {
     assert!(!backups.is_empty(), "should have backup");
     let backup_file = &backups[0];
 
-    // Corrupt the backup file with invalid JSONL
+    // Corrupt the backup file with content that parses as no export format
     let backup_path = workspace
         .root
-        .join(".beads")
-        .join(".br_history")
+        .join(".obr")
+        .join("history")
         .join(backup_file);
     fs::write(&backup_path, "{ this is not valid json }\n{ also broken }")
         .expect("write corrupt backup");
 
     // Restore should succeed (it just copies the file)
     // The corruption would be detected on import, not restore
-    let restore = run_br(
+    let restore = run_obr(
         &workspace,
         ["history", "restore", backup_file, "--force"],
         "history_restore_corrupt",
@@ -296,9 +318,8 @@ fn e2e_history_restore_corrupt_backup_succeeds_copy() {
         restore.stderr
     );
 
-    // The restored issues.jsonl should contain the corrupt content
-    let restored_content = fs::read_to_string(workspace.root.join(".beads").join("issues.jsonl"))
-        .expect("read restored");
+    // The restored export should contain the corrupt content verbatim
+    let restored_content = fs::read_to_string(export_path(&workspace)).expect("read restored");
     assert!(
         restored_content.contains("this is not valid json"),
         "restored file should contain the corrupt content"
@@ -308,7 +329,7 @@ fn e2e_history_restore_corrupt_backup_succeeds_copy() {
 #[test]
 fn e2e_history_restore_empty_backup() {
     let _log = common::test_log("e2e_history_restore_empty_backup");
-    let workspace = setup_workspace_with_jsonl();
+    let workspace = setup_workspace();
 
     // Create issue to trigger backup
     create_issue(&workspace, "Issue for empty test", "create_empty");
@@ -321,13 +342,13 @@ fn e2e_history_restore_empty_backup() {
     // Make the backup empty
     let backup_path = workspace
         .root
-        .join(".beads")
-        .join(".br_history")
+        .join(".obr")
+        .join("history")
         .join(backup_file);
     fs::write(&backup_path, "").expect("write empty backup");
 
     // Restore should succeed
-    let restore = run_br(
+    let restore = run_obr(
         &workspace,
         ["history", "restore", backup_file, "--force"],
         "history_restore_empty",
@@ -339,8 +360,7 @@ fn e2e_history_restore_empty_backup() {
     );
 
     // Verify the restored file is empty
-    let restored = fs::read_to_string(workspace.root.join(".beads").join("issues.jsonl"))
-        .expect("read restored");
+    let restored = fs::read_to_string(export_path(&workspace)).expect("read restored");
     assert!(restored.is_empty(), "restored file should be empty");
 }
 
@@ -351,7 +371,7 @@ fn e2e_history_restore_empty_backup() {
 #[test]
 fn e2e_history_prune_deletes_excess_backups() {
     let _log = common::test_log("e2e_history_prune_deletes_excess_backups");
-    let workspace = setup_workspace_with_jsonl();
+    let workspace = setup_workspace();
 
     // Create 5 backups with different timestamps
     for i in 0..5 {
@@ -371,7 +391,7 @@ fn e2e_history_prune_deletes_excess_backups() {
     );
 
     // Prune keeping only 2
-    let prune = run_br(
+    let prune = run_obr(
         &workspace,
         ["history", "prune", "--keep", "2"],
         "history_prune",
@@ -389,7 +409,7 @@ fn e2e_history_prune_deletes_excess_backups() {
 #[test]
 fn e2e_history_prune_keeps_newest() {
     let _log = common::test_log("e2e_history_prune_keeps_newest");
-    let workspace = setup_workspace_with_jsonl();
+    let workspace = setup_workspace();
 
     // Create 4 backups with different timestamps
     let mut backup_timestamps: Vec<String> = Vec::new();
@@ -413,7 +433,7 @@ fn e2e_history_prune_keeps_newest() {
     let newest_two: Vec<String> = backup_timestamps.iter().rev().take(2).cloned().collect();
 
     // Prune keeping only 2
-    let prune = run_br(
+    let prune = run_obr(
         &workspace,
         ["history", "prune", "--keep", "2"],
         "history_prune",
@@ -433,7 +453,7 @@ fn e2e_history_prune_keeps_newest() {
 #[test]
 fn e2e_history_prune_json_output() {
     let _log = common::test_log("e2e_history_prune_json_output");
-    let workspace = setup_workspace_with_jsonl();
+    let workspace = setup_workspace();
 
     // Create backups
     for i in 0..3 {
@@ -447,7 +467,7 @@ fn e2e_history_prune_json_output() {
     }
 
     // Prune with JSON output
-    let prune = run_br(
+    let prune = run_obr(
         &workspace,
         ["--json", "history", "prune", "--keep", "1"],
         "history_prune_json",
@@ -465,14 +485,14 @@ fn e2e_history_prune_json_output() {
 #[test]
 fn e2e_history_prune_with_older_than_days() {
     let _log = common::test_log("e2e_history_prune_with_older_than_days");
-    let workspace = setup_workspace_with_jsonl();
+    let workspace = setup_workspace();
 
     // Create a backup
     create_issue(&workspace, "Issue for age prune", "create_age");
     sync_flush(&workspace);
 
     // Prune with --older-than 0 (should delete all backups)
-    let prune = run_br(
+    let prune = run_obr(
         &workspace,
         ["history", "prune", "--keep", "100", "--older-than", "0"],
         "history_prune_age",
@@ -490,7 +510,7 @@ fn e2e_history_prune_with_older_than_days() {
 #[test]
 fn e2e_history_prune_no_backups_to_delete() {
     let _log = common::test_log("e2e_history_prune_no_backups_to_delete");
-    let workspace = setup_workspace_with_jsonl();
+    let workspace = setup_workspace();
 
     // Create exactly 2 backups
     for i in 0..2 {
@@ -506,7 +526,7 @@ fn e2e_history_prune_no_backups_to_delete() {
     let backups_before = list_backup_files(&workspace);
 
     // Prune keeping 10 (more than we have)
-    let prune = run_br(
+    let prune = run_obr(
         &workspace,
         ["history", "prune", "--keep", "10"],
         "history_prune_nodelete",
@@ -532,24 +552,22 @@ fn e2e_history_restore_with_real_dataset() {
     let _log = common::test_log("e2e_history_restore_with_real_dataset");
 
     if !is_dataset_available() {
-        eprintln!(
-            "Skipping e2e_history_restore_with_real_dataset: beads_rust dataset not available"
-        );
+        eprintln!("Skipping e2e_history_restore_with_real_dataset: obr dataset not available");
         return;
     }
 
     // Create isolated workspace from real dataset
-    let isolated = IsolatedDataset::from_dataset(KnownDataset::BeadsRust)
-        .expect("should copy beads_rust dataset");
+    let isolated =
+        IsolatedDataset::from_dataset(KnownDataset::Obr).expect("should copy obr dataset");
     isolated
         .migrate_to_current_schema()
-        .expect("migrate isolated beads_rust dataset");
+        .expect("migrate isolated obr dataset");
 
     // Write test summary for debugging
     let _summary_path = isolated.write_summary().expect("write summary");
 
     // Create a wrapper workspace for our test helpers
-    let workspace = BrWorkspace {
+    let workspace = ObrWorkspace {
         temp_dir: isolated.temp_dir,
         root: isolated.root.clone(),
         log_dir: isolated.root.join("logs"),
@@ -557,7 +575,7 @@ fn e2e_history_restore_with_real_dataset() {
     fs::create_dir_all(&workspace.log_dir).ok();
 
     // Ensure history directory exists
-    let history_dir = workspace.root.join(".beads").join(".br_history");
+    let history_dir = workspace.root.join(".obr").join("history");
     fs::create_dir_all(&history_dir).expect("create history dir");
 
     // Create a backup by modifying and syncing
@@ -565,7 +583,7 @@ fn e2e_history_restore_with_real_dataset() {
     sync_flush(&workspace);
 
     // Get the backup
-    let backups = list_backup_files(&workspace);
+    let backups = list_jsonl_backup_files(&workspace);
     if backups.is_empty() {
         // Create another change to trigger backup
         create_issue(
@@ -576,7 +594,7 @@ fn e2e_history_restore_with_real_dataset() {
         sync_flush(&workspace);
     }
 
-    let backups = list_backup_files(&workspace);
+    let backups = list_jsonl_backup_files(&workspace);
     if backups.is_empty() {
         eprintln!("No backups created - dataset may have been empty or sync didn't trigger backup");
         return;
@@ -589,7 +607,7 @@ fn e2e_history_restore_with_real_dataset() {
     let original_content = fs::read(&backup_path).expect("read backup");
 
     // Restore the backup
-    let restore = run_br(
+    let restore = run_obr(
         &workspace,
         ["history", "restore", backup_file, "--force"],
         "history_restore_real",
@@ -602,7 +620,7 @@ fn e2e_history_restore_with_real_dataset() {
 
     // Verify content matches
     let restored_content =
-        fs::read(workspace.root.join(".beads").join("issues.jsonl")).expect("read restored");
+        fs::read(workspace.root.join(".obr").join("issues.jsonl")).expect("read restored");
     assert_eq!(
         restored_content, original_content,
         "restored content should match backup"
@@ -614,18 +632,18 @@ fn e2e_history_prune_with_real_dataset() {
     let _log = common::test_log("e2e_history_prune_with_real_dataset");
 
     if !is_dataset_available() {
-        eprintln!("Skipping e2e_history_prune_with_real_dataset: beads_rust dataset not available");
+        eprintln!("Skipping e2e_history_prune_with_real_dataset: obr dataset not available");
         return;
     }
 
     // Create isolated workspace from real dataset
-    let isolated = IsolatedDataset::from_dataset(KnownDataset::BeadsRust)
-        .expect("should copy beads_rust dataset");
+    let isolated =
+        IsolatedDataset::from_dataset(KnownDataset::Obr).expect("should copy obr dataset");
     isolated
         .migrate_to_current_schema()
-        .expect("migrate isolated beads_rust dataset");
+        .expect("migrate isolated obr dataset");
 
-    let workspace = BrWorkspace {
+    let workspace = ObrWorkspace {
         temp_dir: isolated.temp_dir,
         root: isolated.root.clone(),
         log_dir: isolated.root.join("logs"),
@@ -643,17 +661,17 @@ fn e2e_history_prune_with_real_dataset() {
         sync_flush(&workspace);
     }
 
-    let backups_before = list_backup_files(&workspace);
+    let backups_before = list_jsonl_backup_files(&workspace);
 
     // Prune keeping 2
-    let prune = run_br(
+    let prune = run_obr(
         &workspace,
         ["history", "prune", "--keep", "2"],
         "history_prune_real",
     );
     assert!(prune.status.success(), "prune failed: {}", prune.stderr);
 
-    let backups_after = list_backup_files(&workspace);
+    let backups_after = list_jsonl_backup_files(&workspace);
     assert!(
         backups_after.len() <= 2,
         "should have at most 2 backups: before={}, after={}",
@@ -669,7 +687,7 @@ fn e2e_history_prune_with_real_dataset() {
 #[test]
 fn e2e_history_restore_requires_force_when_exists() {
     let _log = common::test_log("e2e_history_restore_requires_force_when_exists");
-    let workspace = setup_workspace_with_jsonl();
+    let workspace = setup_workspace();
 
     // Create issue to trigger backup
     create_issue(&workspace, "Issue for force test", "create_force");
@@ -680,7 +698,7 @@ fn e2e_history_restore_requires_force_when_exists() {
     let backup_file = &backups[0];
 
     // Try restore without --force
-    let restore = run_br(
+    let restore = run_obr(
         &workspace,
         ["history", "restore", backup_file],
         "history_restore_no_force",
@@ -701,7 +719,7 @@ fn e2e_history_restore_requires_force_when_exists() {
 #[test]
 fn e2e_history_restore_succeeds_without_force_when_missing() {
     let _log = common::test_log("e2e_history_restore_succeeds_without_force_when_missing");
-    let workspace = setup_workspace_with_jsonl();
+    let workspace = setup_workspace();
 
     // Create issue to trigger backup
     create_issue(&workspace, "Issue for no force test", "create_noforce");
@@ -711,11 +729,11 @@ fn e2e_history_restore_succeeds_without_force_when_missing() {
     assert!(!backups.is_empty());
     let backup_file = &backups[0];
 
-    // Delete the current issues.jsonl
-    fs::remove_file(workspace.root.join(".beads").join("issues.jsonl")).expect("delete jsonl");
+    // Delete the current export
+    fs::remove_file(export_path(&workspace)).expect("delete export");
 
     // Restore without --force should succeed when target doesn't exist
-    let restore = run_br(
+    let restore = run_obr(
         &workspace,
         ["history", "restore", backup_file],
         "history_restore_noforce_ok",
@@ -727,13 +745,13 @@ fn e2e_history_restore_succeeds_without_force_when_missing() {
     );
 
     // Verify file was restored
-    assert!(workspace.root.join(".beads").join("issues.jsonl").exists());
+    assert!(export_path(&workspace).exists());
 }
 
 #[test]
 fn e2e_history_prune_with_keep_zero_deletes_all() {
     let _log = common::test_log("e2e_history_prune_with_keep_zero_deletes_all");
-    let workspace = setup_workspace_with_jsonl();
+    let workspace = setup_workspace();
 
     // Create backups
     for i in 0..3 {
@@ -750,7 +768,7 @@ fn e2e_history_prune_with_keep_zero_deletes_all() {
     assert!(!backups_before.is_empty(), "should have backups");
 
     // Prune with --keep 0
-    let prune = run_br(
+    let prune = run_obr(
         &workspace,
         ["history", "prune", "--keep", "0"],
         "history_prune_zero",
@@ -772,7 +790,7 @@ fn e2e_history_prune_with_keep_zero_deletes_all() {
 #[test]
 fn e2e_history_restore_quiet_mode() {
     let _log = common::test_log("e2e_history_restore_quiet_mode");
-    let workspace = setup_workspace_with_jsonl();
+    let workspace = setup_workspace();
 
     create_issue(&workspace, "Issue for quiet", "create_quiet");
     sync_flush(&workspace);
@@ -782,7 +800,7 @@ fn e2e_history_restore_quiet_mode() {
     let backup_file = &backups[0];
 
     // Restore with --quiet
-    let restore = run_br(
+    let restore = run_obr(
         &workspace,
         ["--quiet", "history", "restore", backup_file, "--force"],
         "history_restore_quiet",
@@ -798,13 +816,13 @@ fn e2e_history_restore_quiet_mode() {
 #[test]
 fn e2e_history_prune_quiet_mode() {
     let _log = common::test_log("e2e_history_prune_quiet_mode");
-    let workspace = setup_workspace_with_jsonl();
+    let workspace = setup_workspace();
 
     create_issue(&workspace, "Issue for prune quiet", "create_prune_quiet");
     sync_flush(&workspace);
 
     // Prune with --quiet
-    let prune = run_br(
+    let prune = run_obr(
         &workspace,
         ["--quiet", "history", "prune", "--keep", "1"],
         "history_prune_quiet",
@@ -820,7 +838,7 @@ fn e2e_history_prune_quiet_mode() {
 #[test]
 fn e2e_history_restore_force_no_missing_target_window() {
     let _log = common::test_log("e2e_history_restore_force_no_missing_target_window");
-    let workspace = setup_workspace_with_jsonl();
+    let workspace = setup_workspace();
 
     create_issue(&workspace, "Extra issue", "create_extra");
     sync_flush(&workspace);
@@ -830,11 +848,11 @@ fn e2e_history_restore_force_no_missing_target_window() {
     create_issue(&workspace, "Another issue", "create_another");
     sync_flush(&workspace);
 
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    let pre_restore_content = fs::read(&jsonl_path).expect("read jsonl before restore");
+    let target_path = export_path(&workspace);
+    let pre_restore_content = fs::read(&target_path).expect("read export before restore");
     assert!(
         !pre_restore_content.is_empty(),
-        "jsonl should have content before restore"
+        "export should have content before restore"
     );
 
     let backups = list_backup_files(&workspace);
@@ -845,12 +863,12 @@ fn e2e_history_restore_force_no_missing_target_window() {
     let backup_file = backups.last().unwrap();
     let backup_path = workspace
         .root
-        .join(".beads")
-        .join(".br_history")
+        .join(".obr")
+        .join("history")
         .join(backup_file);
     let expected_content = fs::read(&backup_path).expect("read backup");
 
-    let restore = run_br(
+    let restore = run_obr(
         &workspace,
         ["history", "restore", backup_file, "--force"],
         "restore_atomic",
@@ -862,18 +880,18 @@ fn e2e_history_restore_force_no_missing_target_window() {
     );
 
     assert!(
-        jsonl_path.exists(),
-        "target JSONL must exist after force restore (no missing-file window)"
+        target_path.exists(),
+        "target export must exist after force restore (no missing-file window)"
     );
 
-    let post_restore_content = fs::read(&jsonl_path).expect("read jsonl after restore");
+    let post_restore_content = fs::read(&target_path).expect("read export after restore");
     assert_eq!(
         post_restore_content, expected_content,
         "restored content should match the backup exactly"
     );
 
-    let beads_dir = workspace.root.join(".beads");
-    let leftover_temps: Vec<_> = fs::read_dir(&beads_dir)
+    let obr_dir = workspace.root.join(".obr");
+    let leftover_temps: Vec<_> = fs::read_dir(&obr_dir)
         .unwrap()
         .filter_map(Result::ok)
         .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))

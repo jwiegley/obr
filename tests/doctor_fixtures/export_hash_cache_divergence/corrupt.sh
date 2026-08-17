@@ -23,14 +23,14 @@ cd "$target_dir"
 
 # Capture the JSONL bytes pre-corruption so we can later assert they're
 # unchanged by --repair.
-sha256sum .beads/issues.jsonl | awk '{print $1}' > .fixture_jsonl_pre_sha256
+sha256sum .obr/issues.jsonl | awk '{print $1}' > .fixture_jsonl_pre_sha256
 
 # Poison the cached top-level hash with a known-wrong value. JSONL on
 # disk is untouched. Uses python3 because the sqlite3 CLI isn't
 # guaranteed in the test harness env.
 python3 <<'PY'
 import sqlite3
-conn = sqlite3.connect(".beads/beads.db")
+conn = sqlite3.connect(".obr/obr.db")
 cur = conn.cursor()
 cur.execute("UPDATE metadata SET value = 'deadbeef-poisoned' WHERE key = 'jsonl_content_hash'")
 conn.commit()

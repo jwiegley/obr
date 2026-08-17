@@ -2,8 +2,8 @@
 # Fixture: empty_database_with_jsonl
 # FM: fm-state_files-empty-or-truncated-database (P0)
 #
-# Plants a workspace where `.beads/beads.db` has been truncated to 0 bytes but
-# `.beads/issues.jsonl` retains real records. doctor reports
+# Plants a workspace where `.obr/obr.db` has been truncated to 0 bytes but
+# `.obr/issues.jsonl` retains real records. doctor reports
 # schema.tables=error (no tables) and workspace_health=recoverable;
 # `--repair` rebuilds the DB from JSONL.
 
@@ -22,8 +22,8 @@ cd "$target_dir"
 "$tool_bin" sync --flush-only >/dev/null 2>&1 || true
 
 # Now truncate the DB and WAL.
-: > .beads/beads.db
-[ -f .beads/beads.db-wal ] && : > .beads/beads.db-wal || true
+: > .obr/obr.db
+[ -f .obr/obr.db-wal ] && : > .obr/obr.db-wal || true
 
 if [ -e .fixture_baseline ]; then
   echo "fixture baseline already exists; expected a fresh workspace" >&2

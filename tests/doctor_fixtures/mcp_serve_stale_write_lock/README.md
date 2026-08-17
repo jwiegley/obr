@@ -3,11 +3,23 @@
 - **FM**: `fm-agent_coordination-mcp-serve-stale-write-lock`
 - **Covered by live detector**: `write_lock` /
   `fm-concurrency_primitives-orphaned-write-lock`
-- **Detect**: plants an old `.beads/.write.lock` plus an orphan
+- **Detect**: plants an old `.obr/.write.lock` plus an orphan
   `.write.lock.holder.pid` sidecar, matching the shape left behind by a killed
-  long-running `br serve` process. Doctor must classify the lock inode `ok`
-  with `details.reason == "persistent_advisory_inode"`; process exit already
-  released the OS lock.
+  long-running `obr serve` process. Doctor must classify the lock inode `ok`
+  with `details.reason == "probe_acquired_free"`: process exit already released
+  the OS advisory lock, so a non-blocking probe acquires it, and the leftover
+  inode wedges nothing.
+- **obr-m6m — the reason string changed, and why that is a correction**: this
+  used to demand `details.reason == "persistent_advisory_inode"`. That string
+  is emitted nowhere in `src/` and never was; `docs/research/upgrade/DECISIONS.md`
+  lists it under "Born-broken tests" as a never-implemented classification. The
+  implemented vocabulary is `probe_acquired_free` /
+  `probe_would_block_live_holder` / `stale_mtime`, and `probe_acquired_free` is
+  the right answer for an unheld old lock. The fixture only appeared to be
+  checking anything real because a plain `obr doctor` held the workspace write
+  lock while probing it, so the probe collided with its own caller. Read-only
+  doctor no longer takes that lock, so the probe answers honestly and the
+  fixture now pins the FREE branch by name.
 - **Repair contract**: doctor must not move, remove, or rewrite either lock
   artifact automatically. The fixture proves device+inode identity across
   detect, repair, and undo; a subsequent real mutation proves the old inode

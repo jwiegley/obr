@@ -1,29 +1,29 @@
-//! E2E coverage for issue #408: `br create` accepts `--acceptance-criteria`
+//! E2E coverage for issue #408: `obr create` accepts `--acceptance-criteria`
 //! (visible alias `--acceptance`) and `--agent-context` so a fully governed
 //! issue is created in ONE atomic mutation instead of create + update.
 
 mod common;
 
-use common::cli::{BrWorkspace, extract_json_payload, parse_created_id, run_br};
+use common::cli::{ObrWorkspace, extract_json_payload, parse_created_id, pin_jsonl, run_obr};
 use serde_json::Value;
 use std::fs;
 
-fn show_issue(workspace: &BrWorkspace, id: &str) -> Value {
-    let show = run_br(
+fn show_issue(workspace: &ObrWorkspace, id: &str) -> Value {
+    let show = run_obr(
         workspace,
         ["show", id, "--json", "--no-auto-flush", "--no-auto-import"],
         "show_issue",
     );
     assert!(show.status.success(), "show failed: {}", show.stderr);
-    // `br show --json` emits an array of issues.
+    // `obr show --json` emits an array of issues.
     let mut issues: Vec<Value> =
         serde_json::from_str(&extract_json_payload(&show.stdout)).expect("show JSON");
     assert_eq!(issues.len(), 1, "expected exactly one issue for {id}");
     issues.remove(0)
 }
 
-fn jsonl_record_for(workspace: &BrWorkspace, id: &str) -> Value {
-    let jsonl = fs::read_to_string(workspace.root.join(".beads").join("issues.jsonl"))
+fn jsonl_record_for(workspace: &ObrWorkspace, id: &str) -> Value {
+    let jsonl = fs::read_to_string(workspace.root.join(".obr").join("issues.jsonl"))
         .expect("read issues.jsonl");
     let line = jsonl
         .lines()
@@ -39,15 +39,16 @@ fn jsonl_record_for(workspace: &BrWorkspace, id: &str) -> Value {
 }
 
 /// Both fields persist through the single create transaction, appear in the
-/// command's JSON output, in `br show`, and in the first flushed JSONL record.
+/// command's JSON output, in `obr show`, and in the first flushed JSONL record.
 #[test]
 fn e2e_create_with_acceptance_criteria_and_agent_context() {
     let _log = common::test_log("e2e_create_with_acceptance_criteria_and_agent_context");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         [
             "create",
@@ -102,11 +103,12 @@ fn e2e_create_with_acceptance_criteria_and_agent_context() {
 #[test]
 fn e2e_create_acceptance_alias() {
     let _log = common::test_log("e2e_create_acceptance_alias");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         [
             "create",
@@ -128,20 +130,21 @@ fn e2e_create_acceptance_alias() {
 }
 
 /// `--agent-context @file.json` and `@file.yaml` normalize exactly like
-/// `br update --agent-context`.
+/// `obr update --agent-context`.
 #[test]
 fn e2e_create_agent_context_file_forms() {
     let _log = common::test_log("e2e_create_agent_context_file_forms");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     let json_path = workspace.root.join("ctx.json");
     fs::write(&json_path, r#"{"workflow":"json-file","steps":[1,2]}"#).expect("write json");
     let yaml_path = workspace.root.join("ctx.yaml");
     fs::write(&yaml_path, "workflow: yaml-file\nsteps:\n  - a\n  - b\n").expect("write yaml");
 
-    let create_json = run_br(
+    let create_json = run_obr(
         &workspace,
         [
             "create",
@@ -167,7 +170,7 @@ fn e2e_create_agent_context_file_forms() {
     .expect("JSON");
     assert_eq!(ctx_json["workflow"].as_str(), Some("json-file"));
 
-    let create_yaml = run_br(
+    let create_yaml = run_obr(
         &workspace,
         [
             "create",
@@ -196,7 +199,7 @@ fn e2e_create_agent_context_file_forms() {
 
     // Update with the same YAML file must produce the identical normalized
     // context (parser parity between create and update).
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         [
             "update",
@@ -221,11 +224,12 @@ fn e2e_create_agent_context_file_forms() {
 #[test]
 fn e2e_create_invalid_agent_context_leaves_no_trace() {
     let _log = common::test_log("e2e_create_invalid_agent_context_leaves_no_trace");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         [
             "create",
@@ -247,7 +251,7 @@ fn e2e_create_invalid_agent_context_leaves_no_trace() {
         create.stderr
     );
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         [
             "list",
@@ -266,13 +270,13 @@ fn e2e_create_invalid_agent_context_leaves_no_trace() {
     );
 
     let jsonl =
-        fs::read_to_string(workspace.root.join(".beads").join("issues.jsonl")).unwrap_or_default();
+        fs::read_to_string(workspace.root.join(".obr").join("issues.jsonl")).unwrap_or_default();
     assert!(
         !jsonl.contains("Broken context"),
         "no JSONL record may exist after a rejected create"
     );
 
-    let status = run_br(
+    let status = run_obr(
         &workspace,
         [
             "sync",
@@ -297,11 +301,12 @@ fn e2e_create_invalid_agent_context_leaves_no_trace() {
 #[test]
 fn e2e_create_without_governance_flags_unchanged() {
     let _log = common::test_log("e2e_create_without_governance_flags_unchanged");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         [
             "create",

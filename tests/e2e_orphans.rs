@@ -6,14 +6,16 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, extract_json_payload, run_br, run_br_with_env, run_br_with_stdin};
+use common::cli::{
+    ObrWorkspace, extract_json_payload, pin_jsonl, run_obr, run_obr_with_env, run_obr_with_stdin,
+};
 use serde_json::Value;
 use std::fs;
 use std::process::Command;
 use tracing::info;
 
 /// Initialize a git repository in the workspace.
-fn init_git(workspace: &BrWorkspace, label: &str) {
+fn init_git(workspace: &ObrWorkspace, label: &str) {
     let output = Command::new("git")
         .current_dir(&workspace.root)
         .args(["init"])
@@ -37,7 +39,7 @@ fn init_git(workspace: &BrWorkspace, label: &str) {
 }
 
 /// Make a git commit with the given message.
-fn git_commit(workspace: &BrWorkspace, message: &str, label: &str) {
+fn git_commit(workspace: &ObrWorkspace, message: &str, label: &str) {
     // Create a dummy file to commit
     let file_path = workspace.root.join(format!("{label}.txt"));
     fs::write(&file_path, format!("Content for {label}")).expect("write file");
@@ -77,8 +79,8 @@ fn parse_created_id(stdout: &str) -> String {
     id_part.trim().to_string()
 }
 
-fn rewrite_jsonl_issue_as_closed(workspace: &BrWorkspace, issue_id: &str) {
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+fn rewrite_jsonl_issue_as_closed(workspace: &ObrWorkspace, issue_id: &str) {
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     let contents = fs::read_to_string(&jsonl_path).expect("read issues.jsonl");
 
     let rewritten = contents
@@ -156,22 +158,23 @@ fn assert_mixed_prefix_dotted_orphans(stdout: &str) {
 fn e2e_orphans_no_orphans_empty_list() {
     common::init_test_logging();
     info!("e2e_orphans_no_orphans_empty_list: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize git and beads
     init_git(&workspace, "git_init");
-    let init = run_br(&workspace, ["init"], "br_init");
+    let init = run_obr(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     // Create an issue but don't reference it in commits
-    let create = run_br(&workspace, ["create", "Unreferenced issue"], "create_issue");
+    let create = run_obr(&workspace, ["create", "Unreferenced issue"], "create_issue");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // Make a commit without issue reference
     git_commit(&workspace, "Add feature without issue ref", "commit_no_ref");
 
     // Run orphans - should be empty
-    let orphans = run_br(&workspace, ["orphans"], "orphans_empty");
+    let orphans = run_obr(&workspace, ["orphans"], "orphans_empty");
     assert!(
         orphans.status.success(),
         "orphans failed: {}",
@@ -189,15 +192,16 @@ fn e2e_orphans_no_orphans_empty_list() {
 fn e2e_orphans_detects_open_issue_in_commit() {
     common::init_test_logging();
     info!("e2e_orphans_detects_open_issue_in_commit: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize git and beads
     init_git(&workspace, "git_init");
-    let init = run_br(&workspace, ["init"], "br_init");
+    let init = run_obr(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     // Create an issue
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Feature to implement"],
         "create_issue",
@@ -210,7 +214,7 @@ fn e2e_orphans_detects_open_issue_in_commit() {
     git_commit(&workspace, &commit_msg, "commit_with_ref");
 
     // Run orphans - should detect the open issue
-    let orphans = run_br(&workspace, ["orphans"], "orphans_detect");
+    let orphans = run_obr(&workspace, ["orphans"], "orphans_detect");
     assert!(
         orphans.status.success(),
         "orphans failed: {}",
@@ -234,13 +238,14 @@ fn e2e_orphans_detects_open_issue_in_commit() {
 fn e2e_orphans_auto_imports_newer_jsonl_before_scanning_issue_state() {
     common::init_test_logging();
     info!("e2e_orphans_auto_imports_newer_jsonl_before_scanning_issue_state: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     init_git(&workspace, "git_init");
-    let init = run_br(&workspace, ["init"], "br_init");
+    let init = run_obr(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Issue closed only in JSONL"],
         "create_issue",
@@ -256,7 +261,7 @@ fn e2e_orphans_auto_imports_newer_jsonl_before_scanning_issue_state() {
 
     rewrite_jsonl_issue_as_closed(&workspace, &issue_id);
 
-    let orphans = run_br(&workspace, ["orphans"], "orphans_auto_import");
+    let orphans = run_obr(&workspace, ["orphans"], "orphans_auto_import");
     assert!(
         orphans.status.success(),
         "orphans failed: {}",
@@ -274,13 +279,14 @@ fn e2e_orphans_auto_imports_newer_jsonl_before_scanning_issue_state() {
 fn e2e_orphans_fix_auto_flushes_closed_issue_to_jsonl() {
     common::init_test_logging();
     info!("e2e_orphans_fix_auto_flushes_closed_issue_to_jsonl: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     init_git(&workspace, "git_init");
-    let init = run_br(&workspace, ["init"], "br_init");
+    let init = run_obr(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Close via orphans fix"],
         "create_issue",
@@ -294,10 +300,10 @@ fn e2e_orphans_fix_auto_flushes_closed_issue_to_jsonl() {
         "commit_ref",
     );
 
-    let fix = run_br_with_stdin(&workspace, ["orphans", "--fix"], "y\n", "orphans_fix");
+    let fix = run_obr_with_stdin(&workspace, ["orphans", "--fix"], "y\n", "orphans_fix");
     assert!(fix.status.success(), "orphans --fix failed: {}", fix.stderr);
 
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     let exported_issue = fs::read_to_string(&jsonl_path)
         .expect("read issues.jsonl")
         .lines()
@@ -323,15 +329,16 @@ fn e2e_orphans_fix_auto_flushes_closed_issue_to_jsonl() {
 fn e2e_orphans_detects_issue_without_parens() {
     common::init_test_logging();
     info!("e2e_orphans_detects_issue_without_parens: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize git and beads
     init_git(&workspace, "git_init");
-    let init = run_br(&workspace, ["init"], "br_init");
+    let init = run_obr(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     // Create an issue
-    let create = run_br(&workspace, ["create", "Bug fix needed"], "create_issue");
+    let create = run_obr(&workspace, ["create", "Bug fix needed"], "create_issue");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue_id = parse_created_id(&create.stdout);
 
@@ -340,7 +347,7 @@ fn e2e_orphans_detects_issue_without_parens() {
     git_commit(&workspace, &commit_msg, "commit_no_parens");
 
     // Run orphans - should detect the issue
-    let orphans = run_br(&workspace, ["orphans"], "orphans_no_parens");
+    let orphans = run_obr(&workspace, ["orphans"], "orphans_no_parens");
     assert!(
         orphans.status.success(),
         "orphans failed: {}",
@@ -359,15 +366,16 @@ fn e2e_orphans_detects_issue_without_parens() {
 fn e2e_orphans_json_output_structure() {
     common::init_test_logging();
     info!("e2e_orphans_json_output_structure: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize git and beads
     init_git(&workspace, "git_init");
-    let init = run_br(&workspace, ["init"], "br_init");
+    let init = run_obr(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     // Create an issue
-    let create = run_br(&workspace, ["create", "JSON test issue"], "create_issue");
+    let create = run_obr(&workspace, ["create", "JSON test issue"], "create_issue");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue_id = parse_created_id(&create.stdout);
 
@@ -376,7 +384,7 @@ fn e2e_orphans_json_output_structure() {
     git_commit(&workspace, &commit_msg, "commit_ref");
 
     // Run orphans with --json
-    let orphans = run_br(&workspace, ["orphans", "--json"], "orphans_json");
+    let orphans = run_obr(&workspace, ["orphans", "--json"], "orphans_json");
     assert!(
         orphans.status.success(),
         "orphans failed: {}",
@@ -406,17 +414,18 @@ fn e2e_orphans_json_output_structure() {
 fn e2e_orphans_detects_mixed_prefix_and_dotted_child_refs() {
     common::init_test_logging();
     info!("e2e_orphans_detects_mixed_prefix_and_dotted_child_refs: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     init_git(&workspace, "git_init");
-    let init = run_br(
+    let init = run_obr(
         &workspace,
         ["init", "--prefix", "local"],
         "br_init_local_prefix",
     );
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Local seed issue", "--json"],
         "create_seed_issue",
@@ -445,7 +454,7 @@ fn e2e_orphans_detects_mixed_prefix_and_dotted_child_refs() {
     );
     mark_imported_issue_closed(&mut imported_closed_child);
 
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     fs::write(
         &jsonl_path,
         format!(
@@ -458,7 +467,7 @@ fn e2e_orphans_detects_mixed_prefix_and_dotted_child_refs() {
     )
     .expect("write mixed-prefix issues.jsonl");
 
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--json"],
         "sync_import_mixed_prefix_dotted",
@@ -475,7 +484,7 @@ fn e2e_orphans_detects_mixed_prefix_and_dotted_child_refs() {
         "commit_mixed_prefix_dotted",
     );
 
-    let orphans = run_br(
+    let orphans = run_obr(
         &workspace,
         ["orphans", "--json"],
         "orphans_mixed_prefix_dotted",
@@ -499,19 +508,20 @@ fn e2e_orphans_detects_mixed_prefix_and_dotted_child_refs() {
 fn e2e_orphans_excludes_closed_issues() {
     common::init_test_logging();
     info!("e2e_orphans_excludes_closed_issues: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize git and beads
     init_git(&workspace, "git_init");
-    let init = run_br(&workspace, ["init"], "br_init");
+    let init = run_obr(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     // Create and close an issue
-    let create = run_br(&workspace, ["create", "Already done issue"], "create_issue");
+    let create = run_obr(&workspace, ["create", "Already done issue"], "create_issue");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue_id = parse_created_id(&create.stdout);
 
-    let close = run_br(
+    let close = run_obr(
         &workspace,
         ["close", &issue_id, "--reason", "done"],
         "close_issue",
@@ -523,7 +533,7 @@ fn e2e_orphans_excludes_closed_issues() {
     git_commit(&workspace, &commit_msg, "commit_closed");
 
     // Run orphans - should NOT include closed issue
-    let orphans = run_br(&workspace, ["orphans", "--json"], "orphans_closed");
+    let orphans = run_obr(&workspace, ["orphans", "--json"], "orphans_closed");
     assert!(
         orphans.status.success(),
         "orphans failed: {}",
@@ -541,19 +551,20 @@ fn e2e_orphans_excludes_closed_issues() {
 fn e2e_orphans_includes_in_progress_issues() {
     common::init_test_logging();
     info!("e2e_orphans_includes_in_progress_issues: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize git and beads
     init_git(&workspace, "git_init");
-    let init = run_br(&workspace, ["init"], "br_init");
+    let init = run_obr(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     // Create an issue and mark it in_progress
-    let create = run_br(&workspace, ["create", "In progress issue"], "create_issue");
+    let create = run_obr(&workspace, ["create", "In progress issue"], "create_issue");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     let issue_id = parse_created_id(&create.stdout);
 
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         ["update", &issue_id, "--status", "in_progress"],
         "update_status",
@@ -565,7 +576,7 @@ fn e2e_orphans_includes_in_progress_issues() {
     git_commit(&workspace, &commit_msg, "commit_in_progress");
 
     // Run orphans - should include in_progress issue
-    let orphans = run_br(&workspace, ["orphans", "--json"], "orphans_in_progress");
+    let orphans = run_obr(&workspace, ["orphans", "--json"], "orphans_in_progress");
     assert!(
         orphans.status.success(),
         "orphans failed: {}",
@@ -588,13 +599,13 @@ fn e2e_orphans_includes_in_progress_issues() {
 fn e2e_orphans_before_init_returns_empty() {
     common::init_test_logging();
     info!("e2e_orphans_before_init_returns_empty: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize git but NOT beads
     init_git(&workspace, "git_init");
 
     // Run orphans - should return empty, not error
-    let orphans = run_br(&workspace, ["orphans"], "orphans_no_init");
+    let orphans = run_obr(&workspace, ["orphans"], "orphans_no_init");
     assert!(
         orphans.status.success(),
         "orphans should succeed: {}",
@@ -612,9 +623,9 @@ fn e2e_orphans_before_init_returns_empty() {
 fn e2e_orphans_fix_before_init_returns_empty() {
     common::init_test_logging();
     info!("e2e_orphans_fix_before_init_returns_empty: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let orphans = run_br_with_stdin(
+    let orphans = run_obr_with_stdin(
         &workspace,
         ["orphans", "--fix"],
         "\n",
@@ -637,9 +648,9 @@ fn e2e_orphans_fix_before_init_returns_empty() {
 fn e2e_orphans_fix_before_init_rejects_machine_output() {
     common::init_test_logging();
     info!("e2e_orphans_fix_before_init_rejects_machine_output: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let orphans = run_br_with_stdin(
+    let orphans = run_obr_with_stdin(
         &workspace,
         ["--json", "orphans", "--fix"],
         "\n",
@@ -661,18 +672,19 @@ fn e2e_orphans_fix_before_init_rejects_machine_output() {
 fn e2e_orphans_not_git_repo_returns_empty() {
     common::init_test_logging();
     info!("e2e_orphans_not_git_repo_returns_empty: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize beads but NOT git
-    let init = run_br(&workspace, ["init"], "br_init");
+    let init = run_obr(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     // Create an issue
-    let create = run_br(&workspace, ["create", "Test issue"], "create_issue");
+    let create = run_obr(&workspace, ["create", "Test issue"], "create_issue");
     assert!(create.status.success(), "create failed: {}", create.stderr);
 
     // Run orphans - should return empty (no git repo)
-    let orphans = run_br(&workspace, ["orphans"], "orphans_no_git");
+    let orphans = run_obr(&workspace, ["orphans"], "orphans_no_git");
     assert!(
         orphans.status.success(),
         "orphans should succeed: {}",
@@ -690,28 +702,29 @@ fn e2e_orphans_not_git_repo_returns_empty() {
 fn e2e_orphans_multiple_issues_multiple_commits() {
     common::init_test_logging();
     info!("e2e_orphans_multiple_issues_multiple_commits: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize git and beads
     init_git(&workspace, "git_init");
-    let init = run_br(&workspace, ["init"], "br_init");
+    let init = run_obr(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     // Create multiple issues
-    let create1 = run_br(&workspace, ["create", "First issue"], "create_1");
+    let create1 = run_obr(&workspace, ["create", "First issue"], "create_1");
     assert!(create1.status.success());
     let id1 = parse_created_id(&create1.stdout);
 
-    let create2 = run_br(&workspace, ["create", "Second issue"], "create_2");
+    let create2 = run_obr(&workspace, ["create", "Second issue"], "create_2");
     assert!(create2.status.success());
     let id2 = parse_created_id(&create2.stdout);
 
-    let create3 = run_br(&workspace, ["create", "Third issue"], "create_3");
+    let create3 = run_obr(&workspace, ["create", "Third issue"], "create_3");
     assert!(create3.status.success());
     let id3 = parse_created_id(&create3.stdout);
 
     // Close the third issue
-    let close = run_br(&workspace, ["close", &id3, "--reason", "done"], "close_3");
+    let close = run_obr(&workspace, ["close", &id3, "--reason", "done"], "close_3");
     assert!(close.status.success());
 
     // Make commits referencing all three
@@ -723,7 +736,7 @@ fn e2e_orphans_multiple_issues_multiple_commits() {
     );
 
     // Run orphans - should detect only id1 and id2 (id3 is closed)
-    let orphans = run_br(&workspace, ["orphans", "--json"], "orphans_multi");
+    let orphans = run_obr(&workspace, ["orphans", "--json"], "orphans_multi");
     assert!(
         orphans.status.success(),
         "orphans failed: {}",
@@ -750,15 +763,16 @@ fn e2e_orphans_multiple_issues_multiple_commits() {
 fn e2e_orphans_robot_flag_json_output() {
     common::init_test_logging();
     info!("e2e_orphans_robot_flag_json_output: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize git and beads
     init_git(&workspace, "git_init");
-    let init = run_br(&workspace, ["init"], "br_init");
+    let init = run_obr(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     // Create an issue
-    let create = run_br(&workspace, ["create", "Robot test"], "create_issue");
+    let create = run_obr(&workspace, ["create", "Robot test"], "create_issue");
     assert!(create.status.success());
     let issue_id = parse_created_id(&create.stdout);
 
@@ -766,7 +780,7 @@ fn e2e_orphans_robot_flag_json_output() {
     git_commit(&workspace, &format!("Implement ({issue_id})"), "commit_ref");
 
     // Run orphans with --robot (should produce JSON like --json)
-    let orphans = run_br(&workspace, ["orphans", "--robot"], "orphans_robot");
+    let orphans = run_obr(&workspace, ["orphans", "--robot"], "orphans_robot");
     assert!(
         orphans.status.success(),
         "orphans failed: {}",
@@ -783,13 +797,14 @@ fn e2e_orphans_robot_flag_json_output() {
 fn e2e_orphans_robot_flag_overrides_toon_env_output() {
     common::init_test_logging();
     info!("e2e_orphans_robot_flag_overrides_toon_env_output: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     init_git(&workspace, "git_init");
-    let init = run_br(&workspace, ["init"], "br_init");
+    let init = run_obr(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Robot TOON override"],
         "create_issue",
@@ -803,7 +818,7 @@ fn e2e_orphans_robot_flag_overrides_toon_env_output() {
         "commit_ref",
     );
 
-    let orphans = run_br_with_env(
+    let orphans = run_obr_with_env(
         &workspace,
         ["orphans", "--robot"],
         [("TOON_DEFAULT_FORMAT", "toon")],
@@ -828,17 +843,18 @@ fn e2e_orphans_robot_flag_overrides_toon_env_output() {
 fn e2e_orphans_empty_json_array_when_no_orphans() {
     common::init_test_logging();
     info!("e2e_orphans_empty_json_array_when_no_orphans: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize git and beads
     init_git(&workspace, "git_init");
-    let init = run_br(&workspace, ["init"], "br_init");
+    let init = run_obr(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     // No issues, no commits with refs
 
     // Run orphans with --json
-    let orphans = run_br(&workspace, ["orphans", "--json"], "orphans_empty_json");
+    let orphans = run_obr(&workspace, ["orphans", "--json"], "orphans_empty_json");
     assert!(
         orphans.status.success(),
         "orphans failed: {}",
@@ -856,13 +872,14 @@ fn e2e_orphans_empty_json_array_when_no_orphans() {
 fn e2e_orphans_empty_robot_output_overrides_toon_env_output() {
     common::init_test_logging();
     info!("e2e_orphans_empty_robot_output_overrides_toon_env_output: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     init_git(&workspace, "git_init");
-    let init = run_br(&workspace, ["init"], "br_init");
+    let init = run_obr(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let orphans = run_br_with_env(
+    let orphans = run_obr_with_env(
         &workspace,
         ["orphans", "--robot"],
         [("TOON_DEFAULT_FORMAT", "toon")],
@@ -888,15 +905,16 @@ fn e2e_orphans_empty_robot_output_overrides_toon_env_output() {
 fn e2e_orphans_details_flag_shows_commit_info() {
     common::init_test_logging();
     info!("e2e_orphans_details_flag_shows_commit_info: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize git and beads
     init_git(&workspace, "git_init");
-    let init = run_br(&workspace, ["init"], "br_init");
+    let init = run_obr(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     // Create an issue
-    let create = run_br(&workspace, ["create", "Details test issue"], "create_issue");
+    let create = run_obr(&workspace, ["create", "Details test issue"], "create_issue");
     assert!(create.status.success());
     let issue_id = parse_created_id(&create.stdout);
 
@@ -905,7 +923,7 @@ fn e2e_orphans_details_flag_shows_commit_info() {
     git_commit(&workspace, &commit_msg, "commit_ref");
 
     // Run orphans with --details
-    let orphans = run_br(&workspace, ["orphans", "--details"], "orphans_details");
+    let orphans = run_obr(&workspace, ["orphans", "--details"], "orphans_details");
     assert!(
         orphans.status.success(),
         "orphans failed: {}",
@@ -930,15 +948,16 @@ fn e2e_orphans_details_flag_shows_commit_info() {
 fn e2e_orphans_issue_referenced_multiple_times() {
     common::init_test_logging();
     info!("e2e_orphans_issue_referenced_multiple_times: starting");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize git and beads
     init_git(&workspace, "git_init");
-    let init = run_br(&workspace, ["init"], "br_init");
+    let init = run_obr(&workspace, ["init"], "br_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     // Create an issue
-    let create = run_br(&workspace, ["create", "Multi-ref issue"], "create_issue");
+    let create = run_obr(&workspace, ["create", "Multi-ref issue"], "create_issue");
     assert!(create.status.success());
     let issue_id = parse_created_id(&create.stdout);
 
@@ -948,7 +967,7 @@ fn e2e_orphans_issue_referenced_multiple_times() {
     git_commit(&workspace, &format!("Finish ({issue_id})"), "commit_3");
 
     // Run orphans - issue should appear only once
-    let orphans = run_br(&workspace, ["orphans", "--json"], "orphans_multi_ref");
+    let orphans = run_obr(&workspace, ["orphans", "--json"], "orphans_multi_ref");
     assert!(
         orphans.status.success(),
         "orphans failed: {}",
@@ -969,4 +988,149 @@ fn e2e_orphans_issue_referenced_multiple_times() {
         "should reference latest commit, got: {commit_msg}"
     );
     info!("e2e_orphans_issue_referenced_multiple_times: assertions passed");
+}
+
+// ---------------------------------------------------------------------------
+// Git hardening: `orphans` and `changelog` must reach git only through the
+// hardened builder in `vcs.rs`.
+// ---------------------------------------------------------------------------
+
+/// Install a fake `git` on PATH that records every invocation's argv and the
+/// `GIT_*` environment it was handed, then exits successfully with empty
+/// output so the caller proceeds normally.
+#[cfg(unix)]
+fn install_recording_git(dir: &std::path::Path, record: &std::path::Path, root: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::create_dir_all(dir).expect("sentinel dir");
+    let fake = dir.join("git");
+    // `env` lines are prefixed so the assertions can tell argv from env.
+    // Answering `rev-parse --show-toplevel` with a real path matters: `orphans`
+    // stops before the history scan when it cannot resolve a repository root,
+    // and a test that never reaches the scan cannot see whether the scan is
+    // hardened.
+    fs::write(
+        &fake,
+        format!(
+            "#!/bin/sh\n\
+             for a in \"$@\"; do printf 'ARG %s\\n' \"$a\" >> '{record}'; done\n\
+             env | sed -n 's/^\\(GIT_[A-Z_]*\\)=.*/ENV \\1/p' >> '{record}'\n\
+             printf 'END\\n' >> '{record}'\n\
+             printf '%s\\n' '{root}'\n\
+             exit 0\n",
+            record = record.to_string_lossy(),
+            root = root.to_string_lossy()
+        ),
+    )
+    .expect("write recording git");
+    let mut perms = fs::metadata(&fake)
+        .expect("fake git metadata")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&fake, perms).expect("chmod fake git");
+}
+
+/// Every git invocation from `orphans` and `changelog` must carry the
+/// hardening flags and run with the ambient `GIT_*` environment scrubbed.
+///
+/// Plain `git` in an untrusted clone is code execution: `core.fsmonitor` and a
+/// repository `hooksPath` both name programs the repository controls. `vcs.rs`
+/// disables them for exactly that reason, and `orphans --fix` then *closes
+/// issues* from what git reports — so these two commands used to run the
+/// unhardened form on a mutation path.
+#[cfg(unix)]
+#[test]
+fn orphans_and_changelog_invoke_git_only_through_the_hardened_builder() {
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init", "--prefix", "hard"], "init");
+    assert!(init.status.success(), "init failed: {}", init.stderr);
+
+    // `orphans` short-circuits before touching git when no open issue exists,
+    // so the scan has to have something to scan.
+    let create = run_obr(
+        &workspace,
+        ["create", "Hardening probe issue", "--type", "task"],
+        "create",
+    );
+    assert!(create.status.success(), "create failed: {}", create.stderr);
+
+    let sentinel_dir = workspace.root.join("git-sentinel");
+    let record = workspace.root.join("git-invocations.txt");
+    install_recording_git(&sentinel_dir, &record, &workspace.root);
+
+    let path_with_sentinel = format!(
+        "{}:{}",
+        sentinel_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    for (label, args) in [
+        ("orphans", vec!["orphans"]),
+        ("changelog", vec!["changelog", "--since-tag", "v0.0.0"]),
+    ] {
+        let _ = run_obr_with_env(
+            &workspace,
+            args,
+            [
+                ("PATH", path_with_sentinel.as_str()),
+                // Ambient state the hardening must scrub before exec.
+                ("GIT_DIR", "/nonexistent/evil.git"),
+                ("GIT_CONFIG_COUNT", "1"),
+            ],
+            label,
+        );
+    }
+
+    let recorded = fs::read_to_string(&record).unwrap_or_default();
+    assert!(
+        !recorded.is_empty(),
+        "the fake git was never invoked; the test proves nothing"
+    );
+
+    // One group per invocation. Asserting over the union would let a single
+    // hardened call vouch for every unhardened one — verified: with `orphans`
+    // reverted to plain `Command::new("git")`, a union assertion still passed
+    // because `changelog` supplied the flags.
+    let mut invocations: Vec<(Vec<&str>, Vec<&str>)> = Vec::new();
+    let mut args: Vec<&str> = Vec::new();
+    let mut envs: Vec<&str> = Vec::new();
+    for line in recorded.lines() {
+        if let Some(arg) = line.strip_prefix("ARG ") {
+            args.push(arg);
+        } else if let Some(env) = line.strip_prefix("ENV ") {
+            envs.push(env);
+        } else if line == "END" {
+            invocations.push((std::mem::take(&mut args), std::mem::take(&mut envs)));
+        }
+    }
+    assert!(
+        invocations.len() >= 2,
+        "expected git invocations from both commands, saw {}: {recorded}",
+        invocations.len()
+    );
+
+    for (index, (args, envs)) in invocations.iter().enumerate() {
+        for required in [
+            "--no-optional-locks",
+            "core.fsmonitor=false",
+            "core.untrackedCache=false",
+        ] {
+            assert!(
+                args.contains(&required),
+                "git invocation #{index} lacked {required}: {args:?}"
+            );
+        }
+        assert!(
+            args.iter().any(|a| a.starts_with("core.hooksPath=")),
+            "git invocation #{index} did not override core.hooksPath: {args:?}"
+        );
+        let leaked: Vec<&str> = envs
+            .iter()
+            .copied()
+            .filter(|name| matches!(*name, "GIT_DIR" | "GIT_CONFIG_COUNT"))
+            .collect();
+        assert!(
+            leaked.is_empty(),
+            "git invocation #{index} inherited ambient git environment: {leaked:?}"
+        );
+    }
 }

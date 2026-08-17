@@ -10,10 +10,10 @@ mkdir -p "$target_dir"
 cd "$target_dir"
 "$tool_bin" init >/dev/null 2>&1
 
-: > .beads/.write.lock
-chmod 0444 .beads/.write.lock
+: > .obr/.write.lock
+chmod 0444 .obr/.write.lock
 
-mode=$(stat -c '%a' .beads/.write.lock)
+mode=$(stat -c '%a' .obr/.write.lock)
 if [ "$mode" != "444" ]; then
   echo "corrupt.sh: expected .write.lock mode 444, got $mode" >&2
   exit 1

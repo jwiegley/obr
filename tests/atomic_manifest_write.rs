@@ -6,14 +6,14 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, run_br};
+use common::cli::{ObrWorkspace, run_obr};
 use std::fs;
 
-fn init_and_create_issue(workspace: &BrWorkspace) {
-    let init = run_br(workspace, ["init", "--prefix", "bd"], "init");
+fn init_and_create_issue(workspace: &ObrWorkspace) {
+    let init = run_obr(workspace, ["init", "--prefix", "bd"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create = run_br(
+    let create = run_obr(
         workspace,
         ["create", "--title", "test issue", "--no-auto-flush"],
         "create",
@@ -23,13 +23,13 @@ fn init_and_create_issue(workspace: &BrWorkspace) {
 
 #[test]
 fn manifest_is_valid_json_after_flush() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_and_create_issue(&workspace);
 
-    let flush = run_br(&workspace, ["sync", "--flush-only", "--manifest"], "flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only", "--manifest"], "flush");
     assert!(flush.status.success(), "flush failed: {}", flush.stderr);
 
-    let manifest_path = workspace.root.join(".beads").join(".manifest.json");
+    let manifest_path = workspace.root.join(".obr").join(".manifest.json");
     assert!(
         manifest_path.exists(),
         "manifest should exist after --manifest flush"
@@ -55,15 +55,15 @@ fn manifest_is_valid_json_after_flush() {
 
 #[test]
 fn manifest_write_leaves_no_temp_files() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_and_create_issue(&workspace);
 
-    let flush = run_br(&workspace, ["sync", "--flush-only", "--manifest"], "flush");
+    let flush = run_obr(&workspace, ["sync", "--flush-only", "--manifest"], "flush");
     assert!(flush.status.success(), "flush failed: {}", flush.stderr);
 
-    let beads_dir = workspace.root.join(".beads");
-    let temp_files: Vec<_> = fs::read_dir(&beads_dir)
-        .expect("read .beads dir")
+    let obr_dir = workspace.root.join(".obr");
+    let temp_files: Vec<_> = fs::read_dir(&obr_dir)
+        .expect("read .obr dir")
         .filter_map(Result::ok)
         .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
         .collect();
@@ -80,14 +80,14 @@ fn manifest_write_leaves_no_temp_files() {
 
 #[test]
 fn pre_existing_manifest_survives_if_no_manifest_flag() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_and_create_issue(&workspace);
 
-    let manifest_path = workspace.root.join(".beads").join(".manifest.json");
+    let manifest_path = workspace.root.join(".obr").join(".manifest.json");
     let sentinel = r#"{"sentinel": true}"#;
     fs::write(&manifest_path, sentinel).expect("write sentinel manifest");
 
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "flush-no-manifest");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "flush-no-manifest");
     assert!(flush.status.success(), "flush failed: {}", flush.stderr);
 
     let content = fs::read_to_string(&manifest_path).expect("read manifest");
@@ -99,14 +99,14 @@ fn pre_existing_manifest_survives_if_no_manifest_flag() {
 
 #[test]
 fn manifest_overwrite_replaces_old_content_atomically() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_and_create_issue(&workspace);
 
-    let manifest_path = workspace.root.join(".beads").join(".manifest.json");
+    let manifest_path = workspace.root.join(".obr").join(".manifest.json");
     let old_content = r#"{"old": "manifest", "issues_count": 0}"#;
     fs::write(&manifest_path, old_content).expect("write old manifest");
 
-    let flush = run_br(
+    let flush = run_obr(
         &workspace,
         ["sync", "--flush-only", "--manifest"],
         "flush-overwrite",

@@ -34,13 +34,13 @@ case "$stage" in
   post_repair)
     # Detect-only — doctor cannot mutate the parent env. The marker
     # file should still be present (we never wrote to it).
-    [ -f .beads/.fixture_rust_log_level ] || {
+    [ -f .obr/.fixture_rust_log_level ] || {
       echo "ASSERT FAIL[$stage]: marker file vanished after --repair (unexpected mutation)" >&2
       exit 1
     }
     ;;
   post_undo)
-    [ -d .beads ] || { echo "ASSERT FAIL[$stage]: .beads gone after undo" >&2; exit 1; }
+    [ -d .obr ] || { echo "ASSERT FAIL[$stage]: .obr gone after undo" >&2; exit 1; }
     ;;
   *)
     echo "unknown stage: $stage" >&2

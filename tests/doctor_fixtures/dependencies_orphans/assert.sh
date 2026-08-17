@@ -16,7 +16,7 @@ cd "$target_dir"
 orphan_count() {
   python3 <<'PY'
 import sqlite3
-conn = sqlite3.connect(".beads/beads.db")
+conn = sqlite3.connect(".obr/obr.db")
 cur = conn.cursor()
 cur.execute(
     "SELECT COUNT(*) FROM dependencies "
@@ -33,7 +33,7 @@ count_pair() {
   python3 - "$1" "$2" <<'PY'
 import sqlite3, sys
 owner, target = sys.argv[1], sys.argv[2]
-conn = sqlite3.connect(".beads/beads.db")
+conn = sqlite3.connect(".obr/obr.db")
 cur = conn.cursor()
 cur.execute(
     "SELECT COUNT(*) FROM dependencies "
@@ -61,7 +61,7 @@ case "$stage" in
       echo "ASSERT FAIL[$stage]: expected 2 orphans, got '$count'" >&2
       exit 1
     fi
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: JSONL bytes drifted during corrupt stage" >&2
@@ -86,7 +86,7 @@ case "$stage" in
     fi
     # SACRED INVARIANT: JSONL byte-identical (dependencies orphans
     # aren't reachable from any issue so JSONL export is unaffected).
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: JSONL bytes mutated by --repair (sacred invariant violation)" >&2
@@ -147,7 +147,7 @@ case "$stage" in
         exit 1
       fi
     done < .fixture_orphan_keys
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: JSONL bytes drifted across undo" >&2

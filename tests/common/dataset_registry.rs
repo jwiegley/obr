@@ -1,6 +1,6 @@
 //! Dataset registry for E2E, conformance, and benchmark tests.
 //!
-//! Provides access to real `.beads` directories as fixtures, with safe copy
+//! Provides access to real `.obr` directories as fixtures, with safe copy
 //! to isolated temp workspaces. Source datasets are NEVER mutated.
 
 #![allow(dead_code)]
@@ -73,7 +73,7 @@ const WORKSPACE_FAILURE_FIXTURE_DIR: &str = "tests/fixtures/workspace_failures";
 /// Known datasets for testing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KnownDataset {
-    BeadsRust,
+    Obr,
     BeadsViewer,
     CodingAgentSessionSearch,
     BrennerBot,
@@ -82,7 +82,7 @@ pub enum KnownDataset {
 impl KnownDataset {
     pub const fn name(self) -> &'static str {
         match self {
-            Self::BeadsRust => "beads_rust",
+            Self::Obr => "obr",
             Self::BeadsViewer => "beads_viewer",
             Self::CodingAgentSessionSearch => "coding_agent_session_search",
             Self::BrennerBot => "brenner_bot",
@@ -91,8 +91,8 @@ impl KnownDataset {
 
     pub fn source_path(self) -> PathBuf {
         match self {
-            // Use CARGO_MANIFEST_DIR for BeadsRust since we're running from within the repo
-            Self::BeadsRust => PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+            // Use CARGO_MANIFEST_DIR for Obr since we're running from within the repo
+            Self::Obr => PathBuf::from(env!("CARGO_MANIFEST_DIR")),
             Self::BeadsViewer => PathBuf::from("/data/projects/beads_viewer"),
             Self::CodingAgentSessionSearch => {
                 PathBuf::from("/data/projects/coding_agent_session_search")
@@ -101,13 +101,13 @@ impl KnownDataset {
         }
     }
 
-    pub fn beads_dir(self) -> PathBuf {
-        self.source_path().join(".beads")
+    pub fn obr_dir(self) -> PathBuf {
+        self.source_path().join(".obr")
     }
 
     pub const fn all() -> &'static [Self] {
         &[
-            Self::BeadsRust,
+            Self::Obr,
             Self::BeadsViewer,
             Self::CodingAgentSessionSearch,
             Self::BrennerBot,
@@ -176,7 +176,7 @@ pub struct WorkspaceFailureFixture {
 pub struct IsolatedWorkspaceFailureFixture {
     pub temp_dir: TempDir,
     pub root: PathBuf,
-    pub beads_dir: PathBuf,
+    pub obr_dir: PathBuf,
     pub fixture: WorkspaceFailureFixture,
 }
 
@@ -253,7 +253,7 @@ pub fn isolated_workspace_failure_fixture(
     Ok(IsolatedWorkspaceFailureFixture {
         temp_dir,
         root: root.clone(),
-        beads_dir: root.join(".beads"),
+        obr_dir: root.join(".obr"),
         fixture,
     })
 }
@@ -280,7 +280,7 @@ impl DatasetRegistry {
         registry
     }
 
-    /// Check if a dataset is available (exists and has valid .beads).
+    /// Check if a dataset is available (exists and has valid .obr).
     pub fn is_available(&self, dataset: KnownDataset) -> bool {
         self.datasets.contains_key(dataset.name())
     }
@@ -297,29 +297,48 @@ impl DatasetRegistry {
 
     /// Scan a dataset and compute its metadata.
     fn scan_dataset(dataset: KnownDataset) -> std::io::Result<DatasetMetadata> {
-        let beads_dir = dataset.beads_dir();
-        if !beads_dir.exists() {
+        let obr_dir = dataset.obr_dir();
+        if !obr_dir.exists() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 format!(
                     "Dataset {} not found at {}",
                     dataset.name(),
-                    beads_dir.display()
+                    obr_dir.display()
                 ),
             ));
         }
 
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        let db_path = beads_dir.join("beads.db");
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        let db_path = obr_dir.join("obr.db");
 
-        // Require beads.db to exist (not committed to git, only present in dev environments)
+        // Require obr.db to exist (not committed to git, only present in dev environments)
         if !db_path.exists() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 format!(
-                    "Dataset {} missing beads.db at {} (only available in dev environment)",
+                    "Dataset {} missing obr.db at {} (only available in dev environment)",
                     dataset.name(),
                     db_path.display()
+                ),
+            ));
+        }
+
+        // Same reason as obr.db above, one file over. Every metadata field
+        // below — issue_count, dependency_count, jsonl_size_bytes — is read
+        // from the JSONL export, and under D-SURFACE the tracked surface is
+        // `docs/PLAN.org`: a healthy dev workspace can hold a populated obr.db
+        // with no `.obr/issues.jsonl` beside it at all. Describing that as a
+        // zero-issue dataset made the tests that assert `issue_count > 0` fail
+        // on a healthy tree instead of skipping the way they do in CI, where
+        // `.obr/` is not checked in.
+        if !jsonl_path.exists() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!(
+                    "Dataset {} has no JSONL export at {} (D-SURFACE workspaces export to the tracked surface instead)",
+                    dataset.name(),
+                    jsonl_path.display()
                 ),
             ));
         }
@@ -330,7 +349,7 @@ impl DatasetRegistry {
         let issue_count = count_jsonl_lines(&jsonl_path).unwrap_or(0);
         let dependency_count = count_dependencies(&jsonl_path).unwrap_or(0);
 
-        let content_hash = hash_beads_directory(&beads_dir)?;
+        let content_hash = hash_obr_directory(&obr_dir)?;
 
         // Get git commit from source repository (if .git exists)
         let source_commit = get_git_commit(&dataset.source_path());
@@ -357,7 +376,7 @@ impl DatasetRegistry {
             return Err(format!("Dataset {} not in registry", dataset.name()));
         };
 
-        let current_hash = hash_beads_directory(&dataset.beads_dir())
+        let current_hash = hash_obr_directory(&dataset.obr_dir())
             .map_err(|e| format!("Failed to hash {}: {e}", dataset.name()))?;
 
         if &current_hash != original_hash {
@@ -383,7 +402,7 @@ impl Default for DatasetRegistry {
 pub struct IsolatedDataset {
     pub temp_dir: TempDir,
     pub root: PathBuf,
-    pub beads_dir: PathBuf,
+    pub obr_dir: PathBuf,
     pub metadata: DatasetMetadata,
     pub source_dataset: KnownDataset,
 }
@@ -393,10 +412,10 @@ impl IsolatedDataset {
     ///
     /// # Safety
     /// - Source dataset is read-only; only the temp copy is writable.
-    /// - Copies .beads directory and creates minimal repo scaffold.
+    /// - Copies .obr directory and creates minimal repo scaffold.
     pub fn from_dataset(dataset: KnownDataset) -> std::io::Result<Self> {
-        let source_beads = dataset.beads_dir();
-        if !source_beads.exists() {
+        let source_obr = dataset.obr_dir();
+        if !source_obr.exists() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 format!("Dataset {} not found", dataset.name()),
@@ -406,10 +425,10 @@ impl IsolatedDataset {
         let start = Instant::now();
         let temp_dir = TempDir::new()?;
         let root = temp_dir.path().to_path_buf();
-        let beads_dir = root.join(".beads");
+        let obr_dir = root.join(".obr");
 
-        // Copy .beads directory
-        copy_dir_recursive(&source_beads, &beads_dir)?;
+        // Copy .obr directory
+        copy_dir_recursive(&source_obr, &obr_dir)?;
 
         // Create minimal repo scaffold (empty .git marker, not a real git repo)
         fs::create_dir_all(root.join(".git"))?;
@@ -418,14 +437,14 @@ impl IsolatedDataset {
         let copy_duration = start.elapsed();
 
         // Scan copied dataset for metadata
-        let jsonl_path = beads_dir.join("issues.jsonl");
-        let db_path = beads_dir.join("beads.db");
+        let jsonl_path = obr_dir.join("issues.jsonl");
+        let db_path = obr_dir.join("obr.db");
 
         let jsonl_size_bytes = fs::metadata(&jsonl_path).map_or(0, |m| m.len());
         let db_size_bytes = fs::metadata(&db_path).map_or(0, |m| m.len());
         let issue_count = count_jsonl_lines(&jsonl_path).unwrap_or(0);
         let dependency_count = count_dependencies(&jsonl_path).unwrap_or(0);
-        let content_hash = hash_beads_directory(&beads_dir)?;
+        let content_hash = hash_obr_directory(&obr_dir)?;
 
         // Get git commit from source repository (if .git exists)
         let source_commit = get_git_commit(&dataset.source_path());
@@ -448,7 +467,7 @@ impl IsolatedDataset {
         Ok(Self {
             temp_dir,
             root,
-            beads_dir,
+            obr_dir: obr_dir,
             metadata,
             source_dataset: dataset,
         })
@@ -458,7 +477,7 @@ impl IsolatedDataset {
     pub fn empty() -> std::io::Result<Self> {
         let temp_dir = TempDir::new()?;
         let root = temp_dir.path().to_path_buf();
-        let beads_dir = root.join(".beads");
+        let obr_dir = root.join(".obr");
 
         // Create minimal git scaffold
         fs::create_dir_all(root.join(".git"))?;
@@ -482,9 +501,9 @@ impl IsolatedDataset {
         Ok(Self {
             temp_dir,
             root,
-            beads_dir,
+            obr_dir: obr_dir,
             metadata,
-            source_dataset: KnownDataset::BeadsRust, // Placeholder
+            source_dataset: KnownDataset::Obr, // Placeholder
         })
     }
 
@@ -493,7 +512,7 @@ impl IsolatedDataset {
         &self.root
     }
 
-    /// Upgrade the isolated copy through br's reviewed schema-migration
+    /// Upgrade the isolated copy through obr's reviewed schema-migration
     /// workflow. The source dataset remains untouched.
     pub fn migrate_to_current_schema(&self) -> std::io::Result<()> {
         migrate_workspace_to_current_schema(&self.root)
@@ -512,7 +531,7 @@ impl IsolatedDataset {
         let summary = serde_json::json!({
             "dataset": self.metadata.to_json(),
             "workspace_root": self.root.display().to_string(),
-            "beads_dir": self.beads_dir.display().to_string(),
+            "obr_dir": self.obr_dir.display().to_string(),
         });
         fs::write(&summary_path, serde_json::to_string_pretty(&summary)?)?;
         Ok(summary_path)
@@ -521,7 +540,7 @@ impl IsolatedDataset {
 
 /// Upgrade a copied fixture through the public plan/apply workflow.
 pub fn migrate_workspace_to_current_schema(root: &Path) -> std::io::Result<()> {
-    let binary = assert_cmd::cargo::cargo_bin!("br");
+    let binary = assert_cmd::cargo::cargo_bin!("obr");
     let plan = std::process::Command::new(binary)
         .args(["doctor", "migrate-schema", "plan", "--json"])
         .current_dir(root)
@@ -658,8 +677,8 @@ fn copy_fixture_workspace_recursive(src: &Path, dst: &Path) -> std::io::Result<(
 fn copy_workspace_failure_fixture_root(src: &Path, dst: &Path) -> std::io::Result<()> {
     fs::create_dir_all(dst)?;
 
-    let visible_payload = src.join("beads");
-    let hidden_payload = src.join(".beads");
+    let visible_payload = src.join("obr");
+    let hidden_payload = src.join(".obr");
     let payload = if visible_payload.exists() {
         Some(visible_payload)
     } else if hidden_payload.exists() {
@@ -669,7 +688,7 @@ fn copy_workspace_failure_fixture_root(src: &Path, dst: &Path) -> std::io::Resul
     };
 
     if let Some(payload) = payload {
-        copy_fixture_workspace_recursive(&payload, &dst.join(".beads"))?;
+        copy_fixture_workspace_recursive(&payload, &dst.join(".obr"))?;
     }
 
     for entry in fs::read_dir(src)? {
@@ -677,7 +696,7 @@ fn copy_workspace_failure_fixture_root(src: &Path, dst: &Path) -> std::io::Resul
         let file_type = entry.file_type()?;
         let file_name = entry.file_name();
         let name = file_name.to_string_lossy();
-        if matches!(name.as_ref(), "fixture.json" | "beads" | ".beads") {
+        if matches!(name.as_ref(), "fixture.json" | "obr" | ".obr") {
             continue;
         }
 
@@ -718,15 +737,15 @@ fn count_dependencies(path: &Path) -> std::io::Result<usize> {
     Ok(count)
 }
 
-/// Hash the contents of a .beads directory for integrity verification.
-fn hash_beads_directory(beads_dir: &Path) -> std::io::Result<String> {
+/// Hash the contents of a .obr directory for integrity verification.
+fn hash_obr_directory(obr_dir: &Path) -> std::io::Result<String> {
     let mut hasher = Sha256::new();
 
     // Hash key files in deterministic order
     let files_to_hash = ["issues.jsonl", "config.yaml"];
 
     for filename in &files_to_hash {
-        let path = beads_dir.join(filename);
+        let path = obr_dir.join(filename);
         if path.exists() {
             let mut file = File::open(&path)?;
             let mut buffer = Vec::new();
@@ -735,7 +754,7 @@ fn hash_beads_directory(beads_dir: &Path) -> std::io::Result<String> {
         }
     }
 
-    Ok(beads_rust::util::hex_encode(&hasher.finalize())[..16].to_string())
+    Ok(obr::util::hex_encode(&hasher.finalize())[..16].to_string())
 }
 
 fn normalize_source_commit(value: &str) -> Option<String> {
@@ -802,7 +821,7 @@ fn get_git_commit(repo_path: &Path) -> Option<String> {
 
 /// Configuration for dataset override.
 ///
-/// Allows tests to use custom `.beads` directories instead of known datasets.
+/// Allows tests to use custom `.obr` directories instead of known datasets.
 #[derive(Debug, Clone)]
 pub struct DatasetOverride {
     /// Custom path to use instead of known dataset
@@ -832,31 +851,28 @@ impl DatasetOverride {
 
 /// Create an isolated dataset from a custom path (override).
 ///
-/// This allows tests to use arbitrary `.beads` directories instead of
+/// This allows tests to use arbitrary `.obr` directories instead of
 /// the known datasets. The override is logged for traceability.
 pub fn isolated_from_override(
     override_config: &DatasetOverride,
 ) -> std::io::Result<IsolatedDataset> {
     let source_path = &override_config.path;
-    let source_beads_dir = source_path.join(".beads");
+    let source_obr_dir = source_path.join(".obr");
 
-    if !source_beads_dir.exists() {
+    if !source_obr_dir.exists() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            format!(
-                "Override dataset not found at {}",
-                source_beads_dir.display()
-            ),
+            format!("Override dataset not found at {}", source_obr_dir.display()),
         ));
     }
 
     let start = Instant::now();
     let temp_dir = TempDir::new()?;
     let root = temp_dir.path().to_path_buf();
-    let beads_dir = root.join(".beads");
+    let obr_dir = root.join(".obr");
 
-    // Copy .beads directory
-    copy_dir_recursive(&source_beads_dir, &beads_dir)?;
+    // Copy .obr directory
+    copy_dir_recursive(&source_obr_dir, &obr_dir)?;
 
     // Create minimal repo scaffold
     fs::create_dir_all(root.join(".git"))?;
@@ -865,14 +881,14 @@ pub fn isolated_from_override(
     let copy_duration = start.elapsed();
 
     // Scan copied dataset for metadata
-    let jsonl_path = beads_dir.join("issues.jsonl");
-    let db_path = beads_dir.join("beads.db");
+    let jsonl_path = obr_dir.join("issues.jsonl");
+    let db_path = obr_dir.join("obr.db");
 
     let jsonl_size_bytes = fs::metadata(&jsonl_path).map_or(0, |m| m.len());
     let db_size_bytes = fs::metadata(&db_path).map_or(0, |m| m.len());
     let issue_count = count_jsonl_lines(&jsonl_path).unwrap_or(0);
     let dependency_count = count_dependencies(&jsonl_path).unwrap_or(0);
-    let content_hash = hash_beads_directory(&beads_dir)?;
+    let content_hash = hash_obr_directory(&obr_dir)?;
 
     // Get git commit from source repository (if .git exists)
     let source_commit = get_git_commit(source_path);
@@ -913,9 +929,9 @@ pub fn isolated_from_override(
     Ok(IsolatedDataset {
         temp_dir,
         root,
-        beads_dir,
+        obr_dir: obr_dir,
         metadata,
-        source_dataset: KnownDataset::BeadsRust, // Placeholder for overrides
+        source_dataset: KnownDataset::Obr, // Placeholder for overrides
     })
 }
 
@@ -961,7 +977,7 @@ impl IntegrityCheckResult {
 /// # Example
 ///
 /// ```ignore
-/// let mut guard = DatasetIntegrityGuard::new(KnownDataset::BeadsRust)?;
+/// let mut guard = DatasetIntegrityGuard::new(KnownDataset::Obr)?;
 /// guard.verify_before().assert_ok();
 ///
 /// // ... run tests ...
@@ -981,8 +997,8 @@ impl DatasetIntegrityGuard {
     ///
     /// Captures the current hash of the source dataset.
     pub fn new(dataset: KnownDataset) -> std::io::Result<Self> {
-        let beads_dir = dataset.beads_dir();
-        let original_hash = hash_beads_directory(&beads_dir)?;
+        let obr_dir = dataset.obr_dir();
+        let original_hash = hash_obr_directory(&obr_dir)?;
 
         Ok(Self {
             dataset_name: dataset.name().to_string(),
@@ -996,8 +1012,8 @@ impl DatasetIntegrityGuard {
     /// Create a guard from a custom path (for overrides).
     pub fn from_path(path: impl Into<PathBuf>, name: impl Into<String>) -> std::io::Result<Self> {
         let source_path: PathBuf = path.into();
-        let beads_dir = source_path.join(".beads");
-        let original_hash = hash_beads_directory(&beads_dir)?;
+        let obr_dir = source_path.join(".obr");
+        let original_hash = hash_obr_directory(&obr_dir)?;
 
         Ok(Self {
             dataset_name: name.into(),
@@ -1026,8 +1042,8 @@ impl DatasetIntegrityGuard {
 
     /// Verify current state matches original.
     fn verify_current(&self, phase: &str) -> IntegrityCheckResult {
-        let beads_dir = self.source_path.join(".beads");
-        let current_hash = hash_beads_directory(&beads_dir).unwrap_or_else(|_| "ERROR".to_string());
+        let obr_dir = self.source_path.join(".obr");
+        let current_hash = hash_obr_directory(&obr_dir).unwrap_or_else(|_| "ERROR".to_string());
 
         let passed = current_hash == self.original_hash;
         let message = if passed {
@@ -1176,7 +1192,7 @@ impl DatasetProvenance {
 /// # Example
 ///
 /// ```ignore
-/// let provenance = run_with_integrity(KnownDataset::BeadsRust, |isolated| {
+/// let provenance = run_with_integrity(KnownDataset::Obr, |isolated| {
 ///     // ... run test commands on isolated.workspace_root() ...
 ///     Ok(())
 /// })?;
@@ -1219,17 +1235,17 @@ where
 mod tests {
     use super::*;
 
-    fn isolated_beads_rust_or_skip(test_name: &str) -> Option<IsolatedDataset> {
+    fn isolated_obr_or_skip(test_name: &str) -> Option<IsolatedDataset> {
         let registry = DatasetRegistry::new();
-        if !registry.is_available(KnownDataset::BeadsRust) {
-            eprintln!("Skipping {test_name}: beads_rust dataset not available (no beads.db in CI)");
+        if !registry.is_available(KnownDataset::Obr) {
+            eprintln!("Skipping {test_name}: obr dataset not available (no obr.db in CI)");
             return None;
         }
 
-        match IsolatedDataset::from_dataset(KnownDataset::BeadsRust) {
+        match IsolatedDataset::from_dataset(KnownDataset::Obr) {
             Ok(isolated) => Some(isolated),
             Err(error) => {
-                eprintln!("Skipping {test_name}: failed to copy beads_rust dataset: {error}");
+                eprintln!("Skipping {test_name}: failed to copy obr dataset: {error}");
                 None
             }
         }
@@ -1238,23 +1254,23 @@ mod tests {
     #[test]
     fn test_registry_creation() {
         let registry = DatasetRegistry::new();
-        // beads_rust may not be available in CI (no beads.db)
+        // obr may not be available in CI (no obr.db)
         // Just verify the registry can be created
-        let _ = registry.is_available(KnownDataset::BeadsRust);
+        let _ = registry.is_available(KnownDataset::Obr);
     }
 
     #[test]
     fn test_isolated_dataset_copy() {
-        let Some(isolated) = isolated_beads_rust_or_skip("test_isolated_dataset_copy") else {
+        let Some(isolated) = isolated_obr_or_skip("test_isolated_dataset_copy") else {
             return;
         };
 
         // Verify the copy was created
-        assert!(isolated.beads_dir.exists());
-        assert!(isolated.beads_dir.join("beads.db").exists());
+        assert!(isolated.obr_dir.exists());
+        assert!(isolated.obr_dir.join("obr.db").exists());
 
         // Verify metadata was captured
-        assert_eq!(isolated.metadata.name, "beads_rust");
+        assert_eq!(isolated.metadata.name, "obr");
         assert!(isolated.metadata.issue_count > 0);
         assert!(isolated.metadata.copy_duration.is_some());
     }
@@ -1268,25 +1284,25 @@ mod tests {
         assert!(isolated.root.join(".git").exists());
 
         // Beads dir should not exist yet (init will create it)
-        assert!(!isolated.beads_dir.exists());
+        assert!(!isolated.obr_dir.exists());
     }
 
-    /// Helper to check if `beads_rust` dataset is available (has `beads.db`)
-    fn beads_rust_available() -> bool {
-        DatasetRegistry::new().is_available(KnownDataset::BeadsRust)
+    /// Helper to check if `obr` dataset is available (has `obr.db`)
+    fn obr_available() -> bool {
+        DatasetRegistry::new().is_available(KnownDataset::Obr)
     }
 
     #[test]
     fn test_source_integrity_check() {
-        if !beads_rust_available() {
-            eprintln!("Skipping test_source_integrity_check: beads_rust dataset not available");
+        if !obr_available() {
+            eprintln!("Skipping test_source_integrity_check: obr dataset not available");
             return;
         }
 
         let registry = DatasetRegistry::new();
 
         // This should pass (source unchanged during test)
-        let result = registry.verify_source_integrity(KnownDataset::BeadsRust);
+        let result = registry.verify_source_integrity(KnownDataset::Obr);
         assert!(result.is_ok(), "Source integrity check failed: {result:?}");
     }
 
@@ -1296,30 +1312,26 @@ mod tests {
 
     #[test]
     fn test_integrity_guard_creation() {
-        if !beads_rust_available() {
-            eprintln!("Skipping test_integrity_guard_creation: beads_rust dataset not available");
+        if !obr_available() {
+            eprintln!("Skipping test_integrity_guard_creation: obr dataset not available");
             return;
         }
 
-        let guard =
-            DatasetIntegrityGuard::new(KnownDataset::BeadsRust).expect("should create guard");
+        let guard = DatasetIntegrityGuard::new(KnownDataset::Obr).expect("should create guard");
 
-        assert_eq!(guard.dataset_name(), "beads_rust");
+        assert_eq!(guard.dataset_name(), "obr");
         assert!(!guard.original_hash().is_empty());
         assert!(!guard.fully_verified()); // Not yet verified
     }
 
     #[test]
     fn test_integrity_guard_verify_before() {
-        if !beads_rust_available() {
-            eprintln!(
-                "Skipping test_integrity_guard_verify_before: beads_rust dataset not available"
-            );
+        if !obr_available() {
+            eprintln!("Skipping test_integrity_guard_verify_before: obr dataset not available");
             return;
         }
 
-        let mut guard =
-            DatasetIntegrityGuard::new(KnownDataset::BeadsRust).expect("should create guard");
+        let mut guard = DatasetIntegrityGuard::new(KnownDataset::Obr).expect("should create guard");
 
         let result = guard.verify_before();
         assert!(result.passed, "Before check failed: {}", result.message);
@@ -1328,15 +1340,12 @@ mod tests {
 
     #[test]
     fn test_integrity_guard_verify_after() {
-        if !beads_rust_available() {
-            eprintln!(
-                "Skipping test_integrity_guard_verify_after: beads_rust dataset not available"
-            );
+        if !obr_available() {
+            eprintln!("Skipping test_integrity_guard_verify_after: obr dataset not available");
             return;
         }
 
-        let mut guard =
-            DatasetIntegrityGuard::new(KnownDataset::BeadsRust).expect("should create guard");
+        let mut guard = DatasetIntegrityGuard::new(KnownDataset::Obr).expect("should create guard");
 
         // Verify both before and after
         let before = guard.verify_before();
@@ -1351,19 +1360,18 @@ mod tests {
 
     #[test]
     fn test_integrity_guard_to_json() {
-        if !beads_rust_available() {
-            eprintln!("Skipping test_integrity_guard_to_json: beads_rust dataset not available");
+        if !obr_available() {
+            eprintln!("Skipping test_integrity_guard_to_json: obr dataset not available");
             return;
         }
 
-        let mut guard =
-            DatasetIntegrityGuard::new(KnownDataset::BeadsRust).expect("should create guard");
+        let mut guard = DatasetIntegrityGuard::new(KnownDataset::Obr).expect("should create guard");
 
         guard.verify_before();
         guard.verify_after();
 
         let json = guard.to_json();
-        assert_eq!(json["dataset_name"], "beads_rust");
+        assert_eq!(json["dataset_name"], "obr");
         assert_eq!(json["verified_before"], true);
         assert_eq!(json["verified_after"], true);
         assert!(json["original_hash"].is_string());
@@ -1406,17 +1414,15 @@ mod tests {
 
     #[test]
     fn test_isolated_from_override() {
-        if !beads_rust_available() {
-            eprintln!("Skipping test_isolated_from_override: beads_rust dataset not available");
+        if !obr_available() {
+            eprintln!("Skipping test_isolated_from_override: obr dataset not available");
             return;
         }
 
-        // Use beads_rust as the override source (we know it exists)
-        let override_cfg = DatasetOverride::new(
-            KnownDataset::BeadsRust.source_path(),
-            "testing override with beads_rust",
-        )
-        .with_name("override_test");
+        // Use obr as the override source (we know it exists)
+        let override_cfg =
+            DatasetOverride::new(KnownDataset::Obr.source_path(), "testing override with obr")
+                .with_name("override_test");
 
         let isolated =
             isolated_from_override(&override_cfg).expect("should create isolated from override");
@@ -1426,7 +1432,7 @@ mod tests {
         assert!(isolated.metadata.is_override);
         assert_eq!(
             isolated.metadata.override_reason,
-            Some("testing override with beads_rust".to_string())
+            Some("testing override with obr".to_string())
         );
         assert!(isolated.metadata.issue_count > 0);
     }
@@ -1481,7 +1487,7 @@ mod tests {
         let wal_fixture =
             isolated_workspace_failure_fixture("sidecar_wal_without_shm").expect("sidecar fixture");
         assert!(
-            wal_fixture.beads_dir.join("beads.db-wal").exists(),
+            wal_fixture.obr_dir.join("obr.db-wal").exists(),
             "sidecar WAL should be preserved in copied fixture"
         );
 
@@ -1489,16 +1495,16 @@ mod tests {
             .expect("interrupted rebuild fixture");
         assert!(
             rebuild_fixture
-                .beads_dir
-                .join("beads.db.bad_20260312T000000Z")
+                .obr_dir
+                .join("obr.db.bad_20260312T000000Z")
                 .exists(),
             "backup database should be preserved in copied fixture"
         );
         assert!(
             rebuild_fixture
-                .beads_dir
-                .join(".br_recovery")
-                .join("beads.db.20260312T000000Z.rebuild-failed")
+                .obr_dir
+                .join("recovery")
+                .join("obr.db.20260312T000000Z.rebuild-failed")
                 .exists(),
             "recovery debris should be preserved in copied fixture"
         );
@@ -1510,11 +1516,11 @@ mod tests {
             .expect("metadata override fixture");
 
         assert!(
-            fixture.beads_dir.join("custom.db").exists(),
+            fixture.obr_dir.join("custom.db").exists(),
             "custom database path should be preserved"
         );
         assert!(
-            fixture.beads_dir.join("custom.jsonl").exists(),
+            fixture.obr_dir.join("custom.jsonl").exists(),
             "custom jsonl path should be preserved"
         );
     }
@@ -1620,14 +1626,14 @@ mod tests {
     #[test]
     fn test_run_with_integrity() {
         let registry = DatasetRegistry::new();
-        if !registry.is_available(KnownDataset::BeadsRust) {
-            eprintln!("Skipping test_run_with_integrity: beads_rust dataset not available");
+        if !registry.is_available(KnownDataset::Obr) {
+            eprintln!("Skipping test_run_with_integrity: obr dataset not available");
             return;
         }
 
-        let (result, provenance) = run_with_integrity(KnownDataset::BeadsRust, |isolated| {
+        let (result, provenance) = run_with_integrity(KnownDataset::Obr, |isolated| {
             // Verify we have a valid isolated dataset
-            assert!(isolated.beads_dir.exists());
+            assert!(isolated.obr_dir.exists());
             assert!(isolated.metadata.issue_count > 0);
             Ok(42) // Return a value to verify it's passed through
         })
@@ -1649,12 +1655,11 @@ mod tests {
 
     #[test]
     fn test_metadata_includes_source_commit() {
-        let Some(isolated) = isolated_beads_rust_or_skip("test_metadata_includes_source_commit")
-        else {
+        let Some(isolated) = isolated_obr_or_skip("test_metadata_includes_source_commit") else {
             return;
         };
 
-        let expected_commit = get_git_commit(&KnownDataset::BeadsRust.source_path());
+        let expected_commit = get_git_commit(&KnownDataset::Obr.source_path());
 
         assert_eq!(
             isolated.metadata.source_commit, expected_commit,
@@ -1664,8 +1669,7 @@ mod tests {
 
     #[test]
     fn test_metadata_to_json_includes_new_fields() {
-        let Some(isolated) =
-            isolated_beads_rust_or_skip("test_metadata_to_json_includes_new_fields")
+        let Some(isolated) = isolated_obr_or_skip("test_metadata_to_json_includes_new_fields")
         else {
             return;
         };

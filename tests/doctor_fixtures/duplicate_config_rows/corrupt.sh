@@ -20,7 +20,7 @@ cd "$target_dir"
 printf '%s\n' \
   "INSERT INTO config(key, value) VALUES('fixture.dup_test', 'first');" \
   "INSERT INTO config(key, value) VALUES('fixture.dup_test', 'second');" \
-  | sqlite3 .beads/beads.db
+  | sqlite3 .obr/obr.db
 
 if [ -e .fixture_baseline ]; then
   echo "fixture baseline already exists; expected a fresh workspace" >&2

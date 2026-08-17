@@ -20,19 +20,19 @@ cd "$target_dir"
 # Write a config.yaml containing a secret-shaped keyword so the
 # detector fires. Use `token:` because the detector matches on
 # token/secret/password/api_key/private_key substrings.
-cat > .beads/config.yaml <<'YAML'
+cat > .obr/config.yaml <<'YAML'
 github_token: ghp_fixture_placeholder_REDACTED
 project: fixture-workspace
 YAML
 
 # Set world-readable AND world-writable.
-chmod 0666 .beads/config.yaml
+chmod 0666 .obr/config.yaml
 
 # Capture pre-corruption bytes — Op::Chmod must NOT mutate content.
-sha256sum .beads/config.yaml | awk '{print $1}' > .fixture_config_pre_sha256
+sha256sum .obr/config.yaml | awk '{print $1}' > .fixture_config_pre_sha256
 # Snapshot the corrupted mode so post_undo can verify byte-
 # deterministic restore.
-python3 - .beads/config.yaml > .fixture_pre_mode <<'PY'
+python3 - .obr/config.yaml > .fixture_pre_mode <<'PY'
 import os
 import sys
 

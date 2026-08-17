@@ -7,7 +7,7 @@
 # omitting the DB-backed findings.
 #
 # The "planted state" is simply a healthy workspace; the assert stage
-# drives `br doctor --no-db --json` itself and pins the marker's shape.
+# drives `obr doctor --no-db --json` itself and pins the marker's shape.
 
 set -euo pipefail
 target_dir="${1:?usage: corrupt.sh <target_dir>}"
@@ -21,8 +21,8 @@ cd "$target_dir"
 "$tool_bin" sync --flush-only >/dev/null 2>&1
 
 if [ -e .fixture_baseline ]; then
-  echo "fixture baseline already exists; expected a fresh workspace" >&2
-  exit 1
+	echo "fixture baseline already exists; expected a fresh workspace" >&2
+	exit 1
 fi
 mkdir -p .fixture_baseline
 tar --exclude=.fixture_baseline -cf .fixture_baseline/state.tar .

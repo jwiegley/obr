@@ -6,10 +6,10 @@
 
 mod common;
 
-use beads_rust::model::{Comment, DependencyType, EventType, Issue, IssueType, Priority, Status};
-use beads_rust::storage::{IssueUpdate, SqliteStorage};
 use chrono::{Duration, Utc};
 use common::{fixtures, test_db, test_db_with_dir};
+use obr::model::{Comment, DependencyType, EventType, Issue, IssueType, Priority, Status};
+use obr::storage::{IssueUpdate, SqliteStorage};
 
 // ============================================================================
 // CREATE ISSUE TESTS
@@ -92,7 +92,7 @@ fn create_issue_all_fields_populated() {
         Some("Detailed description".to_string())
     );
     // The create transaction persists every populated field, including the
-    // governance fields settable via `br create` since #408.
+    // governance fields settable via `obr create` since #408.
     assert_eq!(retrieved.design, Some("Technical design notes".to_string()));
     assert_eq!(
         retrieved.acceptance_criteria,
@@ -654,7 +654,7 @@ fn deleted_issues_excluded_from_list() {
         .delete_issue(&issue2.id, "deleter", "removed", None)
         .unwrap();
 
-    let filters = beads_rust::storage::ListFilters::default();
+    let filters = obr::storage::ListFilters::default();
     let listed = storage.list_issues(&filters).unwrap();
 
     let ids: Vec<_> = listed.iter().map(|i| i.id.clone()).collect();
@@ -740,7 +740,7 @@ fn failed_create_does_not_persist() {
 
     // Only one issue should exist
     let all_issues = storage
-        .list_issues(&beads_rust::storage::ListFilters::default())
+        .list_issues(&obr::storage::ListFilters::default())
         .unwrap();
     assert_eq!(all_issues.len(), 1);
 }
@@ -979,7 +979,7 @@ fn count_active_issues_excludes_closed_and_templates_but_includes_deferred() {
 #[test]
 fn data_persists_across_connections() {
     let (mut storage, dir) = test_db_with_dir();
-    let db_path = dir.path().join(".beads").join("beads.db");
+    let db_path = dir.path().join(".obr").join("obr.db");
     let issue = fixtures::issue("persist-test");
 
     storage.create_issue(&issue, "tester").unwrap();

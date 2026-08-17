@@ -1,6 +1,6 @@
-//! Regression test for issue #252: `br show` / `br update` / `br defer` /
-//! `br sync --flush-only` intermittently reported "Issue not found" for
-//! freshly-created beads that `br list` resolved cleanly.
+//! Regression test for issue #252: `obr show` / `obr update` / `obr defer` /
+//! `obr sync --flush-only` intermittently reported "Issue not found" for
+//! freshly-created beads that `obr list` resolved cleanly.
 //!
 //! This test is intentionally phrased in behavioral terms rather than
 //! implementation details. The original failure mode involved freshly-created
@@ -19,7 +19,7 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, run_br};
+use common::cli::{ObrWorkspace, pin_jsonl, run_obr};
 
 fn parse_created_id(stdout: &str) -> String {
     let line = stdout.lines().next().unwrap_or("");
@@ -42,14 +42,14 @@ fn parse_created_id(stdout: &str) -> String {
 fn e2e_issue_252_show_update_defer_find_all_freshly_created_beads() {
     const N: usize = 60;
 
-    let ws = BrWorkspace::new();
-    let init = run_br(&ws, ["init", "--prefix", "i252"], "init");
+    let ws = ObrWorkspace::new();
+    let init = run_obr(&ws, ["init", "--prefix", "i252"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let mut ids = Vec::with_capacity(N);
     for i in 0..N {
         let title = format!("issue-252 repro {}", i);
-        let out = run_br(
+        let out = run_obr(
             &ws,
             [
                 "create",
@@ -71,58 +71,58 @@ fn e2e_issue_252_show_update_defer_find_all_freshly_created_beads() {
     }
 
     for id in &ids {
-        let show = run_br(&ws, ["show", id], &format!("show_{}", id));
+        let show = run_obr(&ws, ["show", id], &format!("show_{}", id));
         assert!(
             show.status.success(),
-            "br show {} failed (issue #252): stdout={:?} stderr={:?}",
+            "obr show {} failed (issue #252): stdout={:?} stderr={:?}",
             id,
             show.stdout,
             show.stderr
         );
         assert!(
             !show.stderr.contains("Issue not found") && !show.stdout.contains("Issue not found"),
-            "br show {} reported 'Issue not found' for a freshly-created bead (issue #252): {}",
+            "obr show {} reported 'Issue not found' for a freshly-created bead (issue #252): {}",
             id,
             show.stderr
         );
     }
 
     for (i, id) in ids.iter().enumerate() {
-        let update = run_br(
+        let update = run_obr(
             &ws,
             ["update", id, "--notes", &format!("touch {}", i)],
             &format!("update_{}", id),
         );
         assert!(
             update.status.success(),
-            "br update {} failed (issue #252): stderr={:?}",
+            "obr update {} failed (issue #252): stderr={:?}",
             id,
             update.stderr
         );
         assert!(
             !update.stderr.contains("Issue not found")
                 && !update.stdout.contains("Issue not found"),
-            "br update {} reported 'Issue not found' (issue #252): {}",
+            "obr update {} reported 'Issue not found' (issue #252): {}",
             id,
             update.stderr
         );
     }
 
     for id in ids.iter().take(N / 2) {
-        let defer = run_br(
+        let defer = run_obr(
             &ws,
             ["defer", id, "--until", "2099-01-01"],
             &format!("defer_{}", id),
         );
         assert!(
             defer.status.success(),
-            "br defer {} failed (issue #252): stderr={:?}",
+            "obr defer {} failed (issue #252): stderr={:?}",
             id,
             defer.stderr
         );
         assert!(
             !defer.stderr.contains("issue not found") && !defer.stderr.contains("Issue not found"),
-            "br defer {} reported 'Issue not found' (issue #252): {}",
+            "obr defer {} reported 'Issue not found' (issue #252): {}",
             id,
             defer.stderr
         );
@@ -130,7 +130,7 @@ fn e2e_issue_252_show_update_defer_find_all_freshly_created_beads() {
 }
 
 /// Issue #252 flush-path repro: after creating N beads and touching them,
-/// `br sync --flush-only` must export all N to `issues.jsonl`.  The original
+/// `obr sync --flush-only` must export all N to `issues.jsonl`.  The original
 /// report observed freshly-created beads silently dropped from export
 /// because the same single-id lookup backed the export path for individual
 /// dirty-issue reads.
@@ -138,14 +138,16 @@ fn e2e_issue_252_show_update_defer_find_all_freshly_created_beads() {
 fn e2e_issue_252_sync_flush_only_exports_every_freshly_created_bead() {
     const N: usize = 40;
 
-    let ws = BrWorkspace::new();
-    let init = run_br(&ws, ["init", "--prefix", "i252flush"], "init");
+    let ws = ObrWorkspace::new();
+    let init = run_obr(&ws, ["init", "--prefix", "i252flush"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    // Asserts on JSONL line count and `"id":"..."` fields, so pin the export.
+    pin_jsonl(&ws.root.join(".obr"));
 
     let mut ids = Vec::with_capacity(N);
     for i in 0..N {
         let title = format!("flush-252 repro {}", i);
-        let out = run_br(
+        let out = run_obr(
             &ws,
             [
                 "create",
@@ -164,7 +166,7 @@ fn e2e_issue_252_sync_flush_only_exports_every_freshly_created_bead() {
         ids.push(id);
     }
 
-    let flush = run_br(&ws, ["sync", "--flush-only"], "flush");
+    let flush = run_obr(&ws, ["sync", "--flush-only"], "flush");
     assert!(
         flush.status.success(),
         "sync --flush-only failed: stdout={:?} stderr={:?}",
@@ -172,7 +174,7 @@ fn e2e_issue_252_sync_flush_only_exports_every_freshly_created_bead() {
         flush.stderr
     );
 
-    let jsonl_path = ws.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = ws.root.join(".obr").join("issues.jsonl");
     assert!(
         jsonl_path.exists(),
         "issues.jsonl missing after flush-only: {:?}",
@@ -182,7 +184,7 @@ fn e2e_issue_252_sync_flush_only_exports_every_freshly_created_bead() {
     let exported_count = jsonl.lines().filter(|l| !l.trim().is_empty()).count();
     assert_eq!(
         exported_count, N,
-        "flush dropped freshly-created beads (issue #252): exported {} of {}\nids: {:?}",
+        "flush dropped freshly-created obr (issue #252): exported {} of {}\nids: {:?}",
         exported_count, N, ids
     );
 

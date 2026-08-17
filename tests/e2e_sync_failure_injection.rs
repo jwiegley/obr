@@ -20,10 +20,12 @@
 
 mod common;
 
-use beads_rust::model::Issue;
-use beads_rust::storage::{ListFilters, SqliteStorage};
-use beads_rust::sync::{ExportConfig, ImportConfig, export_to_jsonl, import_from_jsonl};
-use common::cli::{BrRun, BrWorkspace, extract_json_payload, parse_created_id, run_br};
+use common::cli::{
+    ObrRun, ObrWorkspace, export_path, extract_json_payload, parse_created_id, pin_jsonl, run_obr,
+};
+use obr::model::Issue;
+use obr::storage::{ListFilters, SqliteStorage};
+use obr::sync::{ExportConfig, ImportConfig, export_to_jsonl, import_from_jsonl};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -54,39 +56,39 @@ fn export_temp_path_for_test(output_path: &Path) -> PathBuf {
     output_path.with_extension(format!("jsonl.{}.tmp", std::process::id()))
 }
 
-fn should_clear_inherited_br_env(key: &OsStr) -> bool {
+fn should_clear_inherited_obr_env(key: &OsStr) -> bool {
     let key = key.to_string_lossy();
     key.starts_with("BD_")
         || key.starts_with("BEADS_")
         || matches!(
             key.as_ref(),
-            "BR_OUTPUT_FORMAT" | "TOON_DEFAULT_FORMAT" | "TOON_STATS"
+            "OBR_OUTPUT_FORMAT" | "TOON_DEFAULT_FORMAT" | "TOON_STATS"
         )
 }
 
-fn clear_inherited_br_env(cmd: &mut StdCommand) {
+fn clear_inherited_obr_env(cmd: &mut StdCommand) {
     for (key, _) in std::env::vars_os() {
-        if should_clear_inherited_br_env(&key) {
+        if should_clear_inherited_obr_env(&key) {
             cmd.env_remove(&key);
         }
     }
 }
 
-fn spawn_br_child<I, S>(workspace: &BrWorkspace, args: I) -> std::process::Child
+fn spawn_obr_child<I, S>(workspace: &ObrWorkspace, args: I) -> std::process::Child
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let mut cmd = StdCommand::new(assert_cmd::cargo::cargo_bin!("br"));
+    let mut cmd = StdCommand::new(assert_cmd::cargo::cargo_bin!("obr"));
     cmd.current_dir(&workspace.root);
     cmd.args(args);
-    clear_inherited_br_env(&mut cmd);
+    clear_inherited_obr_env(&mut cmd);
     cmd.env("NO_COLOR", "1");
     cmd.env("RUST_BACKTRACE", "1");
     cmd.env("HOME", &workspace.root);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
-    cmd.spawn().expect("spawn br child")
+    cmd.spawn().expect("spawn obr child")
 }
 
 #[cfg(target_os = "linux")]
@@ -210,7 +212,7 @@ fn collect_files_recursive(base: &Path, current: &Path, files: &mut BTreeMap<Str
                     .to_string_lossy()
                     .to_string();
                 let content = fs::read(&path).unwrap_or_default();
-                let hash = beads_rust::util::hex_encode(&Sha256::digest(&content));
+                let hash = obr::util::hex_encode(&Sha256::digest(&content));
                 files.insert(relative, hash);
             } else if path.is_dir() {
                 collect_files_recursive(base, &path, files);
@@ -228,15 +230,15 @@ fn create_test_issue(id: &str, title: &str) -> Issue {
 fn compute_file_hash(path: &Path) -> Option<String> {
     if path.exists() {
         let content = fs::read(path).ok()?;
-        Some(beads_rust::util::hex_encode(&Sha256::digest(&content)))
+        Some(obr::util::hex_encode(&Sha256::digest(&content)))
     } else {
         None
     }
 }
 
-fn jsonl_export_temp_files(beads_dir: &Path) -> Vec<PathBuf> {
+fn jsonl_export_temp_files(obr_dir: &Path) -> Vec<PathBuf> {
     let mut temps = Vec::new();
-    if let Ok(entries) = fs::read_dir(beads_dir) {
+    if let Ok(entries) = fs::read_dir(obr_dir) {
         for entry in entries.flatten() {
             let file_name = entry.file_name();
             let file_name = file_name.to_string_lossy();
@@ -286,7 +288,7 @@ fn read_jsonl_values(path: &Path, context: &str) -> Vec<Value> {
         .collect()
 }
 
-fn parse_stdout_json(run: &BrRun, context: &str) -> Value {
+fn parse_stdout_json(run: &ObrRun, context: &str) -> Value {
     let payload = extract_json_payload(&run.stdout);
     let parsed = serde_json::from_str(&payload);
     let parse_error = match parsed.as_ref() {
@@ -302,7 +304,7 @@ fn parse_stdout_json(run: &BrRun, context: &str) -> Value {
     parsed.unwrap_or(Value::Null)
 }
 
-fn assert_run_success(run: &BrRun, context: &str) {
+fn assert_run_success(run: &ObrRun, context: &str) {
     assert!(
         run.status.success(),
         "{context} failed\nstdout={}\nstderr={}",
@@ -316,7 +318,7 @@ fn assert_run_success(run: &BrRun, context: &str) {
     );
 }
 
-fn assert_run_failure(run: &BrRun, context: &str) {
+fn assert_run_failure(run: &ObrRun, context: &str) {
     assert!(
         !run.status.success(),
         "{context} unexpectedly succeeded\nstdout={}\nstderr={}",
@@ -330,8 +332,8 @@ fn assert_run_failure(run: &BrRun, context: &str) {
     );
 }
 
-fn sync_status_json(workspace: &BrWorkspace, label: &str) -> Value {
-    let run = run_br(workspace, ["sync", "--status", "--json"], label);
+fn sync_status_json(workspace: &ObrWorkspace, label: &str) -> Value {
+    let run = run_obr(workspace, ["sync", "--status", "--json"], label);
     assert_run_success(&run, label);
     parse_stdout_json(&run, label)
 }
@@ -362,21 +364,21 @@ fn assert_clean_status(status: &Value, context: &str) {
     );
 }
 
-fn flush_and_assert_clean(workspace: &BrWorkspace, label: &str) {
-    let flush = run_br(workspace, ["sync", "--flush-only", "--json"], label);
+fn flush_and_assert_clean(workspace: &ObrWorkspace, label: &str) {
+    let flush = run_obr(workspace, ["sync", "--flush-only", "--json"], label);
     assert_run_success(&flush, label);
     let status = sync_status_json(workspace, &format!("{label}_status"));
     assert_clean_status(&status, label);
 }
 
-fn assert_doctor_healthy(workspace: &BrWorkspace, label: &str) {
-    let doctor = run_br(workspace, ["doctor", "--json"], label);
+fn assert_doctor_healthy(workspace: &ObrWorkspace, label: &str) {
+    let doctor = run_obr(workspace, ["doctor", "--json"], label);
     if doctor.status.success() {
         return;
     }
 
     let repair_label = format!("{label}_repair");
-    let repair = run_br(workspace, ["doctor", "--repair", "--json"], &repair_label);
+    let repair = run_obr(workspace, ["doctor", "--repair", "--json"], &repair_label);
     assert!(
         repair.status.success(),
         "{label} failed and doctor --repair could not recover it\n\
@@ -389,8 +391,8 @@ fn assert_doctor_healthy(workspace: &BrWorkspace, label: &str) {
     );
 }
 
-fn assert_stale_show_finds(workspace: &BrWorkspace, issue_id: &str, label: &str) {
-    let show = run_br(
+fn assert_stale_show_finds(workspace: &ObrWorkspace, issue_id: &str, label: &str) {
+    let show = run_obr(
         workspace,
         [
             "show",
@@ -415,8 +417,8 @@ fn assert_stale_show_finds(workspace: &BrWorkspace, issue_id: &str, label: &str)
     );
 }
 
-fn run_dirty_mutation(workspace: &BrWorkspace, args: Vec<String>, label: &str) {
-    let run = run_br(workspace, args, label);
+fn run_dirty_mutation(workspace: &ObrWorkspace, args: Vec<String>, label: &str) {
+    let run = run_obr(workspace, args, label);
     assert_run_success(&run, label);
     let dirty_status = sync_status_json(workspace, &format!("{label}_dirty_status"));
     assert_dirty_status(&dirty_status, label);
@@ -439,9 +441,9 @@ fn export_failure_readonly_dir_preserves_original() {
 
     // Create temp directory with existing JSONL
     let temp = TempDir::new().unwrap();
-    let beads_dir = temp.path().join(".beads");
-    fs::create_dir_all(&beads_dir).unwrap();
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = temp.path().join(".obr");
+    fs::create_dir_all(&obr_dir).unwrap();
+    let jsonl_path = obr_dir.join("issues.jsonl");
 
     // Create initial JSONL with known content
     let initial_content = r#"{"id":"test-old","title":"Old Issue"}"#;
@@ -452,17 +454,17 @@ fn export_failure_readonly_dir_preserves_original() {
     artifacts.snapshot_dir("before_failure", temp.path());
 
     // Make directory read-only to cause export failure
-    fs::set_permissions(&beads_dir, Permissions::from_mode(0o555)).unwrap();
+    fs::set_permissions(&obr_dir, Permissions::from_mode(0o555)).unwrap();
 
     // Attempt export (should fail)
     let config = ExportConfig {
-        beads_dir: Some(beads_dir.clone()),
+        obr_dir: Some(obr_dir.clone()),
         ..Default::default()
     };
     let result = export_to_jsonl(&storage, &jsonl_path, &config);
 
     // Restore permissions for cleanup
-    fs::set_permissions(&beads_dir, Permissions::from_mode(0o755)).unwrap();
+    fs::set_permissions(&obr_dir, Permissions::from_mode(0o755)).unwrap();
 
     artifacts.snapshot_dir("after_failure", temp.path());
 
@@ -508,9 +510,9 @@ fn export_failure_temp_file_preserves_original() {
 
     // Create temp directory
     let temp = TempDir::new().unwrap();
-    let beads_dir = temp.path().join(".beads");
-    fs::create_dir_all(&beads_dir).unwrap();
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = temp.path().join(".obr");
+    fs::create_dir_all(&obr_dir).unwrap();
+    let jsonl_path = obr_dir.join("issues.jsonl");
 
     // Create initial JSONL
     let initial_content = r#"{"id":"test-old","title":"Old"}"#;
@@ -526,7 +528,7 @@ fn export_failure_temp_file_preserves_original() {
 
     // Attempt export
     let config = ExportConfig {
-        beads_dir: Some(beads_dir.clone()),
+        obr_dir: Some(obr_dir.clone()),
         ..Default::default()
     };
     let result = export_to_jsonl(&storage, &jsonl_path, &config);
@@ -561,7 +563,7 @@ fn import_failure_missing_file_no_db_changes() {
 
     // Attempt import from non-existent file
     let temp = TempDir::new().unwrap();
-    let missing_path = temp.path().join(".beads").join("nonexistent.jsonl");
+    let missing_path = temp.path().join(".obr").join("nonexistent.jsonl");
 
     let config = ImportConfig::default();
     let result = import_from_jsonl(&mut storage, &missing_path, &config, Some("test-"));
@@ -601,16 +603,16 @@ fn import_failure_malformed_json_no_db_changes() {
 
     // Create malformed JSONL
     let temp = TempDir::new().unwrap();
-    let beads_dir = temp.path().join(".beads");
-    fs::create_dir_all(&beads_dir).unwrap();
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = temp.path().join(".obr");
+    fs::create_dir_all(&obr_dir).unwrap();
+    let jsonl_path = obr_dir.join("issues.jsonl");
     fs::write(&jsonl_path, "not valid json\n").unwrap();
 
     artifacts.log("malformed_content", "not valid json");
 
     // Attempt import
     let config = ImportConfig {
-        beads_dir: Some(beads_dir),
+        obr_dir: Some(obr_dir),
         ..Default::default()
     };
     let result = import_from_jsonl(&mut storage, &jsonl_path, &config, Some("test-"));
@@ -650,13 +652,13 @@ fn import_failure_conflict_markers_no_db_changes() {
 
     // Create JSONL with conflict markers
     let temp = TempDir::new().unwrap();
-    let beads_dir = temp.path().join(".beads");
-    fs::create_dir_all(&beads_dir).unwrap();
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = temp.path().join(".obr");
+    fs::create_dir_all(&obr_dir).unwrap();
+    let jsonl_path = obr_dir.join("issues.jsonl");
     fs::write(&jsonl_path, "<<<<<<< HEAD\n{\"id\":\"test-1\"}\n").unwrap();
 
     let config = ImportConfig {
-        beads_dir: Some(beads_dir),
+        obr_dir: Some(obr_dir),
         ..Default::default()
     };
     let result = import_from_jsonl(&mut storage, &jsonl_path, &config, Some("test-"));
@@ -693,16 +695,16 @@ fn import_failure_prefix_mismatch_no_db_changes() {
 
     // Create JSONL with wrong prefix
     let temp = TempDir::new().unwrap();
-    let beads_dir = temp.path().join(".beads");
-    fs::create_dir_all(&beads_dir).unwrap();
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = temp.path().join(".obr");
+    fs::create_dir_all(&obr_dir).unwrap();
+    let jsonl_path = obr_dir.join("issues.jsonl");
 
     let wrong_prefix_issue = create_test_issue("wrong-001", "Wrong Prefix");
     let json = serde_json::to_string(&wrong_prefix_issue).unwrap();
     fs::write(&jsonl_path, format!("{}\n", json)).unwrap();
 
     let config = ImportConfig {
-        beads_dir: Some(beads_dir),
+        obr_dir: Some(obr_dir),
         ..Default::default()
     };
     let result = import_from_jsonl(&mut storage, &jsonl_path, &config, Some("test-"));
@@ -731,10 +733,10 @@ fn cli_export_readonly_preserves_state() {
     let _log = common::test_log("cli_export_readonly_preserves_state");
     let mut artifacts = FailureTestArtifacts::new("cli_export_readonly");
 
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize (without explicit prefix)
-    let init_run = run_br(&workspace, ["init"], "init");
+    let init_run = run_obr(&workspace, ["init"], "init");
     artifacts.log("init_stdout", &init_run.stdout);
     artifacts.log("init_stderr", &init_run.stderr);
     assert!(
@@ -744,7 +746,7 @@ fn cli_export_readonly_preserves_state() {
     );
 
     // Create issue
-    let create_run = run_br(&workspace, ["create", "Test Issue"], "create");
+    let create_run = run_obr(&workspace, ["create", "Test Issue"], "create");
     artifacts.log("create_stdout", &create_run.stdout);
     artifacts.log("create_stderr", &create_run.stderr);
     assert!(
@@ -754,7 +756,7 @@ fn cli_export_readonly_preserves_state() {
     );
 
     // First export to establish baseline
-    let export1_run = run_br(&workspace, ["sync", "--flush-only"], "export1");
+    let export1_run = run_obr(&workspace, ["sync", "--flush-only"], "export1");
     artifacts.log("export1_stdout", &export1_run.stdout);
     artifacts.log("export1_stderr", &export1_run.stderr);
     assert!(
@@ -763,23 +765,25 @@ fn cli_export_readonly_preserves_state() {
         export1_run.stderr
     );
 
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
-    let initial_hash = compute_file_hash(&jsonl_path);
+    // This test only needs "the artifact the default flush wrote"; it compares
+    // hashes and never parses the contents, so it tracks the default (Org) export.
+    let export_artifact = export_path(&workspace);
+    let initial_hash = compute_file_hash(&export_artifact);
     artifacts.log("initial_hash", &initial_hash.clone().unwrap_or_default());
 
     artifacts.snapshot_dir("before_readonly", &workspace.root);
 
-    // Make .beads read-only
-    let beads_dir = workspace.root.join(".beads");
-    fs::set_permissions(&beads_dir, Permissions::from_mode(0o555)).unwrap();
+    // Make .obr read-only
+    let obr_dir = workspace.root.join(".obr");
+    fs::set_permissions(&obr_dir, Permissions::from_mode(0o555)).unwrap();
 
     // Attempt another export (should fail)
-    let export2_run = run_br(&workspace, ["sync", "--flush-only"], "export2_fail");
+    let export2_run = run_obr(&workspace, ["sync", "--flush-only"], "export2_fail");
     artifacts.log("export2_stdout", &export2_run.stdout);
     artifacts.log("export2_stderr", &export2_run.stderr);
 
     // Restore permissions
-    fs::set_permissions(&beads_dir, Permissions::from_mode(0o755)).unwrap();
+    fs::set_permissions(&obr_dir, Permissions::from_mode(0o755)).unwrap();
 
     artifacts.snapshot_dir("after_readonly", &workspace.root);
 
@@ -788,12 +792,12 @@ fn cli_export_readonly_preserves_state() {
 
     // Export may succeed or fail depending on how the engine handles
     // read-only directories (temp file placement, fallback strategies).
-    // The key invariant: if it fails, the JSONL must be unchanged.
+    // The key invariant: if it fails, the export artifact must be unchanged.
     if !export2_run.status.success() {
-        let final_hash = compute_file_hash(&jsonl_path);
+        let final_hash = compute_file_hash(&export_artifact);
         assert_eq!(
             initial_hash, final_hash,
-            "JSONL should be unchanged after failed export"
+            "the export artifact should be unchanged after failed export"
         );
     }
 }
@@ -804,10 +808,10 @@ fn cli_import_malformed_preserves_db() {
     let _log = common::test_log("cli_import_malformed_preserves_db");
     let mut artifacts = FailureTestArtifacts::new("cli_import_malformed");
 
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize (without explicit prefix - let it auto-generate)
-    let init_run = run_br(&workspace, ["init"], "init");
+    let init_run = run_obr(&workspace, ["init"], "init");
     artifacts.log("init_stdout", &init_run.stdout);
     artifacts.log("init_stderr", &init_run.stderr);
     assert!(
@@ -816,8 +820,12 @@ fn cli_import_malformed_preserves_db() {
         init_run.stderr
     );
 
+    // The point of this test is the JSONL reader's rejection of malformed rows,
+    // so pin the workspace to the legacy JSONL export.
+    pin_jsonl(&workspace.root.join(".obr"));
+
     // Create issue
-    let create_run = run_br(&workspace, ["create", "Original Issue"], "create");
+    let create_run = run_obr(&workspace, ["create", "Original Issue"], "create");
     artifacts.log("create_stdout", &create_run.stdout);
     artifacts.log("create_stderr", &create_run.stderr);
     assert!(
@@ -827,7 +835,7 @@ fn cli_import_malformed_preserves_db() {
     );
 
     // List before import attempt
-    let list1_run = run_br(&workspace, ["list", "--json"], "list_before");
+    let list1_run = run_obr(&workspace, ["list", "--json"], "list_before");
     artifacts.log("list_before", &list1_run.stdout);
     assert!(
         list1_run.stdout.contains("Original Issue"),
@@ -835,11 +843,11 @@ fn cli_import_malformed_preserves_db() {
     );
 
     // Corrupt the JSONL file
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     fs::write(&jsonl_path, "totally not json {{{\n").unwrap();
 
     // Attempt import
-    let import_run = run_br(&workspace, ["sync", "--import-only"], "import_fail");
+    let import_run = run_obr(&workspace, ["sync", "--import-only"], "import_fail");
     artifacts.log("import_stdout", &import_run.stdout);
     artifacts.log("import_stderr", &import_run.stderr);
 
@@ -853,7 +861,7 @@ fn cli_import_malformed_preserves_db() {
     );
 
     // List after - DB should still have original issue (use --no-auto-import --allow-stale to ignore corrupt/newer JSONL)
-    let list2_run = run_br(
+    let list2_run = run_obr(
         &workspace,
         ["list", "--json", "--no-auto-import", "--allow-stale"],
         "list_after",
@@ -881,11 +889,11 @@ fn cli_mutation_crash_boundary_matrix_marks_dirty_until_recovered() {
     let _log = common::test_log("cli_mutation_crash_boundary_matrix_marks_dirty_until_recovered");
     let mut artifacts = FailureTestArtifacts::new("cli_mutation_crash_boundary_matrix");
 
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "matrix_init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "matrix_init");
     assert_run_success(&init, "matrix_init");
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Crash matrix anchor", "--no-auto-flush"],
         "matrix_create_primary_write",
@@ -1024,9 +1032,9 @@ fn cli_sync_crash_boundary_matrix_preserves_artifacts() {
     let mut artifacts = FailureTestArtifacts::new("cli_sync_crash_boundary_matrix");
 
     let temp_failure_workspace = TempDir::new().expect("temp failure workspace");
-    let temp_failure_beads_dir = temp_failure_workspace.path().join(".beads");
-    fs::create_dir_all(&temp_failure_beads_dir).expect("temp failure beads dir");
-    let temp_failure_jsonl = temp_failure_beads_dir.join("issues.jsonl");
+    let temp_failure_obr_dir = temp_failure_workspace.path().join(".obr");
+    fs::create_dir_all(&temp_failure_obr_dir).expect("temp failure obr dir");
+    let temp_failure_jsonl = temp_failure_obr_dir.join("issues.jsonl");
     fs::write(&temp_failure_jsonl, "{\"id\":\"old\",\"title\":\"Old\"}\n")
         .expect("write preserved jsonl");
     let temp_failure_hash = compute_file_hash(&temp_failure_jsonl).expect("temp failure hash");
@@ -1039,7 +1047,7 @@ fn cli_sync_crash_boundary_matrix_preserves_artifacts() {
         .create_issue(&temp_failure_issue, "tester")
         .expect("create temp failure issue");
     let temp_failure_config = ExportConfig {
-        beads_dir: Some(temp_failure_beads_dir.clone()),
+        obr_dir: Some(temp_failure_obr_dir.clone()),
         ..Default::default()
     };
     let temp_failure = export_to_jsonl(
@@ -1058,11 +1066,14 @@ fn cli_sync_crash_boundary_matrix_preserves_artifacts() {
     );
     artifacts.snapshot_dir("after_temp_file_failure", temp_failure_workspace.path());
 
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "sync_matrix_init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "sync_matrix_init");
     assert_run_success(&init, "sync_matrix_init");
+    // The recovery phase injects git conflict markers into the export artifact
+    // and drives `export_to_jsonl` against it directly, so pin JSONL.
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Sync crash matrix anchor", "--no-auto-flush"],
         "sync_matrix_create_anchor",
@@ -1075,14 +1086,14 @@ fn cli_sync_crash_boundary_matrix_preserves_artifacts() {
         create.stdout
     );
 
-    let beads_dir = workspace.root.join(".beads");
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = workspace.root.join(".obr");
+    let jsonl_path = obr_dir.join("issues.jsonl");
 
     flush_and_assert_clean(&workspace, "sync_matrix_baseline_flush");
     let baseline_hash = compute_file_hash(&jsonl_path).expect("baseline hash");
     artifacts.log("baseline_hash", &baseline_hash);
 
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         [
             "update",
@@ -1106,9 +1117,9 @@ fn cli_sync_crash_boundary_matrix_preserves_artifacts() {
         "the dirty DB write should not rewrite JSONL before explicit export"
     );
 
-    let storage = SqliteStorage::open(&beads_dir.join("beads.db")).expect("open workspace db");
+    let storage = SqliteStorage::open(&obr_dir.join("obr.db")).expect("open workspace db");
     let config = ExportConfig {
-        beads_dir: Some(beads_dir.clone()),
+        obr_dir: Some(obr_dir.clone()),
         force: true,
         ..Default::default()
     };
@@ -1129,7 +1140,7 @@ fn cli_sync_crash_boundary_matrix_preserves_artifacts() {
         "<<<<<<< HEAD\n{\"id\":\"broken\"}\n=======\n{}\n>>>>>>> branch\n",
     )
     .expect("write conflict marker jsonl");
-    let failed_import = run_br(
+    let failed_import = run_obr(
         &workspace,
         ["sync", "--import-only", "--force", "--json"],
         "sync_matrix_import_validation_failure",
@@ -1149,7 +1160,7 @@ fn cli_sync_crash_boundary_matrix_preserves_artifacts() {
     );
 
     fs::write(&jsonl_path, recovered_jsonl).expect("restore valid jsonl");
-    let repair_import = run_br(
+    let repair_import = run_obr(
         &workspace,
         ["sync", "--import-only", "--force", "--json"],
         "sync_matrix_import_recovery",
@@ -1177,11 +1188,14 @@ fn cli_sync_flush_anchor_publication_failure_retains_dirty_state_and_retries() {
     let mut artifacts =
         FailureTestArtifacts::new("cli_sync_flush_anchor_publication_failure_retry");
 
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "anchor_failure_init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "anchor_failure_init");
     assert_run_success(&init, "anchor failure init");
+    // This test manipulates the `merge.base.jsonl` anchor and parses the export
+    // artifact back as JSONL rows, so pin JSONL.
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Anchor publication failure", "--json"],
         "anchor_failure_create",
@@ -1197,16 +1211,16 @@ fn cli_sync_flush_anchor_publication_failure_retains_dirty_state_and_retries() {
 
     flush_and_assert_clean(&workspace, "anchor_failure_baseline_flush");
 
-    let beads_dir = workspace.root.join(".beads");
-    let jsonl_path = beads_dir.join("issues.jsonl");
-    let anchor_path = beads_dir.join("beads.base.jsonl");
-    let retained_anchor_path = beads_dir.join("beads.base.pre-blocker.jsonl");
-    let retained_blocker_path = beads_dir.join("beads.base.directory-blocker.retained");
+    let obr_dir = workspace.root.join(".obr");
+    let jsonl_path = obr_dir.join("issues.jsonl");
+    let anchor_path = obr_dir.join("merge.base.jsonl");
+    let retained_anchor_path = obr_dir.join("beads.base.pre-blocker.jsonl");
+    let retained_blocker_path = obr_dir.join("beads.base.directory-blocker.retained");
     let baseline_status = sync_status_json(&workspace, "anchor_failure_baseline_status");
     let baseline_last_export_time = baseline_status["last_export_time"].clone();
     let baseline_content_hash = baseline_status["jsonl_content_hash"].clone();
 
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         [
             "update",
@@ -1228,7 +1242,7 @@ fn cli_sync_flush_anchor_publication_failure_retains_dirty_state_and_retries() {
     fs::rename(&anchor_path, &retained_anchor_path).expect("retain prior regular anchor");
     fs::create_dir(&anchor_path).expect("plant directory anchor blocker");
 
-    let failed_flush = run_br(
+    let failed_flush = run_obr(
         &workspace,
         ["sync", "--flush-only", "--json", "--no-auto-import"],
         "anchor_failure_flush",
@@ -1238,7 +1252,7 @@ fn cli_sync_flush_anchor_publication_failure_retains_dirty_state_and_retries() {
     assert_run_failure(&failed_flush, "directory-blocked anchor flush");
     let failure_output = format!("{}\n{}", failed_flush.stdout, failed_flush.stderr);
     assert!(
-        failure_output.contains("beads.base.jsonl") && failure_output.contains("regular file"),
+        failure_output.contains("merge.base.jsonl") && failure_output.contains("regular file"),
         "anchor publication failure should identify the non-regular anchor: {failure_output}"
     );
 
@@ -1251,7 +1265,7 @@ fn cli_sync_flush_anchor_publication_failure_retains_dirty_state_and_retries() {
         "the JSONL should contain the durable export even though anchor publication failed: {exported:?}"
     );
 
-    let failed_status_run = run_br(
+    let failed_status_run = run_obr(
         &workspace,
         ["sync", "--status", "--json", "--no-auto-import"],
         "anchor_failure_status_after_failure",
@@ -1273,7 +1287,7 @@ fn cli_sync_flush_anchor_publication_failure_retains_dirty_state_and_retries() {
 
     fs::rename(&anchor_path, &retained_blocker_path)
         .expect("retain directory blocker for postmortem evidence");
-    let retry = run_br(
+    let retry = run_obr(
         &workspace,
         ["sync", "--flush-only", "--json", "--no-auto-import"],
         "anchor_failure_retry",
@@ -1316,11 +1330,11 @@ fn cli_sync_flush_sigkill_while_waiting_for_write_lock_preserves_dirty_state() {
     );
     let mut artifacts = FailureTestArtifacts::new("cli_sync_flush_sigkill_waiting_write_lock");
 
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "sigkill_flush_init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "sigkill_flush_init");
     assert_run_success(&init, "sigkill_flush_init");
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "SIGKILL sync flush anchor", "--json"],
         "sigkill_flush_create",
@@ -1336,11 +1350,13 @@ fn cli_sync_flush_sigkill_while_waiting_for_write_lock_preserves_dirty_state() {
 
     flush_and_assert_clean(&workspace, "sigkill_flush_baseline");
 
-    let beads_dir = workspace.root.join(".beads");
-    let jsonl_path = beads_dir.join("issues.jsonl");
-    let baseline_hash = compute_file_hash(&jsonl_path).expect("baseline jsonl hash");
+    let obr_dir = workspace.root.join(".obr");
+    // Class B: this test is about the write-lock protocol, not about JSONL. The
+    // export artifact is only ever hashed, so it tracks the default (Org) export.
+    let export_artifact = export_path(&workspace);
+    let baseline_hash = compute_file_hash(&export_artifact).expect("baseline export hash");
 
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         [
             "update",
@@ -1358,11 +1374,11 @@ fn cli_sync_flush_sigkill_while_waiting_for_write_lock_preserves_dirty_state() {
     assert_dirty_status(&dirty_before_kill, "dirty update before killed flush");
     assert_eq!(
         baseline_hash,
-        compute_file_hash(&jsonl_path).expect("hash before killed flush"),
-        "dirty DB update should not rewrite JSONL before explicit flush"
+        compute_file_hash(&export_artifact).expect("hash before killed flush"),
+        "dirty DB update should not rewrite the export artifact before explicit flush"
     );
 
-    let lock_path = beads_dir.join(".write.lock");
+    let lock_path = obr_dir.join(".write.lock");
     let write_lock = OpenOptions::new()
         .read(true)
         .write(true)
@@ -1372,7 +1388,7 @@ fn cli_sync_flush_sigkill_while_waiting_for_write_lock_preserves_dirty_state() {
         .expect("open .write.lock");
     write_lock.lock().expect("hold .write.lock");
 
-    let mut blocked_flush = spawn_br_child(
+    let mut blocked_flush = spawn_obr_child(
         &workspace,
         ["sync", "--flush-only", "--json", "--no-auto-import"],
     );
@@ -1399,18 +1415,18 @@ fn cli_sync_flush_sigkill_while_waiting_for_write_lock_preserves_dirty_state() {
 
     assert_eq!(
         baseline_hash,
-        compute_file_hash(&jsonl_path).expect("hash after killed flush"),
-        "killed blocked flush must preserve the pre-flush JSONL"
+        compute_file_hash(&export_artifact).expect("hash after killed flush"),
+        "killed blocked flush must preserve the pre-flush export artifact"
     );
     let dirty_after_kill = sync_status_json(&workspace, "sigkill_flush_dirty_after_kill");
     assert_dirty_status(&dirty_after_kill, "dirty update after killed flush");
     assert_stale_show_finds(&workspace, &issue_id, "sigkill_flush_stale_show_after_kill");
 
     flush_and_assert_clean(&workspace, "sigkill_flush_recovery");
-    let final_hash = compute_file_hash(&jsonl_path).expect("final jsonl hash");
+    let final_hash = compute_file_hash(&export_artifact).expect("final export hash");
     assert_ne!(
         baseline_hash, final_hash,
-        "recovery flush should export the dirty update into JSONL"
+        "recovery flush should export the dirty update into the export artifact"
     );
 
     assert_doctor_healthy(&workspace, "sigkill_flush_final_doctor");
@@ -1432,11 +1448,14 @@ fn cli_sync_flush_concurrent_export_race_serializes_jsonl_sidecars() {
     let _log = common::test_log("cli_sync_flush_concurrent_export_race_serializes_jsonl_sidecars");
     let mut artifacts = FailureTestArtifacts::new("cli_sync_flush_concurrent_export_race");
 
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "concurrent_flush_init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "concurrent_flush_init");
     assert_run_success(&init, "concurrent_flush_init");
+    // This test asserts on `issues.jsonl.<pid>.tmp` sidecars and parses the
+    // export artifact back as JSONL rows, so pin JSONL.
+    pin_jsonl(&workspace.root.join(".obr"));
 
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         ["create", "Concurrent sync flush anchor", "--json"],
         "concurrent_flush_create",
@@ -1452,15 +1471,15 @@ fn cli_sync_flush_concurrent_export_race_serializes_jsonl_sidecars() {
 
     flush_and_assert_clean(&workspace, "concurrent_flush_baseline");
 
-    let beads_dir = workspace.root.join(".beads");
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = workspace.root.join(".obr");
+    let jsonl_path = obr_dir.join("issues.jsonl");
     let baseline_hash = compute_file_hash(&jsonl_path).expect("baseline jsonl hash");
     assert!(
-        jsonl_export_temp_files(&beads_dir).is_empty(),
+        jsonl_export_temp_files(&obr_dir).is_empty(),
         "baseline export should not leave temp JSONL files"
     );
 
-    let update = run_br(
+    let update = run_obr(
         &workspace,
         [
             "update",
@@ -1479,7 +1498,7 @@ fn cli_sync_flush_concurrent_export_race_serializes_jsonl_sidecars() {
         "dirty update before concurrent flush race",
     );
 
-    let lock_path = beads_dir.join(".write.lock");
+    let lock_path = obr_dir.join(".write.lock");
     let write_lock = OpenOptions::new()
         .read(true)
         .write(true)
@@ -1489,11 +1508,11 @@ fn cli_sync_flush_concurrent_export_race_serializes_jsonl_sidecars() {
         .expect("open .write.lock");
     write_lock.lock().expect("hold .write.lock");
 
-    let mut flush_a = spawn_br_child(
+    let mut flush_a = spawn_obr_child(
         &workspace,
         ["sync", "--flush-only", "--json", "--no-auto-import"],
     );
-    let mut flush_b = spawn_br_child(
+    let mut flush_b = spawn_obr_child(
         &workspace,
         ["sync", "--flush-only", "--json", "--no-auto-import"],
     );
@@ -1555,7 +1574,7 @@ fn cli_sync_flush_concurrent_export_race_serializes_jsonl_sidecars() {
 
     let status_after_race = sync_status_json(&workspace, "concurrent_flush_status_after_race");
     assert_clean_status(&status_after_race, "concurrent flush race");
-    let temp_files = jsonl_export_temp_files(&beads_dir);
+    let temp_files = jsonl_export_temp_files(&obr_dir);
     assert!(
         temp_files.is_empty(),
         "concurrent flush race should not leave export temp files: {temp_files:?}"
@@ -1570,34 +1589,39 @@ fn cli_sync_flush_concurrent_export_race_serializes_jsonl_sidecars() {
     artifacts.save();
 }
 
-/// Test: a workspace with `.beads` symlinked to external metadata storage
+/// Test: a workspace with `.obr` symlinked to external metadata storage
 /// should fail cleanly while the target is offline and recover after restore.
 #[test]
 #[cfg(unix)]
-fn cli_symlinked_beads_target_offline_recovers_after_restore() {
+fn cli_symlinked_obr_target_offline_recovers_after_restore() {
     let _log = common::test_log("cli_symlinked_beads_target_offline_recovers_after_restore");
     let mut artifacts = FailureTestArtifacts::new("cli_symlinked_beads_target_offline");
 
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     let external = TempDir::new().expect("create external metadata tempdir");
     let external_parent = external.path().join("metadata-store");
-    let target = external_parent.join(".beads");
-    let offline_target = external_parent.join(".beads-offline");
+    let target = external_parent.join(".obr");
+    let offline_target = external_parent.join(".obr-offline");
     fs::create_dir_all(&target).expect("create symlink target");
-    symlink(&target, workspace.root.join(".beads")).expect("symlink workspace .beads");
+    symlink(&target, workspace.root.join(".obr")).expect("symlink workspace .obr");
 
     let symlink_meta =
-        fs::symlink_metadata(workspace.root.join(".beads")).expect("stat .beads symlink");
+        fs::symlink_metadata(workspace.root.join(".obr")).expect("stat .obr symlink");
     assert!(
         symlink_meta.file_type().is_symlink(),
-        ".beads should be a symlink before init"
+        ".obr should be a symlink before init"
     );
 
-    let init = run_br(&workspace, ["init"], "symlinked_beads_init");
+    let init = run_obr(&workspace, ["init"], "symlinked_beads_init");
     assert_run_success(&init, "symlinked_beads_init");
-    let create = run_br(
+    // The scenario is an export that lives on the symlinked external store and
+    // therefore goes offline with it. Since D-SURFACE the default export sits
+    // at the workspace root, outside the symlink, so pin the anchor back
+    // inside `.obr/` to keep the offline window meaningful.
+    pin_jsonl(&workspace.root.join(".obr"));
+    let create = run_obr(
         &workspace,
-        ["create", "Symlinked beads target anchor", "--json"],
+        ["create", "Symlinked obr target anchor", "--json"],
         "symlinked_beads_create",
     );
     assert_run_success(&create, "symlinked_beads_create");
@@ -1616,17 +1640,17 @@ fn cli_symlinked_beads_target_offline_recovers_after_restore() {
 
     fs::rename(&target, &offline_target).expect("move symlink target offline");
     assert!(
-        !workspace.root.join(".beads").exists(),
-        "broken .beads symlink should not resolve while target is offline"
+        !workspace.root.join(".obr").exists(),
+        "broken .obr symlink should not resolve while target is offline"
     );
     let offline_meta =
-        fs::symlink_metadata(workspace.root.join(".beads")).expect("stat broken .beads symlink");
+        fs::symlink_metadata(workspace.root.join(".obr")).expect("stat broken .obr symlink");
     assert!(
         offline_meta.file_type().is_symlink(),
-        "offline command must not replace the .beads symlink"
+        "offline command must not replace the .obr symlink"
     );
 
-    let offline_status = run_br(
+    let offline_status = run_obr(
         &workspace,
         ["sync", "--status", "--json"],
         "symlinked_beads_status_offline",
@@ -1635,11 +1659,11 @@ fn cli_symlinked_beads_target_offline_recovers_after_restore() {
     artifacts.log("offline_status_stdout", &offline_status.stdout);
     artifacts.log("offline_status_stderr", &offline_status.stderr);
     assert!(
-        fs::symlink_metadata(workspace.root.join(".beads"))
-            .expect("stat .beads after offline command")
+        fs::symlink_metadata(workspace.root.join(".obr"))
+            .expect("stat .obr after offline command")
             .file_type()
             .is_symlink(),
-        "offline command should not materialize replacement .beads state"
+        "offline command should not materialize replacement .obr state"
     );
     assert!(
         !target.exists(),
@@ -1648,8 +1672,8 @@ fn cli_symlinked_beads_target_offline_recovers_after_restore() {
 
     fs::rename(&offline_target, &target).expect("restore symlink target");
     assert!(
-        workspace.root.join(".beads").exists(),
-        "restored .beads symlink should resolve again"
+        workspace.root.join(".obr").exists(),
+        "restored .obr symlink should resolve again"
     );
     assert_eq!(
         baseline_hash,
@@ -1658,14 +1682,14 @@ fn cli_symlinked_beads_target_offline_recovers_after_restore() {
     );
 
     let restored_status = sync_status_json(&workspace, "symlinked_beads_status_restored");
-    assert_clean_status(&restored_status, "restored symlinked .beads workspace");
+    assert_clean_status(&restored_status, "restored symlinked .obr workspace");
     assert_stale_show_finds(&workspace, &issue_id, "symlinked_beads_show_after_restore");
     assert_doctor_healthy(&workspace, "symlinked_beads_final_doctor");
 
     artifacts.snapshot_dir("after_target_restore", &workspace.root);
     artifacts.log(
         "verification",
-        "PASSED: symlinked .beads target offline failure left no replacement state and recovered after restore",
+        "PASSED: symlinked .obr target offline failure left no replacement state and recovered after restore",
     );
     artifacts.save();
 }
@@ -1685,9 +1709,9 @@ fn export_preserves_large_existing_jsonl() {
 
     // Create temp directory with large existing JSONL
     let temp = TempDir::new().unwrap();
-    let beads_dir = temp.path().join(".beads");
-    fs::create_dir_all(&beads_dir).unwrap();
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = temp.path().join(".obr");
+    fs::create_dir_all(&obr_dir).unwrap();
+    let jsonl_path = obr_dir.join("issues.jsonl");
 
     // Create a reasonably large JSONL (100KB of issues)
     let mut large_content = String::new();
@@ -1704,16 +1728,16 @@ fn export_preserves_large_existing_jsonl() {
     artifacts.log("initial_hash", &initial_hash);
 
     // Make directory read-only to force failure
-    fs::set_permissions(&beads_dir, Permissions::from_mode(0o555)).unwrap();
+    fs::set_permissions(&obr_dir, Permissions::from_mode(0o555)).unwrap();
 
     let config = ExportConfig {
-        beads_dir: Some(beads_dir.clone()),
+        obr_dir: Some(obr_dir.clone()),
         ..Default::default()
     };
     let result = export_to_jsonl(&storage, &jsonl_path, &config);
 
     // Restore permissions
-    fs::set_permissions(&beads_dir, Permissions::from_mode(0o755)).unwrap();
+    fs::set_permissions(&obr_dir, Permissions::from_mode(0o755)).unwrap();
 
     // Verify failure
     assert!(result.is_err(), "Export should fail");
@@ -1747,14 +1771,14 @@ fn export_cleans_up_temp_file_on_success() {
     storage.create_issue(&issue, "tester").unwrap();
 
     let temp = TempDir::new().unwrap();
-    let beads_dir = temp.path().join(".beads");
-    fs::create_dir_all(&beads_dir).unwrap();
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = temp.path().join(".obr");
+    fs::create_dir_all(&obr_dir).unwrap();
+    let jsonl_path = obr_dir.join("issues.jsonl");
     let temp_path = export_temp_path_for_test(&jsonl_path);
 
     // Export should succeed
     let config = ExportConfig {
-        beads_dir: Some(beads_dir.clone()),
+        obr_dir: Some(obr_dir.clone()),
         ..Default::default()
     };
     let result = export_to_jsonl(&storage, &jsonl_path, &config);
@@ -1786,9 +1810,9 @@ fn multiple_export_failures_no_accumulation() {
     storage.create_issue(&issue, "tester").unwrap();
 
     let temp = TempDir::new().unwrap();
-    let beads_dir = temp.path().join(".beads");
-    fs::create_dir_all(&beads_dir).unwrap();
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = temp.path().join(".obr");
+    fs::create_dir_all(&obr_dir).unwrap();
+    let jsonl_path = obr_dir.join("issues.jsonl");
 
     // Create initial JSONL
     fs::write(&jsonl_path, r#"{"id":"test-orig","title":"Original"}"#).unwrap();
@@ -1796,15 +1820,15 @@ fn multiple_export_failures_no_accumulation() {
 
     // Attempt multiple failures
     for i in 0..5 {
-        fs::set_permissions(&beads_dir, Permissions::from_mode(0o555)).unwrap();
+        fs::set_permissions(&obr_dir, Permissions::from_mode(0o555)).unwrap();
 
         let config = ExportConfig {
-            beads_dir: Some(beads_dir.clone()),
+            obr_dir: Some(obr_dir.clone()),
             ..Default::default()
         };
         let result = export_to_jsonl(&storage, &jsonl_path, &config);
 
-        fs::set_permissions(&beads_dir, Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(&obr_dir, Permissions::from_mode(0o755)).unwrap();
 
         assert!(result.is_err(), "Attempt {} should fail", i);
 
@@ -1840,14 +1864,14 @@ fn atomic_write_pipeline_produces_valid_output() {
     }
 
     let temp = TempDir::new().unwrap();
-    let beads_dir = temp.path().join(".beads");
-    fs::create_dir_all(&beads_dir).unwrap();
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = temp.path().join(".obr");
+    fs::create_dir_all(&obr_dir).unwrap();
+    let jsonl_path = obr_dir.join("issues.jsonl");
     let temp_path = export_temp_path_for_test(&jsonl_path);
 
     // Export
     let config = ExportConfig {
-        beads_dir: Some(beads_dir.clone()),
+        obr_dir: Some(obr_dir.clone()),
         ..Default::default()
     };
     let result = export_to_jsonl(&storage, &jsonl_path, &config).unwrap();
@@ -1910,9 +1934,9 @@ fn stale_temp_file_handled_gracefully() {
     storage.create_issue(&issue, "tester").unwrap();
 
     let temp = TempDir::new().unwrap();
-    let beads_dir = temp.path().join(".beads");
-    fs::create_dir_all(&beads_dir).unwrap();
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = temp.path().join(".obr");
+    fs::create_dir_all(&obr_dir).unwrap();
+    let jsonl_path = obr_dir.join("issues.jsonl");
     // Use a fake PID (99999) to simulate a stale temp from a *different*
     // crashed process, which is the realistic scenario.  Same-PID collisions
     // are now correctly treated as an error by the export engine.
@@ -1925,7 +1949,7 @@ fn stale_temp_file_handled_gracefully() {
 
     // Export should succeed and overwrite stale temp file
     let config = ExportConfig {
-        beads_dir: Some(beads_dir.clone()),
+        obr_dir: Some(obr_dir.clone()),
         ..Default::default()
     };
     let result = export_to_jsonl(&storage, &jsonl_path, &config);
@@ -1964,13 +1988,13 @@ fn export_empty_db_produces_empty_jsonl() {
     let storage = SqliteStorage::open_memory().unwrap();
 
     let temp = TempDir::new().unwrap();
-    let beads_dir = temp.path().join(".beads");
-    fs::create_dir_all(&beads_dir).unwrap();
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = temp.path().join(".obr");
+    fs::create_dir_all(&obr_dir).unwrap();
+    let jsonl_path = obr_dir.join("issues.jsonl");
 
     // Export empty DB
     let config = ExportConfig {
-        beads_dir: Some(beads_dir.clone()),
+        obr_dir: Some(obr_dir.clone()),
         force: true, // Allow empty export
         ..Default::default()
     };
@@ -2013,13 +2037,13 @@ fn export_sets_correct_permissions() {
     storage.create_issue(&issue, "tester").unwrap();
 
     let temp = TempDir::new().unwrap();
-    let beads_dir = temp.path().join(".beads");
-    fs::create_dir_all(&beads_dir).unwrap();
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = temp.path().join(".obr");
+    fs::create_dir_all(&obr_dir).unwrap();
+    let jsonl_path = obr_dir.join("issues.jsonl");
 
     // Export
     let config = ExportConfig {
-        beads_dir: Some(beads_dir.clone()),
+        obr_dir: Some(obr_dir.clone()),
         ..Default::default()
     };
     export_to_jsonl(&storage, &jsonl_path, &config).unwrap();

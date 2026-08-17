@@ -11,7 +11,7 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, extract_issues_array, extract_json_payload, run_br};
+use common::cli::{ObrWorkspace, extract_issues_array, extract_json_payload, pin_jsonl, run_obr};
 use serde_json::Value;
 use std::fs;
 
@@ -28,16 +28,16 @@ fn parse_created_id(stdout: &str) -> String {
 
 /// Setup workspace with issues containing varied searchable content.
 #[allow(clippy::too_many_lines)]
-fn setup_search_workspace() -> (BrWorkspace, Vec<String>) {
-    let workspace = BrWorkspace::new();
+fn setup_search_workspace() -> (ObrWorkspace, Vec<String>) {
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let mut ids = Vec::new();
 
     // Issue 1: Authentication related bug
-    let issue1 = run_br(
+    let issue1 = run_obr(
         &workspace,
         [
             "create",
@@ -51,7 +51,7 @@ fn setup_search_workspace() -> (BrWorkspace, Vec<String>) {
     );
     assert!(issue1.status.success());
     let id1 = parse_created_id(&issue1.stdout);
-    run_br(
+    run_obr(
         &workspace,
         ["update", &id1, "--add-label", "auth"],
         "label_auth",
@@ -59,7 +59,7 @@ fn setup_search_workspace() -> (BrWorkspace, Vec<String>) {
     ids.push(id1);
 
     // Issue 2: Authentication feature
-    let issue2 = run_br(
+    let issue2 = run_obr(
         &workspace,
         [
             "create",
@@ -73,7 +73,7 @@ fn setup_search_workspace() -> (BrWorkspace, Vec<String>) {
     );
     assert!(issue2.status.success());
     let id2 = parse_created_id(&issue2.stdout);
-    run_br(
+    run_obr(
         &workspace,
         ["update", &id2, "--add-label", "auth"],
         "label_auth2",
@@ -81,7 +81,7 @@ fn setup_search_workspace() -> (BrWorkspace, Vec<String>) {
     ids.push(id2);
 
     // Issue 3: Database related task
-    let issue3 = run_br(
+    let issue3 = run_obr(
         &workspace,
         [
             "create",
@@ -97,7 +97,7 @@ fn setup_search_workspace() -> (BrWorkspace, Vec<String>) {
     ids.push(parse_created_id(&issue3.stdout));
 
     // Issue 4: UI/Frontend feature
-    let issue4 = run_br(
+    let issue4 = run_obr(
         &workspace,
         [
             "create",
@@ -113,7 +113,7 @@ fn setup_search_workspace() -> (BrWorkspace, Vec<String>) {
     ids.push(parse_created_id(&issue4.stdout));
 
     // Issue 5: API bug
-    let issue5 = run_br(
+    let issue5 = run_obr(
         &workspace,
         [
             "create",
@@ -129,7 +129,7 @@ fn setup_search_workspace() -> (BrWorkspace, Vec<String>) {
     );
     assert!(issue5.status.success());
     let id5 = parse_created_id(&issue5.stdout);
-    run_br(
+    run_obr(
         &workspace,
         ["update", &id5, "--add-label", "api"],
         "label_api",
@@ -137,7 +137,7 @@ fn setup_search_workspace() -> (BrWorkspace, Vec<String>) {
     ids.push(id5);
 
     // Issue 6: Closed issue
-    let issue6 = run_br(
+    let issue6 = run_obr(
         &workspace,
         [
             "create",
@@ -151,11 +151,11 @@ fn setup_search_workspace() -> (BrWorkspace, Vec<String>) {
     );
     assert!(issue6.status.success());
     let id6 = parse_created_id(&issue6.stdout);
-    run_br(&workspace, ["close", &id6], "close_issue");
+    run_obr(&workspace, ["close", &id6], "close_issue");
     ids.push(id6);
 
     // Issue 7: Issue with numbers in title
-    let issue7 = run_br(
+    let issue7 = run_obr(
         &workspace,
         [
             "create",
@@ -181,7 +181,7 @@ fn setup_search_workspace() -> (BrWorkspace, Vec<String>) {
 fn search_basic_single_word() {
     let (workspace, _ids) = setup_search_workspace();
 
-    let search = run_br(
+    let search = run_obr(
         &workspace,
         ["search", "authentication", "--json"],
         "search_auth",
@@ -211,10 +211,10 @@ fn search_case_insensitive() {
     let (workspace, _ids) = setup_search_workspace();
 
     // Search with different case
-    let search_upper = run_br(&workspace, ["search", "DATABASE", "--json"], "search_upper");
+    let search_upper = run_obr(&workspace, ["search", "DATABASE", "--json"], "search_upper");
     assert!(search_upper.status.success());
 
-    let search_lower = run_br(&workspace, ["search", "database", "--json"], "search_lower");
+    let search_lower = run_obr(&workspace, ["search", "database", "--json"], "search_lower");
     assert!(search_lower.status.success());
 
     let upper_json = extract_issues_array(&search_upper.stdout);
@@ -233,7 +233,7 @@ fn search_multiple_words() {
     let (workspace, _ids) = setup_search_workspace();
 
     // Search for "Authentication" which appears in multiple issues
-    let search = run_br(
+    let search = run_obr(
         &workspace,
         ["search", "Authentication", "--json"],
         "search_multi",
@@ -254,7 +254,7 @@ fn search_partial_word() {
     let (workspace, _ids) = setup_search_workspace();
 
     // Search for partial word "auth" should match "authentication"
-    let search = run_br(&workspace, ["search", "auth", "--json"], "search_partial");
+    let search = run_obr(&workspace, ["search", "auth", "--json"], "search_partial");
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
     let json = extract_issues_array(&search.stdout);
@@ -271,7 +271,7 @@ fn search_with_status_filter() {
     let (workspace, _ids) = setup_search_workspace();
 
     // Search only open issues
-    let search = run_br(
+    let search = run_obr(
         &workspace,
         ["search", "bug", "--status", "open", "--json"],
         "search_bug_open",
@@ -294,7 +294,7 @@ fn search_with_status_filter() {
 fn search_with_type_filter() {
     let (workspace, _ids) = setup_search_workspace();
 
-    let search = run_br(
+    let search = run_obr(
         &workspace,
         ["search", "authentication", "-t", "feature", "--json"],
         "search_auth_feature",
@@ -316,7 +316,7 @@ fn search_with_type_filter() {
 fn search_with_priority_filter() {
     let (workspace, _ids) = setup_search_workspace();
 
-    let search = run_br(
+    let search = run_obr(
         &workspace,
         ["search", "API", "-p", "0", "--json"],
         "search_api_p0",
@@ -333,7 +333,7 @@ fn search_with_priority_filter() {
 fn search_with_label_filter() {
     let (workspace, _ids) = setup_search_workspace();
 
-    let search = run_br(
+    let search = run_obr(
         &workspace,
         ["search", "bug", "--label", "auth", "--json"],
         "search_bug_auth",
@@ -356,7 +356,7 @@ fn search_include_closed() {
     let (workspace, _ids) = setup_search_workspace();
 
     // Without --include-closed, shouldn't find closed issues
-    let search_no_closed = run_br(
+    let search_no_closed = run_obr(
         &workspace,
         ["search", "login", "--json"],
         "search_no_closed",
@@ -368,7 +368,7 @@ fn search_include_closed() {
     let json_no_closed = extract_issues_array(&search_no_closed.stdout);
 
     // With --all to include closed issues
-    let search_with_closed = run_br(
+    let search_with_closed = run_obr(
         &workspace,
         ["search", "login", "--all", "--json"],
         "search_with_closed",
@@ -397,7 +397,7 @@ fn search_text_notes_hidden_closed_matches() {
     let (workspace, _ids) = setup_search_workspace();
 
     // "login" matches two open issues plus the closed "Fixed login timeout bug".
-    let search = run_br(&workspace, ["search", "login"], "search_hidden_text");
+    let search = run_obr(&workspace, ["search", "login"], "search_hidden_text");
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
     assert!(
@@ -413,7 +413,7 @@ fn search_text_notes_hidden_closed_matches_with_empty_results() {
 
     // "timeout" appears only in the closed issue, so the visible result set
     // is empty — exactly when the narrowed corpus is most misleading.
-    let search = run_br(&workspace, ["search", "timeout"], "search_hidden_empty");
+    let search = run_obr(&workspace, ["search", "timeout"], "search_hidden_empty");
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
     assert!(
@@ -427,7 +427,7 @@ fn search_text_notes_hidden_closed_matches_with_empty_results() {
 fn search_json_reports_hidden_closed_count() {
     let (workspace, _ids) = setup_search_workspace();
 
-    let search = run_br(
+    let search = run_obr(
         &workspace,
         ["search", "login", "--json"],
         "search_hidden_json",
@@ -453,9 +453,10 @@ fn search_json_reports_hidden_closed_count() {
 #[test]
 fn search_default_page_discloses_additional_matches() {
     let _log = common::test_log("search_default_page_discloses_additional_matches");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "init_search_page");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "init_search_page");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    pin_jsonl(&workspace.root.join(".obr"));
 
     let timestamp = "2026-08-27T00:00:00Z";
     let mut jsonl = (0..60)
@@ -475,10 +476,10 @@ fn search_default_page_discloses_additional_matches() {
         .collect::<Vec<_>>()
         .join("\n");
     jsonl.push('\n');
-    fs::write(workspace.root.join(".beads/issues.jsonl"), jsonl)
+    fs::write(workspace.root.join(".obr/issues.jsonl"), jsonl)
         .expect("write search pagination fixture");
 
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--force"],
         "import_search_page",
@@ -490,7 +491,7 @@ fn search_default_page_discloses_additional_matches() {
         import.stderr
     );
 
-    let text = run_br(
+    let text = run_obr(
         &workspace,
         ["search", "pagination-search-needle"],
         "search_default_text_page",
@@ -504,7 +505,7 @@ fn search_default_page_discloses_additional_matches() {
         text.stdout
     );
 
-    let json = run_br(
+    let json = run_obr(
         &workspace,
         ["search", "pagination-search-needle", "--json"],
         "search_default_json_page",
@@ -517,7 +518,7 @@ fn search_default_page_discloses_additional_matches() {
     assert_eq!(page["offset"], 0);
     assert_eq!(page["has_more"], true);
 
-    let unlimited = run_br(
+    let unlimited = run_obr(
         &workspace,
         [
             "search",
@@ -544,7 +545,7 @@ fn search_default_page_discloses_additional_matches() {
 fn search_toon_reports_hidden_closed_count() {
     let (workspace, _ids) = setup_search_workspace();
 
-    let search = run_br(
+    let search = run_obr(
         &workspace,
         ["search", "login", "--format", "toon"],
         "search_hidden_toon",
@@ -564,7 +565,7 @@ fn search_machine_output_reports_zero_without_closed_matches() {
 
     // No closed issue mentions "database", but the machine envelope remains
     // stable and reports an explicit zero.
-    let json_search = run_br(
+    let json_search = run_obr(
         &workspace,
         ["search", "database", "--json"],
         "search_no_hidden_json",
@@ -581,7 +582,7 @@ fn search_machine_output_reports_zero_without_closed_matches() {
         "JSON should report an explicit zero when nothing was hidden: {json}"
     );
 
-    let toon_search = run_br(
+    let toon_search = run_obr(
         &workspace,
         ["search", "database", "--format", "toon"],
         "search_no_hidden_toon",
@@ -593,7 +594,7 @@ fn search_machine_output_reports_zero_without_closed_matches() {
         toon_search.stdout
     );
 
-    let text_search = run_br(&workspace, ["search", "database"], "search_no_hidden_text");
+    let text_search = run_obr(&workspace, ["search", "database"], "search_no_hidden_text");
     assert!(text_search.status.success());
     assert!(
         !text_search.stdout.contains("hidden"),
@@ -606,7 +607,7 @@ fn search_machine_output_reports_zero_without_closed_matches() {
 fn search_machine_output_reports_zero_with_all_flag() {
     let (workspace, _ids) = setup_search_workspace();
 
-    let search = run_br(
+    let search = run_obr(
         &workspace,
         ["search", "login", "--all", "--json"],
         "search_all_no_hidden",
@@ -629,7 +630,7 @@ fn search_machine_output_reports_zero_with_all_flag() {
 fn search_machine_output_reports_zero_with_status_closed() {
     let (workspace, _ids) = setup_search_workspace();
 
-    let search = run_br(
+    let search = run_obr(
         &workspace,
         ["search", "login", "--status", "closed", "--json"],
         "search_status_closed_no_hidden",
@@ -656,7 +657,7 @@ fn search_machine_output_reports_zero_with_status_closed() {
 fn search_text_output() {
     let (workspace, _ids) = setup_search_workspace();
 
-    let search = run_br(&workspace, ["search", "authentication"], "search_text");
+    let search = run_obr(&workspace, ["search", "authentication"], "search_text");
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
     // Text output should contain issue information
@@ -676,7 +677,7 @@ fn search_text_output() {
 fn search_json_output_structure() {
     let (workspace, _ids) = setup_search_workspace();
 
-    let search = run_br(&workspace, ["search", "database", "--json"], "search_json");
+    let search = run_obr(&workspace, ["search", "database", "--json"], "search_json");
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
     let payload = extract_json_payload(&search.stdout);
@@ -699,7 +700,7 @@ fn search_json_output_structure() {
 fn search_no_results() {
     let (workspace, _ids) = setup_search_workspace();
 
-    let search = run_br(
+    let search = run_obr(
         &workspace,
         ["search", "xyznonexistentterm123", "--json"],
         "search_no_results",
@@ -725,7 +726,7 @@ fn search_empty_query() {
     let (workspace, _ids) = setup_search_workspace();
 
     // Empty query might be rejected or return all issues
-    let search = run_br(&workspace, ["search", "", "--json"], "search_empty");
+    let search = run_obr(&workspace, ["search", "", "--json"], "search_empty");
 
     // Either succeeds with all results or fails with error
     if search.status.success() {
@@ -739,13 +740,13 @@ fn search_empty_query() {
 
 #[test]
 fn search_special_characters() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init_special");
+    let init = run_obr(&workspace, ["init"], "init_special");
     assert!(init.status.success());
 
     // Create issue with special characters
-    let create = run_br(
+    let create = run_obr(
         &workspace,
         [
             "create",
@@ -758,7 +759,7 @@ fn search_special_characters() {
     assert!(create.status.success());
 
     // Search for special characters
-    let search = run_br(&workspace, ["search", "C++", "--json"], "search_cpp");
+    let search = run_obr(&workspace, ["search", "C++", "--json"], "search_cpp");
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
     let json = extract_issues_array(&search.stdout);
@@ -770,7 +771,7 @@ fn search_special_characters() {
 fn search_with_numbers() {
     let (workspace, _ids) = setup_search_workspace();
 
-    let search = run_br(&workspace, ["search", "2.0", "--json"], "search_version");
+    let search = run_obr(&workspace, ["search", "2.0", "--json"], "search_version");
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
     let json = extract_issues_array(&search.stdout);
@@ -781,9 +782,9 @@ fn search_with_numbers() {
 
 #[test]
 fn search_before_init_fails() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let search = run_br(&workspace, ["search", "test"], "search_no_init");
+    let search = run_obr(&workspace, ["search", "test"], "search_no_init");
     assert!(!search.status.success(), "search should fail before init");
 }
 
@@ -796,7 +797,7 @@ fn search_finds_content_in_description() {
     let (workspace, _ids) = setup_search_workspace();
 
     // Search for term only in descriptions
-    let search = run_br(&workspace, ["search", "TOTP", "--json"], "search_desc");
+    let search = run_obr(&workspace, ["search", "TOTP", "--json"], "search_desc");
     assert!(search.status.success(), "search failed: {}", search.stderr);
 
     let json = extract_issues_array(&search.stdout);
@@ -810,7 +811,7 @@ fn search_finds_content_in_title_only() {
     let (workspace, _ids) = setup_search_workspace();
 
     // "Dashboard" appears only in title
-    let search = run_br(
+    let search = run_obr(
         &workspace,
         ["search", "Dashboard", "--json"],
         "search_title",
@@ -831,7 +832,7 @@ fn search_finds_content_in_title_only() {
 fn search_combined_multiple_filters() {
     let (workspace, _ids) = setup_search_workspace();
 
-    let search = run_br(
+    let search = run_obr(
         &workspace,
         ["search", "bug", "--status", "open", "-t", "bug", "--json"],
         "search_combined",

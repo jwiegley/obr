@@ -10,9 +10,9 @@ use chrono::{TimeZone, Utc};
 use proptest::prelude::*;
 use tracing::info;
 
-use beads_rust::error::{BeadsError, ErrorCode, StructuredError};
-use beads_rust::model::{Issue, IssueType, Priority, Status};
-use beads_rust::validation::{IssueValidator, LabelValidator};
+use obr::error::{BeadsError, ErrorCode, StructuredError};
+use obr::model::{Issue, IssueType, Priority, Status};
+use obr::validation::{IssueValidator, LabelValidator};
 
 /// Initialize test logging for proptest
 fn init_test_logging() {
@@ -71,7 +71,7 @@ fn make_valid_issue(title: &str) -> Issue {
 }
 
 fn assert_validation_error_for_field(
-    result: Result<(), Vec<beads_rust::error::ValidationError>>,
+    result: Result<(), Vec<obr::error::ValidationError>>,
     expected_field: &str,
 ) {
     let errors = result.expect_err("issue should fail validation");

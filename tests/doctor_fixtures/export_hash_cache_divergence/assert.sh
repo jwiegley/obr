@@ -15,7 +15,7 @@ cd "$target_dir"
 read_metadata_hash() {
   python3 <<'PY'
 import sqlite3
-conn = sqlite3.connect(".beads/beads.db")
+conn = sqlite3.connect(".obr/obr.db")
 cur = conn.cursor()
 cur.execute("SELECT value FROM metadata WHERE key='jsonl_content_hash'")
 row = cur.fetchone()
@@ -41,7 +41,7 @@ case "$stage" in
       exit 1
     fi
     # JSONL pre-state preserved.
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: JSONL bytes drifted during corrupt stage" >&2
@@ -68,7 +68,7 @@ case "$stage" in
     fi
     # SACRED INVARIANT: the JSONL bytes are byte-identical to the
     # pre-corruption state. The fixer must NEVER touch JSONL.
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: JSONL bytes mutated by --repair (sacred invariant violation)" >&2
@@ -107,7 +107,7 @@ case "$stage" in
       exit 1
     fi
     # JSONL still byte-identical.
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: JSONL bytes drifted across undo" >&2

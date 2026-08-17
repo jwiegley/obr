@@ -15,7 +15,7 @@ cd "$target_dir"
 # Read the first 3 bytes of the JSONL as a hex pair so we can
 # compare against the BOM signature without locale issues.
 first3_hex() {
-  head -c 3 .beads/issues.jsonl | xxd -p
+  head -c 3 .obr/issues.jsonl | xxd -p
 }
 
 case "$stage" in
@@ -53,7 +53,7 @@ case "$stage" in
     fi
     # The post-repair JSONL bytes must match the pre-corruption
     # baseline exactly (BOM was the only difference).
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_baseline=$(cat .fixture_jsonl_post_repair_sha256)
     if [ "$jsonl_now" != "$jsonl_baseline" ]; then
       echo "ASSERT FAIL[$stage]: post-repair JSONL doesn't match baseline" >&2
@@ -89,7 +89,7 @@ case "$stage" in
       echo "ASSERT FAIL[$stage]: undo did not restore BOM (first3='$first3')" >&2
       exit 1
     fi
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: undo didn't byte-restore BOM-prefixed JSONL" >&2

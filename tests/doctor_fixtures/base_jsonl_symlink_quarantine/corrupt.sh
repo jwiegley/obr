@@ -2,12 +2,12 @@
 # Fixture: base_jsonl_symlink_quarantine
 # FM: fm-state_files-base-jsonl-missing-or-stale (P2, SYMLINK subset)
 #
-# Initialises a workspace with at least one issue (so .beads/issues.jsonl
+# Initialises a workspace with at least one issue (so .obr/issues.jsonl
 # exists and is non-empty — the detector's stale-anchor branch requires
 # this, but more importantly we use it as the symlink target so the link
 # resolves cleanly during inspection). Plants a symlink at
-# `.beads/beads.base.jsonl` pointing to `issues.jsonl` (relative path,
-# stays inside .beads/). Doctor's `base_jsonl` check should fire warn
+# `.obr/merge.base.jsonl` pointing to `issues.jsonl` (relative path,
+# stays inside .obr/). Doctor's `base_jsonl` check should fire warn
 # with `details.kind == "symlink"`; `--repair` quarantines the symlink
 # under the run-dir.
 
@@ -24,12 +24,12 @@ cd "$target_dir"
 
 # Remove any real anchor that sync may have left, then plant a symlink
 # pointing at the live JSONL.
-rm -f .beads/beads.base.jsonl
-ln -s issues.jsonl .beads/beads.base.jsonl
+rm -f .obr/merge.base.jsonl
+ln -s issues.jsonl .obr/merge.base.jsonl
 
 # Sanity: confirm we actually created a symlink (not a regular file).
-if [ ! -L .beads/beads.base.jsonl ]; then
-    echo "corrupt.sh: expected .beads/beads.base.jsonl to be a symlink" >&2
+if [ ! -L .obr/merge.base.jsonl ]; then
+    echo "corrupt.sh: expected .obr/merge.base.jsonl to be a symlink" >&2
     exit 1
 fi
 

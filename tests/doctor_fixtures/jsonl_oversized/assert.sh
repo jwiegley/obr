@@ -46,7 +46,7 @@ case "$stage" in
     # Detect-only: the file must not have been truncated to silence the
     # warning, and the warning must still be truthfully present.
     planted=$(cat .fixture_planted_size)
-    size_now=$(stat -c '%s' .beads/issues.jsonl)
+    size_now=$(stat -c '%s' .obr/issues.jsonl)
     if [ "$size_now" -lt "$planted" ]; then
       echo "ASSERT FAIL[$stage]: --repair shrank the JSONL ($planted -> $size_now); size remediation is operator-only" >&2
       exit 1
@@ -55,7 +55,7 @@ case "$stage" in
     assert_size_warn "$out" || exit 1
     ;;
   post_undo)
-    [ -f .beads/issues.jsonl ] || { echo "ASSERT FAIL[$stage]: issues.jsonl gone after undo" >&2; exit 1; }
+    [ -f .obr/issues.jsonl ] || { echo "ASSERT FAIL[$stage]: issues.jsonl gone after undo" >&2; exit 1; }
     # Final stage of a fully-passed run: shrink the retained workspace.
     # run_all.sh keeps every fixture tempdir even on pass, and the ~105MB
     # padding has served its purpose by now. It was appended after the
@@ -64,10 +64,10 @@ case "$stage" in
     # stage never reaches this line, so failures retain the full padded
     # file for forensics.
     if [ -f .fixture_prepad_size ]; then
-      truncate -s "$(cat .fixture_prepad_size)" .beads/issues.jsonl
+      truncate -s "$(cat .fixture_prepad_size)" .obr/issues.jsonl
     fi
     # The padding also propagates into repair/undo artifacts: the
-    # base_jsonl fixer regenerates beads.base.jsonl as a byte copy of the
+    # base_jsonl fixer regenerates merge.base.jsonl as a byte copy of the
     # padded export, and `doctor undo` preserves that copy in the run's
     # backup slot. Sweep any padding-sized file (nothing legitimate in
     # this fixture approaches 100MB). This invalidates redo for the

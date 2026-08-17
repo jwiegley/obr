@@ -1,31 +1,29 @@
 //! E2E tests for the schema command.
 //!
-//! Validates that `br schema` works without an initialized workspace and
+//! Validates that `obr schema` works without an initialized workspace and
 //! produces machine-parseable output in both JSON and TOON modes.
 
 mod common;
 
-use common::cli::{BrWorkspace, extract_json_payload, parse_created_id, run_br, run_br_with_env};
+use common::cli::{
+    ObrWorkspace, extract_json_payload, parse_created_id, run_obr, run_obr_with_env,
+};
 use serde_json::Value;
-#[cfg(feature = "self_update")]
 use std::{fs, path::PathBuf};
-#[cfg(feature = "self_update")]
 use toon_rust::options::KeyFoldingMode;
 use toon_rust::try_decode as parse_toon;
-#[cfg(feature = "self_update")]
 use toon_rust::{EncodeOptions, JsonValue};
 
-#[cfg(feature = "self_update")]
 const UPDATE_AGENT_BASELINE_ENV: &str = "UPDATE_AGENT_BASELINE";
 
 #[test]
 fn e2e_schema_vcs_shape_matches_live_success_and_error_streams() {
     let _log = common::test_log("e2e_schema_vcs_shape_matches_live_success_and_error_streams");
-    let workspace = BrWorkspace::new();
-    let init = run_br(&workspace, ["init"], "schema_vcs_init");
+    let workspace = ObrWorkspace::new();
+    let init = run_obr(&workspace, ["init"], "schema_vcs_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let schemas = run_br(
+    let schemas = run_obr(
         &workspace,
         ["schema", "commands", "--format", "json"],
         "schema_vcs_commands",
@@ -42,7 +40,7 @@ fn e2e_schema_vcs_shape_matches_live_success_and_error_streams() {
         "shape must describe the top-level CLI error stream: {shape}"
     );
 
-    let success = run_br(
+    let success = run_obr(
         &workspace,
         ["vcs-status", "--json"],
         "schema_vcs_live_success",
@@ -50,9 +48,9 @@ fn e2e_schema_vcs_shape_matches_live_success_and_error_streams() {
     assert!(success.status.success(), "{}", success.stderr);
     let success: Value =
         serde_json::from_str(&extract_json_payload(&success.stdout)).expect("VCS success JSON");
-    assert_eq!(success["schema"], "br.vcs-export-status.v2", "{success}");
+    assert_eq!(success["schema"], "obr.vcs-export-status.v2", "{success}");
 
-    let error = run_br(
+    let error = run_obr(
         &workspace,
         ["vcs-status", "--timeout-ms", "1", "--json"],
         "schema_vcs_live_error",
@@ -66,9 +64,9 @@ fn e2e_schema_vcs_shape_matches_live_success_and_error_streams() {
 #[test]
 fn e2e_schema_json_issue() {
     let _log = common::test_log("e2e_schema_json_issue");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let run = run_br(
+    let run = run_obr(
         &workspace,
         ["schema", "issue", "--format", "json"],
         "schema_issue_json",
@@ -82,7 +80,7 @@ fn e2e_schema_json_issue() {
     let payload = extract_json_payload(&run.stdout);
     let json: Value = serde_json::from_str(&payload).expect("valid JSON output");
 
-    assert_eq!(json["tool"], "br");
+    assert_eq!(json["tool"], "obr");
     assert!(json.get("generated_at").is_some(), "missing generated_at");
     assert!(json.get("schemas").is_some(), "missing schemas");
     assert!(
@@ -94,9 +92,9 @@ fn e2e_schema_json_issue() {
 #[test]
 fn e2e_schema_all_includes_grouped_count_contract() {
     let _log = common::test_log("e2e_schema_all_includes_grouped_count_contract");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let run = run_br(
+    let run = run_obr(
         &workspace,
         ["schema", "all", "--format", "json"],
         "schema_all_grouped_count_contract",
@@ -135,9 +133,9 @@ fn e2e_schema_all_includes_grouped_count_contract() {
 #[test]
 fn e2e_schema_toon_decodes() {
     let _log = common::test_log("e2e_schema_toon_decodes");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let run = run_br(
+    let run = run_obr(
         &workspace,
         ["schema", "issue-details", "--format", "toon"],
         "schema_issue_details_toon",
@@ -154,7 +152,7 @@ fn e2e_schema_toon_decodes() {
     let decoded = parse_toon(toon, None).expect("valid TOON");
     let json = Value::from(decoded);
 
-    assert_eq!(json["tool"], "br");
+    assert_eq!(json["tool"], "obr");
     assert!(json.get("generated_at").is_some(), "missing generated_at");
     // TOON output uses key folding, so nested map keys may appear as dotted keys.
     let has_nested = json
@@ -172,9 +170,9 @@ fn e2e_schema_toon_decodes() {
 #[test]
 fn e2e_capabilities_json_no_workspace() {
     let _log = common::test_log("e2e_capabilities_json_no_workspace");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let run = run_br(
+    let run = run_obr(
         &workspace,
         ["capabilities", "--format", "json"],
         "capabilities_json",
@@ -188,8 +186,8 @@ fn e2e_capabilities_json_no_workspace() {
     let payload = extract_json_payload(&run.stdout);
     let json: Value = serde_json::from_str(&payload).expect("valid JSON output");
 
-    assert_eq!(json["tool"], "br");
-    assert_eq!(json["contract_version"], "br.capabilities.v1");
+    assert_eq!(json["tool"], "obr");
+    assert_eq!(json["contract_version"], "obr.capabilities.v1");
     assert!(
         json["features"].as_array().is_some_and(|features| {
             features
@@ -222,9 +220,9 @@ fn e2e_capabilities_json_no_workspace() {
 #[test]
 fn e2e_capabilities_command_detail_create_json() {
     let _log = common::test_log("e2e_capabilities_command_detail_create_json");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let run = run_br(
+    let run = run_obr(
         &workspace,
         ["capabilities", "--format", "json", "--command", "create"],
         "capabilities_command_detail_create_json",
@@ -258,9 +256,9 @@ fn e2e_capabilities_command_detail_create_json() {
 #[test]
 fn e2e_capabilities_command_detail_nested_alias_json() {
     let _log = common::test_log("e2e_capabilities_command_detail_nested_alias_json");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let run = run_br(
+    let run = run_obr(
         &workspace,
         [
             "capabilities",
@@ -288,7 +286,7 @@ fn e2e_capabilities_command_detail_nested_alias_json() {
             .as_array()
             .is_some_and(|examples| examples.iter().any(|example| example
                 .as_str()
-                .is_some_and(|text| text.contains("br comments add")))),
+                .is_some_and(|text| text.contains("obr comments add")))),
         "missing nested command examples: {detail}"
     );
     assert!(
@@ -307,9 +305,9 @@ fn e2e_capabilities_command_detail_nested_alias_json() {
 #[test]
 fn e2e_capabilities_command_detail_group_contracts_json() {
     let _log = common::test_log("e2e_capabilities_command_detail_group_contracts_json");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let dep_add = run_br(
+    let dep_add = run_obr(
         &workspace,
         ["capabilities", "--format", "json", "--command", "dep add"],
         "capabilities_command_detail_dep_add_json",
@@ -329,11 +327,11 @@ fn e2e_capabilities_command_detail_group_contracts_json() {
             .as_array()
             .is_some_and(|examples| examples.iter().any(|example| example
                 .as_str()
-                .is_some_and(|text| text.contains("br dep add")))),
+                .is_some_and(|text| text.contains("obr dep add")))),
         "missing dep add examples: {dep_add_detail}"
     );
 
-    let query_run = run_br(
+    let query_run = run_obr(
         &workspace,
         ["capabilities", "--format", "json", "--command", "query run"],
         "capabilities_command_detail_query_run_json",
@@ -355,7 +353,7 @@ fn e2e_capabilities_command_detail_group_contracts_json() {
         "missing query run machine output formats: {query_run_detail}"
     );
 
-    let dep_group = run_br(
+    let dep_group = run_obr(
         &workspace,
         ["capabilities", "--format", "json", "--command", "dep"],
         "capabilities_command_detail_dep_group_json",
@@ -375,17 +373,17 @@ fn e2e_capabilities_command_detail_group_contracts_json() {
             .as_array()
             .is_some_and(|examples| examples.iter().any(|example| example
                 .as_str()
-                .is_some_and(|text| text.contains("br dep list")))),
+                .is_some_and(|text| text.contains("obr dep list")))),
         "missing dep parent examples: {dep_group_detail}"
     );
 }
 
-fn capabilities_command_detail_output(workspace: &BrWorkspace, command: &str) -> Value {
+fn capabilities_command_detail_output(workspace: &ObrWorkspace, command: &str) -> Value {
     let label = format!(
         "capabilities_command_detail_{}_json",
         command.replace(' ', "_")
     );
-    let run = run_br(
+    let run = run_obr(
         workspace,
         ["capabilities", "--format", "json", "--command", command],
         &label,
@@ -412,11 +410,11 @@ fn assert_array_text_contains(detail: &Value, field: &str, needle: &str, context
 }
 
 fn assert_json_command_succeeds<const N: usize>(
-    workspace: &BrWorkspace,
+    workspace: &ObrWorkspace,
     args: [&str; N],
     label: &str,
 ) -> Value {
-    let run = run_br(workspace, args, label);
+    let run = run_obr(workspace, args, label);
     assert!(
         run.status.success(),
         "{label} JSON command failed: {}",
@@ -427,11 +425,11 @@ fn assert_json_command_succeeds<const N: usize>(
 }
 
 fn assert_toon_command_succeeds<const N: usize>(
-    workspace: &BrWorkspace,
+    workspace: &ObrWorkspace,
     args: [&str; N],
     label: &str,
 ) -> Value {
-    let run = run_br_with_env(workspace, args, [("BR_OUTPUT_FORMAT", "toon")], label);
+    let run = run_obr_with_env(workspace, args, [("OBR_OUTPUT_FORMAT", "toon")], label);
     assert!(
         run.status.success(),
         "{label} TOON command failed: {}",
@@ -450,7 +448,7 @@ type CommandDetailCase = (
     &'static str,
 );
 
-fn assert_command_detail_cases(workspace: &BrWorkspace, cases: &[CommandDetailCase]) {
+fn assert_command_detail_cases(workspace: &ObrWorkspace, cases: &[CommandDetailCase]) {
     for (command, operation, field, needle, context) in cases {
         let output = capabilities_command_detail_output(workspace, command);
         let detail = output
@@ -467,7 +465,7 @@ fn assert_command_detail_cases(workspace: &BrWorkspace, cases: &[CommandDetailCa
 #[test]
 fn e2e_capabilities_command_detail_high_traffic_safety_notes_json() {
     let _log = common::test_log("e2e_capabilities_command_detail_high_traffic_safety_notes_json");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     let cases = [
         (
@@ -527,7 +525,7 @@ fn e2e_capabilities_command_detail_high_traffic_safety_notes_json() {
 #[test]
 fn e2e_capabilities_command_detail_machine_output_contracts_json() {
     let _log = common::test_log("e2e_capabilities_command_detail_machine_output_contracts_json");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     let cases = [
         (
@@ -609,25 +607,18 @@ fn e2e_capabilities_command_detail_machine_output_contracts_json() {
         .expect("capabilities output should include command_detail");
     assert_array_text_contains(detail, "machine_output", "json", "config");
     assert_array_text_excludes(detail, "machine_output", "toon", "config");
-
-    let output = capabilities_command_detail_output(&workspace, "upgrade");
-    let detail = output
-        .get("command_detail")
-        .expect("capabilities output should include command_detail");
-    assert_array_text_contains(detail, "machine_output", "json", "upgrade");
-    assert_array_text_excludes(detail, "machine_output", "toon", "upgrade");
 }
 
 #[test]
 fn e2e_capabilities_machine_output_contracts_execute_representative_modes() {
     let _log =
         common::test_log("e2e_capabilities_machine_output_contracts_execute_representative_modes");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init", "--prefix", "br"], "cap_runtime_init");
+    let init = run_obr(&workspace, ["init", "--prefix", "obr"], "cap_runtime_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let create_issue = run_br(
+    let create_issue = run_obr(
         &workspace,
         ["create", "Runtime contract issue"],
         "cap_runtime_create_issue",
@@ -640,7 +631,7 @@ fn e2e_capabilities_machine_output_contracts_execute_representative_modes() {
     let issue_id = parse_created_id(&create_issue.stdout);
     assert!(!issue_id.is_empty(), "created issue id missing");
 
-    let create_blocker = run_br(
+    let create_blocker = run_obr(
         &workspace,
         ["create", "Runtime contract blocker"],
         "cap_runtime_create_blocker",
@@ -714,7 +705,7 @@ fn e2e_capabilities_machine_output_contracts_execute_representative_modes() {
 #[test]
 fn e2e_capabilities_command_detail_dependency_safety_notes_json() {
     let _log = common::test_log("e2e_capabilities_command_detail_dependency_safety_notes_json");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     let cases = [
         (
@@ -749,7 +740,7 @@ fn e2e_capabilities_command_detail_dependency_safety_notes_json() {
             "dep cycles",
             "read",
             "examples",
-            "BR_OUTPUT_FORMAT=toon",
+            "OBR_OUTPUT_FORMAT=toon",
             "dependency cycles TOON env recipe",
         ),
         (
@@ -763,7 +754,7 @@ fn e2e_capabilities_command_detail_dependency_safety_notes_json() {
             "dep tree",
             "read",
             "examples",
-            "BR_OUTPUT_FORMAT=toon",
+            "OBR_OUTPUT_FORMAT=toon",
             "dependency tree TOON env recipe",
         ),
         (
@@ -790,7 +781,7 @@ fn e2e_capabilities_command_detail_dependency_safety_notes_json() {
 #[test]
 fn e2e_capabilities_command_detail_workflow_safety_notes_json() {
     let _log = common::test_log("e2e_capabilities_command_detail_workflow_safety_notes_json");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     let cases = [
         (
@@ -862,9 +853,9 @@ fn assert_array_text_excludes(detail: &Value, field: &str, needle: &str, context
 #[test]
 fn e2e_robot_docs_guide_text_is_concise() {
     let _log = common::test_log("e2e_robot_docs_guide_text_is_concise");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let run = run_br(&workspace, ["robot-docs", "guide"], "robot_docs_guide_text");
+    let run = run_obr(&workspace, ["robot-docs", "guide"], "robot_docs_guide_text");
     assert!(
         run.status.success(),
         "robot-docs guide failed: {}",
@@ -873,19 +864,19 @@ fn e2e_robot_docs_guide_text_is_concise() {
 
     let lines = run.stdout.lines().count();
     assert!(lines <= 80, "guide should stay concise, got {lines} lines");
-    assert!(run.stdout.contains("br capabilities --format json"));
-    assert!(run.stdout.contains("br ready --json"));
-    // The guide's non-invasiveness promise ("Normal issue and sync paths
-    // never run git. Only an explicit br vcs-status request ...").
-    assert!(run.stdout.contains("never run git"));
+    assert!(run.stdout.contains("obr capabilities --format json"));
+    assert!(run.stdout.contains("obr ready --json"));
+    // The guide's non-invasiveness promise ("obr never runs git on normal
+    // issue and sync paths. Only an explicit obr vcs-status request ...").
+    assert!(run.stdout.contains("obr never runs git"));
 }
 
 #[test]
 fn e2e_robot_docs_guide_json_no_workspace() {
     let _log = common::test_log("e2e_robot_docs_guide_json_no_workspace");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let run = run_br(
+    let run = run_obr(
         &workspace,
         ["robot-docs", "guide", "--format", "json"],
         "robot_docs_guide_json",
@@ -899,8 +890,8 @@ fn e2e_robot_docs_guide_json_no_workspace() {
     let payload = extract_json_payload(&run.stdout);
     let json: Value = serde_json::from_str(&payload).expect("valid JSON output");
 
-    assert_eq!(json["tool"], "br");
-    assert_eq!(json["contract_version"], "br.robot_docs.v1");
+    assert_eq!(json["tool"], "obr");
+    assert_eq!(json["contract_version"], "obr.robot_docs.v1");
     assert!(
         json["line_count"].as_u64().is_some_and(|count| count <= 80),
         "guide should report <=80 lines: {json}"
@@ -911,17 +902,16 @@ fn e2e_robot_docs_guide_json_no_workspace() {
             .is_some_and(|commands| {
                 commands
                     .iter()
-                    .any(|command| command["command"] == "br coordination status --json")
+                    .any(|command| command["command"] == "obr coordination status --json")
             }),
         "missing canonical coordination command: {json}"
     );
 }
 
-#[cfg(feature = "self_update")]
 #[test]
 fn agent_baseline_snapshots_match_current_binary() {
     let _log = common::test_log("agent_baseline_snapshots_match_current_binary");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     compare_agent_baseline_help(&workspace);
     compare_agent_baseline_schemas(&workspace);
@@ -930,8 +920,7 @@ fn agent_baseline_snapshots_match_current_binary() {
     compare_agent_baseline_error(&workspace);
 }
 
-#[cfg(feature = "self_update")]
-fn compare_agent_baseline_help(workspace: &BrWorkspace) {
+fn compare_agent_baseline_help(workspace: &ObrWorkspace) {
     let help = run_success(workspace, ["--help"], "baseline_help");
     // The checked-in baseline records the default feature surface. The
     // all-features gate adds the optional MCP `serve` command, which is
@@ -942,19 +931,18 @@ fn compare_agent_baseline_help(workspace: &BrWorkspace) {
         .collect::<Vec<_>>()
         .join("\n")
         + "\n";
-    compare_text_baseline("help/br_help.txt", &help);
+    compare_text_baseline("help/obr_help.txt", &help);
     compare_text_baseline(
-        "help/br_list_help.txt",
+        "help/obr_list_help.txt",
         &run_success(workspace, ["list", "--help"], "baseline_list_help"),
     );
     compare_text_baseline(
-        "help/br_schema_help.txt",
+        "help/obr_schema_help.txt",
         &run_success(workspace, ["schema", "--help"], "baseline_schema_help"),
     );
 }
 
-#[cfg(feature = "self_update")]
-fn compare_agent_baseline_schemas(workspace: &BrWorkspace) {
+fn compare_agent_baseline_schemas(workspace: &ObrWorkspace) {
     compare_json_baseline(
         "schemas/schema_all.json",
         &run_success(
@@ -984,11 +972,10 @@ fn compare_agent_baseline_schemas(workspace: &BrWorkspace) {
     );
 }
 
-#[cfg(feature = "self_update")]
-fn seed_agent_baseline_workspace(workspace: &BrWorkspace) -> String {
-    let init = run_br(workspace, ["init", "--prefix", "bd"], "baseline_init");
+fn seed_agent_baseline_workspace(workspace: &ObrWorkspace) -> String {
+    let init = run_obr(workspace, ["init", "--prefix", "bd"], "baseline_init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
-    let create_one = run_br(
+    let create_one = run_obr(
         workspace,
         [
             "create",
@@ -1007,7 +994,7 @@ fn seed_agent_baseline_workspace(workspace: &BrWorkspace) -> String {
         "create one failed: {}",
         create_one.stderr
     );
-    let create_two = run_br(
+    let create_two = run_obr(
         workspace,
         ["create", "Two", "--type", "bug", "--priority", "0"],
         "baseline_create_two",
@@ -1018,7 +1005,7 @@ fn seed_agent_baseline_workspace(workspace: &BrWorkspace) -> String {
         create_two.stderr
     );
     let id_two = parse_created_id(&create_two.stdout);
-    let create_three = run_br(
+    let create_three = run_obr(
         workspace,
         ["create", "Three", "--type", "feature", "--priority", "1"],
         "baseline_create_three",
@@ -1031,8 +1018,7 @@ fn seed_agent_baseline_workspace(workspace: &BrWorkspace) -> String {
     id_two
 }
 
-#[cfg(feature = "self_update")]
-fn compare_agent_baseline_examples(workspace: &BrWorkspace, id_two: &str) {
+fn compare_agent_baseline_examples(workspace: &ObrWorkspace, id_two: &str) {
     compare_json_baseline(
         "examples/list_limit3.json",
         &run_success(
@@ -1091,9 +1077,8 @@ fn compare_agent_baseline_examples(workspace: &BrWorkspace, id_two: &str) {
     );
 }
 
-#[cfg(feature = "self_update")]
-fn compare_agent_baseline_error(workspace: &BrWorkspace) {
-    let missing = run_br(
+fn compare_agent_baseline_error(workspace: &ObrWorkspace) {
+    let missing = run_obr(
         workspace,
         ["show", "bd-NOTEXIST", "--json"],
         "baseline_show_not_found",
@@ -1110,9 +1095,8 @@ fn compare_agent_baseline_error(workspace: &BrWorkspace) {
     );
 }
 
-#[cfg(feature = "self_update")]
-fn run_success<const N: usize>(workspace: &BrWorkspace, args: [&str; N], label: &str) -> String {
-    let run = run_br(workspace, args, label);
+fn run_success<const N: usize>(workspace: &ObrWorkspace, args: [&str; N], label: &str) -> String {
+    let run = run_obr(workspace, args, label);
     assert!(
         run.status.success(),
         "{label} failed: stdout={} stderr={}",
@@ -1122,7 +1106,6 @@ fn run_success<const N: usize>(workspace: &BrWorkspace, args: [&str; N], label: 
     run.stdout
 }
 
-#[cfg(feature = "self_update")]
 fn compare_text_baseline(relative_path: &str, actual: &str) {
     let path = baseline_path(relative_path);
     let actual = normalize_text_snapshot(actual);
@@ -1139,7 +1122,6 @@ fn compare_text_baseline(relative_path: &str, actual: &str) {
     );
 }
 
-#[cfg(feature = "self_update")]
 fn compare_json_baseline(relative_path: &str, actual: &str, normalize: fn(&mut Value)) {
     let path = baseline_path(relative_path);
     let actual_payload = extract_json_payload(actual);
@@ -1166,7 +1148,6 @@ fn compare_json_baseline(relative_path: &str, actual: &str, normalize: fn(&mut V
     );
 }
 
-#[cfg(feature = "self_update")]
 fn compare_toon_baseline(relative_path: &str, actual: &str) {
     let path = baseline_path(relative_path);
     let actual = actual.trim_end();
@@ -1195,7 +1176,6 @@ fn compare_toon_baseline(relative_path: &str, actual: &str) {
     );
 }
 
-#[cfg(feature = "self_update")]
 #[must_use]
 fn agent_baseline_toon_encode_options() -> EncodeOptions {
     EncodeOptions {
@@ -1207,24 +1187,20 @@ fn agent_baseline_toon_encode_options() -> EncodeOptions {
     }
 }
 
-#[cfg(feature = "self_update")]
 fn baseline_path(relative_path: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("agent_baseline")
         .join(relative_path)
 }
 
-#[cfg(feature = "self_update")]
 fn should_update_agent_baseline() -> bool {
     std::env::var_os(UPDATE_AGENT_BASELINE_ENV).is_some()
 }
 
-#[cfg(feature = "self_update")]
 fn with_trailing_newline(text: &str) -> String {
     format!("{text}\n")
 }
 
-#[cfg(feature = "self_update")]
 fn normalize_text_snapshot(text: &str) -> String {
     let mut normalized = text
         .lines()
@@ -1235,7 +1211,6 @@ fn normalize_text_snapshot(text: &str) -> String {
     normalized
 }
 
-#[cfg(feature = "self_update")]
 fn normalize_schema_snapshot(value: &mut Value) {
     if let Some(object) = value.as_object_mut() {
         object.insert(
@@ -1245,7 +1220,6 @@ fn normalize_schema_snapshot(value: &mut Value) {
     }
 }
 
-#[cfg(feature = "self_update")]
 fn normalize_version_snapshot(value: &mut Value) {
     if let Some(object) = value.as_object_mut() {
         object.remove("branch");
@@ -1264,7 +1238,6 @@ fn normalize_version_snapshot(value: &mut Value) {
     }
 }
 
-#[cfg(feature = "self_update")]
 fn normalize_issue_example_snapshot(value: &mut Value) {
     match value {
         Value::Array(items) => {
@@ -1295,5 +1268,4 @@ fn normalize_issue_example_snapshot(value: &mut Value) {
     }
 }
 
-#[cfg(feature = "self_update")]
 fn normalize_noop(_: &mut Value) {}

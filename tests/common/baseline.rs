@@ -18,7 +18,7 @@
 //! ```ignore
 //! let config = RegressionConfig::from_env();
 //! let baselines = BaselineStore::load_or_default(&config.baseline_file);
-//! let result = baselines.check_regression("list", "beads_rust", &comparison, &config);
+//! let result = baselines.check_regression("list", "obr", &comparison, &config);
 //! println!("{}", result);
 //! ```
 
@@ -36,7 +36,7 @@ use std::path::{Path, PathBuf};
 /// Configuration for regression detection, populated from environment variables.
 #[derive(Debug, Clone)]
 pub struct RegressionConfig {
-    /// Max allowed ratio increase for duration (br/bd) before flagging as regression.
+    /// Max allowed ratio increase for duration (obr/bd) before flagging as regression.
     /// Default: 1.20 (20% slower than baseline is a regression)
     pub duration_threshold: f64,
 
@@ -109,15 +109,15 @@ impl RegressionConfig {
 /// Expected baseline metrics for a single operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationBaseline {
-    /// Expected br/bd duration ratio.
+    /// Expected obr/bd duration ratio.
     pub duration_ratio: f64,
 
-    /// Expected br/bd RSS ratio (if available).
+    /// Expected obr/bd RSS ratio (if available).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rss_ratio: Option<f64>,
 
-    /// Absolute br duration in ms (for reference).
-    pub br_duration_ms: u128,
+    /// Absolute obr duration in ms (for reference).
+    pub obr_duration_ms: u128,
 
     /// Absolute bd duration in ms (for reference).
     pub bd_duration_ms: u128,
@@ -256,7 +256,7 @@ pub struct RegressionResult {
     /// Percentage change from baseline.
     pub change_pct: Option<f64>,
 
-    /// Current RSS ratio (br/bd), if available.
+    /// Current RSS ratio (obr/bd), if available.
     pub current_rss_ratio: Option<f64>,
 
     /// Baseline RSS ratio (if available).
@@ -571,11 +571,11 @@ pub fn update_baselines_from_results(
     store: &mut BaselineStore,
     dataset_name: &str,
     issue_count: usize,
-    comparisons: &[(String, f64, u128, u128, Option<f64>)], // (label, ratio, br_ms, bd_ms, rss_ratio)
+    comparisons: &[(String, f64, u128, u128, Option<f64>)], // (label, ratio, obr_ms, bd_ms, rss_ratio)
 ) {
     let timestamp = chrono::Utc::now().to_rfc3339();
 
-    for (label, ratio, br_ms, bd_ms, rss_ratio) in comparisons {
+    for (label, ratio, obr_ms, bd_ms, rss_ratio) in comparisons {
         store.set_baseline(
             dataset_name,
             issue_count,
@@ -583,7 +583,7 @@ pub fn update_baselines_from_results(
             OperationBaseline {
                 duration_ratio: *ratio,
                 rss_ratio: *rss_ratio,
-                br_duration_ms: *br_ms,
+                obr_duration_ms: *obr_ms,
                 bd_duration_ms: *bd_ms,
                 captured_at: timestamp.clone(),
                 notes: None,
@@ -611,7 +611,7 @@ mod tests {
 
     #[test]
     fn test_regression_check_no_baseline() {
-        let result = RegressionResult::no_baseline("list", "beads_rust", 0.5, None);
+        let result = RegressionResult::no_baseline("list", "obr", 0.5, None);
         assert!(!result.is_regression);
         assert_eq!(result.status, RegressionStatus::Ok);
         assert!(result.baseline_ratio.is_none());
@@ -623,14 +623,14 @@ mod tests {
         let baseline = OperationBaseline {
             duration_ratio: 0.5,
             rss_ratio: None,
-            br_duration_ms: 100,
+            obr_duration_ms: 100,
             bd_duration_ms: 200,
             captured_at: "2026-01-01".to_string(),
             notes: None,
         };
 
         // Current is 0.4 (better than baseline 0.5)
-        let result = RegressionResult::check("list", "beads_rust", 0.4, None, &baseline, &config);
+        let result = RegressionResult::check("list", "obr", 0.4, None, &baseline, &config);
         assert!(!result.is_regression);
         assert_eq!(result.status, RegressionStatus::Ok);
         assert!(result.reason.contains("faster"));
@@ -642,14 +642,14 @@ mod tests {
         let baseline = OperationBaseline {
             duration_ratio: 0.5,
             rss_ratio: None,
-            br_duration_ms: 100,
+            obr_duration_ms: 100,
             bd_duration_ms: 200,
             captured_at: "2026-01-01".to_string(),
             notes: None,
         };
 
         // Current is 0.55 (10% worse than baseline 0.5, within 20% threshold)
-        let result = RegressionResult::check("list", "beads_rust", 0.55, None, &baseline, &config);
+        let result = RegressionResult::check("list", "obr", 0.55, None, &baseline, &config);
         assert!(!result.is_regression);
         assert_eq!(result.status, RegressionStatus::Ok);
     }
@@ -660,14 +660,14 @@ mod tests {
         let baseline = OperationBaseline {
             duration_ratio: 0.5,
             rss_ratio: None,
-            br_duration_ms: 100,
+            obr_duration_ms: 100,
             bd_duration_ms: 200,
             captured_at: "2026-01-01".to_string(),
             notes: None,
         };
 
         // Current is 0.7 (40% worse than baseline 0.5, exceeds 20% threshold)
-        let result = RegressionResult::check("list", "beads_rust", 0.7, None, &baseline, &config);
+        let result = RegressionResult::check("list", "obr", 0.7, None, &baseline, &config);
         assert!(result.is_regression);
         assert_eq!(result.status, RegressionStatus::Regression);
     }
@@ -682,7 +682,7 @@ mod tests {
             OperationBaseline {
                 duration_ratio: 0.5,
                 rss_ratio: Some(0.8),
-                br_duration_ms: 100,
+                obr_duration_ms: 100,
                 bd_duration_ms: 200,
                 captured_at: "2026-01-01".to_string(),
                 notes: Some("Test baseline".to_string()),

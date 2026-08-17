@@ -1,6 +1,6 @@
 //! Integration tests for sync preflight safety checks.
 //!
-//! These tests implement beads_rust-0v1.3.5:
+//! These tests implement obr-0v1.3.5:
 //! - Import aborts on conflict markers
 //! - Import aborts on unsafe paths
 //! - No files are modified on preflight failure
@@ -25,11 +25,11 @@
 
 mod common;
 
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{
+use common::cli::{ObrWorkspace, pin_jsonl, run_obr};
+use obr::storage::SqliteStorage;
+use obr::sync::{
     ExportConfig, ImportConfig, PreflightCheckStatus, preflight_export, preflight_import,
 };
-use common::cli::{BrWorkspace, run_br};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
@@ -101,30 +101,35 @@ fn assert_directory_unchanged(before: &HashMap<String, Vec<u8>>, dir: &Path, con
 }
 
 // ============================================================================
-// Helper: Create a basic beads workspace
+// Helper: Create a basic obr workspace
 // ============================================================================
 
-fn setup_workspace_with_issues() -> BrWorkspace {
-    let workspace = BrWorkspace::new();
+fn setup_workspace_with_issues() -> ObrWorkspace {
+    let workspace = ObrWorkspace::new();
 
-    // Initialize beads
-    let init = run_br(&workspace, ["init"], "init");
+    // Initialize obr
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
+    // Every consumer of this helper drives `preflight_import`/`preflight_export`
+    // against a hand-authored `issues.jsonl`, so pin the workspace to the legacy
+    // JSONL export instead of the default Org one.
+    pin_jsonl(&workspace.root.join(".obr"));
+
     // Create a few issues for export
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["create", "Test issue 1", "-t", "task"],
         "create1",
     );
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["create", "Test issue 2", "-t", "bug"],
         "create2",
     );
 
     // Export to JSONL
-    let export = run_br(&workspace, ["sync", "--flush-only"], "export");
+    let export = run_obr(&workspace, ["sync", "--flush-only"], "export");
     assert!(export.status.success(), "export failed: {}", export.stderr);
 
     workspace
@@ -138,8 +143,8 @@ fn setup_workspace_with_issues() -> BrWorkspace {
 #[test]
 fn preflight_import_rejects_conflict_markers() {
     let workspace = setup_workspace_with_issues();
-    let beads_dir = workspace.root.join(".beads");
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = workspace.root.join(".obr");
+    let jsonl_path = obr_dir.join("issues.jsonl");
 
     // Snapshot before modification
     let snapshot_before = snapshot_directory(&workspace.root);
@@ -155,7 +160,7 @@ fn preflight_import_rejects_conflict_markers() {
 
     // Run preflight - should fail
     let config = ImportConfig {
-        beads_dir: Some(beads_dir.clone()),
+        obr_dir: Some(obr_dir.clone()),
         ..Default::default()
     };
 
@@ -244,8 +249,8 @@ fn preflight_import_rejects_conflict_markers() {
 #[test]
 fn preflight_import_conflict_markers_shows_line_numbers() {
     let workspace = setup_workspace_with_issues();
-    let beads_dir = workspace.root.join(".beads");
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = workspace.root.join(".obr");
+    let jsonl_path = obr_dir.join("issues.jsonl");
 
     // Create JSONL with conflict markers at known lines
     let mut file = fs::File::create(&jsonl_path).expect("create jsonl");
@@ -257,7 +262,7 @@ fn preflight_import_conflict_markers_shows_line_numbers() {
     writeln!(file, ">>>>>>> branch").unwrap(); // Line 6
 
     let config = ImportConfig {
-        beads_dir: Some(beads_dir),
+        obr_dir: Some(obr_dir),
         ..Default::default()
     };
 
@@ -286,13 +291,13 @@ fn preflight_import_conflict_markers_shows_line_numbers() {
 // UNSAFE PATH TESTS (Import Preflight)
 // ============================================================================
 
-/// Test: Import preflight rejects paths outside .beads directory
+/// Test: Import preflight rejects paths outside .obr directory
 #[test]
-fn preflight_import_rejects_outside_beads_dir() {
+fn preflight_import_rejects_outside_obr_dir() {
     let workspace = setup_workspace_with_issues();
-    let beads_dir = workspace.root.join(".beads");
+    let obr_dir = workspace.root.join(".obr");
 
-    // Try to import from outside .beads/
+    // Try to import from outside .obr/
     let outside_path = workspace.root.join("malicious.jsonl");
     fs::write(
         &outside_path,
@@ -301,7 +306,7 @@ fn preflight_import_rejects_outside_beads_dir() {
     .expect("write test file");
 
     let config = ImportConfig {
-        beads_dir: Some(beads_dir.clone()),
+        obr_dir: Some(obr_dir.clone()),
         allow_external_jsonl: false,
         ..Default::default()
     };
@@ -312,11 +317,11 @@ fn preflight_import_rejects_outside_beads_dir() {
     let log = format!(
         "=== OUTSIDE BEADS DIR PREFLIGHT TEST ===\n\
          Path: {}\n\
-         Beads dir: {}\n\n\
+         Obr dir: {}\n\n\
          Preflight status: {:?}\n\
          Checks:\n{}\n",
         outside_path.display(),
-        beads_dir.display(),
+        obr_dir.display(),
         result.overall_status,
         result
             .checks
@@ -325,14 +330,14 @@ fn preflight_import_rejects_outside_beads_dir() {
             .collect::<Vec<_>>()
             .join("\n")
     );
-    let log_path = workspace.log_dir.join("preflight_outside_beads.log");
+    let log_path = workspace.log_dir.join("preflight_outside_obr.log");
     fs::write(&log_path, &log).expect("write log");
 
     // ASSERTION: Preflight should fail
     assert_eq!(
         result.overall_status,
         PreflightCheckStatus::Fail,
-        "SAFETY: Preflight should FAIL for paths outside .beads/.\n\
+        "SAFETY: Preflight should FAIL for paths outside .obr/.\n\
          Log: {}",
         log_path.display()
     );
@@ -346,14 +351,14 @@ fn preflight_import_rejects_outside_beads_dir() {
         failures
     );
 
-    eprintln!("✓ Preflight correctly rejected path outside .beads/");
+    eprintln!("✓ Preflight correctly rejected path outside .obr/");
 }
 
 /// Test: Import preflight rejects .git paths even with allow_external
 #[test]
 fn preflight_import_rejects_git_paths() {
     let workspace = setup_workspace_with_issues();
-    let beads_dir = workspace.root.join(".beads");
+    let obr_dir = workspace.root.join(".obr");
 
     // Create a .git directory with a malicious file
     let git_dir = workspace.root.join(".git");
@@ -367,7 +372,7 @@ fn preflight_import_rejects_git_paths() {
 
     // Even with allow_external, .git paths should be rejected
     let config = ImportConfig {
-        beads_dir: Some(beads_dir.clone()),
+        obr_dir: Some(obr_dir.clone()),
         allow_external_jsonl: true, // Even with this flag!
         ..Default::default()
     };
@@ -402,9 +407,9 @@ fn preflight_import_rejects_git_paths() {
 #[test]
 fn preflight_import_rejects_path_traversal() {
     let workspace = setup_workspace_with_issues();
-    let beads_dir = workspace.root.join(".beads");
+    let obr_dir = workspace.root.join(".obr");
 
-    // Create a file outside .beads using traversal
+    // Create a file outside .obr using traversal
     let parent = workspace.root.parent().unwrap();
     let traversal_target = parent.join("traversal_test.jsonl");
     fs::write(
@@ -414,10 +419,10 @@ fn preflight_import_rejects_path_traversal() {
     .expect("write test file");
 
     // Try to access it via traversal path
-    let traversal_path = beads_dir.join("..").join("..").join("traversal_test.jsonl");
+    let traversal_path = obr_dir.join("..").join("..").join("traversal_test.jsonl");
 
     let config = ImportConfig {
-        beads_dir: Some(beads_dir),
+        obr_dir: Some(obr_dir),
         allow_external_jsonl: false,
         ..Default::default()
     };
@@ -445,8 +450,8 @@ fn preflight_import_rejects_path_traversal() {
 #[test]
 fn preflight_export_rejects_git_paths() {
     let workspace = setup_workspace_with_issues();
-    let beads_dir = workspace.root.join(".beads");
-    let db_path = beads_dir.join("beads.db");
+    let obr_dir = workspace.root.join(".obr");
+    let db_path = obr_dir.join("obr.db");
 
     // Create a .git directory
     let git_dir = workspace.root.join(".git");
@@ -455,7 +460,7 @@ fn preflight_export_rejects_git_paths() {
 
     let storage = SqliteStorage::open(&db_path).expect("open db");
     let config = ExportConfig {
-        beads_dir: Some(beads_dir),
+        obr_dir: Some(obr_dir),
         allow_external_jsonl: true, // Even with this flag!
         ..Default::default()
     };
@@ -476,15 +481,15 @@ fn preflight_export_rejects_git_paths() {
 #[test]
 fn preflight_export_warns_empty_db_over_nonempty_jsonl() {
     let workspace = setup_workspace_with_issues();
-    let beads_dir = workspace.root.join(".beads");
-    let jsonl_path = beads_dir.join("issues.jsonl");
-    let db_path = beads_dir.join("beads_test_empty.db");
+    let obr_dir = workspace.root.join(".obr");
+    let jsonl_path = obr_dir.join("issues.jsonl");
+    let db_path = obr_dir.join("obr_test_empty.db");
 
     // Create an empty database
     let storage = SqliteStorage::open(&db_path).expect("open empty db");
 
     let config = ExportConfig {
-        beads_dir: Some(beads_dir),
+        obr_dir: Some(obr_dir),
         force: false, // No force - should fail on empty db
         ..Default::default()
     };
@@ -519,11 +524,11 @@ fn preflight_export_warns_empty_db_over_nonempty_jsonl() {
 #[test]
 fn preflight_results_are_actionable() {
     let workspace = setup_workspace_with_issues();
-    let beads_dir = workspace.root.join(".beads");
-    let jsonl_path = beads_dir.join("issues.jsonl");
+    let obr_dir = workspace.root.join(".obr");
+    let jsonl_path = obr_dir.join("issues.jsonl");
 
     let config = ImportConfig {
-        beads_dir: Some(beads_dir),
+        obr_dir: Some(obr_dir),
         ..Default::default()
     };
 
@@ -577,7 +582,7 @@ fn preflight_results_are_actionable() {
 #[test]
 fn cli_import_shows_preflight_failure() {
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
 
     // Inject conflict markers
     let original = fs::read_to_string(&jsonl_path).expect("read jsonl");
@@ -585,7 +590,7 @@ fn cli_import_shows_preflight_failure() {
     fs::write(&jsonl_path, &modified).expect("write modified jsonl");
 
     // Try CLI import - should fail with clear error
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--force"],
         "import_preflight",
@@ -615,7 +620,7 @@ fn cli_import_shows_preflight_failure() {
 #[test]
 fn cli_import_salvages_one_malformed_record_with_durable_receipt() {
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     let original = fs::read_to_string(&jsonl_path).expect("read exported JSONL");
     let mut lines = original.lines();
     let first = lines.next().expect("first exported issue");
@@ -625,10 +630,10 @@ fn cli_import_salvages_one_malformed_record_with_durable_receipt() {
         "fixture should export exactly two rows"
     );
 
-    let corrupted = format!("{first}\n{second}beads: synchronize issue state and metadata\n");
+    let corrupted = format!("{first}\n{second}obr: synchronize issue state and metadata\n");
     fs::write(&jsonl_path, &corrupted).expect("inject historical trailing text");
 
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["--json", "sync", "--import-only", "--skip-invalid-records"],
         "import_salvage",
@@ -667,14 +672,14 @@ fn cli_import_salvages_one_malformed_record_with_durable_receipt() {
         format!("{first}\n")
     );
 
-    let list = run_br(&workspace, ["--json", "list"], "list_after_salvage");
+    let list = run_obr(&workspace, ["--json", "list"], "list_after_salvage");
     assert!(
         list.status.success(),
         "ordinary command remained blocked after salvage: {}",
         list.stderr
     );
 
-    let status = run_br(
+    let status = run_obr(
         &workspace,
         ["--json", "sync", "--status"],
         "status_after_salvage",
@@ -689,7 +694,7 @@ fn cli_import_salvages_one_malformed_record_with_durable_receipt() {
     assert_eq!(status_json["db_newer"], true);
     assert_eq!(status_json["coverage_drift"], true);
 
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "flush_after_salvage");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "flush_after_salvage");
     assert!(
         flush.status.success(),
         "ordinary flush could not restore salvaged coverage: {}",
@@ -710,11 +715,11 @@ fn cli_import_salvages_one_malformed_record_with_durable_receipt() {
 #[test]
 fn cli_import_salvage_refuses_when_no_valid_records_remain() {
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     let corrupted = b"not-json\nalso-not-json\n";
     fs::write(&jsonl_path, corrupted).expect("replace fixture with invalid records");
 
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--skip-invalid-records"],
         "import_salvage_all_invalid",
@@ -738,12 +743,12 @@ fn cli_import_salvage_refuses_when_no_valid_records_remain() {
 #[test]
 fn cli_import_salvage_never_skips_merge_conflict_markers() {
     let workspace = setup_workspace_with_issues();
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     let original = fs::read_to_string(&jsonl_path).expect("read JSONL");
     let conflicted = format!("<<<<<<< HEAD\n{original}=======\n>>>>>>> incoming\n");
     fs::write(&jsonl_path, &conflicted).expect("inject conflict markers");
 
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--skip-invalid-records"],
         "import_salvage_conflict_markers",

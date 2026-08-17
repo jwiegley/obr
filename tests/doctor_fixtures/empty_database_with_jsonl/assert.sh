@@ -27,7 +27,7 @@ case "$stage" in
         ;;
     esac
     # DB must be 0 bytes (planted).
-    size=$(stat -c%s .beads/beads.db 2>/dev/null || stat -f%z .beads/beads.db)
+    size=$(stat -c%s .obr/obr.db 2>/dev/null || stat -f%z .obr/obr.db)
     if [ "$size" -ne 0 ]; then
       echo "ASSERT FAIL[$stage]: planted DB is not 0 bytes (size=$size)" >&2
       exit 1
@@ -35,7 +35,7 @@ case "$stage" in
     ;;
   post_repair)
     # DB should now have content rebuilt from JSONL.
-    size=$(stat -c%s .beads/beads.db 2>/dev/null || stat -f%z .beads/beads.db)
+    size=$(stat -c%s .obr/obr.db 2>/dev/null || stat -f%z .obr/obr.db)
     if [ "$size" -lt 1024 ]; then
       echo "ASSERT FAIL[$stage]: repaired DB suspiciously small ($size bytes)" >&2
       exit 1
@@ -50,7 +50,7 @@ case "$stage" in
       exit 1
     fi
     # Issues should be queryable.
-    n=$("$tool_bin" list --json 2>/dev/null | jq 'length' 2>/dev/null || echo 0)
+    n=$("$tool_bin" list --json 2>/dev/null | jq '.issues | length' 2>/dev/null || echo 0)
     if [ -z "$n" ] || [ "$n" -lt 1 ]; then
       echo "ASSERT FAIL[$stage]: rebuilt DB has no issues (seed lost)" >&2
       exit 1
@@ -59,8 +59,8 @@ case "$stage" in
   post_undo)
     # The rebuild path predates the chokepoint; undo may be a no-op.
     # Just verify nothing catastrophic happened.
-    [ -f .beads/beads.db ] || {
-      echo "ASSERT FAIL[$stage]: beads.db missing after undo" >&2
+    [ -f .obr/obr.db ] || {
+      echo "ASSERT FAIL[$stage]: obr.db missing after undo" >&2
       exit 1
     }
     ;;

@@ -3,7 +3,7 @@
 - **FM**: `fm-permissions-gitignore-not-writable-blocks-repair` (P2) —
   the repo-root `.gitignore` exists but the current process lacks
   owner-write permission. The existing `doctor.gitignore_repair`
-  fixer rewrites this file when the `.beads/` shadow rule is
+  fixer rewrites this file when the `.obr/` shadow rule is
   missing; this detector lets that fixer refuse the write before
   it bypasses an intentionally locked file.
 - **Subsystem**: permissions

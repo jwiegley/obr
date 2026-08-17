@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, parse_created_id, parse_json_value, run_br};
+use common::cli::{ObrWorkspace, parse_created_id, parse_json_value, run_obr};
 
 fn assert_no_terminal_controls(output: &str) {
     for forbidden in ['\x1b', '\x07', '\x08', '\r', '\u{9b}'] {
@@ -16,13 +16,13 @@ fn assert_no_terminal_controls(output: &str) {
 #[test]
 fn human_output_escapes_terminal_controls_but_json_preserves_values() {
     let _log = common::test_log("human_output_escapes_terminal_controls_but_json_preserves_values");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
     let title = "screen\x1b[2J spoof\x08\r done";
-    let create = run_br(&workspace, ["create", title], "create_control_title");
+    let create = run_obr(&workspace, ["create", title], "create_control_title");
     assert!(create.status.success(), "create failed: {}", create.stderr);
     assert_no_terminal_controls(&create.stdout);
     assert!(create.stdout.contains("\\u{1b}[2J"));
@@ -34,7 +34,7 @@ fn human_output_escapes_terminal_controls_but_json_preserves_values() {
 
     let comment = "comment\x1b]52;c;bad\x07 tail";
     let author = "actor\x1b[31m";
-    let add_comment = run_br(
+    let add_comment = run_obr(
         &workspace,
         ["comments", "add", &id, "--author", author, comment],
         "add_control_comment",
@@ -46,14 +46,14 @@ fn human_output_escapes_terminal_controls_but_json_preserves_values() {
     );
     assert_no_terminal_controls(&add_comment.stdout);
 
-    let show = run_br(&workspace, ["show", &id], "show_human");
+    let show = run_obr(&workspace, ["show", &id], "show_human");
     assert!(show.status.success(), "show failed: {}", show.stderr);
     assert_no_terminal_controls(&show.stdout);
     assert!(show.stdout.contains("\\u{1b}[2J"));
     assert!(show.stdout.contains("\\u{1b}]52"));
     assert!(show.stdout.contains("\\u{7}"));
 
-    let json = run_br(&workspace, ["show", &id, "--json"], "show_json");
+    let json = run_obr(&workspace, ["show", &id, "--json"], "show_json");
     assert!(json.status.success(), "json show failed: {}", json.stderr);
     let payload = parse_json_value(&json.stdout);
     let issue = payload

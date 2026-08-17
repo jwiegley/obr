@@ -1,2 +1,0 @@
-f28b669c624d396c66819e3af1ab67cf6e5fbeb5d4af201094ed439ff4c99b13  /data/projects/beads_rust/tests/artifacts/perf/beads-perf-20260504T-ready-hybrid-window/ready-baseline.json
-f28b669c624d396c66819e3af1ab67cf6e5fbeb5d4af201094ed439ff4c99b13  /data/projects/beads_rust/tests/artifacts/perf/beads-perf-20260504T-ready-hybrid-window/ready-candidate.json

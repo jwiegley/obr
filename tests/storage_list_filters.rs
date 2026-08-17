@@ -14,9 +14,9 @@
 
 mod common;
 
-use beads_rust::model::{IssueType, Priority, Status};
-use beads_rust::storage::ListFilters;
 use common::{fixtures::IssueBuilder, test_db};
+use obr::model::{IssueType, Priority, Status};
+use obr::storage::ListFilters;
 
 // ============================================================================
 // STATUS FILTER TESTS

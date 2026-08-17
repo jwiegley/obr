@@ -3,7 +3,7 @@ source: tests/snapshots/schema_output.rs
 assertion_line: 858
 expression: normalized_toon
 ---
-tool: br
+tool: obr
 generated_at: "GENERATED_AT"
 schemas:
   AdditiveReconcileReceipt:
@@ -496,7 +496,7 @@ schemas:
   BlockedIssue:
     "$schema": "https://json-schema.org/draft/2020-12/schema"
     title: BlockedIssueOutput
-    description: "Minimal issue output for blocked command (bd parity).\n\nContains only the fields that bd's blocked command outputs, plus `blocked_by` info.\nDoes NOT include: `compaction_level`, `original_size`"
+    description: "Row emitted by `obr blocked --json`.\n\nDeliberately narrower than [`Issue`]: it carries the field set the Go\n`bd` implementation emits for its own `blocked` command, plus the\n`blocked_by` information. That is a real constraint, not a historical\nnote — `tests/conformance.rs` compares the structure of\n`obr blocked --json` against `bd blocked --json` whenever a `bd` binary is\ninstalled, so removing or adding a field here breaks conformance.\nDoes NOT include: `compaction_level`, `original_size`"
     type: object
     properties:
       blocked_by:
@@ -874,7 +874,7 @@ schemas:
         items:
           "$ref": #/$defs/CoordinationClaimRow
       capacity:
-        description: "Workflow capacity occupancy (GitHub #384 phase 6). Absent when no\ncapacity is configured, preserving the pre-capacity\n`br.coordination.v1` payload shape."
+        description: "Workflow capacity occupancy (GitHub #384 phase 6). Absent when no\ncapacity is configured, preserving the pre-capacity\n`obr.coordination.v1` payload shape."
         type: array
         items:
           "$ref": #/$defs/CapacityStat
@@ -1252,7 +1252,7 @@ schemas:
   CountGroup:
     "$schema": "https://json-schema.org/draft/2020-12/schema"
     title: CountGroup
-    description: "Row emitted inside `br count --by <field> --json` under `groups[]`.\n\nKeep this in sync with `cli::commands::count::CountGroup`."
+    description: "Row emitted inside `obr count --by <field> --json` under `groups[]`.\n\nKeep this in sync with `cli::commands::count::CountGroup`."
     type: object
     properties:
       group:
@@ -1297,7 +1297,7 @@ schemas:
     type: object
     properties:
       id:
-        description: "Unique ID (e.g., \"bd-abc123\")."
+        description: "Unique issue ID: the project's issue prefix, a hyphen, and a base36\nhash — for example \"obr-abc123\" under the default `obr` prefix. The\nprefix is per-workspace configuration (`issue_prefix`), so do not\nassume any particular one; read it from `obr://project/info` or\n`obr info --json`."
         type: string
       title:
         description: Title (1-500 chars).
@@ -1372,13 +1372,13 @@ schemas:
         description: Source system for imported issues.
         type[2]: string,"null"
       source_repo:
-        description: "Source repository for multi-repo support — basename of the\ncanonicalized parent of `.beads/`. Stable across clones of the\nsame repo on different machines (different absolute paths\nproduce the same basename). See [`canonical_source_repo`] in\n`cli::commands::create`."
+        description: "Source repository for multi-repo support — basename of the\ncanonicalized parent of the workspace directory. Stable across clones of the\nsame repo on different machines (different absolute paths\nproduce the same basename). See [`canonical_source_repo`] in\n`cli::commands::create`."
         type[2]: string,"null"
       source_repo_path:
-        description: "Absolute canonical path of the source repository. Distinct from\n`source_repo`: this field uniquely identifies the workspace on\nthe machine that produced the issue, which is what multi-repo\nfleet automation needs to route beads back to the right\ndirectory (see beads_rust#289). Two clones of the same repo\nunder `~/Developer/foo` vs `~/Developer/scratch/foo` collide on\n`source_repo` but disagree here. Optional — older databases and\nhand-edited JSONL records without this field are valid."
+        description: "Absolute canonical path of the source repository. Distinct from\n`source_repo`: this field uniquely identifies the workspace on\nthe machine that produced the issue, which is what multi-repo\nfleet automation needs to route obr back to the right directory.\nTwo clones of the same repo\nunder `~/Developer/foo` vs `~/Developer/scratch/foo` collide on\n`source_repo` but disagree here. Optional — older databases and\nhand-edited JSONL records without this field are valid."
         type[2]: string,"null"
       agent_context:
-        description: "Canonical-JSON governing instructions inherited by descendant\nbeads (beads_rust#297). When set on an ancestor and the project\nhas `inherited_context.enabled = true` in `.beads/config.yaml`,\n`br update --status in_progress` / `--claim` and `br show` emit\nthe ancestor's `agent_context` alongside the child's normal\noutput so the working agent sees the constraints regardless of\ncontext compaction or cold-start lookups.\n\nStorage: TEXT column holding a JSON document (typically an\nobject with `skills`, `constraints`, `references`, `workflow`,\n`metadata` fields, but the schema is intentionally open).\n`None` means \"no inherited context\"; emission for descendants\nsilently skips ancestors with `None` (no error, no noise).\n\nNot displayed in `br list` / `br search` — this is per-bead\ngovernance metadata, not browsable content."
+        description: "Canonical-JSON governing instructions inherited by descendant issues.\nWhen set on an ancestor and the project\nhas `inherited_context.enabled = true` in `.obr/config.yaml`,\n`obr update --status in_progress` / `--claim` and `obr show` emit\nthe ancestor's `agent_context` alongside the child's normal\noutput so the working agent sees the constraints regardless of\ncontext compaction or cold-start lookups.\n\nStorage: TEXT column holding a JSON document (typically an\nobject with `skills`, `constraints`, `references`, `workflow`,\n`metadata` fields, but the schema is intentionally open).\n`None` means \"no inherited context\"; emission for descendants\nsilently skips ancestors with `None` (no error, no noise).\n\nNot displayed in `obr list` / `obr search` — this is per-issue\ngovernance metadata, not browsable content."
         type[2]: string,"null"
       deleted_at:
         type[2]: string,"null"
@@ -1484,7 +1484,7 @@ schemas:
     type: object
     properties:
       id:
-        description: "Unique ID (e.g., \"bd-abc123\")."
+        description: "Unique issue ID: the project's issue prefix, a hyphen, and a base36\nhash — for example \"obr-abc123\" under the default `obr` prefix. The\nprefix is per-workspace configuration (`issue_prefix`), so do not\nassume any particular one; read it from `obr://project/info` or\n`obr info --json`."
         type: string
       title:
         description: Title (1-500 chars).
@@ -1559,13 +1559,13 @@ schemas:
         description: Source system for imported issues.
         type[2]: string,"null"
       source_repo:
-        description: "Source repository for multi-repo support — basename of the\ncanonicalized parent of `.beads/`. Stable across clones of the\nsame repo on different machines (different absolute paths\nproduce the same basename). See [`canonical_source_repo`] in\n`cli::commands::create`."
+        description: "Source repository for multi-repo support — basename of the\ncanonicalized parent of the workspace directory. Stable across clones of the\nsame repo on different machines (different absolute paths\nproduce the same basename). See [`canonical_source_repo`] in\n`cli::commands::create`."
         type[2]: string,"null"
       source_repo_path:
-        description: "Absolute canonical path of the source repository. Distinct from\n`source_repo`: this field uniquely identifies the workspace on\nthe machine that produced the issue, which is what multi-repo\nfleet automation needs to route beads back to the right\ndirectory (see beads_rust#289). Two clones of the same repo\nunder `~/Developer/foo` vs `~/Developer/scratch/foo` collide on\n`source_repo` but disagree here. Optional — older databases and\nhand-edited JSONL records without this field are valid."
+        description: "Absolute canonical path of the source repository. Distinct from\n`source_repo`: this field uniquely identifies the workspace on\nthe machine that produced the issue, which is what multi-repo\nfleet automation needs to route obr back to the right directory.\nTwo clones of the same repo\nunder `~/Developer/foo` vs `~/Developer/scratch/foo` collide on\n`source_repo` but disagree here. Optional — older databases and\nhand-edited JSONL records without this field are valid."
         type[2]: string,"null"
       agent_context:
-        description: "Canonical-JSON governing instructions inherited by descendant\nbeads (beads_rust#297). When set on an ancestor and the project\nhas `inherited_context.enabled = true` in `.beads/config.yaml`,\n`br update --status in_progress` / `--claim` and `br show` emit\nthe ancestor's `agent_context` alongside the child's normal\noutput so the working agent sees the constraints regardless of\ncontext compaction or cold-start lookups.\n\nStorage: TEXT column holding a JSON document (typically an\nobject with `skills`, `constraints`, `references`, `workflow`,\n`metadata` fields, but the schema is intentionally open).\n`None` means \"no inherited context\"; emission for descendants\nsilently skips ancestors with `None` (no error, no noise).\n\nNot displayed in `br list` / `br search` — this is per-bead\ngovernance metadata, not browsable content."
+        description: "Canonical-JSON governing instructions inherited by descendant issues.\nWhen set on an ancestor and the project\nhas `inherited_context.enabled = true` in `.obr/config.yaml`,\n`obr update --status in_progress` / `--claim` and `obr show` emit\nthe ancestor's `agent_context` alongside the child's normal\noutput so the working agent sees the constraints regardless of\ncontext compaction or cold-start lookups.\n\nStorage: TEXT column holding a JSON document (typically an\nobject with `skills`, `constraints`, `references`, `workflow`,\n`metadata` fields, but the schema is intentionally open).\n`None` means \"no inherited context\"; emission for descendants\nsilently skips ancestors with `None` (no error, no noise).\n\nNot displayed in `obr list` / `obr search` — this is per-issue\ngovernance metadata, not browsable content."
         type[2]: string,"null"
       deleted_at:
         type[2]: string,"null"
@@ -1764,7 +1764,7 @@ schemas:
     type: object
     properties:
       id:
-        description: "Unique ID (e.g., \"bd-abc123\")."
+        description: "Unique issue ID: the project's issue prefix, a hyphen, and a base36\nhash — for example \"obr-abc123\" under the default `obr` prefix. The\nprefix is per-workspace configuration (`issue_prefix`), so do not\nassume any particular one; read it from `obr://project/info` or\n`obr info --json`."
         type: string
       title:
         description: Title (1-500 chars).
@@ -1839,13 +1839,13 @@ schemas:
         description: Source system for imported issues.
         type[2]: string,"null"
       source_repo:
-        description: "Source repository for multi-repo support — basename of the\ncanonicalized parent of `.beads/`. Stable across clones of the\nsame repo on different machines (different absolute paths\nproduce the same basename). See [`canonical_source_repo`] in\n`cli::commands::create`."
+        description: "Source repository for multi-repo support — basename of the\ncanonicalized parent of the workspace directory. Stable across clones of the\nsame repo on different machines (different absolute paths\nproduce the same basename). See [`canonical_source_repo`] in\n`cli::commands::create`."
         type[2]: string,"null"
       source_repo_path:
-        description: "Absolute canonical path of the source repository. Distinct from\n`source_repo`: this field uniquely identifies the workspace on\nthe machine that produced the issue, which is what multi-repo\nfleet automation needs to route beads back to the right\ndirectory (see beads_rust#289). Two clones of the same repo\nunder `~/Developer/foo` vs `~/Developer/scratch/foo` collide on\n`source_repo` but disagree here. Optional — older databases and\nhand-edited JSONL records without this field are valid."
+        description: "Absolute canonical path of the source repository. Distinct from\n`source_repo`: this field uniquely identifies the workspace on\nthe machine that produced the issue, which is what multi-repo\nfleet automation needs to route obr back to the right directory.\nTwo clones of the same repo\nunder `~/Developer/foo` vs `~/Developer/scratch/foo` collide on\n`source_repo` but disagree here. Optional — older databases and\nhand-edited JSONL records without this field are valid."
         type[2]: string,"null"
       agent_context:
-        description: "Canonical-JSON governing instructions inherited by descendant\nbeads (beads_rust#297). When set on an ancestor and the project\nhas `inherited_context.enabled = true` in `.beads/config.yaml`,\n`br update --status in_progress` / `--claim` and `br show` emit\nthe ancestor's `agent_context` alongside the child's normal\noutput so the working agent sees the constraints regardless of\ncontext compaction or cold-start lookups.\n\nStorage: TEXT column holding a JSON document (typically an\nobject with `skills`, `constraints`, `references`, `workflow`,\n`metadata` fields, but the schema is intentionally open).\n`None` means \"no inherited context\"; emission for descendants\nsilently skips ancestors with `None` (no error, no noise).\n\nNot displayed in `br list` / `br search` — this is per-bead\ngovernance metadata, not browsable content."
+        description: "Canonical-JSON governing instructions inherited by descendant issues.\nWhen set on an ancestor and the project\nhas `inherited_context.enabled = true` in `.obr/config.yaml`,\n`obr update --status in_progress` / `--claim` and `obr show` emit\nthe ancestor's `agent_context` alongside the child's normal\noutput so the working agent sees the constraints regardless of\ncontext compaction or cold-start lookups.\n\nStorage: TEXT column holding a JSON document (typically an\nobject with `skills`, `constraints`, `references`, `workflow`,\n`metadata` fields, but the schema is intentionally open).\n`None` means \"no inherited context\"; emission for descendants\nsilently skips ancestors with `None` (no error, no noise).\n\nNot displayed in `obr list` / `obr search` — this is per-issue\ngovernance metadata, not browsable content."
         type[2]: string,"null"
       deleted_at:
         type[2]: string,"null"
@@ -1955,7 +1955,7 @@ schemas:
   ReadyIssue:
     "$schema": "https://json-schema.org/draft/2020-12/schema"
     title: ReadyIssue
-    description: "Minimal issue output for ready command (bd parity).\n\nContains only the fields that bd's ready command outputs.\nDoes NOT include: `compaction_level`, `original_size`, `dependency_count`, `dependent_count`"
+    description: "Row emitted by `obr ready --json`.\n\nDeliberately narrower than [`Issue`]: it carries the field set the Go\n`bd` implementation emits for its own `ready` command. That is a real\nconstraint, not a historical note — `tests/conformance.rs` compares the\nstructure of `obr ready --json` against `bd ready --json` whenever a `bd`\nbinary is installed, so removing or adding a field here breaks conformance.\nDoes NOT include: `compaction_level`, `original_size`, `dependency_count`, `dependent_count`"
     type: object
     properties:
       acceptance_criteria.type[2]: string,"null"
@@ -1972,7 +1972,7 @@ schemas:
       issue_type:
         "$ref": #/$defs/IssueType
       labels:
-        description: "Labels attached to the issue.\n\nAlways emitted (as `[]` when empty) so downstream consumers can filter\n`br ready --json` output on labels the same way they filter\n`br list --json` (#309)."
+        description: "Labels attached to the issue.\n\nAlways emitted (as `[]` when empty) so downstream consumers can filter\n`obr ready --json` output on labels the same way they filter\n`obr list --json` (#309)."
         type: array
         items.type: string
       notes.type[2]: string,"null"
@@ -2006,7 +2006,7 @@ schemas:
   StaleIssue:
     "$schema": "https://json-schema.org/draft/2020-12/schema"
     title: StaleIssue
-    description: "Minimal issue output for stale command (bd parity).\nContains only the fields that bd's stale command outputs."
+    description: "Row emitted by `obr stale --json`.\n\nDeliberately narrower than [`Issue`]: it carries the field set the Go\n`bd` implementation emits for its own `stale` command. That is a real\nconstraint, not a historical note — `tests/conformance.rs` compares the\nstructure of `obr stale --json` against `bd stale --json` whenever a `bd`\nbinary is installed, so removing or adding a field here breaks conformance."
     type: object
     properties:
       created_at:
@@ -2228,11 +2228,11 @@ schemas:
   SyncReconcileReceipt:
     "$schema": "https://json-schema.org/draft/2020-12/schema"
     title: SyncReconcileReceipt
-    description: "Versioned receipt for `br sync --reconcile` (`br.sync.reconcile.v1`).\n\nEmitted by both `--dry-run` (plan only, `applied: false`) and apply\n(`applied: true`, with the `apply` block present). Deletion is impossible\nin this mode, so `plan.deleted` is a constant `0`."
+    description: "Versioned receipt for `obr sync --reconcile` (`obr.sync.reconcile.v1`).\n\nEmitted by both `--dry-run` (plan only, `applied: false`) and apply\n(`applied: true`, with the `apply` block present). Deletion is impossible\nin this mode, so `plan.deleted` is a constant `0`."
     type: object
     properties:
       schema_version:
-        description: Receipt schema identifier (`br.sync.reconcile.v1`).
+        description: Receipt schema identifier (`obr.sync.reconcile.v1`).
         type: string
       mode:
         description: "`\"dry_run\"` or `\"apply\"`."
@@ -2435,7 +2435,7 @@ schemas:
   TreeNode:
     "$schema": "https://json-schema.org/draft/2020-12/schema"
     title: TreeNode
-    description: "Row emitted by `br dep tree --json`.\n\nKeep this in sync with `cli::commands::dep::TreeNode`. The command emits a\ncompact traversal node, not the older `format::output::TreeNode` shape that\nflattened a full `Issue`."
+    description: "Row emitted by `obr dep tree --json`.\n\nKeep this in sync with `cli::commands::dep::TreeNode`. The command emits a\ncompact traversal node, not the older `format::output::TreeNode` shape that\nflattened a full `Issue`."
     type: object
     properties:
       id:
@@ -2466,7 +2466,7 @@ schemas:
   VcsExportStatus:
     "$schema": "https://json-schema.org/draft/2020-12/schema"
     title: VcsExportStatus
-    description: "Explicit Git visibility for the configured JSONL export.\n\nRepository and index evidence remains available when a path-local\nworktree comparison is unsafe or unsupported. Raw worktree identities are\ncomputed in-process from one immutable, no-follow JSONL snapshot; Git\nfilters and text conversions are never invoked."
+    description: "Explicit Git visibility for the configured export (`.org` or `.jsonl`).\n\nRepository and index evidence remains available when a path-local\nworktree comparison is unsafe or unsupported. Raw worktree identities are\ncomputed in-process from one immutable, no-follow snapshot of the export;\nGit filters and text conversions are never invoked."
     type: object
     properties:
       schema.type: string
@@ -2537,7 +2537,7 @@ schemas:
           object_id.type: string
         required[4]: stage,mode,object_type,object_id
       WorktreeState:
-        description: Relationship between the securely captured JSONL leaf and the Git index.
+        description: Relationship between the securely captured export leaf and the Git index.
         type: string
         enum[8]: clean,modified,deleted,untracked,ignored,unmerged,comparison_unavailable,absent
 commands:
@@ -2570,14 +2570,14 @@ commands:
     shape: object
     jq_filter: .count
     error_envelope_on_stderr: false
-    notes: Ungrouped `br count --json`; scalar count under `.count`. Grouped variants use the `count --by` entry.
+    notes: Ungrouped `obr count --json`; scalar count under `.count`. Grouped variants use the `count --by` entry.
   "count --by":
     shape: object
     jq_filter: ".groups[]"
     items_at: .groups
     item_schema: CountGroup
     error_envelope_on_stderr: false
-    notes: For `br count --by <status|priority|type|assignee|label> --json`. The wrapper object also includes `total`.
+    notes: For `obr count --by <status|priority|type|assignee|label> --json`. The wrapper object also includes `total`.
   "dep list":
     shape: array
     jq_filter: ".[]"

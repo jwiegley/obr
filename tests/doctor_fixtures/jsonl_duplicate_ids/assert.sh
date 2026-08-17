@@ -39,7 +39,7 @@ case "$stage" in
     # SACRED INVARIANT: doctor must NOT mutate the JSONL. Auto-fix
     # would have to pick a winner among duplicates; that decision
     # belongs to the operator.
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: doctor silently mutated JSONL with duplicate ids (operator-intent violation)" >&2
@@ -59,7 +59,7 @@ case "$stage" in
     ;;
   post_undo)
     # File still byte-identical (no mutation happened).
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: JSONL bytes drifted across undo" >&2

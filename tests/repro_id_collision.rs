@@ -1,5 +1,5 @@
-use beads_rust::util::id::{IdConfig, IdGenerator};
 use chrono::Utc;
+use obr::util::id::{IdConfig, IdGenerator};
 
 #[test]
 fn test_id_generator_fallback_collision() {

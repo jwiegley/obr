@@ -5,9 +5,9 @@
 //! This is the TLP (Ternary Logic Partitioning) pattern applied to the issue
 //! tracker's status dimension.
 
-use beads_rust::model::{Issue, IssueType, Priority, Status};
-use beads_rust::storage::{ListFilters, SqliteStorage};
 use chrono::{TimeZone, Utc};
+use obr::model::{Issue, IssueType, Priority, Status};
+use obr::storage::{ListFilters, SqliteStorage};
 use proptest::prelude::*;
 use std::collections::BTreeSet;
 

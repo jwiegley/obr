@@ -2,15 +2,15 @@
 //! the child issue after rebuild/import cycles, even when the database also
 //! contains tombstones.
 //!
-//! The failing installed `br` binary in the swarm was returning an unrelated
-//! tombstone for commands like `br show br-8qdh0.11 --json` and rejecting
-//! `br update br-il53l.1 ...` as if the exact dotted ID were itself a
+//! The failing installed `obr` binary in the swarm was returning an unrelated
+//! tombstone for commands like `obr show br-8qdh0.11 --json` and rejecting
+//! `obr update br-il53l.1 ...` as if the exact dotted ID were itself a
 //! tombstone. Current `main` already contains the storage-side recovery path;
 //! this test keeps that exact CLI contract covered.
 
 mod common;
 
-use common::cli::{BrWorkspace, extract_json_payload, run_br};
+use common::cli::{ObrWorkspace, extract_json_payload, run_obr};
 use serde_json::Value;
 
 fn parse_json(stdout: &str) -> Value {
@@ -36,16 +36,16 @@ fn issue_id(payload: &Value) -> String {
 fn e2e_dotted_child_show_and_update_stay_on_exact_issue_after_rebuild() {
     let _log =
         common::test_log("e2e_dotted_child_show_and_update_stay_on_exact_issue_after_rebuild");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(
+    let init = run_obr(
         &workspace,
         ["init", "--prefix", "dot"],
         "init_dotted_resolution",
     );
     assert!(init.status.success(), "init failed: {}", init.stderr);
 
-    let parent = run_br(
+    let parent = run_obr(
         &workspace,
         ["create", "Parent issue", "--json"],
         "create_parent",
@@ -57,7 +57,7 @@ fn e2e_dotted_child_show_and_update_stay_on_exact_issue_after_rebuild() {
     );
     let parent_id = issue_id(&parse_json(&parent.stdout));
 
-    let child = run_br(
+    let child = run_obr(
         &workspace,
         ["create", "Child issue", "--parent", &parent_id, "--json"],
         "create_child",
@@ -74,7 +74,7 @@ fn e2e_dotted_child_show_and_update_stay_on_exact_issue_after_rebuild() {
         "child id should be hierarchical, got {child_id} for parent {parent_id}"
     );
 
-    let tombstone_seed = run_br(
+    let tombstone_seed = run_obr(
         &workspace,
         ["create", "Tombstone seed", "--json"],
         "create_tombstone_seed",
@@ -86,7 +86,7 @@ fn e2e_dotted_child_show_and_update_stay_on_exact_issue_after_rebuild() {
     );
     let tombstone_id = issue_id(&parse_json(&tombstone_seed.stdout));
 
-    let delete = run_br(
+    let delete = run_obr(
         &workspace,
         [
             "delete",
@@ -104,15 +104,12 @@ fn e2e_dotted_child_show_and_update_stay_on_exact_issue_after_rebuild() {
         delete.stderr
     );
 
-    let flush = run_br(&workspace, ["sync", "--flush-only"], "flush_before_rebuild");
+    let flush = run_obr(&workspace, ["sync", "--flush-only"], "flush_before_rebuild");
     assert!(flush.status.success(), "flush failed: {}", flush.stderr);
 
-    let alt_db = workspace
-        .root
-        .join(".beads")
-        .join("beads.dotted-rebuilt.db");
+    let alt_db = workspace.root.join(".obr").join("beads.dotted-rebuilt.db");
     let alt_db_str = alt_db.to_string_lossy().to_string();
-    let rebuild = run_br(
+    let rebuild = run_obr(
         &workspace,
         [
             "--db",
@@ -133,7 +130,7 @@ fn e2e_dotted_child_show_and_update_stay_on_exact_issue_after_rebuild() {
         rebuild.stderr
     );
 
-    let tombstone_show = run_br(
+    let tombstone_show = run_obr(
         &workspace,
         [
             "--db",
@@ -165,7 +162,7 @@ fn e2e_dotted_child_show_and_update_stay_on_exact_issue_after_rebuild() {
     );
 
     for i in 0..10 {
-        let show = run_br(
+        let show = run_obr(
             &workspace,
             [
                 "--db",
@@ -202,7 +199,7 @@ fn e2e_dotted_child_show_and_update_stay_on_exact_issue_after_rebuild() {
         );
 
         let note = format!("touch {i}");
-        let update = run_br(
+        let update = run_obr(
             &workspace,
             [
                 "--db",
@@ -240,7 +237,7 @@ fn e2e_dotted_child_show_and_update_stay_on_exact_issue_after_rebuild() {
             "update should not surface the tombstone seed issue on loop {i}"
         );
 
-        let show_after_update = run_br(
+        let show_after_update = run_obr(
             &workspace,
             [
                 "--db",

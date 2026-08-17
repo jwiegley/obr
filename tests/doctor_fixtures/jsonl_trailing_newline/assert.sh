@@ -14,7 +14,7 @@ tool_bin="${TOOL_BIN:-br}"
 cd "$target_dir"
 
 last_byte_hex() {
-  tail -c 1 .beads/issues.jsonl | xxd -p
+  tail -c 1 .obr/issues.jsonl | xxd -p
 }
 
 case "$stage" in
@@ -52,7 +52,7 @@ case "$stage" in
     fi
     # The post-repair JSONL bytes must match the pre-corruption
     # baseline exactly (the newline was the only difference).
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_baseline=$(cat .fixture_jsonl_post_repair_sha256)
     if [ "$jsonl_now" != "$jsonl_baseline" ]; then
       echo "ASSERT FAIL[$stage]: post-repair JSONL doesn't match baseline" >&2
@@ -88,7 +88,7 @@ case "$stage" in
       echo "ASSERT FAIL[$stage]: undo did not strip the appended newline (last byte still 0x0a)" >&2
       exit 1
     fi
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: undo didn't byte-restore corrupted JSONL" >&2

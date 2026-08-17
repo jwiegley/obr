@@ -1,0 +1,17 @@
+---
+source: tests/golden_obr_init.rs
+expression: contents
+---
+--- .gitignore ---
+# obr keeps only per-machine cache here; nothing under .obr/ is tracked.
+*
+--- config.yaml ---
+# obr project configuration
+# issue_prefix: bd
+# default_priority: 2
+# default_type: task
+--- metadata.json ---
+{
+  "database": "obr.db",
+  "jsonl_export": "PLAN.org"
+}

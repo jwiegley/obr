@@ -1,7 +1,7 @@
 //! JSON baseline fixture loader for backward compatibility testing.
 //!
 //! This module provides helpers to load JSON baseline fixtures that capture
-//! the expected JSON output from br commands. These baselines ensure that
+//! the expected JSON output from obr commands. These baselines ensure that
 //! JSON output remains byte-identical after rich output integration.
 //!
 //! # Usage

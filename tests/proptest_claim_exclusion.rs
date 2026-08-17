@@ -3,9 +3,9 @@
 //! If issue x is in `ready()` and we claim x (set status=in_progress + assignee),
 //! then x must NOT appear in subsequent `ready()` results.
 
-use beads_rust::model::{Issue, IssueType, Priority, Status};
-use beads_rust::storage::{IssueUpdate, ReadyFilters, ReadySortPolicy, SqliteStorage};
 use chrono::{TimeZone, Utc};
+use obr::model::{Issue, IssueType, Priority, Status};
+use obr::storage::{IssueUpdate, ReadyFilters, ReadySortPolicy, SqliteStorage};
 use proptest::prelude::*;
 
 fn make_open_issue(suffix: &str, title: &str, priority: Priority) -> Issue {

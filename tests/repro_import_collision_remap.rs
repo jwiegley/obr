@@ -1,7 +1,7 @@
-use beads_rust::model::{Dependency, DependencyType, Issue, IssueType, Priority, Status};
-use beads_rust::storage::SqliteStorage;
-use beads_rust::sync::{ImportConfig, import_from_jsonl};
 use chrono::Utc;
+use obr::model::{Dependency, DependencyType, Issue, IssueType, Priority, Status};
+use obr::storage::SqliteStorage;
+use obr::sync::{ImportConfig, import_from_jsonl};
 use std::fs;
 use tempfile::TempDir;
 
@@ -61,7 +61,7 @@ fn test_import_collision_remaps_dependencies() {
     let mut db_issue = make_issue("bd-1", "Original");
     db_issue.external_ref = Some("EXT-1".to_string());
     // Ensure it has a hash
-    db_issue.content_hash = Some(beads_rust::util::content_hash(&db_issue));
+    db_issue.content_hash = Some(obr::util::content_hash(&db_issue));
     storage.create_issue(&db_issue, "user").unwrap();
 
     // 2. Create JSONL with:

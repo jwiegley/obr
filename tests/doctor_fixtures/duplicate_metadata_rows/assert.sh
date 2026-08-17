@@ -31,15 +31,15 @@ case "$stage" in
     esac
     # Verify only one row for the duplicated key (rebuild collapses duplicates).
     nrows=$(printf '%s\n' "SELECT COUNT(*) FROM metadata WHERE key='jsonl_content_hash';" \
-              | sqlite3 .beads/beads.db 2>/dev/null || echo 0)
+              | sqlite3 .obr/obr.db 2>/dev/null || echo 0)
     if [ "$nrows" -gt 1 ]; then
       echo "ASSERT FAIL[$stage]: duplicate metadata row count still $nrows (expected 0 or 1)" >&2
       exit 1
     fi
     ;;
   post_undo)
-    [ -f .beads/beads.db ] || {
-      echo "ASSERT FAIL[$stage]: beads.db gone after undo" >&2
+    [ -f .obr/obr.db ] || {
+      echo "ASSERT FAIL[$stage]: obr.db gone after undo" >&2
       exit 1
     }
     ;;

@@ -1,10 +1,10 @@
 mod common;
 
-use beads_rust::franken_sync::Connection;
-use beads_rust::storage::SqliteStorage;
-use common::cli::{BrWorkspace, run_br};
+use common::cli::{ObrWorkspace, run_obr};
 use fsqlite_error::FrankenError;
 use fsqlite_types::SqliteValue;
+use obr::franken_sync::Connection;
+use obr::storage::SqliteStorage;
 use serde_json::Value;
 use std::path::Path;
 
@@ -69,8 +69,8 @@ fn keyed_text_value(conn: &Connection, sql: &str, key: &str) -> Option<String> {
     }
 }
 
-fn create_seed_issue(workspace: &BrWorkspace, title: &str) {
-    let create = run_br(
+fn create_seed_issue(workspace: &ObrWorkspace, title: &str) {
+    let create = run_obr(
         workspace,
         [
             "create",
@@ -92,9 +92,9 @@ fn create_seed_issue(workspace: &BrWorkspace, title: &str) {
     );
 }
 
-fn assert_fresh_lookup_round_trip(workspace: &BrWorkspace, alt_db: &Path, i: usize) {
+fn assert_fresh_lookup_round_trip(workspace: &ObrWorkspace, alt_db: &Path, i: usize) {
     let title = format!("raw lookup loop {i}");
-    let create = run_br(
+    let create = run_obr(
         workspace,
         [
             "--db",
@@ -185,9 +185,9 @@ fn e2e_raw_fsqlite_keyed_lookup_matches_full_scan_after_alt_rebuild() {
     const LOOP_COUNT: usize = 20;
 
     let _log = common::test_log("e2e_raw_fsqlite_keyed_lookup_matches_full_scan_after_alt_rebuild");
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
-    let init = run_br(
+    let init = run_obr(
         &workspace,
         ["init", "--prefix", "raw"],
         "init_raw_workspace",
@@ -198,15 +198,15 @@ fn e2e_raw_fsqlite_keyed_lookup_matches_full_scan_after_alt_rebuild() {
         create_seed_issue(&workspace, title);
     }
 
-    let flush = run_br(
+    let flush = run_obr(
         &workspace,
         ["sync", "--flush-only"],
         "flush_before_alt_rebuild",
     );
     assert!(flush.status.success(), "flush failed: {}", flush.stderr);
 
-    let alt_db = workspace.root.join(".beads").join("beads.raw-rebuilt.db");
-    let rebuild = run_br(
+    let alt_db = workspace.root.join(".obr").join("beads.raw-rebuilt.db");
+    let rebuild = run_obr(
         &workspace,
         [
             "--db",

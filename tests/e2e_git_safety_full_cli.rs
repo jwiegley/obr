@@ -1,7 +1,7 @@
-//! Comprehensive git safety regression tests for the full br CLI.
+//! Comprehensive git safety regression tests for the full obr CLI.
 //!
 //! This test suite implements beads_rust-k1px:
-//! - E2E assertions that NO br command invokes git operations or touches .git
+//! - E2E assertions that NO obr command invokes git operations or touches .git
 //! - Run representative commands across the full CLI surface
 //! - Validate .git tree is unchanged after each command batch
 //! - Fail fast with artifact diff if any command touches .git
@@ -16,7 +16,7 @@
 
 mod common;
 
-use common::cli::{BrWorkspace, run_br};
+use common::cli::{ObrWorkspace, run_obr};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
@@ -28,7 +28,7 @@ fn hash_file(path: &Path) -> Option<String> {
     fs::read(path).ok().map(|contents| {
         let mut hasher = Sha256::new();
         hasher.update(&contents);
-        beads_rust::util::hex_encode(&hasher.finalize())
+        obr::util::hex_encode(&hasher.finalize())
     })
 }
 
@@ -110,7 +110,7 @@ fn get_commit_count(root: &Path) -> usize {
 }
 
 /// Initialize a git repo with an initial commit.
-fn init_git_repo(workspace: &BrWorkspace) {
+fn init_git_repo(workspace: &ObrWorkspace) {
     let init = Command::new("git")
         .args(["init"])
         .current_dir(&workspace.root)
@@ -244,7 +244,7 @@ fn verify_git_unchanged(
 /// Macro to run a command and verify git safety.
 macro_rules! check_git_safety {
     ($workspace:expr, $before:expr, $head_before:expr, $count_before:expr, $args:expr, $label:expr) => {{
-        let result = run_br($workspace, $args, $label);
+        let result = run_obr($workspace, $args, $label);
         let after = snapshot_git_dir(&$workspace.root);
         let head_after = get_head_commit(&$workspace.root);
         let count_after = get_commit_count(&$workspace.root);
@@ -276,7 +276,7 @@ macro_rules! check_git_safety {
 /// Main test: verify all CLI commands don't touch .git
 #[test]
 fn regression_full_cli_does_not_touch_git() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
 
     // Initialize git repo
     init_git_repo(&workspace);
@@ -1037,11 +1037,11 @@ fn regression_full_cli_does_not_touch_git() {
 /// Test that auto-flush doesn't touch .git
 #[test]
 fn regression_auto_flush_does_not_touch_git() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_git_repo(&workspace);
 
     // Initialize beads
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
     // Take baseline
@@ -1050,7 +1050,7 @@ fn regression_auto_flush_does_not_touch_git() {
     let baseline_count = get_commit_count(&workspace.root);
 
     // Create WITHOUT --no-auto-flush (should auto-flush)
-    let create = run_br(&workspace, ["create", "Auto-flush test"], "create_auto");
+    let create = run_obr(&workspace, ["create", "Auto-flush test"], "create_auto");
     assert!(create.status.success());
 
     // Verify .git unchanged
@@ -1080,24 +1080,24 @@ fn regression_auto_flush_does_not_touch_git() {
 /// Test that auto-import doesn't touch .git
 #[test]
 fn regression_auto_import_does_not_touch_git() {
-    let workspace = BrWorkspace::new();
+    let workspace = ObrWorkspace::new();
     init_git_repo(&workspace);
 
     // Initialize and create issues
-    let init = run_br(&workspace, ["init"], "init");
+    let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success());
 
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["create", "Issue 1", "--no-auto-flush"],
         "create1",
     );
 
     // Manually flush
-    let _ = run_br(&workspace, ["sync", "--flush-only"], "flush");
+    let _ = run_obr(&workspace, ["sync", "--flush-only"], "flush");
 
     // Touch the JSONL to make it newer
-    let jsonl_path = workspace.root.join(".beads").join("issues.jsonl");
+    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
     if jsonl_path.exists() {
         let content = fs::read_to_string(&jsonl_path).expect("read");
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -1110,7 +1110,7 @@ fn regression_auto_import_does_not_touch_git() {
     let baseline_count = get_commit_count(&workspace.root);
 
     // Run list (should trigger auto-import)
-    let list = run_br(&workspace, ["list"], "list_auto_import");
+    let list = run_obr(&workspace, ["list"], "list_auto_import");
     assert!(list.status.success());
 
     // Verify .git unchanged

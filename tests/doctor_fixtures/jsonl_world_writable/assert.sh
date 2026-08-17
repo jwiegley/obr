@@ -13,7 +13,7 @@ tool_bin="${TOOL_BIN:-br}"
 cd "$target_dir"
 
 cur_mode() {
-  python3 - .beads/issues.jsonl <<'PY'
+  python3 - .obr/issues.jsonl <<'PY'
 import os
 import sys
 
@@ -37,7 +37,7 @@ case "$stage" in
       echo "ASSERT FAIL[$stage]: expected pre-fix mode 666, got '$mode'" >&2
       exit 1
     fi
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: JSONL bytes drifted during corrupt stage" >&2
@@ -69,7 +69,7 @@ case "$stage" in
     fi
     # SACRED INVARIANT: JSONL bytes byte-identical. Op::Chmod only
     # touches mode, never content.
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: JSONL bytes mutated by --repair (Op::Chmod must not touch content)" >&2
@@ -104,7 +104,7 @@ case "$stage" in
       echo "ASSERT FAIL[$stage]: undo did not restore mode; got '$mode', expected '$expected'" >&2
       exit 1
     fi
-    jsonl_now=$(sha256sum .beads/issues.jsonl | awk '{print $1}')
+    jsonl_now=$(sha256sum .obr/issues.jsonl | awk '{print $1}')
     jsonl_pre=$(cat .fixture_jsonl_pre_sha256)
     if [ "$jsonl_now" != "$jsonl_pre" ]; then
       echo "ASSERT FAIL[$stage]: JSONL bytes drifted across undo" >&2

@@ -1,4 +1,4 @@
-use super::common::cli::run_br;
+use super::common::cli::run_obr;
 use super::{SnapshotJson, create_issue, init_workspace, normalize_json};
 use insta::{assert_json_snapshot, assert_snapshot};
 use serde_json::Value;
@@ -19,12 +19,13 @@ const LIST_SHOW_JSONL_FIXTURE: &str = r#"{"id":"bd-golden-parent","title":"01 Pa
 {"id":"bd-golden-deleted","title":"04 Deleted Cleanup","status":"tombstone","priority":3,"issue_type":"task","created_at":"2026-01-04T00:00:00Z","created_by":"fixture","updated_at":"2026-01-04T04:00:00Z","deleted_at":"2026-01-04T04:00:00Z","deleted_by":"fixture","delete_reason":"fixture tombstone","original_type":"task","source_repo":".","compaction_level":0,"original_size":0}
 "#;
 
-fn init_list_show_golden_workspace() -> super::common::cli::BrWorkspace {
+fn init_list_show_golden_workspace() -> super::common::cli::ObrWorkspace {
     let workspace = init_workspace();
-    let jsonl_path = workspace.root.join(".beads/issues.jsonl");
+    super::common::cli::pin_jsonl(&workspace.root.join(".obr"));
+    let jsonl_path = workspace.root.join(".obr/issues.jsonl");
     fs::write(jsonl_path, LIST_SHOW_JSONL_FIXTURE).expect("write list/show JSONL fixture");
 
-    let import = run_br(
+    let import = run_obr(
         &workspace,
         ["sync", "--import-only", "--json"],
         "representative_json_golden_import",
@@ -45,7 +46,7 @@ fn snapshot_list_json() {
     create_issue(&workspace, "Issue one", "create_one");
     create_issue(&workspace, "Issue two", "create_two");
 
-    let output = run_br(&workspace, ["list", "--json"], "list_json");
+    let output = run_obr(&workspace, ["list", "--json"], "list_json");
     assert!(
         output.status.success(),
         "list json failed: {}",
@@ -61,7 +62,7 @@ fn snapshot_show_json() {
     let workspace = init_workspace();
     let id = create_issue(&workspace, "Detailed issue", "create_detail");
 
-    let output = run_br(&workspace, ["show", &id, "--json"], "show_json");
+    let output = run_obr(&workspace, ["show", &id, "--json"], "show_json");
     assert!(
         output.status.success(),
         "show json failed: {}",
@@ -76,7 +77,7 @@ fn snapshot_show_json() {
 fn representative_json_golden_list_output() {
     let workspace = init_list_show_golden_workspace();
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["list", "--all", "--sort", "title", "--json"],
         "representative_json_golden_list",
@@ -100,7 +101,7 @@ fn representative_json_golden_list_output() {
 fn representative_json_golden_show_output() {
     let workspace = init_list_show_golden_workspace();
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         [
             "show",
@@ -132,7 +133,7 @@ fn snapshot_ready_json() {
     let workspace = init_workspace();
     create_issue(&workspace, "Ready issue", "create_ready");
 
-    let output = run_br(&workspace, ["ready", "--json"], "ready_json");
+    let output = run_obr(&workspace, ["ready", "--json"], "ready_json");
     assert!(
         output.status.success(),
         "ready json failed: {}",
@@ -152,13 +153,13 @@ fn snapshot_blocked_json() {
     let blocker = create_issue(&workspace, "Blocker issue", "create_blocker_json");
     let blocked = create_issue(&workspace, "Blocked issue", "create_blocked_json");
 
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["dep", "add", &blocked, &blocker],
         "dep_add_json",
     );
 
-    let output = run_br(&workspace, ["blocked", "--json"], "blocked_json");
+    let output = run_obr(&workspace, ["blocked", "--json"], "blocked_json");
     assert!(
         output.status.success(),
         "blocked json failed: {}",
@@ -176,19 +177,19 @@ fn snapshot_list_with_filters_json() {
     let id2 = create_issue(&workspace, "Feature: Add theme", "create_feature_json");
 
     // Update types
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["update", &id1, "--type", "bug"],
         "update_bug_json",
     );
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["update", &id2, "--type", "feature"],
         "update_feature_json",
     );
 
     // List only bugs
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["list", "--type", "bug", "--json"],
         "list_bugs_json",
@@ -211,7 +212,7 @@ fn snapshot_stats_json() {
     let workspace = init_workspace();
     create_issue(&workspace, "Stats Issue", "create_stats");
 
-    let output = run_br(&workspace, ["stats", "--json"], "stats_json");
+    let output = run_obr(&workspace, ["stats", "--json"], "stats_json");
     assert!(output.status.success());
     // Parse the JSON string into Value before passing to normalize_json
     let json: serde_json::Value = serde_json::from_str(&output.stdout).expect("parse json");
@@ -222,7 +223,7 @@ fn snapshot_stats_json() {
 fn snapshot_create_json() {
     let workspace = init_workspace();
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         [
             "create",
@@ -250,7 +251,7 @@ fn snapshot_update_json() {
     let workspace = init_workspace();
     let id = create_issue(&workspace, "Issue to update", "create_update");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["update", &id, "--status", "in_progress", "--json"],
         "update_json",
@@ -270,7 +271,7 @@ fn snapshot_close_json() {
     let workspace = init_workspace();
     let id = create_issue(&workspace, "Issue to close", "create_close_json");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["close", &id, "--reason", "Done", "--json"],
         "close_json",
@@ -292,10 +293,10 @@ fn snapshot_dep_list_json() {
     let id2 = create_issue(&workspace, "Child issue", "create_child");
 
     // Add dependency
-    let add = run_br(&workspace, ["dep", "add", &id2, &id1], "dep_add");
+    let add = run_obr(&workspace, ["dep", "add", &id2, &id1], "dep_add");
     assert!(add.status.success(), "dep add failed: {}", add.stderr);
 
-    let output = run_br(&workspace, ["dep", "list", &id2, "--json"], "dep_list_json");
+    let output = run_obr(&workspace, ["dep", "list", &id2, "--json"], "dep_list_json");
     assert!(
         output.status.success(),
         "dep list json failed: {}",
@@ -312,7 +313,7 @@ fn snapshot_search_json() {
     create_issue(&workspace, "Search target", "create_search_target");
     create_issue(&workspace, "Other issue", "create_search_other");
 
-    let output = run_br(&workspace, ["search", "target", "--json"], "search_json");
+    let output = run_obr(&workspace, ["search", "target", "--json"], "search_json");
     assert!(
         output.status.success(),
         "search json failed: {}",
@@ -329,7 +330,7 @@ fn snapshot_count_json() {
     create_issue(&workspace, "Count one", "create_count_one");
     create_issue(&workspace, "Count two", "create_count_two");
 
-    let output = run_br(&workspace, ["count", "--json"], "count_json");
+    let output = run_obr(&workspace, ["count", "--json"], "count_json");
     assert!(
         output.status.success(),
         "count json failed: {}",
@@ -344,14 +345,14 @@ fn snapshot_count_json() {
 fn snapshot_count_grouped_json() {
     let workspace = init_workspace();
     let id = create_issue(&workspace, "Grouped one", "create_grouped_one");
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["update", &id, "--status", "in_progress"],
         "update_grouped_one",
     );
     create_issue(&workspace, "Grouped two", "create_grouped_two");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["count", "--by", "status", "--json"],
         "count_grouped_json",
@@ -374,7 +375,7 @@ fn snapshot_stale_json() {
     let workspace = init_workspace();
     create_issue(&workspace, "Stale issue", "create_stale");
 
-    let output = run_br(&workspace, ["stale", "--days", "0", "--json"], "stale_json");
+    let output = run_obr(&workspace, ["stale", "--days", "0", "--json"], "stale_json");
     assert!(
         output.status.success(),
         "stale json failed: {}",
@@ -390,7 +391,7 @@ fn snapshot_comments_json() {
     let workspace = init_workspace();
     let id = create_issue(&workspace, "Commented issue", "create_commented");
 
-    let add = run_br(
+    let add = run_obr(
         &workspace,
         ["comments", "add", &id, "First comment", "--json"],
         "comments_add_json",
@@ -407,7 +408,7 @@ fn snapshot_comments_json() {
         SnapshotJson(&normalize_json(&add_json))
     );
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["comments", "list", &id, "--json"],
         "comments_list_json",
@@ -430,7 +431,7 @@ fn snapshot_label_json() {
     let workspace = init_workspace();
     let id = create_issue(&workspace, "Labeled issue", "create_labeled");
 
-    let add = run_br(
+    let add = run_obr(
         &workspace,
         ["label", "add", &id, "backend", "--json"],
         "label_add_json",
@@ -447,7 +448,7 @@ fn snapshot_label_json() {
         SnapshotJson(&normalize_json(&add_json))
     );
 
-    let list = run_br(
+    let list = run_obr(
         &workspace,
         ["label", "list", &id, "--json"],
         "label_list_json",
@@ -464,7 +465,7 @@ fn snapshot_label_json() {
         SnapshotJson(&normalize_json(&list_json))
     );
 
-    let list_all = run_br(
+    let list_all = run_obr(
         &workspace,
         ["label", "list-all", "--json"],
         "label_list_all_json",
@@ -486,7 +487,7 @@ fn snapshot_label_json() {
 fn snapshot_orphans_json() {
     let workspace = init_workspace();
 
-    let output = run_br(&workspace, ["orphans", "--json"], "orphans_json");
+    let output = run_obr(&workspace, ["orphans", "--json"], "orphans_json");
     assert!(
         output.status.success(),
         "orphans json failed: {}",
@@ -503,13 +504,13 @@ fn snapshot_graph_json() {
     let root = create_issue(&workspace, "Graph root", "create_graph_root");
     let child = create_issue(&workspace, "Graph child", "create_graph_child");
 
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["dep", "add", &child, &root],
         "graph_dep_add_json",
     );
 
-    let output = run_br(&workspace, ["graph", &root, "--json"], "graph_json");
+    let output = run_obr(&workspace, ["graph", &root, "--json"], "graph_json");
     assert!(
         output.status.success(),
         "graph json failed: {}",
@@ -528,7 +529,7 @@ fn snapshot_graph_json() {
 fn snapshot_list_empty_json() {
     let workspace = init_workspace();
 
-    let output = run_br(&workspace, ["list", "--json"], "list_empty_json");
+    let output = run_obr(&workspace, ["list", "--json"], "list_empty_json");
     assert!(
         output.status.success(),
         "list empty json failed: {}",
@@ -546,7 +547,7 @@ fn snapshot_list_empty_json() {
 fn snapshot_ready_empty_json() {
     let workspace = init_workspace();
 
-    let output = run_br(&workspace, ["ready", "--json"], "ready_empty_json");
+    let output = run_obr(&workspace, ["ready", "--json"], "ready_empty_json");
     assert!(
         output.status.success(),
         "ready empty json failed: {}",
@@ -564,7 +565,7 @@ fn snapshot_ready_empty_json() {
 fn snapshot_blocked_empty_json() {
     let workspace = init_workspace();
 
-    let output = run_br(&workspace, ["blocked", "--json"], "blocked_empty_json");
+    let output = run_obr(&workspace, ["blocked", "--json"], "blocked_empty_json");
     assert!(
         output.status.success(),
         "blocked empty json failed: {}",
@@ -583,7 +584,7 @@ fn snapshot_search_no_match_json() {
     let workspace = init_workspace();
     create_issue(&workspace, "Existing issue", "create_for_search_miss");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["search", "nonexistent_xyz", "--json"],
         "search_no_match_json",
@@ -605,7 +606,7 @@ fn snapshot_search_no_match_json() {
 fn snapshot_stale_empty_json() {
     let workspace = init_workspace();
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["stale", "--days", "0", "--json"],
         "stale_empty_json",
@@ -627,7 +628,7 @@ fn snapshot_stale_empty_json() {
 fn snapshot_count_empty_json() {
     let workspace = init_workspace();
 
-    let output = run_br(&workspace, ["count", "--json"], "count_empty_json");
+    let output = run_obr(&workspace, ["count", "--json"], "count_empty_json");
     assert!(
         output.status.success(),
         "count empty json failed: {}",
@@ -654,23 +655,23 @@ fn snapshot_list_priority_ordering_json() {
     let id_high = create_issue(&workspace, "High priority task", "create_high_prio");
     let id_crit = create_issue(&workspace, "Critical task", "create_crit_prio");
 
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["update", &id_low, "--priority", "3"],
         "set_low_prio",
     );
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["update", &id_high, "--priority", "1"],
         "set_high_prio",
     );
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["update", &id_crit, "--priority", "0"],
         "set_crit_prio",
     );
 
-    let output = run_br(&workspace, ["list", "--json"], "list_priority_order_json");
+    let output = run_obr(&workspace, ["list", "--json"], "list_priority_order_json");
     assert!(
         output.status.success(),
         "list priority ordering json failed: {}",
@@ -710,23 +711,23 @@ fn snapshot_ready_priority_ordering_json() {
     let id_p1 = create_issue(&workspace, "Urgent ready task", "create_ready_p1");
     let id_p2 = create_issue(&workspace, "Normal ready task", "create_ready_p2");
 
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["update", &id_p3, "--priority", "3"],
         "set_ready_p3",
     );
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["update", &id_p1, "--priority", "1"],
         "set_ready_p1",
     );
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["update", &id_p2, "--priority", "2"],
         "set_ready_p2",
     );
 
-    let output = run_br(&workspace, ["ready", "--json"], "ready_priority_order_json");
+    let output = run_obr(&workspace, ["ready", "--json"], "ready_priority_order_json");
     assert!(
         output.status.success(),
         "ready priority ordering json failed: {}",
@@ -770,7 +771,7 @@ fn snapshot_show_multiple_ids_json() {
     let id1 = create_issue(&workspace, "First detailed issue", "create_multi_1");
     let id2 = create_issue(&workspace, "Second detailed issue", "create_multi_2");
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["show", &id1, &id2, "--json"],
         "show_multi_json",
@@ -798,18 +799,18 @@ fn snapshot_count_grouped_by_type_json() {
     let id2 = create_issue(&workspace, "Feature to add", "create_typed_feature");
     create_issue(&workspace, "Plain task", "create_typed_task");
 
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["update", &id1, "--type", "bug"],
         "set_type_bug",
     );
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["update", &id2, "--type", "feature"],
         "set_type_feature",
     );
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["count", "--by", "type", "--json"],
         "count_by_type_json",
@@ -834,18 +835,18 @@ fn snapshot_count_grouped_by_priority_json() {
     let id2 = create_issue(&workspace, "Normal item", "create_prio_p2");
     create_issue(&workspace, "Default item", "create_prio_default");
 
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["update", &id1, "--priority", "0"],
         "set_prio_p0",
     );
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["update", &id2, "--priority", "3"],
         "set_prio_p3",
     );
 
-    let output = run_br(
+    let output = run_obr(
         &workspace,
         ["count", "--by", "priority", "--json"],
         "count_by_priority_json",
@@ -870,14 +871,14 @@ fn snapshot_graph_all_json() {
     let child1 = create_issue(&workspace, "Graph child of A", "create_graph_child_a");
     let root2 = create_issue(&workspace, "Graph root B", "create_graph_root_b");
 
-    let _ = run_br(
+    let _ = run_obr(
         &workspace,
         ["dep", "add", &child1, &root1],
         "graph_all_dep_add",
     );
 
     // graph --all shows all roots
-    let output = run_br(&workspace, ["graph", "--all", "--json"], "graph_all_json");
+    let output = run_obr(&workspace, ["graph", "--all", "--json"], "graph_all_json");
     assert!(
         output.status.success(),
         "graph all json failed: {}",

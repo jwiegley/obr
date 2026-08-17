@@ -23,11 +23,11 @@ cd "$target_dir"
 
 # JSONL byte-checksum before corruption — pruning unreachable
 # dirty_issues rows must NEVER touch JSONL.
-sha256sum .beads/issues.jsonl | awk '{print $1}' > .fixture_jsonl_pre_sha256
+sha256sum .obr/issues.jsonl | awk '{print $1}' > .fixture_jsonl_pre_sha256
 
 python3 <<'PY'
 import sqlite3
-conn = sqlite3.connect(".beads/beads.db")
+conn = sqlite3.connect(".obr/obr.db")
 cur = conn.cursor()
 cur.execute("PRAGMA foreign_keys = OFF")
 cur.execute(
