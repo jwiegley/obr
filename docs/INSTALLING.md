@@ -1,6 +1,6 @@
 # Installation Guide
 
-Complete installation instructions for `br` (beads_rust), including all supported platforms and methods.
+Complete installation instructions for `obr` (obr), including all supported platforms and methods.
 
 ---
 
@@ -18,7 +18,6 @@ Complete installation instructions for `br` (beads_rust), including all supporte
   - [Windows](#windows)
 - [Configuration](#configuration)
 - [Verifying Installation](#verifying-installation)
-- [Self-Update](#self-update)
 - [Proxy Configuration](#proxy-configuration)
 - [Troubleshooting](#troubleshooting)
 
@@ -49,13 +48,13 @@ Complete installation instructions for `br` (beads_rust), including all supporte
 ### One-liner (Cargo)
 
 ```bash
-cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --locked
+cargo install --git https://github.com/jwiegley/obr.git obr --locked
 ```
 
 ### One-liner (Build from Source)
 
 ```bash
-git clone https://github.com/Dicklesworthstone/beads_rust.git && cd beads_rust && cargo build --release && sudo cp target/release/br /usr/local/bin/
+git clone https://github.com/jwiegley/obr.git && cd obr && cargo build --release && sudo cp target/release/obr /usr/local/bin/
 ```
 
 ---
@@ -67,17 +66,13 @@ git clone https://github.com/Dicklesworthstone/beads_rust.git && cd beads_rust &
 The simplest method using Rust's package manager:
 
 ```bash
-# Install with all features (including self-update)
-cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --locked
-
-# Install without self-update feature
-cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --locked --no-default-features
+cargo install --git https://github.com/jwiegley/obr.git obr --locked
 ```
 
-Keep the explicit `beads_rust` package selector and `--locked` on every git
+Keep the explicit `obr` package selector and `--locked` on every git
 source install. The selector avoids ambiguity with the repository's fuzz
 package, while `--locked` uses the dependency versions validated against
-beads_rust's pinned nightly instead of resolving a newer, potentially
+obr's pinned nightly instead of resolving a newer, potentially
 incompatible graph.
 
 **Requirements:**
@@ -94,7 +89,7 @@ rustup install nightly
 rustup default nightly
 
 # Or use nightly for just this install
-rustup run nightly cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --locked
+rustup run nightly cargo install --git https://github.com/jwiegley/obr.git obr --locked
 ```
 
 ### Build from Source
@@ -103,19 +98,19 @@ For development or customization:
 
 ```bash
 # Clone the repository
-git clone https://github.com/Dicklesworthstone/beads_rust.git
-cd beads_rust
+git clone https://github.com/jwiegley/obr.git
+cd obr
 
 # Build release binary (optimized for size)
 cargo build --release
 
-# The binary is at ./target/release/br
-./target/release/br --version
+# The binary is at ./target/release/obr
+./target/release/obr --version
 
 # Optional: Install system-wide
-sudo cp target/release/br /usr/local/bin/
+sudo cp target/release/obr /usr/local/bin/
 # Or for user-local install
-cp target/release/br ~/.local/bin/
+cp target/release/obr ~/.local/bin/
 ```
 
 **Build Options:**
@@ -123,9 +118,6 @@ cp target/release/br ~/.local/bin/
 ```bash
 # Build with all features
 cargo build --release --all-features
-
-# Build without self-update
-cargo build --release --no-default-features
 
 # Build with debug symbols (for development)
 cargo build
@@ -138,27 +130,35 @@ cargo test && cargo build --release
 
 Pre-built binaries are available from GitHub Releases:
 
+A release URL has two version-shaped parts and they are not the same string:
+
+- the **tag** (`v0.5.7+1`) — the true version, `+` and all;
+- the **asset name** (`obr-0.5.7.1-…`) — the same version with the `+`
+  flattened to `.`, because GitHub rewrites a `+` in an uploaded asset name.
+
 ```bash
+TAG=v0.5.7+1     # the release tag: the version verbatim
+ASSET=0.5.7.1    # the same version with '+' flattened to '.'
+
 # Example for Linux x86_64
-TAG=v0.5.1
-VERSION="${TAG#v}"
-curl -L "https://github.com/Dicklesworthstone/beads_rust/releases/download/${TAG}/br-${VERSION}-linux_amd64.tar.gz" -o br.tar.gz
-tar -xzf br.tar.gz br
-sudo install -m 0755 br /usr/local/bin/br
+curl -L "https://github.com/jwiegley/obr/releases/download/${TAG}/obr-${ASSET}-linux_amd64.tar.gz" -o obr.tar.gz
+tar -xzf obr.tar.gz obr
+sudo install -m 0755 obr /usr/local/bin/obr
 
 # Example for macOS ARM64
-TAG=v0.5.1
-VERSION="${TAG#v}"
-curl -L "https://github.com/Dicklesworthstone/beads_rust/releases/download/${TAG}/br-${VERSION}-darwin_arm64.tar.gz" -o br.tar.gz
-tar -xzf br.tar.gz br
-sudo install -m 0755 br /usr/local/bin/br
+curl -L "https://github.com/jwiegley/obr/releases/download/${TAG}/obr-${ASSET}-darwin_arm64.tar.gz" -o obr.tar.gz
+tar -xzf obr.tar.gz obr
+sudo install -m 0755 obr /usr/local/bin/obr
 ```
+
+`install.sh` derives both from one `--version` argument, so
+`./install.sh --version v0.5.7+1` needs neither spelling.
 
 **Verify Checksum:**
 
 ```bash
 # Download checksum file
-curl -L https://github.com/Dicklesworthstone/beads_rust/releases/latest/download/checksums.sha256 -o checksums.sha256
+curl -L https://github.com/jwiegley/obr/releases/latest/download/checksums.sha256 -o checksums.sha256
 
 # Verify (Linux)
 sha256sum -c checksums.sha256 --ignore-missing
@@ -186,8 +186,8 @@ source ~/.cargo/env
 rustup install nightly
 rustup default nightly
 
-# Install br
-cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --locked
+# Install obr
+cargo install --git https://github.com/jwiegley/obr.git obr --locked
 ```
 
 **Fedora/RHEL:**
@@ -196,12 +196,12 @@ cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_ru
 # Install build dependencies
 sudo dnf install -y gcc pkg-config openssl-devel
 
-# Install Rust and br
+# Install Rust and obr
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source ~/.cargo/env
 rustup install nightly
 rustup default nightly
-cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --locked
+cargo install --git https://github.com/jwiegley/obr.git obr --locked
 ```
 
 **Arch Linux:**
@@ -210,10 +210,10 @@ cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_ru
 # Install dependencies
 sudo pacman -S rust
 
-# Install br
+# Install obr
 rustup install nightly
 rustup default nightly
-cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --locked
+cargo install --git https://github.com/jwiegley/obr.git obr --locked
 ```
 
 ### macOS
@@ -229,8 +229,8 @@ source ~/.cargo/env
 rustup install nightly
 rustup default nightly
 
-# Install br
-cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --locked
+# Install obr
+cargo install --git https://github.com/jwiegley/obr.git obr --locked
 ```
 
 **Apple Silicon (M1/M2/M3):**
@@ -255,8 +255,8 @@ Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
 rustup install nightly
 rustup default nightly
 
-# Install br
-cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --locked
+# Install obr
+cargo install --git https://github.com/jwiegley/obr.git obr --locked
 ```
 
 **With WSL2 (Recommended for Windows):**
@@ -268,29 +268,29 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source ~/.cargo/env
 rustup install nightly
 rustup default nightly
-cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --locked
+cargo install --git https://github.com/jwiegley/obr.git obr --locked
 ```
 
 ---
 
 ## Configuration
 
-After installation, br works out of the box. Optional configuration:
+After installation, obr works out of the box. Optional configuration:
 
 ### Initialize in a Project
 
 ```bash
 cd your-project
-br init
+obr init
 ```
 
 This creates:
-- `.beads/beads.db` - SQLite database
-- `.beads/metadata.json` - Configuration metadata
+- `.obr/obr.db` - SQLite database
+- `.obr/metadata.json` - Configuration metadata
 
 ### User Configuration
 
-Create `~/.config/beads/config.yaml` for global defaults:
+Create `~/.config/obr/config.yaml` for global defaults:
 
 ```yaml
 # Default issue prefix
@@ -308,7 +308,7 @@ auto_flush: true
 
 ### Project Configuration
 
-Create `.beads/config.yaml` for project-specific settings:
+Create `.obr/config.yaml` for project-specific settings:
 
 ```yaml
 # Project-specific prefix
@@ -324,45 +324,32 @@ default_priority: 1
 
 ```bash
 # Check version
-br version
+obr version
 
 # Expected output:
-# br 0.1.0 (abc1234)
+# obr 0.1.0 (abc1234)
 # Built: 2026-01-17
 
 # Check help
-br --help
+obr --help
 
 # Run a simple command
-br init
-br create "Test issue" --type task
-br list
-br delete bd-xxx  # Clean up test issue
+obr init
+obr create "Test issue" --type task
+obr list
+obr delete bd-xxx  # Clean up test issue
 ```
 
 ---
 
-## Self-Update
+## Updating
 
-br includes a built-in update mechanism:
-
-```bash
-# Check for updates
-br upgrade --check
-
-# Install updates
-br upgrade
-
-# Force reinstall current version
-br upgrade --force
-```
-
-**Disable self-update:**
-
-If you prefer to manage updates manually, build without the self_update feature:
+`obr` has no self-updater and no `upgrade` subcommand — it is an unpublished
+fork with no release feed to check against. Re-run the install command to pick
+up a newer commit:
 
 ```bash
-cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --locked --no-default-features
+cargo install --git https://github.com/jwiegley/obr.git obr --locked --force
 ```
 
 ---
@@ -409,7 +396,7 @@ Make sure you're running the cargo install command, not trying to build from a n
 
 ```bash
 # Correct: install from git
-cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --locked
+cargo install --git https://github.com/jwiegley/obr.git obr --locked
 
 # Wrong: trying to build without cloning first
 cargo build  # This requires Cargo.toml in current directory
@@ -423,7 +410,7 @@ You need the Rust nightly toolchain:
 rustup install nightly
 rustup default nightly
 # Or use: rustup run nightly cargo install --git \
-#   https://github.com/Dicklesworthstone/beads_rust.git --locked
+#   https://github.com/jwiegley/obr.git --locked
 ```
 
 #### "error: linker `cc` not found"
@@ -447,11 +434,11 @@ Either use sudo or install to a user directory:
 
 ```bash
 # Option 1: Use sudo
-sudo cp target/release/br /usr/local/bin/
+sudo cp target/release/obr /usr/local/bin/
 
 # Option 2: Install to user directory
 mkdir -p ~/.local/bin
-cp target/release/br ~/.local/bin/
+cp target/release/obr ~/.local/bin/
 # Add to PATH if needed:
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 ```
@@ -462,26 +449,17 @@ If you see "database is locked" errors:
 
 ```bash
 # Check for stale locks
-ls -la .beads/*.db-*
+ls -la .obr/*.db-*
 
-# Remove stale lock files (only if br is not running)
-rm .beads/*.db-shm .beads/*.db-wal .beads/*.db-journal
-```
-
-#### Self-Update Fails
-
-If `br upgrade` fails:
-
-```bash
-# Manual update
-cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --locked --force
+# Remove stale lock files (only if obr is not running)
+rm .obr/*.db-shm .obr/*.db-wal .obr/*.db-journal
 ```
 
 ### Getting Help
 
-- **Documentation**: [docs/](./README.md)
+- **Documentation**: [README.md](../README.md)
 - **Troubleshooting**: [docs/TROUBLESHOOTING.md](./TROUBLESHOOTING.md)
-- **Issues**: [GitHub Issues](https://github.com/Dicklesworthstone/beads_rust/issues)
+- **Issues**: [GitHub Issues](https://github.com/jwiegley/obr/issues)
 
 ---
 

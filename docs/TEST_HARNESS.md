@@ -1,13 +1,13 @@
 # Test Harness Documentation
 
-This document explains how to run the comprehensive E2E, conformance, and benchmark test suites for `br` (beads Rust).
+This document explains how to run the comprehensive E2E, conformance, and benchmark test suites for `obr` (beads Rust).
 
 ## Overview
 
 The test harness provides:
 
 1. **E2E Tests** - End-to-end tests verifying CLI behavior and output parity
-2. **Conformance Tests** - Cross-implementation parity tests (br vs bd)
+2. **Conformance Tests** - Cross-implementation parity tests (obr vs bd)
 3. **Benchmarks** - Performance measurements and regression detection
 4. **Artifact Logging** - Detailed logs and snapshots for debugging
 
@@ -21,7 +21,7 @@ scripts/e2e.sh                    # Quick E2E subset (~6 tests)
 E2E_FULL_CONFIRM=1 scripts/e2e_full.sh   # All E2E tests
 
 # Conformance (requires bd binary)
-scripts/conformance.sh            # br vs bd parity checks
+scripts/conformance.sh            # obr vs bd parity checks
 
 # Benchmarks
 scripts/bench.sh --quick          # Quick performance comparison
@@ -33,7 +33,7 @@ scripts/bench.sh --quick          # Quick performance comparison
 |--------|---------|----------|-------------|
 | `scripts/e2e.sh` | Quick E2E subset | ~30s | PR feedback, local iteration |
 | `scripts/e2e_full.sh` | All E2E tests | 2-5min | Pre-merge validation |
-| `scripts/conformance.sh` | br↔bd parity | 1-3min | Implementation changes |
+| `scripts/conformance.sh` | obr↔bd parity | 1-3min | Implementation changes |
 | `scripts/bench.sh` | Benchmarks | 3-10min | Performance work |
 | `scripts/ci-local.sh` | Full CI simulation | 2-5min | Before pushing |
 
@@ -66,14 +66,14 @@ Runs all `tests/e2e_*.rs` files:
 E2E_FULL_CONFIRM=1 scripts/e2e_full.sh     # All tests
 scripts/e2e_full.sh --parallel             # Parallel execution
 scripts/e2e_full.sh --filter sync          # Only sync-related
-scripts/e2e_full.sh --dataset beads_rust   # Specific dataset
+scripts/e2e_full.sh --dataset obr   # Specific dataset
 ```
 
 **Environment variables:**
 - `E2E_FULL_CONFIRM=1` - Skip confirmation prompt
 - `E2E_TIMEOUT=300` - Per-test timeout (default: 120s)
 - `E2E_PARALLEL=1` - Enable parallel execution
-- `E2E_DATASET=beads_rust` - Dataset to use
+- `E2E_DATASET=obr` - Dataset to use
 
 ### Individual E2E Test Files
 
@@ -87,11 +87,11 @@ cargo test regression_sync_export_does_not_create_commits --release -- --nocaptu
 
 ## Conformance Tests
 
-Conformance tests verify br produces identical outputs to bd (Go implementation).
+Conformance tests verify obr produces identical outputs to bd (Go implementation).
 
 ### Requirements
 
-- Both `br` (Rust) and `bd` (Go) binaries must be available
+- Both `obr` (Rust) and `bd` (Go) binaries must be available
 - bd is typically at `/data/projects/beads/.bin/beads`
 
 ### Running Conformance
@@ -106,7 +106,7 @@ scripts/conformance.sh --filter schema    # Only schema tests
 
 **Environment variables:**
 - `BD_BINARY=/path/to/bd` - Override bd location
-- `BR_BINARY=/path/to/br` - Override br location
+- `OBR_BINARY=/path/to/obr` - Override obr location
 - `CONFORMANCE_TIMEOUT=180` - Per-test timeout
 - `CONFORMANCE_STRICT=1` - Fail on any differences
 
@@ -142,16 +142,16 @@ scripts/bench.sh --save baseline-v1              # Save baseline
 scripts/bench.sh --baseline baseline-v1          # Compare to baseline
 ```
 
-### br vs bd Comparison
+### obr vs bd Comparison
 
 ```bash
-scripts/bench.sh --compare          # Compare br and bd
+scripts/bench.sh --compare          # Compare obr and bd
 ```
 
 **Environment variables:**
 - `BENCH_CONFIRM=1` - Skip confirmation
 - `BENCH_TIMEOUT=600` - Per-benchmark timeout
-- `BENCH_DATASET=beads_rust` - Dataset to benchmark
+- `BENCH_DATASET=obr` - Dataset to benchmark
 
 ### Benchmark Suites (Cold/Warm, Synthetic Scale, Real Datasets)
 
@@ -180,14 +180,14 @@ self-baseline comparison.
 **Synthetic scale (CI profile, 10k–250k issues, and manual million-agent profile)**
 ```bash
  cargo test --test bench_synthetic_scale synthetic_ci_profile -- --nocapture
-BR_E2E_STRESS=1 cargo test --test bench_synthetic_scale -- --nocapture --ignored
-BR_E2E_STRESS=1 BR_SYNTHETIC_MILLION=1 BR_SYNTHETIC_SEED=42 \
+OBR_E2E_STRESS=1 cargo test --test bench_synthetic_scale -- --nocapture --ignored
+OBR_E2E_STRESS=1 OBR_SYNTHETIC_MILLION=1 OBR_SYNTHETIC_SEED=42 \
   cargo test --test bench_synthetic_scale stress_synthetic_million -- --nocapture --ignored
 ```
 Outputs: `target/benchmark-results/synthetic_*_latest.json`,
 `target/benchmark-results/synthetic_all_<timestamp>.json`. The generator streams
 deterministic JSONL directly, then validates the corpus through real
-`br sync --import-only`, `br doctor --json`, and `br sync --status --json`
+`obr sync --import-only`, `obr doctor --json`, and `obr sync --status --json`
 surfaces. Each generated workspace writes `synthetic-corpus-manifest.json` with
 the seed, issue count, dependency density, label/comment distributions, simulated
 agent count, claim density, skewed-DAG factor, JSONL hash, file-size report, and
@@ -202,7 +202,7 @@ million-issue profiles to materialize a full graph JSON document.
 **Contention replay lab (CI smoke and manual 64-worker profile)**
 ```bash
 cargo test --test bench_contention_replay -- --nocapture
-BR_CONTENTION_64=1 cargo test --test bench_contention_replay \
+OBR_CONTENTION_64=1 cargo test --test bench_contention_replay \
   manual_64_worker_contention_profile_records_replayable_trace -- --ignored --nocapture
 ```
 Outputs: `target/test-artifacts/contention-replay/<profile>-seed-*/`.
@@ -214,48 +214,48 @@ issue effects differ.
 
 **NUMA/high-core read-command profile (manual 64+ core evidence)**
 ```bash
-export BR_NUMA_PROFILE_DIR=tests/artifacts/perf/beads-perf-<timestamp>-numa-read-command-profile
-export BR_NUMA_PROFILE_WORKSPACE=/data/tmp/br-large-read-profile
-export BR_NUMA_PROFILE_BINARY=/data/tmp/br-release/release/br
+export OBR_NUMA_PROFILE_DIR=tests/artifacts/perf/beads-perf-<timestamp>-numa-read-command-profile
+export OBR_NUMA_PROFILE_WORKSPACE=/data/tmp/obr-large-read-profile
+export OBR_NUMA_PROFILE_BINARY=/data/tmp/obr-release/release/obr
 
-mkdir -p "$BR_NUMA_PROFILE_DIR"/{env,commands,golden,timing,syscalls,raw}
-lscpu > "$BR_NUMA_PROFILE_DIR/env/lscpu.txt"
-lscpu --json > "$BR_NUMA_PROFILE_DIR/env/lscpu.json"
-numactl --hardware > "$BR_NUMA_PROFILE_DIR/env/numactl-hardware.txt"
-free -b > "$BR_NUMA_PROFILE_DIR/env/free-bytes.txt"
+mkdir -p "$OBR_NUMA_PROFILE_DIR"/{env,commands,golden,timing,syscalls,raw}
+lscpu > "$OBR_NUMA_PROFILE_DIR/env/lscpu.txt"
+lscpu --json > "$OBR_NUMA_PROFILE_DIR/env/lscpu.json"
+numactl --hardware > "$OBR_NUMA_PROFILE_DIR/env/numactl-hardware.txt"
+free -b > "$OBR_NUMA_PROFILE_DIR/env/free-bytes.txt"
 
 hyperfine --warmup 2 --runs 10 \
-  --export-json "$BR_NUMA_PROFILE_DIR/timing/hyperfine-default.json" \
+  --export-json "$OBR_NUMA_PROFILE_DIR/timing/hyperfine-default.json" \
   --command-name list_json_limit100 \
-    "NO_COLOR=1 $BR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush list --json --limit 100" \
+    "NO_COLOR=1 $OBR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush list --json --limit 100" \
   --command-name ready_json_limit100 \
-    "NO_COLOR=1 $BR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush ready --json --limit 100" \
+    "NO_COLOR=1 $OBR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush ready --json --limit 100" \
   --command-name scheduler_json_candidate100 \
-    "NO_COLOR=1 $BR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush scheduler --json --candidate-limit 100" \
+    "NO_COLOR=1 $OBR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush scheduler --json --candidate-limit 100" \
   --command-name search_agent_json_limit100 \
-    "NO_COLOR=1 $BR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush search agent --json --limit 100" \
+    "NO_COLOR=1 $OBR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush search agent --json --limit 100" \
   --command-name stats_no_activity_json \
-    "NO_COLOR=1 $BR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush stats --no-activity --json" \
+    "NO_COLOR=1 $OBR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush stats --no-activity --json" \
   --command-name label_list_all_json \
-    "NO_COLOR=1 $BR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush label list-all --json"
+    "NO_COLOR=1 $OBR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush label list-all --json"
 ```
 Run the same matrix pinned to one logical CPU:
 
 ```bash
 hyperfine --warmup 2 --runs 10 \
-  --export-json "$BR_NUMA_PROFILE_DIR/timing/hyperfine-pinned-cpu0.json" \
+  --export-json "$OBR_NUMA_PROFILE_DIR/timing/hyperfine-pinned-cpu0.json" \
   --command-name list_json_limit100_cpu0 \
-    "taskset -c 0 env NO_COLOR=1 $BR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush list --json --limit 100" \
+    "taskset -c 0 env NO_COLOR=1 $OBR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush list --json --limit 100" \
   --command-name ready_json_limit100_cpu0 \
-    "taskset -c 0 env NO_COLOR=1 $BR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush ready --json --limit 100" \
+    "taskset -c 0 env NO_COLOR=1 $OBR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush ready --json --limit 100" \
   --command-name scheduler_json_candidate100_cpu0 \
-    "taskset -c 0 env NO_COLOR=1 $BR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush scheduler --json --candidate-limit 100" \
+    "taskset -c 0 env NO_COLOR=1 $OBR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush scheduler --json --candidate-limit 100" \
   --command-name search_agent_json_limit100_cpu0 \
-    "taskset -c 0 env NO_COLOR=1 $BR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush search agent --json --limit 100" \
+    "taskset -c 0 env NO_COLOR=1 $OBR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush search agent --json --limit 100" \
   --command-name stats_no_activity_json_cpu0 \
-    "taskset -c 0 env NO_COLOR=1 $BR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush stats --no-activity --json" \
+    "taskset -c 0 env NO_COLOR=1 $OBR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush stats --no-activity --json" \
   --command-name label_list_all_json_cpu0 \
-    "taskset -c 0 env NO_COLOR=1 $BR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush label list-all --json"
+    "taskset -c 0 env NO_COLOR=1 $OBR_NUMA_PROFILE_BINARY --no-auto-import --no-auto-flush label list-all --json"
 ```
 On hosts where `numactl --hardware` reports at least two nodes, also run a
 cross-node matrix such as `numactl --cpunodebind=0 --membind=1 ...` and the
@@ -268,32 +268,31 @@ stdout/stderr pair. The profile bundle must include `env.json`, `manifest.json`,
 command stdout/stderr files, `golden/command-output-sha256.txt`, raw hyperfine
 samples, p50/p95/p99 summaries, syscall summaries, and `notes.md` with the tail
 decomposition across queueing/lock, service CPU, IO/page reads, and
-serialization/output. See `docs/ARTIFACT_LOG_SCHEMA.md` for
-`br.numa-read-command-profile.v1`.
+serialization/output.
 
 **Swarm capacity-planning report (manual operator artifact)**
 ```bash
-export BR_CAPACITY_REPORT_DIR=tests/artifacts/perf/beads-perf-<timestamp>-swarm-capacity-planning
-export BR_CAPACITY_WORKSPACE=/data/tmp/br-large-read-profile
-export BR_CAPACITY_BINARY=/data/tmp/br-release/release/br
-export BR_NUMA_PROFILE_DIR=tests/artifacts/perf/beads-perf-<timestamp>-numa-read-command-profile
+export OBR_CAPACITY_REPORT_DIR=tests/artifacts/perf/beads-perf-<timestamp>-swarm-capacity-planning
+export OBR_CAPACITY_WORKSPACE=/data/tmp/obr-large-read-profile
+export OBR_CAPACITY_BINARY=/data/tmp/obr-release/release/obr
+export OBR_NUMA_PROFILE_DIR=tests/artifacts/perf/beads-perf-<timestamp>-numa-read-command-profile
 
-mkdir -p "$BR_CAPACITY_REPORT_DIR"/{inputs,golden}
-cp "$BR_NUMA_PROFILE_DIR/env.json" "$BR_CAPACITY_REPORT_DIR/inputs/numa-env.json"
-cp "$BR_NUMA_PROFILE_DIR/timing/default-summary.json" \
-  "$BR_CAPACITY_REPORT_DIR/inputs/read-default-summary.json"
-cp "$BR_NUMA_PROFILE_DIR/timing/pinned-cpu0-summary.json" \
-  "$BR_CAPACITY_REPORT_DIR/inputs/read-pinned-cpu0-summary.json"
+mkdir -p "$OBR_CAPACITY_REPORT_DIR"/{inputs,golden}
+cp "$OBR_NUMA_PROFILE_DIR/env.json" "$OBR_CAPACITY_REPORT_DIR/inputs/numa-env.json"
+cp "$OBR_NUMA_PROFILE_DIR/timing/default-summary.json" \
+  "$OBR_CAPACITY_REPORT_DIR/inputs/read-default-summary.json"
+cp "$OBR_NUMA_PROFILE_DIR/timing/pinned-cpu0-summary.json" \
+  "$OBR_CAPACITY_REPORT_DIR/inputs/read-pinned-cpu0-summary.json"
 
-"$BR_CAPACITY_BINARY" --no-auto-import --no-auto-flush count --json \
-  > "$BR_CAPACITY_REPORT_DIR/inputs/count.json"
-"$BR_CAPACITY_BINARY" --no-auto-import --no-auto-flush sync --status --json \
-  > "$BR_CAPACITY_REPORT_DIR/inputs/sync-status.json"
-"$BR_CAPACITY_BINARY" --no-auto-import --no-auto-flush doctor --json \
-  > "$BR_CAPACITY_REPORT_DIR/inputs/doctor.json"
+"$OBR_CAPACITY_BINARY" --no-auto-import --no-auto-flush count --json \
+  > "$OBR_CAPACITY_REPORT_DIR/inputs/count.json"
+"$OBR_CAPACITY_BINARY" --no-auto-import --no-auto-flush sync --status --json \
+  > "$OBR_CAPACITY_REPORT_DIR/inputs/sync-status.json"
+"$OBR_CAPACITY_BINARY" --no-auto-import --no-auto-flush doctor --json \
+  > "$OBR_CAPACITY_REPORT_DIR/inputs/doctor.json"
 ```
 The report should emit both `report.json` and `report.md`. The JSON report uses
-`br.swarm-capacity-report.v1` and must include source evidence paths, issue
+`obr.swarm-capacity-report.v1` and must include source evidence paths, issue
 count, dirty/export state, doctor status, host profile, weighted read p95,
 assumed command cadence, green/yellow/red agent bands, laptop/small-VM fallback
 guidance, and invalidation rules. The Markdown report is the operator-facing
@@ -372,15 +371,29 @@ All summary files follow this structure:
 The existing `.github/workflows/ci.yml` runs:
 
 1. **check** - Formatting, clippy, cargo check
-2. **security** - cargo-audit
-3. **test** - Full test suite (`cargo test`)
-4. **coverage** - llvm-cov with Codecov upload
-5. **build** - Multi-platform binaries
-6. **bench** - Criterion benchmarks with regression detection
+2. **security** - `cargo audit --deny yanked` (the advisory scan lives in
+   `audit.yml`, where it blocks)
+3. **test** - Unit tier (`--lib --bins`) plus doctests; both unit steps are
+   informational, and the full `--all-features` run lives in
+   `.github/workflows/nightly.yml`
+4. **reliability-gates** - Failure-corpus replay, crash-injection, stress and
+   concurrency witnesses
+5. **audit-gates** - Snapshot freshness plus the forced-cycle-close, sync-safety
+   and concurrency witnesses
+6. **build** - Multi-platform binaries
+7. **bench** - Criterion benchmarks with regression detection
+8. **e2e-quick** - `scripts/e2e.sh` with `HARNESS_ARTIFACTS=1`, uploading
+   `e2e_quick_summary.json`
+
+`coverage` and `version-audit` were deleted on 2026-08-12 because neither could
+fail; see the CI section of [`RESIDUALS.md`](RESIDUALS.md) for what each job is
+still expected to report.
 
 ### Adding E2E to PR Checks
 
-Add to `.github/workflows/ci.yml`:
+The `e2e-quick` job below is **already present** in `.github/workflows/ci.yml`;
+the live definition there is authoritative, and this block records only the
+shape it was added in:
 
 ```yaml
   e2e-quick:
@@ -534,7 +547,7 @@ HARNESS_ARTIFACTS=1 cargo test --test e2e_sync_git_safety -- --nocapture
 |----------|---------|-------------|
 | `HARNESS_ARTIFACTS` | 0 | Enable artifact logging |
 | `HARNESS_PRESERVE_SUCCESS` | 0 | Keep artifacts on success |
-| `BR_BINARY` | auto | Path to br binary |
+| `OBR_BINARY` | auto | Path to obr binary |
 | `BD_BINARY` | auto | Path to bd binary |
 | `E2E_TIMEOUT` | 120 | E2E per-test timeout (seconds) |
 | `E2E_FULL_CONFIRM` | 0 | Skip full E2E confirmation |
@@ -543,7 +556,7 @@ HARNESS_ARTIFACTS=1 cargo test --test e2e_sync_git_safety -- --nocapture
 | `CONFORMANCE_STRICT` | 0 | Fail on any differences |
 | `BENCH_TIMEOUT` | 300 | Benchmark timeout |
 | `BENCH_CONFIRM` | 0 | Skip benchmark confirmation |
-| `BENCH_DATASET` | beads_rust | Benchmark dataset |
+| `BENCH_DATASET` | obr | Benchmark dataset |
 | `NO_COLOR` | 0 | Disable colored output |
 | `RUST_LOG` | - | Enable debug logging |
 
@@ -559,14 +572,14 @@ timeout 120 cargo test --release --test e2e_sync_git_safety --test e2e_sync_stat
 lsof +D /tmp/tmp.* 2>/dev/null | grep -E '\.db'
 ```
 
-### "Command not found: br"
+### "Command not found: obr"
 
 ```bash
 # Ensure binary is built
 cargo build --release
 
 # Verify binary exists
-ls -la target/release/br
+ls -la target/release/obr
 ```
 
 ### Conformance "bd not found"
@@ -600,4 +613,3 @@ rm -rf target/test-artifacts/
 
 - [SYNC_SAFETY.md](SYNC_SAFETY.md) - Sync safety model
 - [E2E_SYNC_TESTS.md](E2E_SYNC_TESTS.md) - Sync-specific test details
-- [ARTIFACT_LOG_SCHEMA.md](ARTIFACT_LOG_SCHEMA.md) - Artifact format specification

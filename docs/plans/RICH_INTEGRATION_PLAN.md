@@ -1,12 +1,12 @@
-# Rich Rust Integration Plan for beads_rust
+# Rich Rust Integration Plan for obr
 
-> A comprehensive, granular plan to integrate rich_rust throughout beads_rust for premium, stylish console output that delights humans without interfering with AI agent workflows.
+> A comprehensive, granular plan to integrate rich_rust throughout obr for premium, stylish console output that delights humans without interfering with AI agent workflows.
 
 ---
 
 ## Executive Summary
 
-**Goal:** Transform `br` from basic colored output to a premium, visually stunning CLI experience using `rich_rust`, while maintaining 100% compatibility with agent/robot modes.
+**Goal:** Transform `obr` from basic colored output to a premium, visually stunning CLI experience using `rich_rust`, while maintaining 100% compatibility with agent/robot modes.
 
 **Key Principle:** Agents using `--json` or `--robot` flags must see zero change. Rich formatting is purely for human observers watching the process.
 
@@ -30,7 +30,7 @@
 
 ## 1. Architecture Overview
 
-### Current State (beads_rust)
+### Current State (obr)
 
 ```
 User Command → CLI Parser → Command Handler → println!/colored output → stdout
@@ -333,7 +333,7 @@ impl OutputContext {
 ```rust
 use rich_rust::prelude::*;
 
-/// Consistent color theme for beads_rust CLI.
+/// Consistent color theme for obr CLI.
 ///
 /// Design inspired by premium CLI tools (gh, cargo, rustc).
 #[derive(Debug, Clone)]
@@ -1160,23 +1160,23 @@ pub fn run_list(args: ListArgs, storage: &SqliteStorage, ctx: &OutputContext) ->
 
 ### 4.3 Command-Specific Rich Output Designs
 
-#### `br init`
+#### `obr init`
 
 ```
 ╭────────────────────────────────────────────────────╮
 │  ✓ Initialized beads workspace                     │
 │                                                    │
-│  Location: /path/to/project/.beads                 │
-│  Database: beads.db                                │
-│  Export:   issues.jsonl                            │
+│  Location: /path/to/project/.obr                   │
+│  Database: obr.db                                │
+│  Export:   PLAN.org                                │
 │                                                    │
 │  Next steps:                                       │
-│    br create "Your first issue" --type task        │
-│    br list                                         │
+│    obr create "Your first issue" --type task        │
+│    obr list                                         │
 ╰────────────────────────────────────────────────────╯
 ```
 
-#### `br list`
+#### `obr list`
 
 ```
 ────────────────────── 12 issues ──────────────────────
@@ -1192,7 +1192,7 @@ pub fn run_list(args: ListArgs, storage: &SqliteStorage, ctx: &OutputContext) ->
 ℹ Showing 12 of 47 total issues
 ```
 
-#### `br show bd-abc123`
+#### `obr show bd-abc123`
 
 ```
 ╭─────────────────────────── bd-a1b2c3 ────────────────────────────╮
@@ -1217,7 +1217,7 @@ pub fn run_list(args: ListArgs, storage: &SqliteStorage, ctx: &OutputContext) ->
 ╰───────────────────────────────────────────────────────────────────╯
 ```
 
-#### `br ready`
+#### `obr ready`
 
 ```
 ────────────────────── Ready to Work ──────────────────────
@@ -1232,10 +1232,10 @@ pub fn run_list(args: ListArgs, storage: &SqliteStorage, ctx: &OutputContext) ->
 │ bd-m4n5o6│ 3 │ Docs    │ Update API documentation               │
 ╰──────────┴───┴─────────┴────────────────────────────────────────╯
 
-💡 Tip: Claim work with: br update bd-d4e5f6 --status in_progress
+💡 Tip: Claim work with: obr update bd-d4e5f6 --status in_progress
 ```
 
-#### `br sync --flush-only`
+#### `obr sync --flush-only`
 
 ```
 ────────────────────── Syncing ──────────────────────
@@ -1251,12 +1251,12 @@ Exporting issues to JSONL...
   Dependencies:    15
   Comments:        89
 
-  Output: .beads/issues.jsonl (24.5 KB)
+  Output: PLAN.org (24.5 KB)
 
-💡 Next: git add .beads/ && git commit -m "Sync issues"
+💡 Next: git add .obr/ && git commit -m "Sync issues"
 ```
 
-#### `br dep tree bd-abc123`
+#### `obr dep tree bd-abc123`
 
 ```
 ────────────────────── Dependency Tree ──────────────────────
@@ -1269,7 +1269,7 @@ bd-a1b2c3 [I] Fix critical login timeout
 Legend: [O]=Open [I]=InProgress [B]=Blocked [C]=Closed
 ```
 
-#### `br stats`
+#### `obr stats`
 
 ```
 ╭───────────────────── Project Statistics ─────────────────────╮
@@ -1358,7 +1358,7 @@ ctx.error_panel(
     &format!("Could not find issue with ID: {}", id),
     &[
         "Check the ID is correct",
-        "Run `br list` to see available issues",
+        "Run `obr list` to see available issues",
         "The issue may have been deleted",
     ]
 );
@@ -1473,14 +1473,14 @@ fn test_theme_priority_colors() {
 ```rust
 #[test]
 fn test_list_json_unchanged() {
-    let output = run_command(&["br", "list", "--json"]);
+    let output = run_command(&["obr", "list", "--json"]);
     let parsed: Vec<Issue> = serde_json::from_str(&output).unwrap();
     // Verify structure
 }
 
 #[test]
 fn test_list_rich_has_table() {
-    let output = run_command(&["br", "list"]);
+    let output = run_command(&["obr", "list"]);
     assert!(output.contains("╭")); // Table border
 }
 ```
@@ -1490,7 +1490,7 @@ fn test_list_rich_has_table() {
 ```rust
 #[test]
 fn test_show_output_snapshot() {
-    let output = run_command(&["br", "show", "bd-test123"]);
+    let output = run_command(&["obr", "show", "bd-test123"]);
     insta::assert_snapshot!(output);
 }
 ```
@@ -1607,11 +1607,11 @@ Status Closed:      #6272a4
 ### Before (current output)
 
 ```
-$ br ready
+$ obr ready
 bd-d4e5f6  1  Feature  Add OAuth2 support
 bd-j1k2l3  2  Task     Refactor storage layer
 
-$ br show bd-d4e5f6
+$ obr show bd-d4e5f6
 ID: bd-d4e5f6
 Title: Add OAuth2 support
 Status: Open
@@ -1624,7 +1624,7 @@ Created: 2024-01-15T14:30:00Z
 ### After (with rich_rust)
 
 ```
-$ br ready
+$ obr ready
 ────────────────────── Ready to Work ──────────────────────
 
 ╭──────────┬───┬─────────┬────────────────────────────────────────╮
@@ -1634,9 +1634,9 @@ $ br ready
 │ bd-j1k2l3│ 2 │ Task    │ Refactor storage layer                 │
 ╰──────────┴───┴─────────┴────────────────────────────────────────╯
 
-💡 Claim with: br update <id> --status in_progress
+💡 Claim with: obr update <id> --status in_progress
 
-$ br show bd-d4e5f6
+$ obr show bd-d4e5f6
 ╭─────────────────────────── bd-d4e5f6 ────────────────────────────╮
 │                                                                   │
 │  bd-d4e5f6  [P1]  Open  Feature                                   │

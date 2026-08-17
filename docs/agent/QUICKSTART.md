@@ -5,7 +5,7 @@ Goal: in under 30 seconds, list actionable work, claim it, complete it, and sync
 ## 1) Initialize (once per repo)
 
 ```bash
-br init
+obr init
 ```
 
 ## 2) Find work
@@ -13,19 +13,19 @@ br init
 Machine-readable:
 
 ```bash
-br ready --format json --limit 10
+obr ready --format json --limit 10
 ```
 
 Token-efficient:
 
 ```bash
-br ready --format toon --limit 10
+obr ready --format toon --limit 10
 ```
 
 ## 3) Claim + work
 
 ```bash
-br --json update br-abc123 --status in_progress --claim
+obr --json update obr-abc123 --status in_progress --claim
 ```
 
 If Agent Mail file reservations are unavailable, make the degraded claim visible
@@ -33,11 +33,11 @@ before editing:
 
 ```bash
 export AGENT_NAME="${AGENT_NAME:-codex-agent}"
-br --json update br-abc123 --status in_progress --assignee "$AGENT_NAME"
-br --json comments add br-abc123 --author "$AGENT_NAME" \
+obr --json update obr-abc123 --status in_progress --assignee "$AGENT_NAME"
+obr --json comments add obr-abc123 --author "$AGENT_NAME" \
   --message "degraded-coordination: Agent Mail unavailable; files: src/foo.rs"
 git status --short
-br --json list --status in_progress
+obr --json list --status in_progress
 ```
 
 Treat that comment as advisory, not as a lock. Avoid files already named by
@@ -46,7 +46,7 @@ another active claim or dirty in the worktree.
 ## 4) Close + explain why
 
 ```bash
-br --json close br-abc123 --reason "Implemented X; tests pass"
+obr --json close obr-abc123 --reason "Implemented X; tests pass"
 ```
 
 ## 5) Sync (end of session)
@@ -54,7 +54,7 @@ br --json close br-abc123 --reason "Implemented X; tests pass"
 Export JSONL for git commit (no import):
 
 ```bash
-br sync --flush-only
+obr sync --flush-only
 ```
 
 ## Common gotchas

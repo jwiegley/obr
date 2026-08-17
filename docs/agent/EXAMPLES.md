@@ -9,13 +9,13 @@ This file shows small, copy/pasteable flows. For machine-readable examples, also
 ## List work (TOON -> JSON)
 
 ```bash
-br ready --format toon --limit 10 | tru --decode --expand-paths safe | jq '.[0]'
+obr ready --format toon --limit 10 | tru --decode --expand-paths safe | jq '.[0]'
 ```
 
 ## Update status (JSON)
 
 ```bash
-br --json update br-abc123 --status in_progress | jq .
+obr --json update obr-abc123 --status in_progress | jq .
 ```
 
 ## Determinism smoke check
@@ -23,7 +23,7 @@ br --json update br-abc123 --status in_progress | jq .
 If the workspace is not changing, these should match:
 
 ```bash
-br list --format json --limit 5 | jq -S . > a.json
-br list --format json --limit 5 | jq -S . > b.json
+obr list --format json --limit 5 | jq -S . > a.json
+obr list --format json --limit 5 | jq -S . > b.json
 diff -u a.json b.json
 ```

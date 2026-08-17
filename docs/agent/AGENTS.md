@@ -1,6 +1,6 @@
 # AGENTS.md (Agent-First Entry Point)
 
-This folder is a thin, agent-first map into the existing `br` documentation set.
+This folder is a thin, agent-first map into the existing `obr` documentation set.
 
 If you are an AI coding agent working in this repo, start here:
 

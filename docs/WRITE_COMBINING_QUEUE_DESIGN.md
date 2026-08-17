@@ -1,13 +1,13 @@
 # Write-Combining Queue Design
 
-Status: design artifact only. The current production fallback remains one `br`
+Status: design artifact only. The current production fallback remains one `obr`
 process per `.write.lock` acquisition.
 
 ## Purpose
 
 Bursty swarm workloads often issue many small mutations at once: claims,
 comments, status changes, labels, and short issue creates. Today every mutating
-command separately acquires `.beads/.write.lock`, opens storage, applies any
+command separately acquires `.obr/.write.lock`, opens storage, applies any
 needed recovery or import, mutates SQLite, and runs the usual JSONL flush path.
 That conservative path is simple and correct, but under high agent counts the
 lock handoff and startup cost can dominate the actual write.
@@ -30,7 +30,7 @@ combining.
 ## Current Write Path
 
 The CLI currently resolves startup context, detects whether the command mutates
-state, and acquires `.beads/.write.lock` before any database-family open that can
+state, and acquires `.obr/.write.lock` before any database-family open that can
 mutate or recover storage. The lock holder may then open storage, run
 auto-import, execute the command, record events, and run auto-flush according to
 the normal settings. This makes the lock boundary wider than the final mutation,
@@ -61,7 +61,7 @@ These commands should always run one process per lock:
 - history restore, prune, or snapshot mutation
 - commands that read arbitrary stdin as their primary payload
 - commands that intentionally validate or rewrite JSONL files
-- commands that mutate files outside `.beads/`
+- commands that mutate files outside `.obr/`
 - commands whose success requires a distinct process lifetime or terminal state
 
 Reason: these commands can change storage topology, import or export boundaries,
@@ -116,7 +116,7 @@ Combining should be explicit and default-off until proven by benchmarks.
 
 1. An operator, test harness, or future MCP integration starts an explicit
    combiner process for one project.
-2. The combiner acquires `.beads/.write.lock`, opens storage once, performs any
+2. The combiner acquires `.obr/.write.lock`, opens storage once, performs any
    startup recovery/import work allowed for normal mutating commands, and begins
    accepting local requests.
 3. Writers submit `MutationEnvelope` values over a local transport with:
@@ -208,7 +208,7 @@ Useful existing entry points:
 ```bash
 cargo test --test bench_contention_replay -- --list
 cargo test --test bench_contention_replay contention_ci_profile_records_and_replays_trace -- --nocapture
-BR_CONTENTION_64=1 cargo test --test bench_contention_replay manual_64_worker_contention_profile_records_replayable_trace -- --ignored --nocapture
+OBR_CONTENTION_64=1 cargo test --test bench_contention_replay manual_64_worker_contention_profile_records_replayable_trace -- --ignored --nocapture
 ```
 
 ## Rollout Plan

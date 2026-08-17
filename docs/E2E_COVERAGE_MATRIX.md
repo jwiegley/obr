@@ -1,7 +1,6 @@
-# E2E Coverage Matrix - br CLI Commands
+# E2E Coverage Matrix — obr CLI Commands
 
-> Single source of truth for CLI command coverage and E2E scenario mapping.
-> Generated for beads_rust-rkuz; refreshed for beads_rust-9ow6.1 on 2026-05-08.
+> Maintained inventory of CLI coverage and end-to-end scenario mapping.
 
 ## Overview
 
@@ -211,11 +210,9 @@
 | `orphans` | `--details`, `--fix`, `--robot` | ✏️/📖 | `e2e_orphans.rs` | ✅ |
 | `changelog` | `--since`, `--since-tag`, `--since-commit`, `--robot` | 📖 | `e2e_changelog.rs` | ✅ |
 | `completions` | positional shell, `--output` | 📖 | `e2e_completions.rs` | ✅ |
-| `upgrade` | `--check`, `--force`, `--version`, `--dry-run` | 🌐 ⚠️ | `e2e_upgrade.rs` | 🔶 |
 | `agents` | AGENTS.md workflow helpers | 📖/✏️ | - | ❌ |
 
 **Notes:**
-- `upgrade` requires `self_update` feature and network; tests are guarded
 - `agents` is a newer top-level command and needs first-class E2E coverage.
 
 ---
@@ -230,9 +227,8 @@
 
 ### Guarded Or Partial
 
-4. **`upgrade`** - Guarded by feature/network requirements; current tests cover safe paths.
 
-### Cleared Since beads_rust-rkuz
+### Cleared Since Earlier Coverage Reviews
 
 - `doctor`
 - `config set/delete/edit/path`
@@ -243,15 +239,13 @@
 
 ---
 
-## Datasets Required
+## Test Workspaces
 
-| Dataset | Path | Issue Count | Use Cases |
-|---------|------|-------------|-----------|
-| beads_rust | `/data/projects/beads_rust/.beads` | ~373 | Large dataset, dependencies |
-| beads_viewer | `/data/projects/beads_viewer/.beads` | Variable | Medium dataset |
-| cass | `/data/projects/coding_agent_session_search/.beads` | Variable | Medium dataset |
-| brenner_bot | `/data/projects/brenner_bot/.beads` | Variable | Small dataset |
-| Fresh workspace | temp dir | 0 | Init, basic CRUD |
+| Workspace | Location | Use Cases |
+|-----------|----------|-----------|
+| Fixture workspaces | `tests/fixtures/` | Deterministic import, routing, and failure cases |
+| Doctor fixtures | `tests/doctor_fixtures/` | Corruption detection and repair boundaries |
+| Fresh workspace | Test harness temporary directory | Init and basic CRUD |
 
 ---
 
@@ -273,7 +267,6 @@ query run, query list
 orphans (without --fix)
 changelog
 completions
-upgrade --check
 agents --check
 ```
 
@@ -292,7 +285,6 @@ query save, query delete
 audit record, audit label
 defer, undefer
 orphans --fix
-upgrade (full)
 agents --add, agents --remove, agents --update
 ```
 
@@ -302,11 +294,9 @@ agents --add, agents --remove, agents --update
 
 | Variable | Purpose | Test Impact |
 |----------|---------|-------------|
-| `BEADS_DIR` | Override .beads discovery | Tested in `e2e_config_precedence.rs` |
-| `BEADS_JSONL` | Override JSONL path | Tested in `e2e_env_overrides.rs` and `e2e_history_custom_path.rs` |
-| `BD_ACTOR` / Actor flag | Audit trail identity | Tested in `e2e_env_overrides.rs` |
-| `BR_UPGRADE_SKIP` | Skip upgrade tests | Used in CI |
-| `BR_E2E_DESTRUCTIVE` | Enable destructive tests | Guards `history prune`, `delete --hard` |
+| `OBR_DIR` | Override workspace discovery | Tested in `e2e_config_precedence.rs` |
+| `OBR_JSONL` | Override export path | Tested in `e2e_env_overrides.rs` and `e2e_history_custom_path.rs` |
+| `OBR_ACTOR` / `--actor` | Audit-trail identity | Tested in `e2e_env_overrides.rs` |
 
 ---
 
@@ -347,7 +337,4 @@ All commands support `--json` flag. Key shapes validated:
 
 ---
 
-*Generated: 2026-01-17*
-*Refreshed: 2026-05-08 for beads_rust-9ow6.1*
-*Original task: beads_rust-rkuz*
-*Original agent: SilentFalcon (opus-4.5)*
+*Maintain this inventory with the integration suite; do not treat external workspaces or legacy tracker names as coverage fixtures.*

@@ -1,6 +1,6 @@
 # AI Agent Integration Guide
 
-This guide covers how AI coding agents can effectively use `br` (beads_rust) for issue tracking and workflow management.
+This guide covers how AI coding agents can effectively use `obr` (obr) for issue tracking and workflow management.
 
 ---
 
@@ -16,7 +16,6 @@ This guide covers how AI coding agents can effectively use `br` (beads_rust) for
 - [MCP Server](#mcp-server)
 - [Robot Mode Flags](#robot-mode-flags)
 - [Degraded Coordination Without Agent Mail](#degraded-coordination-without-agent-mail)
-- [Swarm-Scale Tuning](#swarm-scale-tuning)
 - [Agent-Specific Configuration](#agent-specific-configuration)
 - [Best Practices](#best-practices)
 
@@ -24,7 +23,7 @@ This guide covers how AI coding agents can effectively use `br` (beads_rust) for
 
 ## Overview
 
-`br` is designed with AI coding agents in mind:
+`obr` is designed with AI coding agents in mind:
 
 - **JSON output** for all commands (`--json` flag)
 - **Machine-readable errors** with structured error codes
@@ -37,8 +36,8 @@ This guide covers how AI coding agents can effectively use `br` (beads_rust) for
 1. **Always use `--json`** for programmatic access
 2. **Check exit codes** for success/failure
 3. **Parse structured errors** for recovery hints
-4. **Use `br ready`** to find actionable work
-5. **Run a final export check** with `br sync --flush-only` before committing `.beads/`
+4. **Use `obr ready`** to find actionable work
+5. **Run a final export check** with `obr sync --flush-only` before committing `.obr/`
 
 ---
 
@@ -46,21 +45,21 @@ This guide covers how AI coding agents can effectively use `br` (beads_rust) for
 
 ```bash
 # Initialize (if needed)
-br init
+obr init
 
 # Find work
-br ready --json --limit 5
+obr ready --json --limit 5
 
 # Claim and work
-br update br-123 --claim --json
+obr update obr-123 --claim --json
 # ... do the work ...
-br close br-123 --reason "Implemented feature X" --json
+obr close obr-123 --reason "Implemented feature X" --json
 
 # Create discovered work
-br create "Found bug during implementation" -t bug -p 1 --deps discovered-from:br-123 --json
+obr create "Found bug during implementation" -t bug -p 1 --deps discovered-from:obr-123 --json
 
 # Session end: mutations auto-flush by default, but this is an idempotent final check
-br sync --flush-only
+obr sync --flush-only
 ```
 
 ---
@@ -71,17 +70,17 @@ br sync --flush-only
 
 ```bash
 # Flag on any command
-br list --json
-br show br-123 --json
-br create "Title" --json
+obr list --json
+obr show obr-123 --json
+obr create "Title" --json
 
 # Equivalent (when the command supports --format)
-br list --format json
-br ready --format json
+obr list --format json
+obr ready --format json
 
 # Robot mode alias (same as --json)
-br ready --robot
-br close br-123 --robot
+obr ready --robot
+obr close obr-123 --robot
 ```
 
 ### TOON Output (Token-Efficient)
@@ -89,21 +88,21 @@ br close br-123 --robot
 Many read-style commands support TOON output via `--format toon`:
 
 ```bash
-br ready --format toon --limit 10
-br show br-123 --format toon
+obr ready --format toon --limit 10
+obr show obr-123 --format toon
 ```
 
 Decode TOON to JSON when you need to pipe into JSON tools:
 
 ```bash
-br ready --format toon --limit 10 | tru --decode --expand-paths safe | jq '.[0]'
+obr ready --format toon --limit 10 | tru --decode --expand-paths safe | jq '.[0]'
 ```
 
 ### Environment Defaults
 
-If you omit `--format` / `--json`, br can default the output format via env vars:
+If you omit `--format` / `--json`, obr can default the output format via env vars:
 
-- `BR_OUTPUT_FORMAT` (highest precedence)
+- `OBR_OUTPUT_FORMAT` (highest precedence)
 - `TOON_DEFAULT_FORMAT` (fallback)
 - `RUST_LOG=error` (recommended for routine agent runs so stderr stays clean unless you're debugging internals)
 
@@ -112,36 +111,37 @@ Example:
 ```bash
 export TOON_DEFAULT_FORMAT=toon
 export RUST_LOG=error
-br list --limit 5          # defaults to TOON
-br list --json --limit 5   # JSON always wins
+obr list --limit 5          # defaults to TOON
+obr list --json --limit 5   # JSON always wins
 ```
 
 ### JSON Output Characteristics
 
 - **Always valid JSON** - parseable even on errors
-- **Paginated objects** - `br list` and `br blocked` put rows under `.issues`
+- **Paginated objects** - `obr list` and `obr blocked` put rows under `.issues`
   alongside `total`, `limit`, `offset`, and `has_more`
-- **Command-specific objects** - `br search` puts rows under `.issues`, reports
+- **Command-specific objects** - `obr search` puts rows under `.issues`, reports
   `limit`, `offset`, and `has_more`, and includes its additional search metadata
-- **Arrays for unpaginated collections** - for example `br ready` and `br stale`
+- **Arrays for unpaginated collections** - for example `obr ready` and `obr stale`
+- **Objects for single items** - `obr show` and `obr create`
 - **Structured errors** - error object with code and hints
 
 Discover the current envelope before parsing unfamiliar commands:
 
 ```bash
-br schema commands --format json | jq '.commands.blocked'
-br blocked --json | jq '.issues[]'
+obr schema commands --format json | jq '.commands.blocked'
+obr blocked --json | jq '.issues[]'
 ```
 
 ### Example Output
 
 ```bash
-$ br ready --json --limit 2
+$ obr ready --json --limit 2
 ```
 ```json
 [
   {
-    "id": "br-abc123",
+    "id": "obr-abc123",
     "title": "Implement user auth",
     "status": "open",
     "priority": 1,
@@ -151,7 +151,7 @@ $ br ready --json --limit 2
     "dependent_count": 2
   },
   {
-    "id": "br-def456",
+    "id": "obr-def456",
     "title": "Fix login bug",
     "status": "open",
     "priority": 0,
@@ -174,24 +174,20 @@ calls, network access, git mutations, background daemons, or long-running MCP
 clients. Use offline fixtures, in-process helpers, temp workspaces, snapshots,
 and schema/TOON decoding instead.
 
-| Surface | Producer | Agent consumer | Stable contract | Current verifier or evidence | Gap / follow-up bead |
-|---------|----------|----------------|-----------------|------------------------------|----------------------|
-| `br schema all` and `br schema commands` targets | `src/cli/commands/schema.rs` (`build_schemas`, `build_commands`) | Agents discovering output shapes before parsing CLI results | JSON Schema documents plus command envelopes with `jq_filter`, `items_at`, and schema names | `tests/e2e_schema.rs`, `tests/conformance_schema.rs`, `tests/snapshots/schema_output.rs`, `agent_baseline/schemas/schema_all.json`, `agent_baseline/cli_schema.json` | `beads_rust-vqs1` adds emitted-target self-checks; `beads_rust-p1g4` validates command-shape paths against live fixtures |
-| JSON output for `list`, `show`, `ready`, `blocked`, `stale`, `search`, counts, labels, deps, comments, stats, and status | CLI command implementations plus the output/context layers | Shell-based agents, MCP adapters, docs examples, and baseline fixtures | Valid JSON on stdout, stable object/list envelopes, structured errors on failure | `tests/snapshots/json_output.rs`, `tests/snapshots/robot_output.rs`, `tests/e2e_create_output.rs`, `tests/common/json_baseline.rs`, `tests/fixtures/json_baseline/`, `agent_baseline/examples/*.json` | `beads_rust-p1g4` checks command metadata against actual JSON; `beads_rust-8bq8` collects the verifier commands |
-| TOON output for agent-read commands | CLI format handling and `toon_rust` integration | Token-sensitive agents using `--format toon` or `TOON_DEFAULT_FORMAT=toon` | TOON decodes to the documented JSON structure with safe folded-key expansion | `tests/snapshots/toon_output.rs`, `agent_baseline/examples/*.toon`, this guide's decode example | `beads_rust-q5jt` cross-checks JSON/TOON semantic parity, including nested coordination fields |
-| Coordination status evidence (`br.coordination.v1`) | `br coordination status`, coordination model code, and optional offline reservation/agent snapshots | Agents deciding whether an `in_progress` claim is fresh, stale, reclaimable, or blocked by missing Mail evidence | Read-only evidence envelope; no automatic reclaim, no Agent Mail calls, and no git operations | `docs/COORDINATION_EVIDENCE.md`, schema entries for `CoordinationStatusOutput` and `CoordinationClaimRow`, agent workflow examples in this guide | `beads_rust-p1g4` covers command-shape extraction; `beads_rust-q5jt` covers JSON/TOON parity for coordination output |
-| `agent_baseline/` examples and schemas | Curated baseline artifacts generated from representative `br` commands | Agents bootstrapping behavior from examples before running the binary | Checked-in JSON, TOON, schema, and journey artifacts that mirror current CLI contracts | `agent_baseline/README_first_80_lines.md`, `agent_baseline/AGENT_JOURNEY_NOTES.md`, `agent_baseline/examples/`, `agent_baseline/schemas/`, `agent_baseline/robot_mode_examples.jsonl` | `beads_rust-8bq8` defines the one-command verifier; later fixture work should prevent stale baseline artifacts |
-| Snapshot and golden tests for agent output | `tests/snapshots/*`, storage golden snapshots, and focused e2e fixtures | Release reviewers and agents checking whether a contract changed intentionally | Deterministic expected output for representative commands and storage states | `tests/snapshots/cli_output.rs`, `tests/snapshots/json_output.rs`, `tests/snapshots/robot_output.rs`, `tests/snapshots/schema_output.rs`, `tests/snapshots/toon_output.rs`, `tests/storage_golden_snapshot.rs` | `beads_rust-vqs1`, `beads_rust-p1g4`, and `beads_rust-q5jt` make the snapshots harder to update incompletely |
-| MCP resources, tools, and prompts | `src/mcp/resources.rs`, `src/mcp/tools.rs`, `src/mcp/prompts.rs`, and `src/mcp/mod.rs` behind the `mcp` feature | MCP-capable agents using `br serve` instead of shelling out | Stdio-only local server surface with stable resource URIs, tool names, prompt names, and JSON payloads | README and CLI reference MCP sections, this guide's MCP section, in-process MCP code paths | `beads_rust-hu4b` ties MCP metadata and representative payloads to CLI contract fixtures without live clients or network services |
-| README and docs command examples | `README.md`, `docs/CLI_REFERENCE.md`, this guide, `docs/SWARM_SCALE_TUNING.md`, `docs/COORDINATION_EVIDENCE.md` | Human operators and agents copying workflow commands | Examples use robot-safe flags, avoid hidden git automation, and state Mail/network boundaries accurately | Review plus `git diff --check`; relevant e2e/snapshot tests cover many listed commands indirectly | `beads_rust-8bq8` documents when to run the full drift verifier before changing docs or examples |
-| `bv` robot handoff expectations | External `bv` binary plus repo guidance in `AGENTS.md`, this guide, and `docs/SWARM_SCALE_TUNING.md` | Agents selecting work by graph priority before claiming with `br` and Agent Mail | Agents use only `--robot-*` or `--recipe ... --robot-*` flags; bare `bv` is interactive and outside `br`'s control | Documented workflow examples only; `bv` is outside the `br` binary and test harness | Keep this as an offline documentation contract; `br` tests should not shell out to live `bv` |
+| Surface | Producer | Agent consumer | Stable contract | Current verifier or evidence | Follow-up |
+|---------|----------|----------------|-----------------|------------------------------|-----------|
+| `obr schema all` and `obr schema commands` targets | `src/cli/commands/schema.rs` (`build_schemas`, `build_commands`) | Agents discovering output shapes before parsing CLI results | JSON Schema documents plus command envelopes with `jq_filter`, `items_at`, and schema names | `tests/e2e_schema.rs`, `tests/conformance_schema.rs`, `tests/snapshots/schema_output.rs`, `agent_baseline/schemas/schema_all.json`, `agent_baseline/cli_schema.json` | Keep emitted-target checks and live command-shape fixtures aligned. |
+| JSON output for `list`, `show`, `ready`, `blocked`, `stale`, `search`, counts, labels, deps, comments, stats, and status | CLI command implementations plus the output/context layers | Shell-based agents, MCP adapters, docs examples, and baseline fixtures | Valid JSON on stdout, stable object/list envelopes, structured errors on failure | `tests/snapshots/json_output.rs`, `tests/snapshots/robot_output.rs`, `tests/e2e_create_output.rs`, `tests/common/json_baseline.rs`, `tests/fixtures/json_baseline/`, `agent_baseline/examples/*.json` | Keep command metadata, live JSON, and baseline fixtures aligned. |
+| TOON output for agent-read commands | CLI format handling and `toon_rust` integration | Token-sensitive agents using `--format toon` or `TOON_DEFAULT_FORMAT=toon` | TOON decodes to the documented JSON structure with safe folded-key expansion | `tests/snapshots/toon_output.rs`, `agent_baseline/examples/*.toon`, this guide's decode example | Cross-check JSON/TOON semantic parity, including nested coordination fields. |
+| Coordination status evidence (`obr.coordination.v1`) | `obr coordination status`, coordination model code, and optional offline reservation/agent snapshots | Agents deciding whether an `in_progress` claim is fresh, stale, reclaimable, or blocked by missing Mail evidence | Read-only evidence envelope; no automatic reclaim, no Agent Mail calls, and no git operations | `docs/COORDINATION_EVIDENCE.md`, schema entries for `CoordinationStatusOutput` and `CoordinationClaimRow`, agent workflow examples in this guide | Preserve offline command-shape and JSON/TOON parity coverage. |
+| `agent_baseline/` examples and schemas | Curated baseline artifacts generated from representative `obr` commands | Agents bootstrapping behavior from examples before running the binary | Checked-in JSON, TOON, schema, and journey artifacts that mirror current CLI contracts | `agent_baseline/README_first_80_lines.md`, `agent_baseline/AGENT_JOURNEY_NOTES.md`, `agent_baseline/examples/`, `agent_baseline/schemas/`, `agent_baseline/robot_mode_examples.jsonl` | Keep the one-command verifier and fixtures current. |
+| Snapshot and golden tests for agent output | `tests/snapshots/*`, storage golden snapshots, and focused e2e fixtures | Release reviewers and agents checking whether a contract changed intentionally | Deterministic expected output for representative commands and storage states | `tests/snapshots/cli_output.rs`, `tests/snapshots/json_output.rs`, `tests/snapshots/robot_output.rs`, `tests/snapshots/schema_output.rs`, `tests/snapshots/toon_output.rs`, `tests/storage_golden_snapshot.rs` | Update fixtures deliberately when a contract changes. |
+| MCP resources, tools, and prompts | `src/mcp/resources.rs`, `src/mcp/tools.rs`, `src/mcp/prompts.rs`, and `src/mcp/mod.rs` behind the `mcp` feature | MCP-capable agents using `obr serve` instead of shelling out | Stdio-only local server surface with stable resource URIs, tool names, prompt names, and JSON payloads | README and CLI reference MCP sections, this guide's MCP section, in-process MCP code paths | Tie MCP metadata and representative payloads to CLI contract fixtures without live clients or network services. |
 
-The child beads intentionally split coverage by failure mode. Use
-`beads_rust-vqs1` when schema target discovery drifts, `beads_rust-p1g4` when
-command metadata and live JSON disagree, `beads_rust-q5jt` when TOON and JSON
-semantics diverge, `beads_rust-hu4b` when MCP metadata or payloads fall behind,
-and `beads_rust-8bq8` when agents need a single RCH-friendly verifier command
-sequence.
+Coverage is divided by failure mode: schema target discovery, command metadata,
+JSON/TOON parity, baseline artifacts, and MCP metadata each have distinct local
+verifiers. Keep those verifiers independent of network services and external
+coordination systems.
 
 ### Agent Contract Drift Verifier
 
@@ -206,16 +202,14 @@ agents parse or copy:
 - `agent_baseline/` schemas, JSON examples, TOON examples, help text, or journey
   notes
 
-Agent sessions should run the verifier through RCH:
+Run the verifier directly:
 
 ```bash
-BR_AGENT_CONTRACT_USE_RCH=1 ./scripts/verify-agent-contracts.sh
+./scripts/verify-agent-contracts.sh
 ```
 
-The script itself only runs deterministic Cargo tests. With
-`BR_AGENT_CONTRACT_USE_RCH=1`, each Cargo target is delegated to `rch exec --`
-so agent sessions use the normal remote-compilation path when workers are
-available. The contract tests do not run git, project network calls, live Agent
+The script only runs deterministic Cargo tests. The contract tests do not run
+git, project network calls, live Agent
 Mail, MCP stdio clients, background services, or fixture update modes. The
 script unsets `INSTA_UPDATE` and `UPDATE_AGENT_BASELINE` so a verification run
 detects drift instead of regenerating snapshots.
@@ -242,13 +236,13 @@ The verifier currently covers:
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  1. DISCOVER                                                │
-│     br ready --json                                         │
+│     obr ready --json                                         │
 │     → Find unblocked, undeferred issues                     │
 └─────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
 │  2. CLAIM                                                   │
-│     br update <id> --claim --json                           │
+│     obr update <id> --claim --json                           │
 │     → Sets assignee + status=in_progress atomically         │
 └─────────────────────────────────────────────────────────────┘
                               ↓
@@ -256,19 +250,19 @@ The verifier currently covers:
 │  3. WORK                                                    │
 │     Implement the task...                                   │
 │     → If you find new work:                                 │
-│       br create "New issue" --deps discovered-from:<id>     │
+│       obr create "New issue" --deps discovered-from:<id>     │
 └─────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
 │  4. COMPLETE                                                │
-│     br close <id> --reason "Done" --json                    │
+│     obr close <id> --reason "Done" --json                    │
 │     → Optionally: --suggest-next for chained work           │
 └─────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
 │  5. FINAL EXPORT CHECK (at session end)                     │
-│     br sync --flush-only                                    │
-│     → Confirm JSONL is current before committing .beads/    │
+│     obr sync --flush-only                                    │
+│     → Confirm JSONL is current before committing .obr/    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -276,15 +270,15 @@ The verifier currently covers:
 
 ```bash
 # Atomic claim (recommended)
-br update br-123 --claim --json
+obr update obr-123 --claim --json
 
 # Manual claim (equivalent)
-br update br-123 --status in_progress --assignee "$BD_ACTOR" --json
+obr update obr-123 --status in_progress --assignee "$OBR_ACTOR" --json
 ```
 
 ### Stale Claims and Abandoned Work
 
-`br ready` intentionally hides `in_progress` issues. That keeps agents from
+`obr ready` intentionally hides `in_progress` issues. That keeps agents from
 stealing active work, but it also means a crashed session can hide an otherwise
 ready issue. Treat an `in_progress` issue as an abandoned-claim candidate only
 after checking `updated_at`, the assignee, and the coordination trail.
@@ -297,8 +291,8 @@ claims, use one business day as the default threshold.
 Before reclaiming:
 
 ```bash
-br show <id> --json
-br comments list <id> --json
+obr show <id> --json
+obr comments list <id> --json
 git status --short
 ```
 
@@ -311,10 +305,10 @@ editing the same files, or the dirty tree contains unclear overlapping changes.
 When reclaiming abandoned work, leave an audit comment before touching files:
 
 ```bash
-br comments add <id> --author "$BD_ACTOR" \
+obr comments add <id> --author "$OBR_ACTOR" \
   --message "reclaim: previous in_progress claim appears abandoned; evidence: updated_at=<timestamp>, assignee=<name>, no active reservation or pane" \
   --json
-br update <id> --claim --json
+obr update <id> --claim --json
 ```
 
 If Agent Mail is down, include the intended file scope in the same comment or a
@@ -322,7 +316,7 @@ follow-up degraded-coordination comment. The newest assignee owns the claim, but
 the old owner can still return; in that case, coordinate in the bead thread and
 split or hand off the work instead of silently overwriting each other.
 
-`br scheduler --json` uses the same coordination age policy for its
+`obr scheduler --json` uses the same coordination age policy for its
 `evidence.stale_claim` object, but it deliberately assumes
 `reservation_status: "no_snapshot"`. Treat `classification: "no_mail_snapshot"`
 and `recommended_action: "inspect_mail"` as a prompt to gather Agent Mail
@@ -332,11 +326,11 @@ For a read-only preflight, use coordination status with an explicit reservation
 snapshot when available:
 
 ```bash
-br coordination status --reservations reservations.json --agents agents.jsonl --json
+obr coordination status --reservations reservations.json --agents agents.jsonl --json
 ```
 
-MCP-capable agents can read `beads://coordination/status` for the same
-`br.coordination.v1` evidence envelope without shelling out. The MCP resource is
+MCP-capable agents can read `obr://coordination/status` for the same
+`obr.coordination.v1` evidence envelope without shelling out. The MCP resource is
 read-only and does not call Agent Mail, so it reports
 `reservation.state == "no_snapshot"` unless you use the CLI command above with
 offline reservation and agent snapshots.
@@ -345,25 +339,25 @@ Operator runbook for a queue that appears dry:
 
 ```bash
 # 1. Confirm actionable work and graph-priority output agree
-br ready --json
+obr ready --json
 bv --robot-next
 
 # 2. Inspect hidden in-progress claims without mutating them
-br list --status in_progress --json
-br coordination status --json
+obr list --status in_progress --json
+obr coordination status --json
 
 # 3. If a claim looks stale, inspect the local issue trail
-br show <id> --json
-br comments list <id> --json
+obr show <id> --json
+obr comments list <id> --json
 git status --short
 ```
 
 If Agent Mail is healthy, add reservation and liveness snapshots before making
-any ownership decision. `br` consumes those snapshots offline; it does not call
+any ownership decision. `obr` consumes those snapshots offline; it does not call
 Agent Mail itself:
 
 ```bash
-br coordination status \
+obr coordination status \
   --reservations reservations.jsonl \
   --agents agents.jsonl \
   --json
@@ -374,17 +368,17 @@ Safe reclaim is still a manual, auditable sequence. Review
 `suggested_commands` first:
 
 ```bash
-br coordination status --reservations reservations.jsonl --agents agents.jsonl --json \
+obr coordination status --reservations reservations.jsonl --agents agents.jsonl --json \
   | jq '.claims[] | {id: .issue.id, action: .assessment.recommended_action, reclaim_allowed_by_policy, required_human_confirmation, suggested_commands}'
 
-br comments add <id> --author "$BD_ACTOR" \
+obr comments add <id> --author "$OBR_ACTOR" \
   --message "reclaim: previous in_progress claim appears abandoned; evidence: updated_at=<timestamp>, assignee=<name>, no active reservation or pane" \
   --json
-br update <id> --claim --json
+obr update <id> --claim --json
 ```
 
 Only run the final two commands when the advisory output and human policy allow
-it. `br coordination status` never auto-reclaims, never runs git, and never
+it. `obr coordination status` never auto-reclaims, never runs git, and never
 creates or releases Agent Mail reservations.
 
 The output is advisory only. `reclaim_allowed_by_policy=true` means the local
@@ -398,31 +392,31 @@ When a coordination snapshot matters for a handoff or review, record it through
 the audit log before taking follow-up action:
 
 ```bash
-br coordination status --json \
-  | br audit coordination --stdin --command "br coordination status --json" --json
+obr coordination status --json \
+  | obr audit coordination --stdin --command "obr coordination status --json" --json
 ```
 
 This appends one `coordination_incident` interaction per claim to the existing
-`.beads/interactions.jsonl` flight recorder. The recorded fields are bounded and
+`.obr/interactions.jsonl` flight recorder. The recorded fields are bounded and
 normalized: `issue_id`, `classification`, `recommended_action` as
 `suggested_action`, `evidence_summary`, the producing `command`, and a stable
 `snapshot_hash`. After a human or agent reviews the evidence, label the
-interaction with `br audit label <interaction-id> --label reviewed --json`.
+interaction with `obr audit label <interaction-id> --label reviewed --json`.
 
 ### Creating Related Issues
 
 ```bash
 # Bug discovered during feature work
-br create "Edge case causes crash" \
+obr create "Edge case causes crash" \
   -t bug \
   -p 1 \
-  --deps discovered-from:br-123 \
+  --deps discovered-from:obr-123 \
   --json
 
 # Subtask for epic
-br create "Implement auth middleware" \
+obr create "Implement auth middleware" \
   -t task \
-  --parent br-epic-456 \
+  --parent obr-epic-456 \
   --json
 ```
 
@@ -430,21 +424,21 @@ br create "Implement auth middleware" \
 
 ```bash
 # Close and get next unblocked work
-br close br-123 --suggest-next --json
+obr close obr-123 --suggest-next --json
 ```
 
 Returns:
 ```json
 {
-  "closed": "br-123",
-  "unblocked": ["br-456", "br-789"]
+  "closed": "obr-123",
+  "unblocked": ["obr-456", "obr-789"]
 }
 ```
 
 ### Degraded Coordination Without Agent Mail
 
 The normal swarm workflow uses MCP Agent Mail for file reservations and
-threaded coordination. If Mail is unavailable, `br` still provides enough
+threaded coordination. If Mail is unavailable, `obr` still provides enough
 advisory state to avoid silent overlap. This fallback is intentionally weaker
 than Mail reservations, so keep scopes narrow and prefer another ready issue if
 there is any sign of collision.
@@ -457,13 +451,13 @@ there is any sign of collision.
 
    ```bash
    export AGENT_NAME="${AGENT_NAME:-codex-agent}"
-   br update <id> --status in_progress --assignee "$AGENT_NAME" --json
+   obr update <id> --status in_progress --assignee "$AGENT_NAME" --json
    ```
 
 3. Add an issue comment naming the intended files before editing:
 
    ```bash
-   br comments add <id> --author "$AGENT_NAME" \
+   obr comments add <id> --author "$AGENT_NAME" \
      --message "degraded-coordination: Agent Mail unavailable; files: src/foo.rs, tests/foo.rs" \
      --json
    ```
@@ -472,8 +466,8 @@ there is any sign of collision.
 
    ```bash
    git status --short
-   br list --status in_progress --json
-   br comments list <id> --json
+   obr list --status in_progress --json
+   obr comments list <id> --json
    ```
 
    If another live claim or comment names the same files, do not rely on the
@@ -482,8 +476,8 @@ there is any sign of collision.
 
 5. If the edit surface changes, add another comment before touching the new
    files. At completion, close the bead with a reason that states Mail was
-   unavailable, then run `br sync --flush-only` and commit the code plus
-   `.beads/` changes together.
+   unavailable, then run `obr sync --flush-only` and commit the code plus
+   `.obr/` changes together.
 
 6. If you find old `in_progress` work while Mail is degraded, use the stale
    claim protocol above. A stale claim is not automatically safe to take just
@@ -491,8 +485,8 @@ there is any sign of collision.
    longer active.
 
 This protocol does not replace Agent Mail. It is a shared audit trail for
-degraded sessions so abandoned work can be found through `br list --status
-in_progress --json`, `br comments list <id> --json`, and git history.
+degraded sessions so abandoned work can be found through `obr list --status
+in_progress --json`, `obr comments list <id> --json`, and git history.
 
 ---
 
@@ -508,7 +502,7 @@ import subprocess
 class BrError(RuntimeError):
     def __init__(self, exit_code, envelope, partial, stdout, stderr):
         error = envelope.get("error", {})
-        message = error.get("message") or f"br exited {exit_code}"
+        message = error.get("message") or f"obr exited {exit_code}"
         super().__init__(message)
         self.exit_code = exit_code
         self.envelope = envelope
@@ -536,9 +530,9 @@ def _parse_json_documents(text):
 
 
 def br_command(*args):
-    """Run br command and return parsed stdout JSON."""
+    """Run obr command and return parsed stdout JSON."""
     result = subprocess.run(
-        ['br', '--json', *args],
+        ['obr', '--json', *args],
         capture_output=True,
         text=True,
         check=False,
@@ -596,8 +590,8 @@ function parseJsonDocuments(text) {
   return docs;
 }
 
-function br(...args) {
-  const result = spawnSync('br', ['--json', ...args], {
+function obr(...args) {
+  const result = spawnSync('obr', ['--json', ...args], {
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -608,7 +602,7 @@ function br(...args) {
     const last = docs[docs.length - 1];
     const envelope = last && typeof last === 'object' && 'error' in last ? last : {};
     const error = envelope.error || {};
-    const err = new Error(error.message || `br exited ${result.status}`);
+    const err = new Error(error.message || `obr exited ${result.status}`);
     err.exitCode = result.status;
     err.code = error.code;
     err.hint = error.hint;
@@ -621,12 +615,12 @@ function br(...args) {
 }
 
 // Find ready work
-const ready = br('ready', '--limit', '5');
+const ready = obr('ready', '--limit', '5');
 console.log(`Found ${ready.length} ready issues`);
 
 // Claim and work
 if (ready.length > 0) {
-  br('update', ready[0].id, '--claim');
+  obr('update', ready[0].id, '--claim');
 }
 ```
 
@@ -634,16 +628,16 @@ if (ready.length > 0) {
 
 ```bash
 # Get IDs of all ready issues
-br ready --json | jq -r '.[].id'
+obr ready --json | jq -r '.[].id'
 
 # Get high-priority bugs
-br list --json -t bug -p 0 -p 1 | jq '.issues[] | "\(.id): \(.title)"'
+obr list --json -t bug -p 0 -p 1 | jq '.issues[] | "\(.id): \(.title)"'
 
 # Count by status
-br list --json -a | jq '.issues | group_by(.status) | map({status: .[0].status, count: length})'
+obr list --json -a | jq '.issues | group_by(.status) | map({status: .[0].status, count: length})'
 
 # Find my assigned work
-br list --json --assignee $(whoami) | jq '.issues[].title'
+obr list --json --assignee $(whoami) | jq '.issues[].title'
 ```
 
 ---
@@ -672,11 +666,11 @@ With `--json`, the machine-readable result is written to stdout: successful comm
 {
   "error": {
     "code": "ISSUE_NOT_FOUND",
-    "message": "Issue not found: br-xyz999",
-    "hint": "Run 'br list' to see available issues.",
+    "message": "Issue not found: obr-xyz999",
+    "hint": "Run 'obr list' to see available issues.",
     "retryable": false,
     "context": {
-      "searched_id": "br-xyz999"
+      "searched_id": "obr-xyz999"
     }
   }
 }
@@ -701,8 +695,8 @@ def safe_close(issue_id, reason):
 
 ## MCP Server
 
-`br serve` exposes the issue tracker as a Model Context Protocol server. It is
-an alternative to shelling out to `br --json ...` when an MCP-capable agent wants
+`obr serve` exposes the issue tracker as a Model Context Protocol server. It is
+an alternative to shelling out to `obr --json ...` when an MCP-capable agent wants
 tool discovery, resource reads, guided prompts, and structured tool errors.
 
 ### Build and Start
@@ -711,24 +705,24 @@ The MCP server is feature-gated and is not included in default builds:
 
 ```bash
 cargo build --release --features mcp
-RUST_LOG=error ./target/release/br serve --actor codex
+RUST_LOG=error ./target/release/obr serve --actor codex
 ```
 
 Installed binary:
 
 ```bash
-cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --locked --features mcp
-RUST_LOG=error br serve --actor codex
+cargo install --git https://github.com/jwiegley/obr.git obr --locked --features mcp
+RUST_LOG=error obr serve --actor codex
 ```
 
-Transport is stdio. Configure your MCP client to launch `br` as a child process;
+Transport is stdio. Configure your MCP client to launch `obr` as a child process;
 do not point it at a port.
 
 ```json
 {
   "mcpServers": {
-    "br": {
-      "command": "br",
+    "obr": {
+      "command": "obr",
       "args": ["serve", "--actor", "codex"],
       "env": {
         "RUST_LOG": "error"
@@ -752,18 +746,18 @@ Tools:
 
 Resources:
 
-- `beads://project/info`
-- `beads://issues/{id}`
-- `beads://schema`
-- `beads://labels`
-- `beads://issues/ready`
-- `beads://issues/blocked`
-- `beads://issues/in_progress`
-- `beads://coordination/status`
-- `beads://issues/deferred`
-- `beads://issues/bottlenecks`
-- `beads://graph/health`
-- `beads://events/recent`
+- `obr://project/info`
+- `obr://issues/{id}`
+- `obr://schema`
+- `obr://labels`
+- `obr://issues/ready`
+- `obr://issues/blocked`
+- `obr://issues/in_progress`
+- `obr://coordination/status`
+- `obr://issues/deferred`
+- `obr://issues/bottlenecks`
+- `obr://graph/health`
+- `obr://events/recent`
 
 Prompts:
 
@@ -812,23 +806,13 @@ These flags enable machine-friendly output:
 
 ```bash
 # Machine-friendly create
-br create "New issue" --silent
-# Output: br-abc123
+obr create "New issue" --silent
+# Output: obr-abc123
 
 # Quiet mode with JSON
-br close br-123 --quiet --json
+obr close obr-123 --quiet --json
 # Outputs JSON, no status messages
 ```
-
----
-
-## Swarm-Scale Tuning
-
-For 256GB+ RAM and 64+ core agent hosts, see
-[Swarm-Scale Tuning](SWARM_SCALE_TUNING.md). It covers conservative defaults,
-high-core build hygiene, `.write.lock` timeout profiles, Agent Mail reservation
-patterns, MCP serve topology, performance evidence collection, and rollback
-rules for future snapshot/cache/controller features.
 
 ---
 
@@ -838,45 +822,45 @@ rules for future snapshot/cache/controller features.
 
 ```bash
 # Set actor for audit trail
-export BD_ACTOR="claude-agent"
+export OBR_ACTOR="claude-agent"
 export RUST_LOG=error
 
 # Workflow
-br ready --json --limit 10
-br update <id> --claim
+obr ready --json --limit 10
+obr update <id> --claim
 # ... work ...
-br close <id> --reason "Completed by Claude"
-br sync --flush-only  # final JSONL export check before committing .beads/
+obr close <id> --reason "Completed by Claude"
+obr sync --flush-only  # final JSONL export check before committing .obr/
 ```
 
 ### Cursor AI
 
 ```bash
 # Initialize in project
-br init --prefix cursor
+obr init --prefix cursor
 export RUST_LOG=error
 
 # Use with Cursor's tool system
-br ready --json
-br show <id> --json
+obr ready --json
+obr show <id> --json
 ```
 
 ### Aider
 
 ```bash
 # Aider integration
-export BD_ACTOR="aider-$(date +%Y%m%d)"
+export OBR_ACTOR="aider-$(date +%Y%m%d)"
 
 # Check work before session
-br ready --json | head -5
+obr ready --json | head -5
 ```
 
 ### GitHub Copilot Workspace
 
 ```bash
 # Copilot-friendly workflow
-br ready --json --assignee copilot
-br update <id> --status in_progress --assignee copilot
+obr ready --json --assignee copilot
+obr update <id> --status in_progress --assignee copilot
 ```
 
 ---
@@ -887,18 +871,18 @@ br update <id> --status in_progress --assignee copilot
 
 1. **Always use `--json`** for programmatic access
 2. **Check exit codes** before parsing output
-3. **Set `BD_ACTOR`** for audit trail attribution
+3. **Set `OBR_ACTOR`** for audit trail attribution
 4. **Use `--claim`** for atomic status+assignee updates
 5. **Create discovered issues** with `--deps discovered-from:<id>`
-6. **Run a final JSONL export check** at session end with `br sync --flush-only`
-7. **Use `br ready`** to find actionable work
+6. **Run a final JSONL export check** at session end with `obr sync --flush-only`
+7. **Use `obr ready`** to find actionable work
 8. **Include reasons** when closing issues
 9. **Use degraded comments** only when Agent Mail reservations are unavailable
 
 ### DON'T
 
 1. **Don't parse human output** - use `--json` instead
-2. **Don't edit JSONL directly** - always use br commands
+2. **Don't edit JSONL directly** - always use obr commands
 3. **Don't skip sync** - other agents need your changes
 4. **Don't hold issues indefinitely** - close or unassign if stuck
 5. **Don't create duplicate issues** - search first
@@ -908,11 +892,11 @@ br update <id> --status in_progress --assignee copilot
 
 ```bash
 # Session start
-br ready --json > /tmp/session_start.json
+obr ready --json > /tmp/session_start.json
 
 # Session end checklist
-br sync --flush-only  # idempotent; mutations normally auto-flushed already
-git add .beads/
+obr sync --flush-only  # idempotent; mutations normally auto-flushed already
+git add .obr/
 git commit -m "Update issues"
 ```
 
@@ -920,10 +904,10 @@ git commit -m "Update issues"
 
 ```bash
 # Use lock timeout for busy databases
-br list --json --lock-timeout 5000
+obr list --json --lock-timeout 5000
 
 # Check for stale data
-br sync --status --json
+obr sync --status --json
 ```
 
 ---
@@ -953,41 +937,41 @@ See [AGENTS.md](../AGENTS.md) for detailed bv integration.
 
 **"Database not initialized"**
 ```bash
-br init
+obr init
 ```
 
 **"Issue not found"**
 ```bash
 # Use partial ID matching
-br show abc  # Matches br-abc123
+obr show abc  # Matches obr-abc123
 
 # List to find correct ID
-br list --json | jq '.issues[].id'
+obr list --json | jq '.issues[].id'
 ```
 
 **"Database locked"**
 ```bash
 # Increase lock timeout
-br list --json --lock-timeout 10000
+obr list --json --lock-timeout 10000
 ```
 
 **"Cycle detected"**
 ```bash
 # Check for cycles
-br dep cycles --json
+obr dep cycles --json
 
 # Remove problematic dependency
-br dep remove br-123 br-456
+obr dep remove obr-123 obr-456
 ```
 
 ### Debug Logging
 
 ```bash
 # Enable debug output
-RUST_LOG=debug br ready --json 2>debug.log
+RUST_LOG=debug obr ready --json 2>debug.log
 
 # Verbose mode
-br sync --flush-only -vv
+obr sync --flush-only -vv
 ```
 
 ---

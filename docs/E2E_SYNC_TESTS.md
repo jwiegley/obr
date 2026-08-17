@@ -1,13 +1,13 @@
 # E2E Sync Safety Tests
 
-This document explains how to run the sync safety end-to-end tests and interpret their output. These tests verify that `br sync` operations adhere to strict safety invariants.
+This document explains how to run the sync safety end-to-end tests and interpret their output. These tests verify that `obr sync` operations adhere to strict safety invariants.
 
 ## Overview
 
 The e2e sync test suite verifies several critical safety properties:
 
-1. **No Git Operations** - `br sync` never executes git commands, creates commits, or modifies `.git/`
-2. **Path Confinement** - Sync only touches files within `.beads/` (with a strict allowlist)
+1. **No Git Operations** - `obr sync` never executes git commands, creates commits, or modifies `.git/`
+2. **Path Confinement** - Sync only touches files within `.obr/` (with a strict allowlist)
 3. **Atomic Writes** - Export uses write-to-temp + atomic rename; failures preserve original files
 4. **Preflight Validation** - Import validates JSONL before any database changes
 5. **No Partial Writes** - Failed operations leave state unchanged
@@ -19,7 +19,7 @@ The e2e sync test suite verifies several critical safety properties:
 | File | Purpose |
 |------|---------|
 | `tests/e2e_sync_git_safety.rs` | Verifies every sync mode has zero Git authority and preserves the complete `.git/` tree |
-| `tests/e2e_vcs_status.rs` | Verifies the separately requested, bounded `br vcs-status` diagnostic |
+| `tests/e2e_vcs_status.rs` | Verifies the separately requested, bounded `obr vcs-status` diagnostic |
 | `tests/e2e_sync_artifacts.rs` | Tests with detailed logging and artifact preservation |
 | `tests/e2e_sync_fuzz_edge_cases.rs` | Malformed JSONL, path traversal, conflict markers |
 | `tests/e2e_sync_failure_injection.rs` | Read-only dirs, permission errors, atomic guarantees |
@@ -63,10 +63,10 @@ cargo test --test e2e_sync_failure_injection --release
 # Preflight integration tests
 cargo test --test e2e_sync_preflight_integration --release
 
-# Additive reconcile tests (br sync --reconcile / --dry-run)
+# Additive reconcile tests (obr sync --reconcile / --dry-run)
 cargo test --test e2e_sync_reconcile --release
 # Additive recovery with command-level logs retained by BrWorkspace
-RUST_LOG=beads_rust=debug cargo test --test e2e_basic_lifecycle \
+RUST_LOG=obr=debug cargo test --test e2e_basic_lifecycle \
   e2e_sync_additive_reconciliation_is_read_only_then_lossless_and_idempotent \
   --release -- --nocapture
 ```
@@ -102,15 +102,15 @@ Tests produce various artifacts for postmortem analysis:
 Each test creates a temporary workspace:
 
 ```
-/tmp/tmp.XXXXX/           # BrWorkspace.root
-├── .beads/               # Beads directory
-│   ├── beads.db          # SQLite database
-│   ├── issues.jsonl      # JSONL export
+/tmp/tmp.XXXXX/           # ObrWorkspace.root
+├── PLAN.org              # Tracked Org surface (the export)
+├── .obr/                 # Per-machine cache (git-ignored)
+│   ├── obr.db            # SQLite database
 │   └── .manifest.json    # Optional manifest
 ├── logs/                 # Test logs (BrWorkspace.log_dir)
-│   ├── init.log          # br init output
-│   ├── create1.log       # br create output
-│   ├── sync_export.log   # br sync --flush-only output
+│   ├── init.log          # obr init output
+│   ├── create1.log       # obr create output
+│   ├── sync_export.log   # obr sync --flush-only output
 │   └── artifacts/        # Detailed artifact captures
 │       ├── *_snapshots.txt
 │       ├── *_commands.log
@@ -158,7 +158,7 @@ Each test prints structured output:
 [PASS] e2e_sync_export_with_artifacts
   - Artifacts saved to: /tmp/tmpXXX/logs/artifacts
   - JSONL size: 1234 bytes
-  - Files in .beads/: 3
+  - Files in .obr/: 3
 ```
 
 ### Log File Format
@@ -174,19 +174,19 @@ args: ["sync", "--flush-only"]
 cwd: /tmp/tmp.XXXXX
 
 stdout:
-Exported 3 issues to .beads/issues.jsonl
+Exported 3 issues to PLAN.org
 
 stderr:
-[DEBUG beads_rust::sync] Starting export...
-[INFO beads_rust::sync] Export complete: 3 issues
+[DEBUG obr::sync] Starting export...
+[INFO obr::sync] Export complete: 3 issues
 ```
 
 ### Understanding Snapshot Diffs
 
 ```
 === CREATED FILES (2) ===
-  CREATED: .beads/issues.jsonl (size: 1234 bytes, hash: a1b2c3d4...)
-  CREATED: .beads/.manifest.json (size: 56 bytes, hash: e5f6g7h8...)
+  CREATED: PLAN.org (size: 1234 bytes, hash: a1b2c3d4...)
+  CREATED: .obr/.manifest.json (size: 56 bytes, hash: e5f6g7h8...)
 
 === SUMMARY ===
 Created: 2
@@ -250,7 +250,7 @@ conflict-winner, orphan, serialization-policy, and prefix-rewrite correctness.
 
 ### 2. Explicit VCS Diagnostic Tests (`e2e_vcs_status.rs`)
 
-Verifies the `br.vcs-export-status.v2` contract without restoring VCS authority
+Verifies the `obr.vcs-export-status.v2` contract without restoring VCS authority
 to sync. The E2E target covers untracked, committed, unstaged, staged,
 staged-plus-worktree, add/delete/recreate, unborn, ignored, intent-to-add,
 unmerged, assume-unchanged, skip-worktree, executable/type-change, SHA-1, and
@@ -326,14 +326,14 @@ Tests atomic operation guarantees:
 Tests early validation:
 
 - Conflict marker detection
-- Path validation (outside .beads, .git paths)
+- Path validation (outside the workspace, .git paths)
 - Path traversal rejection
 - Export safety checks
 - Actionable error messages
 
 ### 6. Reconcile Tests (`e2e_sync_reconcile.rs`)
 
-Tests the additive `br sync --reconcile` mode (beads_rust-3r45):
+Tests the additive `obr sync --reconcile` mode (beads_rust-3r45):
 
 - False-equal cached-hash repair: `--import-only` skips, reconcile recovers
 - The CASS-shaped fixture: 1,732 DB issues + 1,915-row JSONL → created=183,
@@ -392,16 +392,16 @@ If tests pass/fail intermittently:
    cargo test --release --test e2e_sync_git_safety --test e2e_sync_status_health --test e2e_vcs_status -- --test-threads=1
    ```
 
-### "Command not found: br"
+### "Command not found: obr"
 
-Tests require the `br` binary to be built:
+Tests require the `obr` binary to be built:
 
 ```bash
 # Ensure binary is built
 cargo build --release
 
 # Verify binary exists
-ls -la target/release/br
+ls -la target/release/obr
 ```
 
 ### Git Not Installed
@@ -450,11 +450,13 @@ For CI pipelines:
 
 ## Shell harnesses
 
-`tests/e2e_scripts/sync_safety_witness.sh` — runs `br sync --flush-only` and `br sync --import-only --force` against a fresh workspace, captures every filesystem mutation (via `strace` on Linux when available, polling-snapshot fallback otherwise), and asserts each mutation is in the PC-1 / PC-RECOVERY allowlist. Emits a structured JSONL event log to `/tmp/sync_safety_witness_<UTC-ts>.jsonl` with one event per filesystem op (`{ts, op, path, allowed, reason_if_blocked}`).
+`tests/e2e_scripts/sync_safety_witness.sh` — runs `obr sync --flush-only` and `obr sync --import-only --force` against a fresh workspace, captures every filesystem mutation by diffing two content-hashed snapshots of the tree, and asserts each mutation is in the PC-1 / PC-RECOVERY allowlist. (`strace` is run and its output kept for human debugging, but nothing parses it — the snapshot diff has always been the only mechanism.) Emits a structured JSONL event log to `/tmp/sync_safety_witness_<UTC-ts>.jsonl` with one event per filesystem op (`{ts, op, path, allowed, reason_if_blocked}`).
+
+Mutations come from diffing two content-hashed snapshots of the workspace, so `op` covers `create`, `modify` and `delete`: a pre-existing file that sync overwrote is a violation unless the allowlist names it. The tracked surface is named there explicitly under D-SURFACE — `PLAN.org` in the workspace root or in `doc/`/`docs/`, plus its `PLAN.org.tmp` / `PLAN.org.<pid>.tmp` export siblings — matching `is_workspace_surface_path()` in `src/sync/path.rs`.
 
 ```bash
-# Run locally (needs cargo build --release first, or set BR_BIN=path/to/br)
-BR_BIN=$CARGO_TARGET_DIR/release/br tests/e2e_scripts/sync_safety_witness.sh
+# Run locally (needs cargo build --release first, or set OBR_BIN=path/to/obr)
+OBR_BIN=$CARGO_TARGET_DIR/release/obr tests/e2e_scripts/sync_safety_witness.sh
 echo "exit: $?"   # 0 = PASS, 1 = allowlist violation, 2/3 = prerequisite issue
 ls -1t /tmp/sync_safety_witness_*.jsonl | head -1
 ```
@@ -462,12 +464,12 @@ ls -1t /tmp/sync_safety_witness_*.jsonl | head -1
 Exit codes:
 - `0` — all mutations within allowlist (PASS)
 - `1` — one or more mutations outside allowlist (FAIL — full details in event log)
-- `2` — prerequisite missing (br binary, tmpdir)
+- `2` — prerequisite missing (obr binary, tmpdir)
 - `3` — tracing tool unavailable (strace/inotifywait/dtrace; harness falls back to polling)
 
 ## Related Documentation
 
 - [SYNC_SAFETY.md](SYNC_SAFETY.md) - Sync safety model and design
-- `.beads/SYNC_SAFETY_INVARIANTS.md` - Safety invariants specification (PC-1, PC-3, PC-RECOVERY, NGI-3, ...)
-- `.beads/SYNC_CLI_FLAG_SEMANTICS.md` - CLI flag behavior
-- `.beads/SYNC_THREAT_MODEL.md` - Threat model for sync operations
+- `docs/SYNC_SAFETY_INVARIANTS.md` - Safety invariants specification (PC-1, PC-3, PC-RECOVERY, NGI-3, ...)
+- `docs/SYNC_CLI_FLAG_SEMANTICS.md` - CLI flag behavior
+- `docs/SYNC_THREAT_MODEL.md` - Threat model for sync operations

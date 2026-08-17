@@ -33,7 +33,7 @@
 
 ## Cause classes
 
-- **A** — `--slug` feature (commit `5c0af3d4`): adds a `--slug <SLUG>` option to `br create`. Surfaced in 1 test.
+- **A** — `--slug` feature (commit `5c0af3d4`): adds a `--slug <SLUG>` option to `obr create`. Surfaced in 1 test.
 - **B** — JSON format change (pretty → compact): `src/output/context.rs::json` switched from `serde_json::to_string_pretty` to `serde_json::to_writer` for streaming performance. Same content; different whitespace. Surfaced in 13 tests.
 - **C** — New commands (`capabilities`, `coordination`, `robot-docs`, `scheduler`): added during the audit window between snapshot capture (mostly 2026-04-21) and now (2026-05-09). Surfaced in 3 tests.
 - **E** — Pure insta metadata (`assertion_line`): no semantic change, just insta tracking the source line. Surfaced in 1 test.
@@ -45,7 +45,7 @@ All 21 deltas are legitimate intentional changes; **none hides a regression**. A
 ## Verification commands
 
 ```bash
-cd /data/projects/beads_rust
+cd /data/projects/obr
 RCH_DISABLED=1 cargo test --release --no-fail-fast --test snapshots --test e2e_schema 2>&1 | grep "test result"
 # Expected: all-pass after acceptance
 ```

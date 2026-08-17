@@ -1,0 +1,4 @@
+test test_auto_flush_flush_on_label_change
+test test_auto_flush_keeps_jsonl_id_sorted_after_creates
+test test_auto_flush_preserves_unrelated_existing_jsonl_lines
+test test_auto_flush_uses_resolved_jsonl_path

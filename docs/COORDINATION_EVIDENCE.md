@@ -2,22 +2,22 @@
 
 Status: implemented helper contract shared by coordination CLI, MCP, scheduler,
 and audit work. The primary user-facing surface is the read-only
-`br coordination status` command.
+`obr coordination status` command.
 
 ## Purpose
 
 Large agent swarms can leave work hidden in `in_progress` when a process dies or
-an operator loses track of panes. `br ready` correctly hides active claims, but
+an operator loses track of panes. `obr ready` correctly hides active claims, but
 operators still need a read-only way to decide whether a hidden claim is fresh,
 stale, ambiguous, or protected by an active Agent Mail reservation.
 
-The durable contract is `br.coordination.v1`, implemented as pure data types and
+The durable contract is `obr.coordination.v1`, implemented as pure data types and
 classification helpers in `src/coordination.rs`.
 
 ## Non-Goals
 
 - No automatic claim stealing.
-- No live Agent Mail calls from `br`.
+- No live Agent Mail calls from `obr`.
 - No git operations.
 - No background daemon.
 - No command that mutates issue status or assignee.
@@ -64,7 +64,7 @@ The top-level machine-readable envelope is:
 
 ```text
 CoordinationStatusOutput {
-  schema_version: "br.coordination.v1",
+  schema_version: "obr.coordination.v1",
   generated_at: DateTime<Utc>,
   summary: CoordinationSummary,
   claims: [CoordinationClaimRow]
@@ -102,14 +102,14 @@ a projection of the same fields, not a separate policy.
 
 ## CLI Surface
 
-`br coordination status` enumerates `in_progress` claims and emits the shared
-`br.coordination.v1` envelope:
+`obr coordination status` enumerates `in_progress` claims and emits the shared
+`obr.coordination.v1` envelope:
 
 ```bash
-br coordination status --json
-br coordination status --format toon
-br coordination status --owner-kind swarm-agent
-br coordination status --reservations reservations.json --agents agents.jsonl --json
+obr coordination status --json
+obr coordination status --format toon
+obr coordination status --owner-kind swarm-agent
+obr coordination status --reservations reservations.json --agents agents.jsonl --json
 ```
 
 The command is read-only. It opens the same local storage as other list-style
@@ -117,7 +117,7 @@ commands, computes local issue counts and relation counts, attaches bounded
 latest-comment excerpts, and classifies each claim with either explicit
 `no_snapshot` evidence or an operator-provided offline Agent Mail snapshot.
 
-Snapshot files are optional and local-only. `br` does not call Agent Mail or any
+Snapshot files are optional and local-only. `obr` does not call Agent Mail or any
 network service. Reservation snapshots may be JSON arrays, wrapper objects with a
 `reservations` array, or JSONL streams with one row per reservation:
 
@@ -155,14 +155,14 @@ instead of silently weakening evidence.
 
 ## Audit Flight Recorder
 
-`br audit coordination --stdin` records coordination snapshots through the
-existing `.beads/interactions.jsonl` audit log. It accepts the same
-`br.coordination.v1` status object emitted by `br coordination status --json`,
+`obr audit coordination --stdin` records coordination snapshots through the
+existing `.obr/interactions.jsonl` audit log. It accepts the same
+`obr.coordination.v1` status object emitted by `obr coordination status --json`,
 JSON arrays of claims, or JSONL streams of claim rows/wrapper objects:
 
 ```bash
-br coordination status --json \
-  | br audit coordination --stdin --command "br coordination status --json" --json
+obr coordination status --json \
+  | obr audit coordination --stdin --command "obr coordination status --json" --json
 ```
 
 For every claim in the snapshot, the command appends a `coordination_incident`
@@ -182,11 +182,11 @@ before they enter the audit log.
 
 This is a durable flight recorder, not a second coordination state store.
 Reviews, follow-up labels, and issue audit views continue to use the ordinary
-`br audit label`, `br audit log`, and `br audit summary` surfaces.
+`obr audit label`, `obr audit log`, and `obr audit summary` surfaces.
 
 ## Agent Mail Boundary
 
-Agent Mail remains the collision-avoidance layer. `br` must not depend on a live
+Agent Mail remains the collision-avoidance layer. `obr` must not depend on a live
 MCP service. Future commands may accept explicit snapshot files or stdin payloads
 that describe reservations and agent liveness, but absence of that snapshot must
 be reported as `no_mail_snapshot` or `ambiguous`, never as proof that reclaiming
@@ -200,7 +200,7 @@ assigned stale work with `reservation_status: "no_snapshot"` and
 `recommended_action: "inspect_mail"` instead of claiming abandonment. The
 `--stale-claim-hours` option still controls the scheduler's age threshold, while
 the classifier keeps the owner/reservation semantics aligned with
-`br coordination status`. When in doubt, scheduler output points agents to the
+`obr coordination status`. When in doubt, scheduler output points agents to the
 coordination status surface for deeper diagnosis.
 
 ## Reclaim Boundary
@@ -209,17 +209,17 @@ coordination status surface for deeper diagnosis.
 audit comment before any claim update:
 
 ```bash
-br comments add <id> --author "$AGENT_NAME" \
+obr comments add <id> --author "$AGENT_NAME" \
   --message "reclaim: previous in_progress claim appears abandoned; evidence: updated_at=<timestamp>, assignee=<name>, no active reservation or pane" \
   --json
-br update <id> --claim --json
+obr update <id> --claim --json
 ```
 
 Human or unknown ownership keeps the safer `ask_owner` recommendation even after
 the stale threshold.
 
-`br coordination status` can emit the same sequence in `suggested_commands`, but
+`obr coordination status` can emit the same sequence in `suggested_commands`, but
 only as an advisory. It never executes either command. The first suggested
 command is always the audit comment; only then does the second command show
-`br update <id> --claim --json`. Operators should still review the evidence and
-confirm any external pane/process state that `br` cannot observe.
+`obr update <id> --claim --json`. Operators should still review the evidence and
+confirm any external pane/process state that `obr` cannot observe.

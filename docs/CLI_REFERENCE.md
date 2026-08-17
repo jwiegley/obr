@@ -1,6 +1,6 @@
-# br CLI Reference
+# obr CLI Reference
 
-Comprehensive reference for all `br` (beads_rust) commands.
+Comprehensive reference for all `obr` (obr) commands.
 
 ---
 
@@ -70,7 +70,7 @@ These options apply to all commands:
 
 | Option | Description |
 |--------|-------------|
-| `--db <PATH>` | Database path (auto-discover `.beads/*.db` if not set) |
+| `--db <PATH>` | Database path (auto-discover `.obr/*.db` if not set) |
 | `--actor <NAME>` | Actor name for audit trail |
 | `--json` | Output as JSON (machine-readable) |
 | `--no-daemon` | Force direct mode (no daemon) |
@@ -86,9 +86,9 @@ These options apply to all commands:
 | `-V, --version` | Print version |
 
 By default, successful mutating commands auto-flush SQLite changes to
-`.beads/issues.jsonl`, so the JSONL file is normally ready to stage after the
+`PLAN.org`, so the JSONL file is normally ready to stage after the
 command completes. Use `--no-auto-flush` to skip that export for a single
-command. `br sync --flush-only` remains useful as an idempotent final export
+command. `obr sync --flush-only` remains useful as an idempotent final export
 check before committing, after `--no-auto-flush`, after disabling auto-flush in
 config, or during recovery.
 
@@ -96,26 +96,26 @@ config, or during recovery.
 
 ## Cross-Project Routing
 
-`br` can route explicit issue IDs to another workspace when their prefix matches
-`.beads/routes.jsonl`. This is useful for town or multi-repository setups where
+`obr` can route explicit issue IDs to another workspace when their prefix matches
+`.obr/routes.jsonl`. This is useful for town or multi-repository setups where
 one project needs to inspect or update an issue owned by another project.
 
 Each route is one JSON object per line:
 
 ```jsonl
 {"prefix":"api-","path":"../api"}
-{"prefix":"ops-","path":"/srv/projects/ops/.beads"}
+{"prefix":"ops-","path":"/srv/projects/ops/.obr"}
 ```
 
 Route resolution:
 
 1. Extract the issue prefix before the final hyphen, including the hyphen, so
    hyphenated prefixes such as `document-intelligence-` route correctly.
-2. Search the local `.beads/routes.jsonl`.
+2. Search the local `.obr/routes.jsonl`.
 3. If a parent town root with `mayor/town.json` exists, search its
-   `.beads/routes.jsonl`.
-4. Resolve `path` as a project root or a direct `.beads`/`_beads` directory.
-5. Follow a target `.beads/redirect` file when present.
+   `.obr/routes.jsonl`.
+4. Resolve `path` as a project root or a direct `.obr`/`_beads` directory.
+5. Follow a target `.obr/redirect` file when present.
 
 Current route-aware commands include common issue-ID operations such as `show`,
 `update`, `close`, `reopen`, `delete`, `defer`, `comments`, `label`, `dep`,
@@ -127,7 +127,7 @@ Safety boundaries:
 
 - Routing never runs git, copies repositories, or performs network sync.
 - Routing is not real-time collaboration; each affected repository still needs
-  its own normal `br sync --flush-only`/VCS commit flow.
+  its own normal `obr sync --flush-only`/VCS commit flow.
 - Routes are prefix dispatch rules. They do not import external issues into the
   local database.
 - Cross-project dependency status checks use explicit IDs such as
@@ -142,7 +142,7 @@ Safety boundaries:
 Initialize a beads workspace in the current directory.
 
 ```bash
-br init [OPTIONS]
+obr init [OPTIONS]
 ```
 
 **Options:**
@@ -155,13 +155,13 @@ br init [OPTIONS]
 **Examples:**
 ```bash
 # Initialize with default prefix
-br init
+obr init
 
 # Initialize with custom prefix
-br init --prefix myproj
+obr init --prefix myproj
 
 # Force reinitialize
-br init --force
+obr init --force
 ```
 
 ---
@@ -171,7 +171,7 @@ br init --force
 Create a new issue.
 
 ```bash
-br create [OPTIONS] [TITLE]
+obr create [OPTIONS] [TITLE]
 ```
 
 **Arguments:**
@@ -202,23 +202,23 @@ br create [OPTIONS] [TITLE]
 **Examples:**
 ```bash
 # Simple task
-br create "Fix login bug"
+obr create "Fix login bug"
 
 # High-priority bug with details
-br create "Critical security issue" -t bug -p 0 -d "XSS vulnerability in form input"
+obr create "Critical security issue" -t bug -p 0 -d "XSS vulnerability in form input"
 
 # Feature with assignee and labels
-br create "Add dark mode" -t feature -a alice -l "ui,enhancement"
+obr create "Add dark mode" -t feature -a alice -l "ui,enhancement"
 
 # Task with due date
-br create "Deploy to production" --due "+3d"
+obr create "Deploy to production" --due "+3d"
 
 # Bulk import from markdown
-br create -f issues.md
+obr create -f issues.md
 
 # Human-readable slug embedded in the ID
-br create "Fix login bug on mobile" --slug "fix-login-mobile"
-# → Created: <prefix>-fix-login-mobile-<hash>  (e.g., br-fix-login-mobile-8cda)
+obr create "Fix login bug on mobile" --slug "fix-login-mobile"
+# → Created: <prefix>-fix-login-mobile-<hash>  (e.g., obr-fix-login-mobile-8cda)
 ```
 
 #### Slug normalization
@@ -248,11 +248,11 @@ Examples:
 #### Downstream `--slug` integration
 
 Three commits made `--slug` end-to-end:
-- [`5c0af3d4`](https://github.com/Dicklesworthstone/beads_rust/commit/5c0af3d4) `feat(create): --slug for human-readable issue IDs (#283)` — the feature itself.
-- [`f454486f`](https://github.com/Dicklesworthstone/beads_rust/commit/f454486f) `fix(sync): accept slugged IDs in prefix guard` — sync's prefix guard now tolerates slugged IDs during import/export.
-- [`52ff1722`](https://github.com/Dicklesworthstone/beads_rust/commit/52ff1722) `feat(orphans): scan all candidate-issue prefixes when finding commit refs` — `br orphans` finds commit references to slugged IDs.
+- [`5c0af3d4`](https://github.com/jwiegley/obr/commit/5c0af3d4) `feat(create): --slug for human-readable issue IDs (#283)` — the feature itself.
+- [`f454486f`](https://github.com/jwiegley/obr/commit/f454486f) `fix(sync): accept slugged IDs in prefix guard` — sync's prefix guard now tolerates slugged IDs during import/export.
+- [`52ff1722`](https://github.com/jwiegley/obr/commit/52ff1722) `feat(orphans): scan all candidate-issue prefixes when finding commit refs` — `obr orphans` finds commit references to slugged IDs.
 
-The full lifecycle round-trip (create with slug → show → update → close → orphans references) is verified by `tests/e2e_scripts/slug_round_trip.sh` (added by `beads_rust-l6xl`).
+The full lifecycle round-trip (create with slug → show → update → close → orphan-reference scan) is covered by the slug integration test.
 
 ---
 
@@ -261,7 +261,7 @@ The full lifecycle round-trip (create with slug → show → update → close �
 Quick capture - create issue and print only the ID.
 
 ```bash
-br q [OPTIONS] <TITLE>
+obr q [OPTIONS] <TITLE>
 ```
 
 Same options as `create`, but outputs only the issue ID for scripting.
@@ -269,8 +269,8 @@ Same options as `create`, but outputs only the issue ID for scripting.
 **Example:**
 ```bash
 # Capture and immediately assign
-ISSUE=$(br q "Quick fix needed")
-br update $ISSUE --assignee me
+ISSUE=$(obr q "Quick fix needed")
+obr update $ISSUE --assignee me
 ```
 
 ---
@@ -280,7 +280,7 @@ br update $ISSUE --assignee me
 List issues with filtering and sorting.
 
 ```bash
-br list [OPTIONS]
+obr list [OPTIONS]
 ```
 
 **Filter Options:**
@@ -319,19 +319,19 @@ br list [OPTIONS]
 **Examples:**
 ```bash
 # All open issues
-br list
+obr list
 
 # High-priority bugs
-br list -t bug -p 0 -p 1
+obr list -t bug -p 0 -p 1
 
 # My assigned work
-br list --assignee $(whoami)
+obr list --assignee $(whoami)
 
 # Export to CSV
-br list --format csv --fields id,title,status,priority > issues.csv
+obr list --format csv --fields id,title,status,priority > issues.csv
 
 # JSON for scripting
-br list --json | jq '.issues[].id'
+obr list --json | jq '.issues[].id'
 ```
 
 ---
@@ -341,7 +341,7 @@ br list --json | jq '.issues[].id'
 Show detailed issue information.
 
 ```bash
-br show [IDS]...
+obr show [IDS]...
 ```
 
 **Options:**
@@ -354,13 +354,13 @@ br show [IDS]...
 **Examples:**
 ```bash
 # Show single issue
-br show bd-abc123
+obr show bd-abc123
 
 # Show multiple issues
-br show bd-abc123 bd-def456
+obr show bd-abc123 bd-def456
 
 # JSON output
-br show bd-abc123 --json
+obr show bd-abc123 --json
 ```
 
 ---
@@ -370,7 +370,7 @@ br show bd-abc123 --json
 Update one or more issues.
 
 ```bash
-br update [OPTIONS] [IDS]...
+obr update [OPTIONS] [IDS]...
 ```
 
 **Options:**
@@ -402,16 +402,16 @@ br update [OPTIONS] [IDS]...
 **Examples:**
 ```bash
 # Claim a task
-br update bd-abc123 --claim
+obr update bd-abc123 --claim
 
 # Change status
-br update bd-abc123 -s in_progress
+obr update bd-abc123 -s in_progress
 
 # Update multiple issues
-br update bd-abc123 bd-def456 -p 1
+obr update bd-abc123 bd-def456 -p 1
 
 # Add labels
-br update bd-abc123 --add-label "urgent,reviewed"
+obr update bd-abc123 --add-label "urgent,reviewed"
 ```
 
 ---
@@ -421,7 +421,7 @@ br update bd-abc123 --add-label "urgent,reviewed"
 Close one or more issues.
 
 ```bash
-br close [OPTIONS] [IDS]...
+obr close [OPTIONS] [IDS]...
 ```
 
 **Options:**
@@ -437,16 +437,16 @@ br close [OPTIONS] [IDS]...
 **Examples:**
 ```bash
 # Close with reason
-br close bd-abc123 -r "Completed in PR #42"
+obr close bd-abc123 -r "Completed in PR #42"
 
 # Close multiple
-br close bd-abc123 bd-def456 -r "Sprint complete"
+obr close bd-abc123 bd-def456 -r "Sprint complete"
 
 # Force close blocked issue
-br close bd-abc123 --force
+obr close bd-abc123 --force
 
 # Close and get next work
-br close bd-abc123 --suggest-next --json
+obr close bd-abc123 --suggest-next --json
 ```
 
 ---
@@ -456,7 +456,7 @@ br close bd-abc123 --suggest-next --json
 Reopen a closed issue.
 
 ```bash
-br reopen [OPTIONS] [IDS]...
+obr reopen [OPTIONS] [IDS]...
 ```
 
 **Options:**
@@ -472,7 +472,7 @@ br reopen [OPTIONS] [IDS]...
 Delete an issue (creates tombstone).
 
 ```bash
-br delete [OPTIONS] <IDS>...
+obr delete [OPTIONS] <IDS>...
 ```
 
 **Options:**
@@ -494,7 +494,7 @@ br delete [OPTIONS] <IDS>...
 List issues ready to work on (unblocked, not deferred).
 
 ```bash
-br ready [OPTIONS]
+obr ready [OPTIONS]
 ```
 
 **Options:**
@@ -519,20 +519,20 @@ br ready [OPTIONS]
 **Examples:**
 ```bash
 # My ready work
-br ready --assignee $(whoami)
+obr ready --assignee $(whoami)
 
 # Unassigned high-priority
-br ready --unassigned -p 0 -p 1
+obr ready --unassigned -p 0 -p 1
 
 # JSON for agent integration
-br ready --json --limit 10
+obr ready --json --limit 10
 ```
 
-**Configurable ready status group (`.beads/policy.yaml`):**
+**Configurable ready status group (`.obr/policy.yaml`):**
 
-By default, `br ready` treats only `open` issues as actionable. Projects with a
+By default, `obr ready` treats only `open` issues as actionable. Projects with a
 review workflow can widen what "ready" means — so review-returned work (e.g.
-`rework`) resurfaces through the same `br ready --json` entrypoint instead of
+`rework`) resurfaces through the same `obr ready --json` entrypoint instead of
 forcing workflow knowledge into every agent prompt:
 
 ```yaml
@@ -555,13 +555,13 @@ Semantics:
   group is accepted as-is.
 - **Deferred interaction:** the `defer_until` time-gate still applies to every
   non-`deferred` member of the group, so a configured member with a future
-  `defer_until` stays out of `br ready` until it elapses. `--include-deferred`
+  `defer_until` stays out of `obr ready` until it elapses. `--include-deferred`
   additionally surfaces `deferred` work and drops the time-gate, without
   double-counting `deferred` if it is also listed in the group.
-- **Scope:** `br ready`, `br ready --json`, `br ready --robot`,
-  `br ready --format toon`, and `br scheduler` all use the same ready group.
+- **Scope:** `obr ready`, `obr ready --json`, `obr ready --robot`,
+  `obr ready --format toon`, and `obr scheduler` all use the same ready group.
 
-**Atomic workflow capacity (`.beads/policy.yaml`):**
+**Atomic workflow capacity (`.obr/policy.yaml`):**
 
 Repository-level hard limits and transition-scoped admission guards are
 configured under `workflow.capacity`. Every referenced status must be declared
@@ -622,18 +622,18 @@ workflow:
   be committed if a later route fails and cross-repository atomicity is
   intentionally not claimed.
 - Omitting `workflow.capacity` preserves existing behavior exactly.
-- Audited issue-specific exemptions (`br capacity exempt`, see
+- Audited issue-specific exemptions (`obr capacity exempt`, see
   [capacity](#capacity)) let a named issue enter a named capacity without
   consuming a slot; evidence then reports counted and exempt totals
   separately.
 - Optional multi-agent admission scopes are configured under
   `workflow.capacity.scopes` (see below).
 - Occupancy is observable without mutating anything: once any capacity is
-  configured, `br stats --json` and `br coordination status --json` carry a
+  configured, `obr stats --json` and `obr coordination status --json` carry a
   `capacity` array (one row per repository capacity plus one per occupied
   scope partition) with `counted`, `aggregate_parents_excluded`, `exempt`,
   `soft_limit`, `hard_limit`, `remaining`, and a `state` of
-  `healthy`/`soft-limit`/`at-hard`/`over-hard`; human `br stats` prints the
+  `healthy`/`soft-limit`/`at-hard`/`over-hard`; human `obr stats` prints the
   matching CAPACITY/COUNTED/AGGREGATES/EXEMPT/SOFT/HARD/REMAINING/STATE
   table. The block is absent when no capacity is configured, keeping the
   legacy payload shapes byte-stable, and the snapshot never writes (lazy
@@ -672,8 +672,8 @@ workflow:
   repository-level limits, and a transition must satisfy all of them inside
   the same admission transaction.
 - Partition keys: `actor` uses the resolved CLI actor; `harness` uses the
-  self-reported `--harness`/`BR_HARNESS` attribution; `session` uses the
-  env-only `BR_SESSION` attribution; `assignee` uses the issue's prospective
+  self-reported `--harness`/`OBR_HARNESS` attribution; `session` uses the
+  env-only `OBR_SESSION` attribution; `assignee` uses the issue's prospective
   assignee; `subtree` uses the issue's root ancestor over parent-child
   edges. Every committed status transition records its admitting
   actor/agent/harness/session in the project-local `capacity_occupancy`
@@ -741,7 +741,7 @@ workflow:
         types:
           epic: 0
         issues:
-          br-migration: 3
+          obr-migration: 3
 ```
 
 - Hierarchy counting runs inside the same `BEGIN IMMEDIATE` transaction as
@@ -757,11 +757,11 @@ workflow:
 
 **Derived rollup status:**
 
-`br show --json` adds a `rollup` object to any issue that has local
+`obr show --json` adds a `rollup` object to any issue that has local
 parent-child children, without mutating the issue's own status:
 
 ```json
-{"id":"br-epic","status":"open",
+{"id":"obr-epic","status":"open",
  "rollup":{"status":"in_progress","descendants":{"in_progress":1,"closed":2}}}
 ```
 
@@ -779,19 +779,19 @@ entirely, and the JSONL fallback show paths do not emit it.
 Rank ready work for agent swarms with explainable evidence.
 
 ```bash
-br scheduler [OPTIONS]
-br schedule [OPTIONS]   # alias
+obr scheduler [OPTIONS]
+obr schedule [OPTIONS]   # alias
 ```
 
 `scheduler` starts from the same ready-work definition as `ready`, then scores a
 bounded candidate set with deterministic evidence terms for priority,
 dependency impact, stale claims, fairness, and domain contention. JSON and TOON
-output include `schema: "br.scheduler.v1"` plus a fallback policy so agents can
+output include `schema: "obr.scheduler.v1"` plus a fallback policy so agents can
 parse the result safely and preserve conservative ordering when evidence ties.
 The `evidence.stale_claim` object uses the shared coordination policy with
 `reservation_status: "no_snapshot"` because `scheduler` does not parse Agent
 Mail snapshots. A stale assigned row can therefore recommend `inspect_mail`, but
-it is not proof that the claim is abandoned; run `br coordination status` with
+it is not proof that the claim is abandoned; run `obr coordination status` with
 reservation evidence before reclaiming ownership.
 
 **Options:**
@@ -807,10 +807,10 @@ reservation evidence before reclaiming ownership.
 **Examples:**
 ```bash
 # Top swarm recommendations with evidence
-br scheduler --json --limit 10
+obr scheduler --json --limit 10
 
 # Token-efficient parseable output
-br scheduler --format toon --stats
+obr scheduler --format toon --stats
 ```
 
 ---
@@ -820,10 +820,10 @@ br scheduler --format toon --stats
 Diagnose hidden `in_progress` claims without mutating ownership.
 
 ```bash
-br coordination status [OPTIONS]
+obr coordination status [OPTIONS]
 ```
 
-`coordination status` emits the `br.coordination.v1` evidence envelope used to
+`coordination status` emits the `obr.coordination.v1` evidence envelope used to
 spot stale claims, missing Agent Mail evidence, and active reservation matches.
 The command is read-only: it never calls Agent Mail directly and never changes
 issue status or assignee.
@@ -843,25 +843,25 @@ JSON/TOON claim rows include advisory fields:
 `reclaim_allowed_by_policy`, `required_human_confirmation`,
 `evidence_summary`, and `suggested_commands`. Suggested commands are emitted
 only when the policy has enough evidence to propose the documented audit-comment
-plus `br update --claim` sequence. Fresh claims, active reservations, missing or
+plus `obr update --claim` sequence. Fresh claims, active reservations, missing or
 invalid snapshots, and human/unknown ownership do not emit reclaim commands.
 
 **Examples:**
 ```bash
 # Inspect current in-progress claims
-br coordination status --json
+obr coordination status --json
 
 # Queue-dry diagnosis: ready work may be hidden behind old claims
-br ready --json
+obr ready --json
 bv --robot-next
-br list --status in_progress --json
-br coordination status --json
+obr list --status in_progress --json
+obr coordination status --json
 
 # Use offline Agent Mail snapshots without requiring a live MCP service
-br coordination status --reservations reservations.json --agents agents.jsonl --json
+obr coordination status --reservations reservations.json --agents agents.jsonl --json
 
 # Review advisory reclaim output before copying any suggested command
-br coordination status --reservations reservations.json --agents agents.jsonl --json \
+obr coordination status --reservations reservations.json --agents agents.jsonl --json \
   | jq '.claims[] | {id: .issue.id, reclaim_allowed_by_policy, required_human_confirmation, suggested_commands}'
 ```
 
@@ -872,7 +872,7 @@ br coordination status --reservations reservations.json --agents agents.jsonl --
 List blocked issues.
 
 ```bash
-br blocked [OPTIONS]
+obr blocked [OPTIONS]
 ```
 
 Shows issues that are blocked by other open issues.
@@ -897,7 +897,7 @@ Shows issues that are blocked by other open issues.
 Full-text search across issues.
 
 ```bash
-br search <QUERY> [OPTIONS]
+obr search <QUERY> [OPTIONS]
 ```
 
 Supports all filter options from `list`. Unlike `list`/`ready` (which are
@@ -919,10 +919,10 @@ selected corpus already includes closed issues. Pass `--all` (or a terminal
 **Examples:**
 ```bash
 # Search in all fields
-br search "authentication"
+obr search "authentication"
 
 # Search with filters
-br search "bug" -t bug --assignee alice
+obr search "bug" -t bug --assignee alice
 ```
 
 ---
@@ -932,7 +932,7 @@ br search "bug" -t bug --assignee alice
 Count issues with optional grouping.
 
 ```bash
-br count [OPTIONS]
+obr count [OPTIONS]
 ```
 
 **Options:**
@@ -956,13 +956,13 @@ br count [OPTIONS]
 **Examples:**
 ```bash
 # Total count
-br count
+obr count
 
 # Count by status
-br count --by status
+obr count --by status
 
 # Count by assignee
-br count --by assignee --json
+obr count --by assignee --json
 ```
 
 ---
@@ -972,7 +972,7 @@ br count --by assignee --json
 List stale issues (not updated recently).
 
 ```bash
-br stale [OPTIONS]
+obr stale [OPTIONS]
 ```
 
 **Options:**
@@ -983,14 +983,14 @@ br stale [OPTIONS]
 
 **Abandoned in-progress claims:**
 
-`br ready` does not show `in_progress` issues. To audit hidden work, combine
+`obr ready` does not show `in_progress` issues. To audit hidden work, combine
 `stale` with an explicit in-progress listing and inspect the claim evidence:
 
 ```bash
-br stale --days 1 --json
-br list --status in_progress --json
-br show <id> --json
-br comments list <id> --json
+obr stale --days 1 --json
+obr list --status in_progress --json
+obr show <id> --json
+obr comments list <id> --json
 ```
 
 An `in_progress` issue is a reclaim candidate when `updated_at` is old, the
@@ -1002,10 +1002,10 @@ unclear claims.
 Before reclaiming, add an audit comment with the evidence, then claim:
 
 ```bash
-br comments add <id> --author "$BD_ACTOR" \
+obr comments add <id> --author "$OBR_ACTOR" \
   --message "reclaim: previous in_progress claim appears abandoned; evidence: updated_at=<timestamp>, assignee=<name>, no active reservation or pane" \
   --json
-br update <id> --claim --json
+obr update <id> --claim --json
 ```
 
 There is not a separate reclaim command; the audit comment plus `update --claim`
@@ -1020,7 +1020,7 @@ is the documented recovery workflow.
 Manage dependencies between issues.
 
 ```bash
-br dep <COMMAND>
+obr dep <COMMAND>
 ```
 
 **Subcommands:**
@@ -1041,16 +1041,16 @@ br dep <COMMAND>
 **Examples:**
 ```bash
 # Add blocking dependency
-br dep add bd-123 bd-456  # bd-123 is blocked by bd-456
+obr dep add bd-123 bd-456  # bd-123 is blocked by bd-456
 
 # Add with type
-br dep add bd-123 bd-456 --type discovered-from
+obr dep add bd-123 bd-456 --type discovered-from
 
 # Show tree
-br dep tree bd-123
+obr dep tree bd-123
 
 # Check for cycles
-br dep cycles
+obr dep cycles
 ```
 
 An issue reachable through more than one parent (a diamond) is listed under
@@ -1059,17 +1059,17 @@ Later occurrences are marked `(shown above)` in text output and carry
 `"repeat": true` in `--json`. This keeps the output bounded by the size of the
 dependency graph instead of by the number of distinct paths through it, which
 is what made deep traversals of shared-dependency graphs explode
-([#392](https://github.com/Dicklesworthstone/beads_rust/issues/392)).
+([#392](https://github.com/jwiegley/obr/issues/392)).
 `truncated` is unrelated and still means "children exist but `--max-depth`
 stopped the walk".
 
 **Cycle semantics
-([#391](https://github.com/Dicklesworthstone/beads_rust/issues/391)):**
+([#391](https://github.com/jwiegley/obr/issues/391)):**
 
 - Only *blocking* dependency types are cycle-checked when an edge is added:
   `blocks`, `conditional-blocks`, `waits-for`, and `parent-child`.
   `related`, `discovered-from`, and custom types are never cycle-checked,
-  and `br dep cycles` uses the same blocking edge set, so an edge the add
+  and `obr dep cycles` uses the same blocking edge set, so an edge the add
   path accepted can never fail a cycle health check afterwards
   (`--blocking-only` is a compatible alias of the default).
 - **Epic containment participates in blocking cycles, reversed:** depending
@@ -1091,7 +1091,7 @@ Visualize the dependency graph for one issue or for all active connected
 components.
 
 ```bash
-br graph [OPTIONS] [ISSUE]
+obr graph [OPTIONS] [ISSUE]
 ```
 
 **Options:**
@@ -1099,7 +1099,7 @@ br graph [OPTIONS] [ISSUE]
 |--------|-------------|
 | `--all` | Show graph for all open, in-progress, and blocked issues |
 | `--compact` | Print one line per issue |
-| `--dot` | Emit Graphviz DOT notation (e.g. `br graph bd-1 --dot \| dot -Tsvg > graph.svg`) |
+| `--dot` | Emit Graphviz DOT notation (e.g. `obr graph bd-1 --dot \| dot -Tsvg > graph.svg`) |
 
 ---
 
@@ -1108,7 +1108,7 @@ br graph [OPTIONS] [ISSUE]
 Manage labels on issues.
 
 ```bash
-br label <COMMAND>
+obr label <COMMAND>
 ```
 
 **Subcommands:**
@@ -1127,7 +1127,7 @@ br label <COMMAND>
 Epic management commands.
 
 ```bash
-br epic <COMMAND>
+obr epic <COMMAND>
 ```
 
 **Subcommands:**
@@ -1143,7 +1143,7 @@ br epic <COMMAND>
 Manage comments on issues.
 
 ```bash
-br comments <COMMAND>
+obr comments <COMMAND>
 ```
 
 **Subcommands:**
@@ -1170,8 +1170,8 @@ br comments <COMMAND>
 Defer or undefer issues.
 
 ```bash
-br defer <IDS>... [OPTIONS]
-br undefer <IDS>... [OPTIONS]
+obr defer <IDS>... [OPTIONS]
+obr undefer <IDS>... [OPTIONS]
 ```
 
 **Options:**
@@ -1188,7 +1188,7 @@ br undefer <IDS>... [OPTIONS]
 List orphan issues (referenced in commits but still open).
 
 ```bash
-br orphans [OPTIONS]
+obr orphans [OPTIONS]
 ```
 
 **Options:**
@@ -1205,7 +1205,7 @@ br orphans [OPTIONS]
 Manage saved queries.
 
 ```bash
-br query <COMMAND>
+obr query <COMMAND>
 ```
 
 **Subcommands:**
@@ -1216,7 +1216,7 @@ br query <COMMAND>
 | `list` | List saved queries |
 | `delete <NAME>` | Delete a saved query |
 
-`query save` and `query run` use the same filter flags as `br list`; there is
+`query save` and `query run` use the same filter flags as `obr list`; there is
 no free-form query string argument.
 
 ---
@@ -1225,15 +1225,15 @@ no free-form query string argument.
 
 Record and inspect workflow gate results (issue #312, layer 2). Gates are
 conditions a project can require before a status transition is allowed, defined
-in `.beads/policy.yaml` under `workflow.gates` as a map of `"from -> to"`
+in `.obr/policy.yaml` under `workflow.gates` as a map of `"from -> to"`
 transitions to required gate conditions. Enforcement happens at the
 close/transition chokepoint: a move into a gated state is rejected until every
 required gate passes. Gate results are project-local metadata and are not synced
 through JSONL.
 
 ```bash
-br gate report <ID> --gate <NAME> --provider <NAME> --status pass|fail [OPTIONS]
-br gate list <ID> [OPTIONS]
+obr gate report <ID> --gate <NAME> --provider <NAME> --status pass|fail [OPTIONS]
+obr gate list <ID> [OPTIONS]
 ```
 
 **Subcommands:**
@@ -1309,10 +1309,10 @@ are project-local metadata (like gate results) and are not synced through
 JSONL.
 
 ```bash
-br capacity exempt <ID> --status <NAME>|--group <NAME> --provider <P> --reason <TEXT> [--expires <WHEN>]
-br capacity renew <ID> --status <NAME>|--group <NAME> --provider <P> [--expires <WHEN>] [--reason <TEXT>]
-br capacity revoke <ID> --status <NAME>|--group <NAME> --provider <P> [--reason <TEXT>]
-br capacity exemptions [<ID>] [--history]
+obr capacity exempt <ID> --status <NAME>|--group <NAME> --provider <P> --reason <TEXT> [--expires <WHEN>]
+obr capacity renew <ID> --status <NAME>|--group <NAME> --provider <P> [--expires <WHEN>] [--reason <TEXT>]
+obr capacity revoke <ID> --status <NAME>|--group <NAME> --provider <P> [--reason <TEXT>]
+obr capacity exemptions [<ID>] [--history]
 ```
 
 **Subcommands:**
@@ -1333,7 +1333,7 @@ br capacity exemptions [<ID>] [--history]
 | `--expires <WHEN>` | Expiry: RFC3339, `YYYY-MM-DD`, or relative (`+7d`) |
 | `--robot` | Machine-readable JSON output |
 
-Authorization lives in `.beads/policy.yaml`:
+Authorization lives in `.obr/policy.yaml`:
 
 ```yaml
 workflow:
@@ -1378,25 +1378,25 @@ Semantics:
 Sync database with JSONL file.
 
 ```bash
-br sync [OPTIONS]
+obr sync [OPTIONS]
 ```
 
 **SAFETY GUARANTEES:**
 - NEVER executes git commands or auto-commits
-- NEVER modifies files outside the selected workspace's `.beads/` (unless `--allow-external-jsonl`)
+- NEVER modifies files outside the selected workspace's `.obr/` (unless `--allow-external-jsonl`)
 - Publishes JSONL/base/manifest files with checked temporary-file replacement;
   database mutations use transactions and operation-specific rollback guards
 - Safety guards prevent accidental data loss
 - `--status` does not probe Git; its stable `git_export` compatibility object
   reports `available: false`, `reason: "not_probed"`, and
-  `diagnostic_command: "br vcs-status --json"`
+  `diagnostic_command: "obr vcs-status --json"`
 
 **Modes (exactly one required):**
 | Option | Description |
 |--------|-------------|
 | `--flush-only` | Export database to JSONL |
 | `--import-only` | Import JSONL into database |
-| `--merge` | Three-way merge `.beads/beads.base.jsonl`, SQLite, and JSONL |
+| `--merge` | Three-way merge `.obr/beads.base.jsonl`, SQLite, and JSONL |
 | `--reconcile` | Additively reconcile JSONL into the database (lossless, previewable) |
 | `--status` | Show sync status (read-only) |
 | `--witness` | Compute a deterministic read-only JSONL integrity witness |
@@ -1409,7 +1409,7 @@ br sync [OPTIONS]
 | `-f, --force` | Override safety guards (use with caution) |
 | `--force-db` | With `--merge`, resolve conflicts by keeping the local SQLite version |
 | `--force-jsonl` | With `--merge`, resolve conflicts by keeping the JSONL version |
-| `--allow-external-jsonl` | Allow JSONL path outside `.beads/` |
+| `--allow-external-jsonl` | Allow JSONL path outside `.obr/` |
 | `--manifest` | Write manifest file with export summary |
 | `--error-policy <POLICY>` | Export error handling: strict, best-effort, partial, required-core |
 | `--orphans <MODE>` | Orphan handling: strict, resurrect, skip, allow |
@@ -1423,28 +1423,28 @@ br sync [OPTIONS]
 | `--robot` | Machine-readable output |
 
 **Merge semantics:**
-- `--merge` uses `.beads/beads.base.jsonl` as the common ancestor and compares it with the local SQLite database and current JSONL file.
+- `--merge` uses `.obr/beads.base.jsonl` as the common ancestor and compares it with the local SQLite database and current JSONL file.
 - Without an explicit conflict policy, semantic conflicts stop the command. This covers both-modified, delete-vs-modify, and convergent same-ID creation conflicts.
 - `--force-db` keeps local SQLite changes for conflicts, `--force-jsonl` keeps JSONL changes for conflicts, and `--force` chooses the side with the newer timestamp.
 - `--force-db`, `--force-jsonl`, and `--force` are mutually exclusive for `--merge`.
 
 **Reconcile semantics:**
-- `--reconcile` classifies every JSONL row against full issue state — never the cached content hash — so it repairs the "false equal" state where `br sync --status` reports synchronized while the JSONL holds rows the database never imported.
+- `--reconcile` classifies every JSONL row against full issue state — never the cached content hash — so it repairs the "false equal" state where `obr sync --status` reports synchronized while the JSONL holds rows the database never imported.
 - Classification is timestamp-newer-wins with tombstone protection: JSONL-only rows are created, strictly newer JSONL rows update in place, and everything else is skipped. Deletion is structurally impossible in this mode.
 - Apply runs in one write transaction bound to plan-time witnesses (JSONL content hash + stat, event-table shape). Any divergence between plan and apply rolls the whole transaction back.
 - Audit events are never created, modified, or deleted; the apply transaction verifies the events table is byte-stable and aborts otherwise.
 - Existing dependencies, labels, comments, dirty markers, and tombstones survive unless superseded by an applied row. Database-only issues are never touched; they (and skipped rows whose local copy still diverges) mark the database for a future flush.
 - No JSONL, base snapshot, manifest, or history writes ever happen; the same transaction repairs the stored content hash and stat witness so the staleness short-circuit becomes truthful again.
 - `--dry-run` is read-only: no write transaction, no metadata/cache/dirty changes, no file writes of any kind.
-- Both modes emit a versioned receipt (`br.sync.reconcile.v1` — see `br schema all`, key `SyncReconcileReceipt`) with source/target witnesses, created/updated/skipped/deleted counts (deleted is always 0), bounded id previews, relation counts, and before/after event counts.
+- Both modes emit a versioned receipt (`obr.sync.reconcile.v1` — see `obr schema all`, key `SyncReconcileReceipt`) with source/target witnesses, created/updated/skipped/deleted counts (deleted is always 0), bounded id previews, relation counts, and before/after event counts.
 - `--force`, `--rename-prefix`, and `--orphans` are rejected with `--reconcile`; dangling dependency references are cleaned only from rows the reconcile itself wrote.
 
 **Rebuild semantics:**
-- `--rebuild` is valid only with explicit import mode: `br sync --import-only --rebuild`.
+- `--rebuild` is valid only with explicit import mode: `obr sync --import-only --rebuild`.
 - JSONL is authoritative. After import, entries present only in SQLite are removed; deletion tombstones are preserved when applicable.
 - `--rebuild` is rejected with every non-import mode, including `--flush-only`, `--merge`, `--status`, and `--witness`.
-- Recovery artifacts are preserved under `.beads/.br_recovery/` when br has to move aside a damaged SQLite family before rebuilding.
-- If open-time recovery rebuilt the database before a semantic import flag such as `--rename-prefix` could apply, br prints a rerun command that includes the needed flags.
+- Recovery artifacts are preserved under `.obr/recovery/` when obr has to move aside a damaged SQLite family before rebuilding.
+- If open-time recovery rebuilt the database before a semantic import flag such as `--rename-prefix` could apply, obr prints a rerun command that includes the needed flags.
 
 **Prefix rename semantics (`--rename-prefix`):**
 - Only the prefix segment is replaced; the id remainder (descriptive slug and hash) is preserved: `oldp-cargo-license-spdx-ay8` becomes `newp-cargo-license-spdx-ay8`.
@@ -1452,20 +1452,20 @@ br sync [OPTIONS]
 - If the preserved id would collide with an existing id (or the old id has no separable prefix), that issue falls back to a freshly generated id and the receipt marks it with `fallback` (`regenerated-on-collision` or `regenerated-unparseable-id`).
 - Each renamed issue's old id is stashed in its `external_ref` when that field was empty.
 - The import output reports every rewrite as a `prefix_renames` list of `{old_id, new_id, fallback?}` entries (text and `--json`/`--robot`); use it to fix up external references. The field is omitted from JSON when no rename happened.
-- Without `--force`, the import short-circuits (skipping the rename) when the JSONL content hash is unchanged since the last import; and a following `br sync --flush-only` needs `--force` to write the renamed ids back to the JSONL.
+- Without `--force`, the import short-circuits (skipping the rename) when the JSONL content hash is unchanged since the last import; and a following `obr sync --flush-only` needs `--force` to write the renamed ids back to the JSONL.
 
 **Malformed-record salvage (`--skip-invalid-records`):**
 - This is an explicit recovery operation and is valid only with `--import-only`; normal import remains fail-closed on every invalid record.
 - Salvage is additive. It rejects `--force`, `--rebuild`, and `--rename-prefix` so a malformed source row cannot authorize deletion or ID rewriting.
 - Merge-conflict markers are never skipped. Resolve `<<<<<<<` / `=======` / `>>>>>>>` regions before salvage.
-- br validates each nonblank line as a complete issue record, rejects invalid or duplicate records, and refuses to publish an empty survivor set.
-- Before replacing the tracked JSONL, br stores the exact original bytes in a protected `.beads/.br_history/*pre-salvage*.jsonl` backup with target metadata. Automatic age/count rotation excludes protected backups; an explicit history-prune command can still remove them.
+- `obr` validates each nonblank line as a complete issue record, rejects invalid or duplicate records, and refuses to publish an empty survivor set.
+- Before replacing the tracked JSONL, `obr` stores the exact original bytes in a protected `.obr/history/*pre-salvage*.jsonl` backup with target metadata. Automatic age/count rotation excludes protected backups; an explicit history-prune command can still remove them.
 - The cleaned generation is staged, revalidated, conditionally published under the JSONL-family write authority, and then imported from the exact published snapshot.
-- Valid database rows absent from the survivor generation are preserved. br records their count in `database_records_requiring_export`, sets `needs_flush`, and directs the operator to run `br sync --flush-only` to restore the canonical JSONL.
+- Valid database rows absent from the survivor generation are preserved. `obr` records their count in `database_records_requiring_export`, sets `needs_flush`, and directs the operator to run `obr sync --flush-only` to restore the canonical JSONL.
 - Text output names every rejected line up to the normal human witness limit. `--json`/`--robot` emits the complete `salvage` receipt, including source/recovered digests, all line/error entries, the exact backup path, publication atomicity, preserved-record count, and whether `needs_flush` was armed.
 
 **Additive reconciliation semantics:**
-- `br sync --reconcile-additive --robot` is the default dry-run. It opens the current database read-only, compares exact issue IDs, and emits a hash-bound `br.sync.additive-reconciliation.v2` receipt plus a `plan_sha256` review token.
+- `obr sync --reconcile-additive --robot` is the default dry-run. It opens the current database read-only, compares exact issue IDs, and emits a hash-bound `obr.sync.additive-reconciliation.v2` receipt plus a `plan_sha256` review token.
 - The planner preserves SQLite-only issues, audit events, close metadata, gate-result history, runtime config, and every unmodified relation row. It never performs content-hash identity merges, physical deletes, JSONL writes, base-snapshot writes, or merge-note writes.
 - JSONL-only IDs are created. For a shared ID, only an `open`/`in_progress` to `closed` transition whose scalar diff is limited to `status`, `updated_at`, `closed_at`, and `close_reason` is accepted automatically. Other drift is a conflict. Exact-ID `--resolve-source-id` is limited to the documented non-lifecycle scalar whitelist and is rejected when JSONL is older than SQLite.
 - Explicit resolution never authorizes relation drift, tombstone resurrection, live-to-tombstone conversion, external-reference collision, orphan dependencies, or a newly introduced blocking cycle. Superfluous, duplicate, blank, and unknown resolution IDs are rejected.
@@ -1475,83 +1475,83 @@ br sync [OPTIONS]
 - The receipt distinguishes distinct conflicted issues from total conflict observations; includes complete ID/diff/remap manifests and their SHA-256 digests; and reports pre-existing, projected, and newly introduced blocking-cycle components.
 
 **Portable source path migration (`--migrate-source-repo-path`):**
-- The default invocation emits a `br.sync.source-repo-path-migration.v1` dry-run receipt. It reconciles JSONL-only and newer shared rows without deleting SQLite-only rows, preserves tombstones, and fails closed on equal-timestamp semantic drift.
+- The default invocation emits an `obr.sync.source-repo-path-migration.v1` dry-run receipt. It reconciles JSONL-only and newer shared rows without deleting SQLite-only rows, preserves tombstones, and fails closed on equal-timestamp semantic drift.
 - Every surviving `source_repo_path` is planned for the canonical current workspace directory. The portable `source_repo` display name is preserved rather than replaced by a machine-specific path.
 - Apply requires the exact `plan_sha256` and uses the durable DB/JSONL/base publication saga. If interrupted after the database transaction or JSONL publication, the next migration or merge invocation resumes the pending receipt before starting new work.
-- Migration does not probe Git. Its receipt reports `vcs_status: "not_probed"`; run `br vcs-status --json` separately when staged/worktree state must be reviewed.
+- Migration does not probe Git. Its receipt reports `vcs_status: "not_probed"`; run `obr vcs-status --json` separately when staged/worktree state must be reviewed.
 
 **Examples:**
 ```bash
-# Export to JSONL explicitly; useful as a final check before committing .beads/
-br sync --flush-only
+# Export to JSONL explicitly; useful as a final check before committing .obr/
+obr sync --flush-only
 
 # Import from JSONL
-br sync --import-only
+obr sync --import-only
 
 # Recover valid rows from a historical JSONL containing malformed records
-br sync --import-only --skip-invalid-records --json
+obr sync --import-only --skip-invalid-records --json
 
 # Merge DB and JSONL after both changed
-br sync --merge
+obr sync --merge
 
 # Resolve semantic merge conflicts explicitly
-br sync --merge --force-db
-br sync --merge --force-jsonl
-br sync --merge --force
+obr sync --merge --force-db
+obr sync --merge --force-jsonl
+obr sync --merge --force
 
 # Rebuild SQLite from authoritative JSONL
-br sync --import-only --rebuild
+obr sync --import-only --rebuild
 
 # Rebuild while rewriting imported IDs to the configured prefix
-br sync --import-only --rebuild --rename-prefix
+obr sync --import-only --rebuild --rename-prefix
 
 # Preview an additive reconcile (read-only), then apply it
-br sync --reconcile --dry-run --json
-br sync --reconcile --json
+obr sync --reconcile --dry-run --json
+obr sync --reconcile --json
 # Inspect a lossless additive recovery plan
-br sync --reconcile-additive --robot > /tmp/additive-plan.json
+obr sync --reconcile-additive --robot > /tmp/additive-plan.json
 
 # If a scalar conflict is intentionally source-authoritative, re-plan with the
 # exact ID. Repeat the flag for each independently reviewed conflict.
-br sync --reconcile-additive \
+obr sync --reconcile-additive \
   --resolve-source-id bd-example \
   --robot > /tmp/additive-plan.json
 
 # Apply only the exact conflict-free plan that was reviewed.
-br sync --reconcile-additive \
+obr sync --reconcile-additive \
   --resolve-source-id bd-example \
   --apply \
   --expect-plan-sha256 "$(jq -r .plan_sha256 /tmp/additive-plan.json)" \
   --robot
 
 # Reconcile both stores and normalize machine-specific source paths
-path_plan="$(br sync --migrate-source-repo-path --robot)"
+path_plan="$(obr sync --migrate-source-repo-path --robot)"
 path_plan_sha256="$(printf '%s\n' "$path_plan" | jq -r .plan_sha256)"
-br sync --migrate-source-repo-path \
+obr sync --migrate-source-repo-path \
   --apply --expect-plan-sha256 "$path_plan_sha256" --robot
 
 # Check sync status
-br sync --status
+obr sync --status
 
 # Explicitly inspect the JSONL export's Git visibility
-br vcs-status --json
+obr vcs-status --json
 ```
 
-`br sync --status` also runs a cheap DB↔JSONL **coverage probe**: the
+`obr sync --status` also runs a cheap DB↔JSONL **coverage probe**: the
 exportable DB issue count (tombstones included, ephemerals/wisps excluded)
 is compared against the JSONL's unique id count. When the byte/hash signals
 say "current" but the sets differ — e.g. stored metadata lies about a
 partial or lost import — the status reports **coverage drift** instead of
 "In sync" (JSON: `coverage: {db_exportable_issues, jsonl_unique_ids}` and
-`coverage_drift: true`) and points at `br sync --reconcile --dry-run`
-(lossless) or `br sync --import-only --rebuild` (JSONL-authoritative).
+`coverage_drift: true`) and points at `obr sync --reconcile --dry-run`
+(lossless) or `obr sync --import-only --rebuild` (JSONL-authoritative).
 The `--import-only` stored-hash shortcut applies the same invariant and
 falls through to a real additive import instead of skipping.
 
 ```bash
 
 # Export with verbose logging
-br sync --flush-only -v
+obr sync --flush-only -v
 ```
 
 ---
@@ -1559,14 +1559,14 @@ br sync --flush-only -v
 ### vcs-status
 
 Explicitly inspect Git visibility for the configured JSONL export. This is a
-separate, user-requested diagnostic capability; no `br sync` mode delegates to
+separate, user-requested diagnostic capability; no `obr sync` mode delegates to
 it or executes Git.
 
 ```bash
-br vcs-status [--jsonl PATH] [--allow-external-jsonl] [--timeout-ms MILLISECONDS] [--json|--robot]
+obr vcs-status [--jsonl PATH] [--allow-external-jsonl] [--timeout-ms MILLISECONDS] [--json|--robot]
 ```
 
-The machine-readable `br.vcs-export-status.v2` record reports:
+The machine-readable `obr.vcs-export-status.v2` record reports:
 
 - `observation_atomic: false`, because its exact evidence is collected by
   sequential probes rather than a transactional Git snapshot;
@@ -1594,7 +1594,7 @@ stderr to separate anonymous temporary files and polls each file against a
 fixed limit. The probe clock starts before secure source capture. Capture,
 Git subprocesses, capture reads, and in-process blob hashing check the shared
 deadline between bounded operations; an individual filesystem read cannot
-itself be preempted. On timeout or runner failure, br terminates and reaps the
+itself be preempted. On timeout or runner failure, obr terminates and reaps the
 direct child before returning; mandatory cleanup may extend past the probe
 budget. This preserves distinct `probe_timed_out` and `probe_output_limit`
 results without waiting for pipe EOF from a descendant that only inherited an
@@ -1618,12 +1618,12 @@ reported only as a SHA-256 descriptor; raw external paths and Git stderr are
 not emitted.
 
 ```bash
-# Inspect the configured .beads/issues.jsonl
-br vcs-status
-br vcs-status --json
+# Inspect the configured PLAN.org
+obr vcs-status
+obr vcs-status --json
 
 # Inspect an explicitly authorized external JSONL without exposing its path
-br vcs-status \
+obr vcs-status \
   --jsonl /private/export/issues.jsonl \
   --allow-external-jsonl \
   --json
@@ -1636,7 +1636,7 @@ br vcs-status \
 Configuration management.
 
 ```bash
-br config <COMMAND>
+obr config <COMMAND>
 ```
 
 **Subcommands:**
@@ -1652,17 +1652,17 @@ br config <COMMAND>
 **Examples:**
 ```bash
 # List all config
-br config list
+obr config list
 
 # Get specific value
-br config get id.prefix
+obr config get id.prefix
 
 # Set value
-br config set id.prefix=myproj
-br config set id.prefix myproj
+obr config set id.prefix=myproj
+obr config set id.prefix myproj
 
 # Edit in editor
-br config edit
+obr config edit
 ```
 
 ---
@@ -1671,22 +1671,22 @@ br config edit
 
 ### capabilities
 
-Describe br's machine-readable command contracts, safety guarantees, supported
+Describe obr's machine-readable command contracts, safety guarantees, supported
 output formats, exit-code categories, and environment variables.
 
 ```bash
-br capabilities [OPTIONS]
+obr capabilities [OPTIONS]
 ```
 
 Use this as the first discovery call in automation:
 
 ```bash
-br capabilities --format json
-br capabilities --format json --command "create"
-br capabilities --format json --command "comments add"
-br capabilities --format json --command "dep add"
-br capabilities --format json --command "query save"
-br capabilities --format json --command "update"
+obr capabilities --format json
+obr capabilities --format json --command "create"
+obr capabilities --format json --command "comments add"
+obr capabilities --format json --command "dep add"
+obr capabilities --format json --command "query save"
+obr capabilities --format json --command "update"
 ```
 
 **Options:**
@@ -1710,7 +1710,7 @@ safety notes, and workspace/safety contract metadata.
 Print concise in-tool documentation for automation agents.
 
 ```bash
-br robot-docs guide [OPTIONS]
+obr robot-docs guide [OPTIONS]
 ```
 
 Text mode prints a short handbook under 80 lines. JSON and TOON modes wrap the
@@ -1725,8 +1725,8 @@ same guide with `contract_version`, `line_count`, and canonical commands.
 **Example:**
 
 ```bash
-br robot-docs guide
-br robot-docs guide --format json
+obr robot-docs guide
+obr robot-docs guide --format json
 ```
 
 ---
@@ -1736,14 +1736,14 @@ br robot-docs guide --format json
 Start an MCP (Model Context Protocol) server on stdio.
 
 ```bash
-br serve [OPTIONS]
+obr serve [OPTIONS]
 ```
 
 `serve` is only available in binaries built with the optional `mcp` feature:
 
 ```bash
 cargo build --release --features mcp
-cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_rust --locked --features mcp
+cargo install --git https://github.com/jwiegley/obr.git obr --locked --features mcp
 ```
 
 **Options:**
@@ -1752,25 +1752,25 @@ cargo install --git https://github.com/Dicklesworthstone/beads_rust.git beads_ru
 |--------|-------------|
 | `--actor <NAME>` | Actor name recorded for mutations (default: `mcp`) |
 
-**Transport:** stdio. An MCP client launches `br serve`; `br` does not open a
+**Transport:** stdio. An MCP client launches `obr serve`; `obr` does not open a
 network listener.
 
 **Tools:** `list_issues`, `show_issue`, `create_issue`, `update_issue`,
 `close_issue`, `manage_dependencies`, `project_overview`.
 
-**Resources:** `beads://project/info`, `beads://issues/{id}`,
-`beads://schema`, `beads://labels`, `beads://issues/ready`,
-`beads://issues/blocked`, `beads://issues/in_progress`,
-`beads://coordination/status`, `beads://issues/deferred`,
-`beads://issues/bottlenecks`, `beads://graph/health`,
-`beads://events/recent`.
+**Resources:** `obr://project/info`, `obr://issues/{id}`,
+`obr://schema`, `obr://labels`, `obr://issues/ready`,
+`obr://issues/blocked`, `obr://issues/in_progress`,
+`obr://coordination/status`, `obr://issues/deferred`,
+`obr://issues/bottlenecks`, `obr://graph/health`,
+`obr://events/recent`.
 
 **Prompts:** `triage`, `status_report`, `plan_next_work`, `polish_backlog`.
 
 **Safety:** MCP mutations use the same local storage, audit trail, `.write.lock`,
 and JSONL auto-flush behavior as CLI mutations. The server never runs git and
-does not synchronize repositories. `beads://coordination/status` is read-only
-and does not call Agent Mail; use `br coordination status --reservations
+does not synchronize repositories. `obr://coordination/status` is read-only
+and does not call Agent Mail; use `obr coordination status --reservations
 <PATH> --agents <PATH> --json` when reservation evidence is required.
 
 **Example MCP client entry:**
@@ -1778,8 +1778,8 @@ and does not call Agent Mail; use `br coordination status --reservations
 ```json
 {
   "mcpServers": {
-    "br": {
-      "command": "br",
+    "obr": {
+      "command": "obr",
       "args": ["serve", "--actor", "codex"],
       "env": {
         "RUST_LOG": "error"
@@ -1790,7 +1790,7 @@ and does not call Agent Mail; use `br coordination status --reservations
 ```
 
 Use `serve` when an MCP-native agent benefits from tool/resource discovery and
-structured recovery hints. Use `br --json ...` when a shell pipeline or `jq`
+structured recovery hints. Use `obr --json ...` when a shell pipeline or `jq`
 script is simpler.
 
 ---
@@ -1802,7 +1802,7 @@ script is simpler.
 Manage the Beads workflow section in an `AGENTS.md` file.
 
 ```bash
-br agents [OPTIONS]
+obr agents [OPTIONS]
 ```
 
 **Options:**
@@ -1822,8 +1822,8 @@ br agents [OPTIONS]
 Show project statistics.
 
 ```bash
-br stats [OPTIONS]
-br status [OPTIONS]  # alias
+obr stats [OPTIONS]
+obr status [OPTIONS]  # alias
 ```
 
 **Options:**
@@ -1847,7 +1847,7 @@ br status [OPTIONS]  # alias
 Run diagnostics and optionally repair issues.
 
 ```bash
-br doctor [OPTIONS]
+obr doctor [OPTIONS]
 ```
 
 Checks database integrity, schema compatibility, and configuration.
@@ -1866,20 +1866,20 @@ receipt-bound lifecycle:
 
 ```bash
 # Read-only inspection. Save and review the complete JSON receipt.
-br doctor migrate-schema plan --json > migration-plan.json
+obr doctor migrate-schema plan --json > migration-plan.json
 
 # Apply only if the database still matches the exact reviewed plan.
-br doctor migrate-schema apply \
+obr doctor migrate-schema apply \
   --plan-token "$(jq -r .plan_token migration-plan.json)" \
   --json > migration-applied.json
 
 # Verify that undo is still safe without changing the database.
-br doctor migrate-schema undo \
+obr doctor migrate-schema undo \
   "$(jq -r .run_id migration-applied.json)" \
   --dry-run --json
 
 # Restore the exact pre-migration SQLite family if necessary.
-br doctor migrate-schema undo \
+obr doctor migrate-schema undo \
   "$(jq -r .run_id migration-applied.json)" \
   --json
 ```
@@ -1914,7 +1914,7 @@ before restoring the byte-exact pre-state; it never deletes the displaced
 state. An interrupted undo resumes component by component, and a completed
 undo is idempotent. Recovery directories are mode `0700` and receipt/backup
 files are mode `0600` on Unix. Runs are retained under
-`.beads/.br_recovery/schema-migrations/`.
+`.obr/recovery/schema-migrations/`.
 
 ---
 
@@ -1923,17 +1923,17 @@ files are mode `0600` on Unix. Runs are retained under
 Show workspace diagnostics and metadata.
 
 ```bash
-br info [--schema] [--whats-new] [--thanks]
+obr info [--schema] [--whats-new] [--thanks]
 ```
 
 ---
 
 ### where
 
-Show the active `.beads` directory (after redirects, if any).
+Show the active `.obr` directory (after redirects, if any).
 
 ```bash
-br where
+obr where
 ```
 
 ---
@@ -1943,7 +1943,7 @@ br where
 Emit JSON Schemas for agent/tooling integrations.
 
 ```bash
-br schema [TARGET] [OPTIONS]
+obr schema [TARGET] [OPTIONS]
 ```
 
 **Targets:** `all`, `issue`, `issue-with-counts`, `issue-details`,
@@ -1964,7 +1964,7 @@ br schema [TARGET] [OPTIONS]
 Show version information.
 
 ```bash
-br version
+obr version
 ```
 
 ---
@@ -1974,10 +1974,10 @@ br version
 Record and label agent interactions.
 
 ```bash
-br audit [OPTIONS]
+obr audit [OPTIONS]
 ```
 
-Appends to `.beads/interactions.jsonl`.
+Appends to `.obr/interactions.jsonl`.
 
 **Subcommands:**
 | Command | Description |
@@ -1990,16 +1990,16 @@ Appends to `.beads/interactions.jsonl`.
 
 #### audit coordination
 
-`audit coordination` turns a `br coordination status` snapshot into durable
-`coordination_incident` rows in the existing `.beads/interactions.jsonl` audit
+`audit coordination` turns a `obr coordination status` snapshot into durable
+`coordination_incident` rows in the existing `.obr/interactions.jsonl` audit
 log. It does not create a second coordination datastore.
 
 ```bash
-br coordination status --json \
-  | br audit coordination --stdin --command "br coordination status --json" --json
+obr coordination status --json \
+  | obr audit coordination --stdin --command "obr coordination status --json" --json
 ```
 
-Input may be a `br.coordination.v1` status object with `claims`, a JSON array,
+Input may be a `obr.coordination.v1` status object with `claims`, a JSON array,
 or JSONL rows where each row is either a claim or a wrapper with `claims`.
 Each recorded row stores bounded normalized fields in `extra`: `command`,
 `issue_id`, `classification`, `evidence_summary`, `snapshot_hash`, and
@@ -2024,7 +2024,7 @@ output return:
 Manage local history backups.
 
 ```bash
-br history <COMMAND>
+obr history <COMMAND>
 ```
 
 **Subcommands:**
@@ -2036,10 +2036,10 @@ br history <COMMAND>
 | `prune [--keep N] [--older-than DAYS] [--max-bytes BYTES]` | Remove oldest complete backup+metadata pairs by per-target count/age and an optional global logical-byte budget |
 
 **Notes:**
-- Backups are created during `br sync --flush-only` when overwriting a JSONL file inside `.beads/`, including custom `BEADS_JSONL` paths that still target `.beads/`.
+- Backups are created during `obr sync --flush-only` when overwriting a JSONL file inside `.obr/`, including custom `OBR_JSONL` paths that still target `.obr/`.
 - Ordinary automatic rotation applies a 1 GiB global logical-byte budget across
   all target stems after the per-target count/age limits. Set
-  `BR_HISTORY_MAX_BYTES` to an integer byte count to override it. Protected
+  `OBR_HISTORY_MAX_BYTES` to an integer byte count to override it. Protected
   pre-salvage evidence is excluded from automatic rotation.
 - Byte-budget pruning removes the oldest complete snapshot+metadata pairs
   deterministically. The globally newest pair is retained even when that one
@@ -2052,7 +2052,7 @@ br history <COMMAND>
 Generate changelog from closed issues.
 
 ```bash
-br changelog [OPTIONS]
+obr changelog [OPTIONS]
 ```
 
 **Options:**
@@ -2068,35 +2068,19 @@ br changelog [OPTIONS]
 Check issues for missing template sections.
 
 ```bash
-br lint [OPTIONS]
+obr lint [OPTIONS]
 ```
 
 ---
 
 ## Utilities
 
-### upgrade
-
-Upgrade br to the latest version.
-
-```bash
-br upgrade [OPTIONS]
-```
-
-**Options:**
-| Option | Description |
-|--------|-------------|
-| `--check` | Check for updates without installing |
-| `--force` | Force reinstall current version |
-
----
-
 ### completions
 
 Generate shell completions.
 
 ```bash
-br completions <SHELL>
+obr completions <SHELL>
 ```
 
 **Shells:** bash, zsh, fish, powershell
@@ -2104,7 +2088,7 @@ br completions <SHELL>
 **Example:**
 ```bash
 # Add to ~/.bashrc
-br completions bash >> ~/.bashrc
+obr completions bash >> ~/.bashrc
 source ~/.bashrc
 ```
 
@@ -2130,10 +2114,10 @@ source ~/.bashrc
 
 | Variable | Description |
 |----------|-------------|
-| `BEADS_DIR` | Override `.beads` directory location |
-| `BEADS_JSONL` | Override JSONL file path (requires `--allow-external-jsonl`) |
-| `BD_ACTOR` | Default actor name for audit trail |
-| `EDITOR` | Editor for `br config edit` |
+| `OBR_DIR` | Override `.obr` directory location |
+| `OBR_JSONL` | Override JSONL file path (requires `--allow-external-jsonl`) |
+| `OBR_ACTOR` | Default actor name for audit trail |
+| `EDITOR` | Editor for `obr config edit` |
 | `NO_COLOR` | Disable colored output (any value) |
 | `RUST_LOG` | Logging level (debug, info, warn, error) |
 
@@ -2194,8 +2178,8 @@ This keeps successful commands readable by suppressing low-level dependency logs
 
 ```json
 {
-  "db_path": ".beads/beads.db",
-  "jsonl_path": ".beads/issues.jsonl",
+  "db_path": ".obr/obr.db",
+  "jsonl_path": "PLAN.org",
   "db_modified": "2025-01-16T14:20:00Z",
   "jsonl_modified": "2025-01-16T14:15:00Z",
   "db_issue_count": 150,
@@ -2212,7 +2196,7 @@ This keeps successful commands readable by suppressing low-level dependency logs
   "error_code": 3,
   "message": "Issue not found: bd-xyz999",
   "kind": "not_found",
-  "recovery_hints": ["Check the issue ID", "Use 'br list' to find issues"]
+  "recovery_hints": ["Check the issue ID", "Use 'obr list' to find issues"]
 }
 ```
 

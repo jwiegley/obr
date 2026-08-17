@@ -7,7 +7,7 @@ Most commands return non-zero exit codes on failure and may emit a structured er
 Example:
 
 ```bash
-br show br-NOTEXIST --json > out.json 2>/dev/null || true
+obr show obr-NOTEXIST --json > out.json 2>/dev/null || true
 jq .error out.json
 ```
 
@@ -15,7 +15,7 @@ Minimal regression check:
 
 ```bash
 set +e
-br show br-NOTEXIST --json >out.json 2>err.json
+obr show obr-NOTEXIST --json >out.json 2>err.json
 status=$?
 set -e
 test "$status" -eq 3
@@ -29,20 +29,20 @@ Shape:
 {
   "error": {
     "code": "ISSUE_NOT_FOUND",
-    "message": "Issue not found: br-NOTEXIST",
-    "hint": "Run 'br list' to see available issues.",
+    "message": "Issue not found: obr-NOTEXIST",
+    "hint": "Run 'obr list' to see available issues.",
     "retryable": false,
-    "context": { "searched_id": "br-NOTEXIST" }
+    "context": { "searched_id": "obr-NOTEXIST" }
   }
 }
 ```
 
 ## Partial-batch failures: two documents on stdout
 
-Since [#336], a command that partially applies a batch (e.g. `br close <blocked> <closeable> --json`) exits non-zero and writes **two** JSON documents to stdout: first the payload document describing what *did* happen, then the error envelope describing what failed:
+Since [#336], a command that partially applies a batch (e.g. `obr close <blocked> <closeable> --json`) exits non-zero and writes **two** JSON documents to stdout: first the payload document describing what *did* happen, then the error envelope describing what failed:
 
 ```console
-$ br close t-s4u t-k7x --json; echo "exit=$?"
+$ obr close t-s4u t-k7x --json; echo "exit=$?"
 {"closed":[{"id":"t-k7x",...}],"skipped":[{"id":"t-s4u","reason":"blocked by: t-41y — ..."}]}
 {
   "error": {
@@ -63,7 +63,7 @@ Parse with a streaming JSON deserializer (each document is self-delimiting), or 
 Machine-readable schema:
 
 ```bash
-br schema error --format json
+obr schema error --format json
 ```
 
-[#336]: https://github.com/Dicklesworthstone/beads_rust/issues/336
+[#336]: https://github.com/jwiegley/obr/issues/336

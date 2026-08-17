@@ -13,7 +13,7 @@ The anti-pattern was localized to the 3 `tests/storage_ready.rs::ready_sort_poli
 ## Methodology
 
 ```bash
-rg --no-heading -n 'assert_eq!\([^,]*,\s*"(test|tmp|br|bd|proj)-[a-zA-Z0-9]{4,}"' tests/
+rg --no-heading -n 'assert_eq!\([^,]*,\s*"(test|tmp|obr|bd|proj)-[a-zA-Z0-9]{4,}"' tests/
 ```
 
 This finds any `assert_eq!(<lhs>, "<prefix>-<suffix>")` where the suffix has 4+ alphanumeric characters and the prefix matches one of the project's known ID prefixes.
@@ -52,8 +52,8 @@ The sibling bead `beads_rust-s5se` adds a CI lint that runs the same regex but e
 ## Reproduction
 
 ```bash
-cd /data/projects/beads_rust
-rg --no-heading -n 'assert_eq!\([^,]*,\s*"(test|tmp|br|bd|proj)-[a-zA-Z0-9]{4,}"' tests/ | wc -l
+cd /data/projects/obr
+rg --no-heading -n 'assert_eq!\([^,]*,\s*"(test|tmp|obr|bd|proj)-[a-zA-Z0-9]{4,}"' tests/ | wc -l
 # Expected: 10 (or fewer if any of the 10 are removed by future work)
 ```
 

@@ -1,6 +1,6 @@
 # Architecture Overview
 
-This document describes the internal architecture of `beads_rust` (br), a Rust port of the classic beads issue tracker.
+This document describes the internal architecture of `obr` (obr), a Rust port of the classic beads issue tracker.
 
 ---
 
@@ -29,11 +29,11 @@ This document describes the internal architecture of `beads_rust` (br), a Rust p
 2. **Local-First**: SQLite is the source of truth; JSONL enables collaboration
 3. **Agent-Friendly**: Machine-readable output (JSON) for AI coding agents
 4. **Deterministic**: Same input produces same output
-5. **Safe**: No operations outside `.beads/` directory
+5. **Safe**: No operations outside `.obr/` directory
 
 ### Comparison with Go beads (bd)
 
-| Feature | br (Rust) | bd (Go) |
+| Feature | obr (Rust) | bd (Go) |
 |---------|-----------|---------|
 | Lines of Code | ~33k | ~276k |
 | Backend | SQLite only | SQLite + Dolt |
@@ -71,8 +71,8 @@ This document describes the internal architecture of `beads_rust` (br), a Rust p
             │
             v
 ┌───────────────────────┐        ┌───────────────────────┐
-│  .beads/beads.db      │  <-->  │  .beads/issues.jsonl  │
-│  (SQLite - Primary)   │  sync  │  (Git-friendly)       │
+│  .obr/obr.db          │  <-->  │  PLAN.org             │
+│  (SQLite cache)       │  sync  │  (tracked surface)    │
 └───────────────────────┘        └───────────────────────┘
 ```
 
@@ -145,7 +145,7 @@ src/
 ```
 User Input                  CLI                     Storage                 Sync
     │                        │                        │                      │
-    │  br create "title"     │                        │                      │
+    │  obr create "title"     │                        │                      │
     │ ─────────────────────> │                        │                      │
     │                        │                        │                      │
     │                        │  Validate + Generate ID│                      │
@@ -170,11 +170,11 @@ User Input                  CLI                     Storage                 Sync
 ### Sync Export
 
 ```
-br sync --flush-only
+obr sync --flush-only
         │
         v
 ┌───────────────────────────┐
-│  1. Path Validation       │  Verify target is in .beads/
+│  1. Path Validation       │  Verify target is in .obr/
 ├───────────────────────────┤
 │  2. Create history backup │  Optional timestamped copy (if overwriting)
 ├───────────────────────────┤
@@ -186,7 +186,7 @@ br sync --flush-only
 ├───────────────────────────┤
 │  6. Compute content hash  │  SHA-256 of content
 ├───────────────────────────┤
-│  7. Atomic rename         │  temp -> issues.jsonl
+│  7. Atomic rename         │  temp -> PLAN.org
 ├───────────────────────────┤
 │  8. Clear dirty flags     │  DELETE from dirty_issues
 └───────────────────────────┘
@@ -310,10 +310,10 @@ pub fn export_to_jsonl(
 
 **Safety Guards:**
 
-1. Path validation (must be in `.beads/`)
+1. Path validation (must be in `.obr/`)
 2. Atomic JSONL publication (temp file + rename)
 3. Content hashing (detect corruption)
-4. History backups (optional, created when overwriting JSONL inside `.beads/`)
+4. History backups (optional, created when overwriting JSONL inside `.obr/`)
 
 ### Import Process
 
@@ -341,7 +341,7 @@ pub const ALLOWED_EXTENSIONS: &[&str] = &[".jsonl", ".json", ".db", ".yaml"];
 pub const ALLOWED_EXACT_NAMES: &[&str] = &["metadata.json", "config.yaml"];
 
 pub fn is_sync_path_allowed(path: &Path, beads_dir: &Path) -> bool {
-    // Must be inside .beads/
+    // Must be inside .obr/
     // Must have allowed extension
     // Must not be in .git/
 }
@@ -357,10 +357,10 @@ Configuration sources in precedence order (highest wins):
 
 ```
 1. CLI overrides        (--json, --db, --actor)
-2. Environment vars     (BD_ACTOR, BEADS_JSONL)
-3. Project config       (.beads/config.yaml)
-4. User config          (~/.config/beads/config.yaml; falls back to ~/.config/bd/config.yaml)
-5. Legacy user config   (~/.beads/config.yaml)
+2. Environment vars     (OBR_ACTOR, OBR_JSONL)
+3. Project config       (.obr/config.yaml)
+4. User config          (~/.config/obr/config.yaml)
+5. Legacy user config   (~/.obr/config.yaml)
 6. DB config table      (config table in SQLite)
 7. Defaults
 ```
@@ -449,7 +449,7 @@ pub enum BeadsError {
   "message": "Issue not found: bd-xyz999",
   "recovery_hints": [
     "Check the issue ID spelling",
-    "Use 'br list' to find valid IDs"
+    "Use 'obr list' to find valid IDs"
   ]
 }
 ```
@@ -464,7 +464,7 @@ Uses Clap's derive macros:
 
 ```rust
 #[derive(Parser)]
-#[command(name = "br")]
+#[command(name = "obr")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -591,7 +591,7 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<()> {
 The workspace health contract answers one question consistently across startup,
 `doctor`, write recovery, and sync status:
 
-> Given the current `.beads/` state, what is authoritative, what is derived,
+> Given the current `.obr/` state, what is authoritative, what is derived,
 > what may be rebuilt automatically, and what must never be discarded or
 > silently normalized away?
 
@@ -613,8 +613,8 @@ same vocabulary and the same recovery envelope.
 | State family | Examples | Authority level | Why |
 |-------------|----------|-----------------|-----|
 | Primary data | `issues`, `dependencies`, `labels`, `comments` tables; semantically equivalent JSONL issue records | Authoritative | These describe the actual issue graph and cannot be silently discarded |
-| Interchange data | `.beads/issues.jsonl` plus its content hash / mtime witnesses | Authoritative interchange copy | This is the git-facing source used for rebuild/import/export decisions |
-| Workspace metadata | `.beads/metadata.json`, config layers, sync timestamps/hashes in DB metadata | Control-plane evidence | Needed to resolve paths, detect drift, and explain why a workspace is classified a certain way |
+| Interchange data | `PLAN.org` plus its content hash / mtime witnesses | Authoritative interchange copy | This is the git-facing source used for rebuild/import/export decisions |
+| Workspace metadata | `.obr/metadata.json`, config layers, sync timestamps/hashes in DB metadata | Control-plane evidence | Needed to resolve paths, detect drift, and explain why a workspace is classified a certain way |
 | Derived state | `dirty_issues`, `export_hashes`, `blocked_issues_cache`, `child_counters`, stale markers | Rebuildable | These speed up operations or summarize state, but should never outrank authoritative issue data |
 
 ### Invariant Matrix
@@ -622,10 +622,10 @@ same vocabulary and the same recovery envelope.
 | Surface | Object | Required invariant | Allowed automatic action | Forbidden silent behavior |
 |---------|--------|--------------------|--------------------------|---------------------------|
 | Primary data | `issues` + relational tables | Issue rows, dependencies, labels, and comments must remain representable either in SQLite or in valid JSONL records | Rebuild SQLite from valid JSONL when the DB family is recoverably damaged | Dropping primary issue data because a derived table is inconsistent |
-| Primary data | SQLite database family (`beads.db`, `-wal`, `-shm`, `-journal`) | The DB family must be treated as one unit when diagnosing corruption or recovery | Quarantine the whole family into `.beads/.br_recovery/` before rebuilding | Deleting or overwriting only one sidecar and pretending the rest are canonical |
-| Interchange data | `.beads/issues.jsonl` | JSONL must be parseable, conflict-free, and prefix-consistent before import | Reject import and preserve the file for manual repair | Best-effort partial import of malformed or conflicted JSONL |
+| Primary data | SQLite database family (`obr.db`, `-wal`, `-shm`, `-journal`) | The DB family must be treated as one unit when diagnosing corruption or recovery | Quarantine the whole family into `.obr/recovery/` before rebuilding | Deleting or overwriting only one sidecar and pretending the rest are canonical |
+| Interchange data | `PLAN.org` | JSONL must be parseable, conflict-free, and prefix-consistent before import | Reject import and preserve the file for manual repair | Best-effort partial import of malformed or conflicted JSONL |
 | Interchange data | DB vs JSONL freshness | Empty/stale export must never overwrite non-empty authoritative JSONL by accident | Refuse export unless the operator explicitly forces the destructive direction | Treating a missing import as permission to publish an empty snapshot |
-| Metadata | `.beads/metadata.json` path mapping | Resolved DB + JSONL targets must point at the intended workspace and be explainable | Rehydrate missing defaults from the canonical workspace layout and config rules | Silently operating on a different workspace than the one diagnostics describe |
+| Metadata | `.obr/metadata.json` path mapping | Resolved DB + JSONL targets must point at the intended workspace and be explainable | Rehydrate missing defaults from the canonical workspace layout and config rules | Silently operating on a different workspace than the one diagnostics describe |
 | Metadata | Sync witness keys (`last_import_time`, `last_export_time`, `jsonl_content_hash`, JSONL mtime witness) | Metadata must explain whether DB or JSONL is newer and whether divergence is expected | Recompute witness metadata after successful import/export | Claiming a workspace is healthy when witness data proves drift or missing export/import |
 | Metadata | Prefix/config resolution | Effective prefix and safety-relevant config must be source-traceable | Surface the winning config layer in diagnostics | Forcing absent CLI bools or env overrides into false certainty |
 | Derived state | `dirty_issues` | Dirty flags may lag but must never redefine issue truth | Recompute/clear after verified export | Using stale dirty flags as proof that data itself is corrupt |
@@ -640,7 +640,7 @@ These rules exist so tests and diagnostics can assert what is never allowed.
 1. Primary issue data may only be replaced by a rebuild when there is a valid,
    authoritative interchange source to rebuild from.
 2. Any rebuild of SQLite from JSONL must preserve the original DB family in
-   `.beads/.br_recovery/` before replacement.
+   `.obr/recovery/` before replacement.
 3. Row-level or index-level corruption that affects writes is classified as
    `degraded-recoverable`, not as permission to mutate around the bad row.
 4. Prefix mismatch, malformed JSONL, or unresolved conflict markers promote the
@@ -665,9 +665,9 @@ truth, but only within the boundaries below.
 | Surface | Must report | Must not do silently |
 |---------|-------------|----------------------|
 | Startup / open | Whether the workspace is healthy, drifted, recoverable, or quarantined; whether an automatic DB rebuild was attempted; where evidence was preserved | Auto-rebuild from ambiguous or invalid JSONL, or collapse corruption into a generic `NOT_INITIALIZED` story |
-| `br doctor` | Structural anomalies, JSONL integrity, metadata drift, sync witness disagreement, and whether repair is local-derived-state-only vs full DB rebuild | Emit a clean bill of health when another surface would reject the same workspace |
+| `obr doctor` | Structural anomalies, JSONL integrity, metadata drift, sync witness disagreement, and whether repair is local-derived-state-only vs full DB rebuild | Emit a clean bill of health when another surface would reject the same workspace |
 | Write recovery | Distinguish lock contention from corruption; identify when a mutation can retry once after rebuild | Retry blindly against uncertain state or persist partial side effects without surfacing them |
-| `br sync --status` / export/import preflight | Which side is newer, whether divergence is safe, and whether the requested direction is destructive | Treat stale/empty export conditions as healthy just because files exist |
+| `obr sync --status` / export/import preflight | Which side is newer, whether divergence is safe, and whether the requested direction is destructive | Treat stale/empty export conditions as healthy just because files exist |
 
 ### Incident Evidence Bundle
 
@@ -677,15 +677,15 @@ tests talk about the same evidence:
 | Capture item | Why it is required |
 |--------------|--------------------|
 | Failing command plus exact stdout/stderr | Establishes the observed symptom and whether the failure happened at open, write, sync, or reporting time |
-| `br doctor --json` | Gives the structured health classification surface for the same workspace |
-| `br sync --status` | Shows freshness/drift direction between DB and JSONL |
-| `br where` | Proves which workspace/database/JSONL paths were actually targeted |
-| `br config list -v` | Preserves config provenance and environment overrides that changed behavior |
-| `.beads/metadata.json` | Captures the explicit DB/JSONL routing contract the workspace claimed to use |
-| `.beads/issues.jsonl` | Preserves the authoritative interchange copy used for taxonomy classification and rebuild decisions |
-| Presence plus hashes of `beads.db`, `beads.db-wal`, `beads.db-shm`, and `beads.db-journal` when present | Distinguishes missing-file drift from sidecar mismatch and partial-copy failures |
-| Directory listing of `.beads/`, `.beads/.br_recovery/`, and `.beads/.br_history/` | Preserves recovery artifacts and interrupted-operation evidence |
-| Environment overrides and process context (`BD_DB`, `BD_DATABASE`, `BEADS_JSONL`, `BEADS_DIR`, `NO_COLOR`, active agents/processes) | Explains discovery/path/output drift and multi-actor contention |
+| `obr doctor --json` | Gives the structured health classification surface for the same workspace |
+| `obr sync --status` | Shows freshness/drift direction between DB and JSONL |
+| `obr where` | Proves which workspace/database/JSONL paths were actually targeted |
+| `obr config list -v` | Preserves config provenance and environment overrides that changed behavior |
+| `.obr/metadata.json` | Captures the explicit DB/JSONL routing contract the workspace claimed to use |
+| `PLAN.org` | Preserves the authoritative interchange copy used for taxonomy classification and rebuild decisions |
+| Presence plus hashes of `obr.db`, `obr.db-wal`, `obr.db-shm`, and `obr.db-journal` when present | Distinguishes missing-file drift from sidecar mismatch and partial-copy failures |
+| Directory listing of `.obr/`, `.obr/recovery/`, and `.obr/history/` | Preserves recovery artifacts and interrupted-operation evidence |
+| Environment overrides and process context (`OBR_DB`, `OBR_DATABASE`, `OBR_JSONL`, `OBR_DIR`, `NO_COLOR`, active agents/processes) | Explains discovery/path/output drift and multi-actor contention |
 
 This bundle is intentionally small enough to request in the first reply to a
 field failure while still being sufficient to classify the failure against the
@@ -693,12 +693,12 @@ workspace taxonomy without speculative follow-up.
 
 ### File System Safety
 
-1. **Sync writes confined to its validated `.beads/` authority by default**
+1. **Sync writes confined to its validated `.obr/` authority by default**
    - Path validation before any write
    - External JSONL requires explicit opt-in
 
 2. **No Git operations in sync**
-   - `br sync` never runs `git` commands
+   - `obr sync` never runs `git` commands
    - User handles git manually
 
 3. **Atomic JSONL publication**
@@ -770,7 +770,6 @@ impl IssueValidator {
 | `tracing` | Structured logging |
 | `rich_rust` | Rich terminal UI components |
 | `toon_rust` | TOON format support |
-| `self_update` (optional) | Release-based self-update support |
 
 ---
 

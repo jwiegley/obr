@@ -1,6 +1,6 @@
 # Workspace Health Contract
 
-Canonical reference for beads_rust workspace health classification.
+Canonical reference for obr workspace health classification.
 Executable implementation: `src/health.rs`.
 
 ## Health Levels
@@ -47,7 +47,7 @@ Executable implementation: `src/health.rs`.
 | `TruncatedWal` | Recoverable | WAL file < 32 bytes | Delete truncated WAL |
 | `JournalSidecarPresent` | Degraded | File existence check | Delete journal (incomplete txn) |
 | `StaleRecoveryArtifacts` | Degraded | Recovery temp files present | Clean up |
-| `OrphanedLockFile` | Degraded | `.beads.lock` file stat | Remove if no live process |
+| `OrphanedLockFile` | Degraded | `.obr` lock file stat | Remove if no live process |
 
 ### Derived State
 
@@ -81,12 +81,12 @@ Each row is a workspace component; columns indicate which subsystem owns and val
 
 ## Observability Contract
 
-`br doctor --json` includes machine-readable reliability records:
+`obr doctor --json` includes machine-readable reliability records:
 
 - `report.reliability_audit`: workspace classification evidence derived from `AnomalyClass`.
 - `recovery_audit`: repair action, outcome, applied local actions, quarantine artifacts, and JSONL rebuild counts.
 
-`br sync --status --json` carries the same write-gate fields (beads_rust#334):
+`obr sync --status --json` carries the same write-gate fields (obr#334):
 
 - `workspace_health`: the same `healthy`/`degraded`/`recoverable`/`unsafe`
   vocabulary doctor emits, computed from the cheap signals available in
@@ -101,12 +101,12 @@ Each row is a workspace component; columns indicate which subsystem owns and val
   (`source: "sync.status"`, `anomalies[].code/severity/message`), in the
   same shape as `report.reliability_audit` from doctor.
 - `git_export`: a compatibility slot, not a health probe. Sync always emits
-  `{available:false, reason:"not_probed", diagnostic_command:"br vcs-status --json"}`
+  `{available:false, reason:"not_probed", diagnostic_command:"obr vcs-status --json"}`
   and omits the former optional observation fields. Consumers that need
   tracked/worktree/index/hash visibility must explicitly run the isolated,
-  bounded `br vcs-status --json` diagnostic.
+  bounded `obr vcs-status --json` diagnostic.
 
-The same records are emitted through `tracing` with target `br::reliability` so field logs can be correlated with doctor JSON, quarantined artifacts, and replay fixtures.
+The same records are emitted through `tracing` with target `obr::reliability` so field logs can be correlated with doctor JSON, quarantined artifacts, and replay fixtures.
 
 ## Reliability Gate Contract
 
@@ -114,7 +114,7 @@ CI and release verification must run these suites before a change can ship:
 
 - `cargo test --test workspace_failure_replay -- --nocapture`
 - `cargo test --test e2e_sync_failure_injection -- --nocapture`
-- `BR_LONG_STRESS_ITERATIONS=8 cargo test --test e2e_workspace_scenarios scenario_long_lived_single_workspace_stress_suite -- --nocapture`
+- `OBR_LONG_STRESS_ITERATIONS=8 cargo test --test e2e_workspace_scenarios scenario_long_lived_single_workspace_stress_suite -- --nocapture`
 - `cargo test --test e2e_concurrency e2e_interleaved_command_families_preserve_workspace_integrity -- --nocapture`
 
 These gates cover the failure-corpus replay, crash-injection matrix, long-lived
@@ -127,22 +127,22 @@ before artifacts can be built without the gates.
 
 When a field failure occurs, the following artifacts should be collected for diagnosis:
 
-1. **`beads.db`** - Full database file (or SHA-256 if too large)
-2. **`beads.db-wal`** - WAL sidecar if present
-3. **`beads.db-shm`** - SHM sidecar if present
-4. **`issues.jsonl`** - Full JSONL interchange file
-5. **`br doctor --json`** - Structured diagnostic output
-6. **`br doctor --repair --dry-run --json`** - Projected repair actions
-7. **Environment**: OS, fsqlite version, beads_rust version
+1. **`obr.db`** - Full database file (or SHA-256 if too large)
+2. **`obr.db-wal`** - WAL sidecar if present
+3. **`obr.db-shm`** - SHM sidecar if present
+4. **`PLAN.org`** - The tracked Org surface (full interchange file)
+5. **`obr doctor --json`** - Structured diagnostic output
+6. **`obr doctor --repair --dry-run --json`** - Projected repair actions
+7. **Environment**: OS, fsqlite version, obr version
 8. **Timeline**: last successful operation, operation that failed, error message
-9. **`.br_history/`** - Recent JSONL backups (last 3)
+9. **`history/`** - Recent JSONL backups (last 3)
 10. **`metadata` table dump** - All key-value pairs
 11. **`sqlite_master` dump** - Schema state
 
 ### Capture Command
 
 ```sh
-br doctor --bundle /tmp/incident-$(date +%Y%m%d-%H%M%S).tar.gz
+obr doctor --bundle /tmp/incident-$(date +%Y%m%d-%H%M%S).tar.gz
 ```
 
 (Not yet implemented - tracked for future work.)

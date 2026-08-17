@@ -39,8 +39,8 @@ Note also that `INSTA_UPDATE=no` suppresses `.snap.new` entirely — use `new`.
 
 | Line | Before | After | Class | Verdict |
 |---|---|---|---|---|
-| `rust_log` | `WARN … RUST_LOG=beads_rust=debug would dump verbose tracing…` | `OK rust_log: RUST_LOG=error (quiet)` | D | Test-fixture change. The harness now sets `RUST_LOG=error` (`tests/common/cli.rs`), which is exactly what this doctor check asks for. The old golden had captured the harness tripping the product's own check. |
-| `binary_version` | `Running br 0.2.15; …` | `Running br X.Y.Z; …` | E | Now masked — see normalization fixes. |
+| `rust_log` | `WARN … RUST_LOG=obr=debug would dump verbose tracing…` | `OK rust_log: RUST_LOG=error (quiet)` | D | Test-fixture change. The harness now sets `RUST_LOG=error` (`tests/common/cli.rs`), which is exactly what this doctor check asks for. The old golden had captured the harness tripping the product's own check. |
+| `binary_version` | `Running obr 0.2.15; …` | `Running obr X.Y.Z; …` | E | Now masked — see normalization fixes. |
 | `db.sidecars` | `OK db.sidecars: WAL sidecar exists without a matching SHM sidecar … (expected for frankensqlite)` | `OK db.sidecars` | B | fsqlite 0.1.18 retains `-shm` after a clean exit, so the WAL-without-SHM branch (`src/cli/commands/doctor.rs:1868`) no longer fires. Status is unchanged (`ok`); only the informational message is gone. Not a regression. |
 
 ## Normalization fixes made while reviewing
@@ -49,7 +49,7 @@ Two goldens were drifting for reasons unrelated to any product change. Both were
 fixed rather than re-accepted, so they stop churning:
 
 1. **`tests/snapshots/mod.rs` — `VERSION_NUM_RE`.** The mask only covered the
-   `version 0.1.7` form, so `br doctor`'s `binary_version` check (`Running br 0.2.19`)
+   `version 0.1.7` form, so `obr doctor`'s `binary_version` check (`Running obr 0.2.19`)
    carried the crate version verbatim into the golden and broke it on **every
    release**. The regex now covers both forms and preserves which one matched.
    Covered by `test_mask_bare_br_version` and `test_mask_prerelease_version`.
@@ -63,7 +63,7 @@ fixed rather than re-accepted, so they stop churning:
 
 ## Feature-split note (delta 9)
 
-`br --help` lists `serve` only when the optional `mcp` feature is compiled in, so
+`obr --help` lists `serve` only when the optional `mcp` feature is compiled in, so
 the top-level command list is feature-set dependent. CI runs
 `cargo test --all-features` (`.github/workflows/ci.yml:88`) while the default
 developer build leaves `mcp` off — a single golden cannot satisfy both, and

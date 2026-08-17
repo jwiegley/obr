@@ -2,7 +2,7 @@
 
 Prepared 2026-07-25 for filing upstream against
 [frankensqlite](https://github.com/Dicklesworthstone/frankensqlite). Tracked in
-beads_rust as `beads_rust-ymik`.
+obr as `beads_rust-ymik`.
 
 ## Summary
 
@@ -40,7 +40,7 @@ condition.
 
 ## Reproducer
 
-Self-contained, no beads_rust involvement. `Cargo.toml`:
+Self-contained, no obr involvement. `Cargo.toml`:
 
 ```toml
 [package]
@@ -155,17 +155,17 @@ the operation that would fix the condition, it rewrites the image from the
 logical page set anyway, and refusing it leaves no in-engine path back to a
 file the engine will accept.
 
-## Note for beads_rust
+## Note for obr
 
-`br doctor` runs an orthogonal `PRAGMA integrity_check` through the system
+`obr doctor` runs an orthogonal `PRAGMA integrity_check` through the system
 `sqlite3` binary alongside its own, and reports both verdicts side by side
 (`sqlite.integrity_check` vs `sqlite3.integrity_check`). That is what made this
 divergence visible and is worth keeping.
 
 One beads_rust-side behaviour remains unexplained and is **not** covered by the
-reproducer above: `br` 0.2.16 (fsqlite 0.1.12) successfully VACUUMs a bloated
-`.beads/beads.db`, while `br` 0.2.19 (fsqlite 0.1.18) fails on a byte-identical
+reproducer above: `obr` 0.2.16 (fsqlite 0.1.12) successfully VACUUMs a bloated
+`.obr/beads.db`, while `obr` 0.2.19 (fsqlite 0.1.18) fails on a byte-identical
 fixture, even though `fix_db_bloat_via_vacuum_if_warned` is unchanged between
 those tags and the standalone reproducer shows no version difference. The next
-step is to bisect fsqlite 0.1.13 → 0.1.18 against br's `SqliteStorage::open`
+step is to bisect fsqlite 0.1.13 → 0.1.18 against obr's `SqliteStorage::open`
 path specifically, rather than a raw `Connection::open` as used here.

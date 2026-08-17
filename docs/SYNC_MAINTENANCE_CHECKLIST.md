@@ -1,4 +1,4 @@
-# br sync Safety Maintenance Checklist
+# obr sync Safety Maintenance Checklist
 
 > Use this checklist when making changes to sync-related code.
 
@@ -23,7 +23,7 @@ Before merging any PR that touches sync code, verify all checks pass:
 
 ### 1. Verify No Git Operations
 
-**Why**: `br sync` must never execute git commands. This is a non-negotiable safety invariant.
+**Why**: `obr sync` must never execute git commands. This is a non-negotiable safety invariant.
 
 **Checks**:
 
@@ -44,7 +44,7 @@ cargo test --lib sync_safety_no_direct_runtime_git_library_dependencies
 
 # Resolved transitive runtime closure (build/dev tooling is excluded)
 RCH_REQUIRE_REMOTE=1 RCH_NO_SELF_HEALING=1 \
-  rch --no-self-healing exec -- cargo tree -e normal --prefix none
+  cargo tree -e normal --prefix none
 ```
 
 Fail closed if the runtime tree contains `git2-*`, `libgit2-*`, `gix-*`,
@@ -65,7 +65,7 @@ VCS-authority-free.
 
 ### 2. Verify Path Allowlist
 
-**Why**: Sync file I/O must be confined to `.beads/` directory.
+**Why**: Sync file I/O must be confined to `.obr/` directory.
 
 **Checks**:
 
@@ -77,15 +77,15 @@ grep -A20 'fn is_allowed_sync_file' src/sync/path.rs
 ```
 
 Verify the allowlist only includes:
-- `.beads/*.db` (SQLite database)
-- `.beads/*.db-wal`, `.beads/*.db-shm`, `.beads/*.db-journal` (SQLite sidecar files)
-- `.beads/*.db-fsqlite-ns-gate`, `.beads/*.db-fsqlite-ns-use` (fsqlite multi-process
+- `.obr/*.db` (SQLite database)
+- `.obr/*.db-wal`, `.obr/*.db-shm`, `.obr/*.db-journal` (SQLite sidecar files)
+- `.obr/*.db-fsqlite-ns-gate`, `.obr/*.db-fsqlite-ns-use` (fsqlite multi-process
   namespace admission sidecars; the engine creates and updates these for every
   database path it opens, so sync observes them alongside the classic trio)
-- `.beads/*.jsonl` (JSONL export)
-- `.beads/*.jsonl.tmp` (atomic write temp files)
-- `.beads/.manifest.json` (optional manifest)
-- `.beads/metadata.json` (optional metadata)
+- `.obr/*.jsonl` (JSONL export)
+- `.obr/*.jsonl.tmp` (atomic write temp files)
+- `.obr/.manifest.json` (optional manifest)
+- `.obr/metadata.json` (optional metadata)
 
 **If changed**: Document the reason in the PR and update `SYNC_SAFETY_INVARIANTS.md`.
 
@@ -132,7 +132,7 @@ cargo test --test e2e_sync_git_safety -- --nocapture
 
 1. Enable verbose logging:
    ```bash
-   RUST_LOG=beads_rust=debug cargo test --release \
+   RUST_LOG=obr=debug cargo test --release \
      --test e2e_sync_git_safety \
      --test e2e_sync_status_health \
      --test e2e_vcs_status \
@@ -162,8 +162,8 @@ cargo test --test e2e_sync_git_safety -- --nocapture
 | Document | When to update |
 |----------|----------------|
 | `docs/SYNC_SAFETY.md` | User-facing safety model changes |
-| `.beads/SYNC_SAFETY_INVARIANTS.md` | Technical invariant additions/modifications |
-| `.beads/SYNC_CLI_FLAG_SEMANTICS.md` | New flags or flag behavior changes |
+| `docs/SYNC_SAFETY_INVARIANTS.md` | Technical invariant additions/modifications |
+| `docs/SYNC_CLI_FLAG_SEMANTICS.md` | New flags or flag behavior changes |
 | `docs/E2E_SYNC_TESTS.md` | New test files or test patterns |
 
 **Checklist for docs**:
@@ -225,7 +225,7 @@ Escalate immediately if:
 - The structural authority scan finds a forbidden construct or cannot inspect
   the complete source boundary
 - The PATH sentinel is invoked or any `.git` byte/path changes
-- Path allowlist needs expansion beyond `.beads/`
+- Path allowlist needs expansion beyond `.obr/`
 - User reports data loss or unexpected file modifications
 
 Contact the maintainer team before proceeding with any of these cases.
@@ -236,10 +236,10 @@ Contact the maintainer team before proceeding with any of these cases.
 
 - [SYNC_SAFETY.md](SYNC_SAFETY.md) - User-facing safety model
 - [E2E_SYNC_TESTS.md](E2E_SYNC_TESTS.md) - Test execution guide
-- [.beads/SYNC_SAFETY_INVARIANTS.md](../.beads/SYNC_SAFETY_INVARIANTS.md) - Technical invariants
-- [.beads/SYNC_THREAT_MODEL.md](../.beads/SYNC_THREAT_MODEL.md) - Threat analysis
+- [SYNC_SAFETY_INVARIANTS.md](SYNC_SAFETY_INVARIANTS.md) - Technical invariants
+- [SYNC_THREAT_MODEL.md](SYNC_THREAT_MODEL.md) - Threat analysis
 
 ---
 
-*This checklist is part of the br safety hardening initiative.*
+*This checklist is part of the obr safety hardening initiative.*
 *Last updated: 2026-01-16 by SilverValley*

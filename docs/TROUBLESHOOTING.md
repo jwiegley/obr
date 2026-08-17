@@ -1,6 +1,6 @@
-# br Troubleshooting Guide
+# obr Troubleshooting Guide
 
-Common issues and solutions when using `br` (beads_rust).
+Common issues and solutions when using `obr` (obr).
 
 ---
 
@@ -28,19 +28,19 @@ Run these commands to diagnose common problems:
 
 ```bash
 # Check workspace health
-br doctor
+obr doctor
 
 # Show project statistics
-br stats
+obr stats
 
 # Check sync status
-br sync --status
+obr sync --status
 
 # Show configuration
-br config list
+obr config list
 
 # Show version
-br version
+obr version
 ```
 
 ---
@@ -48,7 +48,7 @@ br version
 ## Workspace Failure Mode Catalog
 
 This section is the canonical inventory of workspace-level failure states that
-`br` is expected to survive, reject, quarantine, or repair. Use it before
+`obr` is expected to survive, reject, quarantine, or repair. Use it before
 improvising a recovery plan.
 
 Not every failure mode below is a defect. Some entries describe deliberate
@@ -67,39 +67,39 @@ preserve evidence rather than guessing.
 
 | Failure class | Symptom signature | Likely root cause | Observability surface | Data-loss risk | Desired system response |
 |---------------|-------------------|-------------------|-----------------------|----------------|-------------------------|
-| Missing SQLite family with valid JSONL | `beads.db` is absent but `issues.jsonl` still exists; startup can proceed only after rebuild | Workspace copied without DB, manual deletion, interrupted cleanup, sidecar-only residue | Startup warnings, `br doctor`, `.beads/` directory listing | Low if JSONL is authoritative and recent | Rebuild SQLite from JSONL automatically or via explicit repair path; do not treat as fatal corruption by itself |
-| Not-a-database / short-read DB file | Open fails with corruption-style errors such as `NotADatabase` or `ShortRead` | Truncated file, wrong file copied into `beads.db`, interrupted filesystem write | Startup error, `br doctor`, verbose logs, `src/config/mod.rs` recovery path | Medium to high depending on JSONL freshness | Preserve the original DB family in `.beads/.br_recovery/`, rebuild from JSONL, and surface the original open error if recovery also fails |
-| Malformed schema / duplicate schema entries / index mismatch | DB opens or probes with messages like `malformed database schema`, `table ... already exists`, `index ... already exists`, or `missing from index` | Corrupt schema pages, failed migration-like writes, damaged catalog/index state | Startup probe, `br doctor`, recovery warnings, integrity checks | Medium | Quarantine the DB family, rebuild from JSONL, and preserve the malformed original for forensic follow-up |
-| WAL / sidecar mismatch | Main DB exists but `-wal`, `-shm`, or `-journal` sidecars are stale or corrupted | Interrupted transaction, crash, partial copy of database family | Open failure, recovery warnings, presence of stale sidecars in `.beads/` | Medium | Move the whole database family into recovery together and rebuild atomically, rather than cherry-picking only `beads.db` |
+| Missing SQLite family with a valid export | `obr.db` is absent but `PLAN.org` still exists; startup can proceed only after rebuild | Workspace copied without DB, manual deletion, interrupted cleanup, sidecar-only residue | Startup warnings, `obr doctor`, `.obr/` directory listing | Low if JSONL is authoritative and recent | Rebuild SQLite from JSONL automatically or via explicit repair path; do not treat as fatal corruption by itself |
+| Not-a-database / short-read DB file | Open fails with corruption-style errors such as `NotADatabase` or `ShortRead` | Truncated file, wrong file copied into `obr.db`, interrupted filesystem write | Startup error, `obr doctor`, verbose logs, `src/config/mod.rs` recovery path | Medium to high depending on JSONL freshness | Preserve the original DB family in `.obr/recovery/`, rebuild from JSONL, and surface the original open error if recovery also fails |
+| Malformed schema / duplicate schema entries / index mismatch | DB opens or probes with messages like `malformed database schema`, `table ... already exists`, `index ... already exists`, or `missing from index` | Corrupt schema pages, failed migration-like writes, damaged catalog/index state | Startup probe, `obr doctor`, recovery warnings, integrity checks | Medium | Quarantine the DB family, rebuild from JSONL, and preserve the malformed original for forensic follow-up |
+| WAL / sidecar mismatch | Main DB exists but `-wal`, `-shm`, or `-journal` sidecars are stale or corrupted | Interrupted transaction, crash, partial copy of database family | Open failure, recovery warnings, presence of stale sidecars in `.obr/` | Medium | Move the whole database family into recovery together and rebuild atomically, rather than cherry-picking only `obr.db` |
 | Partially recoverable row-level corruption | Reads and `doctor` may succeed, but writes against certain rows fail with corruption-like or downstream constraint errors | Localized page/index corruption, inconsistent row/index state | Targeted mutation failures, repro tests such as row-specific update failures, verbose logs | Medium to high if writes are retried blindly | Detect as recoverable corruption, rebuild from JSONL, then retry the mutation once against the repaired DB instead of persisting partial state |
 
 ### JSONL integrity and sync drift
 
 | Failure class | Symptom signature | Likely root cause | Observability surface | Data-loss risk | Desired system response |
 |---------------|-------------------|-------------------|-----------------------|----------------|-------------------------|
-| Merge conflict markers in JSONL | Import fails with conflict marker diagnostics; file contains `<<<<<<<`, `=======`, `>>>>>>>` | Unresolved git merge on `.beads/issues.jsonl` | `br sync --import-only`, `br doctor`, direct file inspection | High if imported blindly | Reject import unconditionally; require manual conflict resolution before any DB mutation |
-| Malformed JSONL lines | Import or doctor reports parse errors on one or more lines | Manual edit mistake, truncated write, external tool damage | `br doctor`, `br sync --import-only`, JSON parser errors, line-numbered diagnostics | Medium | Refuse import, preserve the original file, and require line-level repair rather than best-effort partial mutation |
-| Stale DB relative to JSONL | Export refuses with stale-database language because JSONL contains issues missing from SQLite | Git pull/import not run yet, external JSONL edit, DB drift | `br sync --status`, export guard errors, doctor metadata checks | High if export proceeds | Refuse destructive export unless the operator explicitly chooses `--force`; preferred path is import-first |
-| Empty DB vs non-empty JSONL | Export sees zero DB issues while JSONL already has data | Wrong DB target, accidental DB reset, missing import after workspace copy | Export guard, `br sync --status`, `br stats`, `.beads/` inspection | High if empty export overwrites JSONL | Stop export by default; require import or an explicit `--force` acknowledgement |
-| Prefix mismatch / mixed prefixes | Import rejects with prefix mismatch or mixed project IDs | Wrong workspace, copied JSONL from another project, prefix drift after rename | Import preflight, `br doctor`, `br config get id.prefix`, JSONL inspection | Medium | Refuse import by default, surface the expected vs observed prefix, and only allow override when the operator intentionally wants remapping/repair |
+| Merge conflict markers in JSONL | Import fails with conflict marker diagnostics; file contains `<<<<<<<`, `=======`, `>>>>>>>` | Unresolved git merge on `PLAN.org` | `obr sync --import-only`, `obr doctor`, direct file inspection | High if imported blindly | Reject import unconditionally; require manual conflict resolution before any DB mutation |
+| Malformed JSONL lines | Import or doctor reports parse errors on one or more lines | Manual edit mistake, truncated write, external tool damage | `obr doctor`, `obr sync --import-only`, JSON parser errors, line-numbered diagnostics | Medium | Refuse import, preserve the original file, and require line-level repair rather than best-effort partial mutation |
+| Stale DB relative to JSONL | Export refuses with stale-database language because JSONL contains issues missing from SQLite | Git pull/import not run yet, external JSONL edit, DB drift | `obr sync --status`, export guard errors, doctor metadata checks | High if export proceeds | Refuse destructive export unless the operator explicitly chooses `--force`; preferred path is import-first |
+| Empty DB vs non-empty JSONL | Export sees zero DB issues while JSONL already has data | Wrong DB target, accidental DB reset, missing import after workspace copy | Export guard, `obr sync --status`, `obr stats`, `.obr/` inspection | High if empty export overwrites JSONL | Stop export by default; require import or an explicit `--force` acknowledgement |
+| Prefix mismatch / mixed prefixes | Import rejects with prefix mismatch or mixed project IDs | Wrong workspace, copied JSONL from another project, prefix drift after rename | Import preflight, `obr doctor`, `obr config get id.prefix`, JSONL inspection | Medium | Refuse import by default, surface the expected vs observed prefix, and only allow override when the operator intentionally wants remapping/repair |
 | JSONL-only write false negative | A `--no-db` write persists to JSONL and then still returns an error such as a bogus primary-key failure | Write-path bug in JSONL-only/in-memory flow, duplicate post-write validation, race in finalization | Command exit code vs actual JSONL contents, repro tests, follow-up reads | Medium because automation may retry a write that already succeeded | Report success when the write succeeded, keep genuine duplicate/conflict protection, and add regression coverage for create/comment/dependency paths |
 
 ### Metadata, routing, and configuration drift
 
 | Failure class | Symptom signature | Likely root cause | Observability surface | Data-loss risk | Desired system response |
 |---------------|-------------------|-------------------|-----------------------|----------------|-------------------------|
-| Wrong workspace discovered | Commands report `NOT_INITIALIZED` or operate on an unexpected `.beads/` tree | Running from the wrong cwd, stale `BEADS_DIR`, incorrect `--db`, ancestor discovery surprise | `br where`, `br config list -v`, resolved path output, env inspection | Medium | Surface the effective paths before mutation and prefer explicit path/DB selection over silent fallback |
-| DB/JSONL target drift | DB and JSONL refer to different workspaces or one target moved independently | External path overrides, copied `.beads/` trees, stale config or metadata | `br sync --status`, doctor metadata checks, config output | Medium to high | Detect and report path disagreement before mutation; require the operator to reconcile the intended authoritative target |
+| Wrong workspace discovered | Commands report `NOT_INITIALIZED` or operate on an unexpected `.obr/` tree | Running from the wrong cwd, stale `OBR_DIR`, incorrect `--db`, ancestor discovery surprise | `obr where`, `obr config list -v`, resolved path output, env inspection | Medium | Surface the effective paths before mutation and prefer explicit path/DB selection over silent fallback |
+| DB/JSONL target drift | DB and JSONL refer to different workspaces or one target moved independently | External path overrides, copied `.obr/` trees, stale config or metadata | `obr sync --status`, doctor metadata checks, config output | Medium to high | Detect and report path disagreement before mutation; require the operator to reconcile the intended authoritative target |
 | Missing or stale metadata after recovery | Commands work, but prefix or export metadata is absent/stale after rebuild/import | Rebuild path recreated core tables but not all metadata yet, interrupted export/import | Doctor metadata checks, startup config resolution, sync status | Low to medium | Rehydrate metadata from config/JSONL/project naming rules and report that an external import or recovery is pending |
-| Ambient env or legacy config leakage | Behavior changes unexpectedly between shells or hosts | Inherited `BD_DB`, `BD_DATABASE`, `BEADS_JSONL`, legacy config files, user-level config precedence | `br config list -v`, `env`, non-hermetic smoke tests | Medium | Show source-aware config diagnostics and make it obvious which layer won, rather than silently forcing defaults |
+| Ambient env or legacy config leakage | Behavior changes unexpectedly between shells or hosts | Inherited `OBR_DB`, `OBR_DATABASE`, `OBR_JSONL`, legacy config files, user-level config precedence | `obr config list -v`, `env`, non-hermetic smoke tests | Medium | Show source-aware config diagnostics and make it obvious which layer won, rather than silently forcing defaults |
 
 ### Lifecycle interruption and recovery artifacts
 
 | Failure class | Symptom signature | Likely root cause | Observability surface | Data-loss risk | Desired system response |
 |---------------|-------------------|-------------------|-----------------------|----------------|-------------------------|
-| Interrupted export/import | Operation exits mid-flight; temp or backup artifacts remain | Crash, kill signal, disk-full, remote fs hiccup | Verbose logs, `.beads/.br_history/`, sync status, temp files | Medium | Use atomic temp-file + rename semantics so the last committed JSONL stays valid; leave artifacts as evidence instead of silently deleting them |
-| Failed automatic rebuild from JSONL | Startup attempts recovery but repair also fails | JSONL itself is invalid, prefix mismatch, recovery restore failure, deeper disk corruption | Startup warnings, `.beads/.br_recovery/`, structured error context | High | Preserve both the original DB family and any failed rebuild outputs, then surface the richer recovery error rather than hiding it |
-| Partial temp-file or backup cleanup | Recovery/history directories accumulate stale files after failed or interrupted operations | Interrupted rename sequence, manual restoration attempt, repeated failed rebuilds | `.beads/.br_recovery/`, `.beads/.br_history/`, filesystem inspection | Low direct risk, medium operator confusion | Prefer retaining artifacts over deleting them automatically; document how to inspect and prune only after the workspace is healthy |
+| Interrupted export/import | Operation exits mid-flight; temp or backup artifacts remain | Crash, kill signal, disk-full, remote fs hiccup | Verbose logs, `.obr/history/`, sync status, temp files | Medium | Use atomic temp-file + rename semantics so the last committed JSONL stays valid; leave artifacts as evidence instead of silently deleting them |
+| Failed automatic rebuild from JSONL | Startup attempts recovery but repair also fails | JSONL itself is invalid, prefix mismatch, recovery restore failure, deeper disk corruption | Startup warnings, `.obr/recovery/`, structured error context | High | Preserve both the original DB family and any failed rebuild outputs, then surface the richer recovery error rather than hiding it |
+| Partial temp-file or backup cleanup | Recovery/history directories accumulate stale files after failed or interrupted operations | Interrupted rename sequence, manual restoration attempt, repeated failed rebuilds | `.obr/recovery/`, `.obr/history/`, filesystem inspection | Low direct risk, medium operator confusion | Prefer retaining artifacts over deleting them automatically; document how to inspect and prune only after the workspace is healthy |
 | Crash during mutating no-db workflow | Command may have updated JSONL but not all follow-up validation/reporting steps completed | In-memory/JSONL-only mutation path interrupted after persistence | Exit code mismatch, JSONL diff, follow-up read commands | Medium | Make post-write finalization idempotent and ensure the user can distinguish “state changed” from “state uncertain” without re-applying the mutation blindly |
 
 ### Multi-actor contention and environment interference
@@ -107,27 +107,27 @@ preserve evidence rather than guessing.
 | Failure class | Symptom signature | Likely root cause | Observability surface | Data-loss risk | Desired system response |
 |---------------|-------------------|-------------------|-----------------------|----------------|-------------------------|
 | Database locked / concurrent writer | Mutating command fails or waits on lock acquisition | Multiple agents or shells writing the same workspace simultaneously | Lock timeout errors, verbose logs, active process list | Low to medium | Fail or retry cleanly; never reinterpret a lock as corruption, and keep the operator-visible error distinct from recovery flows |
-| Interleaved read/write staleness | One actor reads stale DB state while another updated JSONL or performed import/export | Missing import before read, overlapping sessions, long-lived processes | `br sync --status`, auto-import warnings, surprising ready/list results | Medium | Prefer import-before-read on commands that need freshness and keep stale-export guards enabled |
+| Interleaved read/write staleness | One actor reads stale DB state while another updated JSONL or performed import/export | Missing import before read, overlapping sessions, long-lived processes | `obr sync --status`, auto-import warnings, surprising ready/list results | Medium | Prefer import-before-read on commands that need freshness and keep stale-export guards enabled |
 | Existing-workspace assumptions hidden by hermetic tests | Commands work in fresh tempdirs but fail in long-lived or ambient-env workspaces | Test harness isolates env too aggressively, latent dependency on preexisting files/config | Non-hermetic smoke runs, field repros, ambient-env regressions | Medium | Keep a lightweight smoke profile against existing workspaces and preserve selected ambient env variables in regression coverage |
-| Multiple agents sharing one workspace with different local state | Different shells see different config/env resolution and reach different conclusions about safety | Divergent `HOME`, config files, env overrides, manually edited `.beads/` artifacts | `br config list -v`, shell env, agent repro transcripts | Medium | Make path/config provenance explicit in diagnostics so multi-actor sessions converge on the same effective workspace before mutating it |
+| Multiple agents sharing one workspace with different local state | Different shells see different config/env resolution and reach different conclusions about safety | Divergent `HOME`, config files, env overrides, manually edited `.obr/` artifacts | `obr config list -v`, shell env, agent repro transcripts | Medium | Make path/config provenance explicit in diagnostics so multi-actor sessions converge on the same effective workspace before mutating it |
 
 ### Observability cheat sheet
 
 Use these surfaces first, before manual repair:
 
-- `br doctor`: workspace health, schema checks, metadata drift, JSONL parse/conflict checks
-- `br sync --status`: stale/empty export guard conditions and import/export pending state
-- `br config list -v`: effective configuration plus the source layer that won
-- `br where`: resolved workspace/database paths
+- `obr doctor`: workspace health, schema checks, metadata drift, JSONL parse/conflict checks
+- `obr sync --status`: stale/empty export guard conditions and import/export pending state
+- `obr config list -v`: effective configuration plus the source layer that won
+- `obr where`: resolved workspace/database paths
 - Verbose logs (`-v`, `-vv`, `RUST_LOG=debug`): startup recovery, path validation, and sync preflight decisions
-- `.beads/.br_recovery/`: quarantined database families preserved during automatic rebuild
-- `.beads/.br_history/`: JSONL backup history preserved during export/restore flows
+- `.obr/recovery/`: quarantined database families preserved during automatic rebuild
+- `.obr/history/`: JSONL backup history preserved during export/restore flows
 
 ---
 
 ## Initialization Issues
 
-### "Beads not initialized: run 'br init' first"
+### "Beads not initialized: run 'obr init' first"
 
 **Error Code:** `NOT_INITIALIZED` (exit code 2)
 
@@ -136,16 +136,17 @@ Use these surfaces first, before manual repair:
 **Solution:**
 ```bash
 # Initialize new workspace
-br init
+obr init
 
 # Initialize with custom prefix
-br init --prefix myproj
+obr init --prefix myproj
 ```
 
 **Verification:**
 ```bash
-ls -la .beads/
-# Should show: beads.db, issues.jsonl, beads.yaml
+ls -la .obr/ PLAN.org
+# .obr/ should show: obr.db, config.yaml, metadata.json, .gitignore
+# PLAN.org is the tracked surface and lives outside .obr/
 ```
 
 ---
@@ -159,26 +160,26 @@ ls -la .beads/
 **Solution:**
 ```bash
 # Reinitialize (caution: resets database!)
-br init --force
+obr init --force
 
 # Or work with existing workspace
-br list
+obr list
 ```
 
 ---
 
 ### Database created in wrong location
 
-**Cause:** `br init` was run in wrong directory, or `.beads/` was moved.
+**Cause:** `obr init` was run in wrong directory, or `.obr/` was moved.
 
 **Solution:**
 ```bash
 # Check current location
-br config path
+obr config path
 
 # Move to correct directory
 cd /correct/path
-br init
+obr init
 ```
 
 ---
@@ -195,16 +196,16 @@ br init
 
 ```bash
 # List all issues to find correct ID
-br list
+obr list
 
 # Use partial ID matching
-br show abc  # Matches bd-abc123
+obr show abc  # Matches bd-abc123
 
 # Search by title
-br search "keyword"
+obr search "keyword"
 
 # Check if deleted (tombstoned)
-br list -a --json | jq '.issues[] | select(.status == "tombstone")'
+obr list -a --json | jq '.issues[] | select(.status == "tombstone")'
 ```
 
 **JSON error provides hints:**
@@ -232,10 +233,10 @@ br list -a --json | jq '.issues[] | select(.status == "tombstone")'
 **Solution:**
 ```bash
 # Provide more characters
-br show bd-abc1  # More specific
+obr show bd-abc1  # More specific
 
 # List matches to see full IDs
-br list --id bd-ab
+obr list --id bd-ab
 ```
 
 ---
@@ -249,10 +250,10 @@ br list --id bd-ab
 **Solution:**
 ```bash
 # Use numeric priority
-br create "Task" -p 1   # High priority
+obr create "Task" -p 1   # High priority
 
 # Or P-notation
-br create "Task" -p P2  # Medium priority
+obr create "Task" -p P2  # Medium priority
 
 # Priority meanings:
 # 0 (P0) = critical
@@ -297,10 +298,10 @@ br create "Task" -p P2  # Medium priority
 **Solution:**
 ```bash
 # Use valid status
-br update bd-123 -s in_progress
+obr update bd-123 -s in_progress
 
 # Or use close command
-br close bd-123  # Instead of --status closed
+obr close bd-123  # Instead of --status closed
 ```
 
 ---
@@ -340,10 +341,10 @@ br close bd-123  # Instead of --status closed
 **Solution:**
 ```bash
 # Provide required title
-br create "My task title"
+obr create "My task title"
 
 # Check what fields are required
-br create --help
+obr create --help
 ```
 
 ---
@@ -359,17 +360,17 @@ br create --help
 **Solutions:**
 ```bash
 # Find existing cycles
-br dep cycles
+obr dep cycles
 
 # View dependency tree
-br dep tree bd-123
+obr dep tree bd-123
 
 # Remove problematic dependency
-br dep remove bd-456 bd-123
+obr dep remove bd-456 bd-123
 ```
 
 **Prevention:**
-- Use `br dep tree <id>` before adding dependencies
+- Use `obr dep tree <id>` before adding dependencies
 - Consider if relationship should be `related` instead of `blocks`
 
 ---
@@ -383,7 +384,7 @@ br dep remove bd-456 bd-123
 **Solution:**
 ```bash
 # This is always an error - fix the command
-br dep add bd-123 bd-456  # Different IDs
+obr dep add bd-123 bd-456  # Different IDs
 ```
 
 ---
@@ -397,13 +398,13 @@ br dep add bd-123 bd-456  # Different IDs
 **Solutions:**
 ```bash
 # View what depends on it
-br dep list bd-123
+obr dep list bd-123
 
 # Remove dependencies first
-br dep remove bd-dependent bd-123
+obr dep remove bd-dependent bd-123
 
 # Or force delete (cascades to dependents)
-br delete bd-123 --force
+obr delete bd-123 --force
 ```
 
 ---
@@ -417,10 +418,10 @@ br delete bd-123 --force
 **Solution:**
 ```bash
 # Verify issue exists
-br show bd-xyz
+obr show bd-xyz
 
 # List to find correct ID
-br list | grep xyz
+obr list | grep xyz
 ```
 
 ---
@@ -434,11 +435,11 @@ br list | grep xyz
 **Solution:**
 ```bash
 # Check existing dependencies
-br dep list bd-123
+obr dep list bd-123
 
 # If different type needed, remove and re-add
-br dep remove bd-123 bd-456
-br dep add bd-123 bd-456 --type related
+obr dep remove bd-123 bd-456
+obr dep add bd-123 bd-456 --type related
 ```
 
 ---
@@ -454,13 +455,13 @@ br dep add bd-123 bd-456 --type related
 **Diagnosis:**
 ```bash
 # Check the specific line
-sed -n '42p' .beads/issues.jsonl
+sed -n '42p' PLAN.org
 
 # Validate JSON syntax
-jq -c '.' .beads/issues.jsonl 2>&1 | head -20
+jq -c '.' PLAN.org 2>&1 | head -20
 
 # Find problematic lines
-cat -n .beads/issues.jsonl | while read n line; do
+cat -n PLAN.org | while read n line; do
   echo "$line" | jq '.' >/dev/null 2>&1 || echo "Line $n: Invalid"
 done
 ```
@@ -468,19 +469,19 @@ done
 **Solutions:**
 ```bash
 # Capture current classification before changing the file
-br doctor --json
-br sync --status --json
+obr doctor --json
+obr sync --status --json
 
 # Manual fix: edit the malformed line(s)
-$EDITOR .beads/issues.jsonl
+$EDITOR PLAN.org
 
 # Or restore a known-good JSONL history entry after reviewing it
-br history list
-br history restore <backup>
+obr history list
+obr history restore <backup>
 
 # Validate and import only after the JSONL is parseable
-jq -c '.' .beads/issues.jsonl >/dev/null
-br sync --import-only --json
+jq -c '.' PLAN.org >/dev/null
+obr sync --import-only --json
 ```
 
 ---
@@ -494,13 +495,13 @@ br sync --import-only --json
 **Solutions:**
 ```bash
 # Check configured prefix
-br config get id.prefix
+obr config get id.prefix
 
 # Import with force (if intentional)
-br sync --import-only --force
+obr sync --import-only --force
 
 # Or update config to match
-br config set id.prefix=bd
+obr config set id.prefix=bd
 ```
 
 ---
@@ -514,16 +515,16 @@ br config set id.prefix=bd
 **Solutions:**
 ```bash
 # Check sync status
-br sync --status --json
+obr sync --status --json
 
 # Inspect both sides before choosing an authority
-br --no-auto-import --allow-stale list --json
+obr --no-auto-import --allow-stale list --json
 
 # If JSONL is authoritative, import it explicitly
-br sync --import-only --force
+obr sync --import-only --force
 
 # If SQLite is authoritative, export it explicitly
-br sync --flush-only --force
+obr sync --flush-only --force
 ```
 
 ---
@@ -537,13 +538,13 @@ br sync --flush-only --force
 **Solution:**
 ```bash
 # Find conflict markers
-grep -n "^<<<<<<\|^======\|^>>>>>>" .beads/issues.jsonl
+grep -n "^<<<<<<\|^======\|^>>>>>>" PLAN.org
 
 # Resolve manually
-$EDITOR .beads/issues.jsonl
+$EDITOR PLAN.org
 
 # Then import
-br sync --import-only
+obr sync --import-only
 ```
 
 ---
@@ -557,10 +558,10 @@ br sync --import-only
 **Solution:**
 ```bash
 # Use default path
-br sync --flush-only
+obr sync --flush-only
 
 # Or explicitly allow external path
-br sync --flush-only --allow-external-jsonl
+obr sync --flush-only --allow-external-jsonl
 ```
 
 ---
@@ -570,22 +571,22 @@ br sync --flush-only --allow-external-jsonl
 **Diagnosis:**
 ```bash
 # Check for dirty issues
-br list --json | jq '[.issues[] | select(.dirty)] | length'
+obr list --json | jq '[.issues[] | select(.dirty)] | length'
 
 # Check file permissions
-ls -la .beads/issues.jsonl
+ls -la PLAN.org
 
 # Check disk space
-df -h .beads/
+df -h .obr/
 ```
 
 **Solutions:**
 ```bash
 # Check file permissions
-chmod 644 .beads/issues.jsonl
+chmod 644 PLAN.org
 
 # Try with verbose logging
-br sync --flush-only -vv
+obr sync --flush-only -vv
 ```
 
 ---
@@ -594,28 +595,28 @@ br sync --flush-only -vv
 
 **Cause:** The command updated SQLite successfully, but the automatic JSONL
 export that runs after mutating commands failed. The DB now contains newer data
-than `.beads/issues.jsonl`, so committing `.beads/` without repairing the export
+than `PLAN.org`, so committing `.obr/` without repairing the export
 can commit stale issue state.
 
 **Diagnosis:**
 ```bash
 # Confirm the DB/JSONL relationship
-br sync --status --json
+obr sync --status --json
 
 # Inspect the export target and its parent directory
-br where --json
-ls -la .beads .beads/issues.jsonl
-df -h .beads/
+obr where --json
+ls -la .obr PLAN.org
+df -h .obr/
 ```
 
 **Recovery:**
 ```bash
 # Fix the reported filesystem/path/config problem first, then export explicitly
-br sync --flush-only
+obr sync --flush-only
 
 # Confirm no export debt remains before committing
-br sync --status --json
-git add .beads/
+obr sync --status --json
+git add .obr/
 ```
 
 If the warning came from a JSON or robot-mode command, the diagnostic is printed
@@ -634,17 +635,17 @@ to stderr as structured JSON so stdout remains parseable.
 **Solutions:**
 ```bash
 # Wait and retry with timeout
-br list --lock-timeout 10000
+obr list --lock-timeout 10000
 
 # Identify the locking process, then coordinate with its owner
-fuser .beads/beads.db
+fuser .obr/obr.db
 
 # Re-check workspace health after the writer finishes
-br doctor --json
+obr doctor --json
 ```
 
 **Prevention:**
-- Avoid running multiple br commands simultaneously
+- Avoid running multiple obr commands simultaneously
 - Don't leave interactive sessions open
 - Use `--lock-timeout` for agent workflows
 
@@ -654,28 +655,25 @@ br doctor --json
 
 **Error Code:** `SCHEMA_MISMATCH` (exit code 2)
 
-**Cause:** Database was created with older/newer br version.
+**Cause:** Database was created with older/newer obr version.
 
 **Solutions:**
 ```bash
-# Check br version
-br version
+# Check obr version
+obr version
 
 # Classify the workspace and projected repair
-br doctor --json
-br doctor --repair --dry-run --json
+obr doctor --json
+obr doctor --repair --dry-run --json
 
-# Use the supported migration path if available
-br upgrade --migrate-db
-
-# Otherwise preserve evidence and escalate with the doctor output
-br where --json
-br config list -v
+# Preserve evidence and escalate with the doctor output
+obr where --json
+obr config list -v
 ```
 
 ---
 
-### "Database not found at '.beads/beads.db'"
+### "Database not found at '.obr/obr.db'"
 
 **Error Code:** `DATABASE_NOT_FOUND` (exit code 2)
 
@@ -684,13 +682,13 @@ br config list -v
 **Solutions:**
 ```bash
 # Initialize if new project
-br init
+obr init
 
 # Check if moved
-find . -name "beads.db" 2>/dev/null
+find . -name "obr.db" 2>/dev/null
 
 # Import from JSONL
-br sync --import-only
+obr sync --import-only
 ```
 
 ---
@@ -700,20 +698,20 @@ br sync --import-only
 **Diagnosis:**
 ```bash
 # Classify corruption and related sidecar/metadata state
-br doctor --json
+obr doctor --json
 
 # Preview the repair plan without changing files
-br doctor --repair --dry-run --json
+obr doctor --repair --dry-run --json
 ```
 
 **Recovery:**
 ```bash
-# Let br preserve the DB family and rebuild only from valid JSONL
-br doctor --repair --json
+# Let obr preserve the DB family and rebuild only from valid JSONL
+obr doctor --repair --json
 
 # Verify the repaired workspace before writing
-br doctor --json
-br sync --status --json
+obr doctor --json
+obr sync --status --json
 ```
 
 ---
@@ -729,14 +727,14 @@ br sync --status --json
 **Solutions:**
 ```bash
 # Check syntax
-cat .beads/beads.yaml | python3 -c "import yaml,sys; yaml.safe_load(sys.stdin)"
+cat .obr/beads.yaml | python3 -c "import yaml,sys; yaml.safe_load(sys.stdin)"
 
 # Find config paths
-br config path
+obr config path
 
 # Repair the YAML in place, then verify the effective config
-$EDITOR .beads/beads.yaml
-br config list -v
+$EDITOR .obr/beads.yaml
+obr config list -v
 ```
 
 ---
@@ -748,20 +746,20 @@ br config list -v
 **Diagnosis:**
 ```bash
 # Show effective config with sources
-br config list -v
+obr config list -v
 
 # Check specific value
-br config get <key>
+obr config get <key>
 
 # Override via CLI
-br --db /path/to/db list
+obr --db /path/to/db list
 ```
 
 **Config precedence (highest to lowest):**
 1. CLI flags
 2. Environment variables
-3. Project config (`.beads/beads.yaml`)
-4. User config (`~/.config/beads/config.yaml`)
+3. Project config (`.obr/beads.yaml`)
+4. User config (`~/.config/obr/config.yaml`)
 5. Global config (`/etc/beads/config.yaml`)
 6. Embedded defaults
 7. Compiled defaults
@@ -809,22 +807,22 @@ Enable debug output for detailed diagnostics:
 
 ```bash
 # Basic verbose
-br list -v
+obr list -v
 
 # Very verbose
-br sync --flush-only -vv
+obr sync --flush-only -vv
 
 # Full debug logging
-RUST_LOG=debug br list 2>debug.log
+RUST_LOG=debug obr list 2>debug.log
 
 # Trace level (very detailed)
-RUST_LOG=trace br sync --flush-only 2>trace.log
+RUST_LOG=trace obr sync --flush-only 2>trace.log
 
 # Module-specific logging
-RUST_LOG=beads_rust::storage=debug br list
+RUST_LOG=obr::storage=debug obr list
 
 # Combine with JSON for parsing
-RUST_LOG=debug br list --json 2>debug.log 1>issues.json
+RUST_LOG=debug obr list --json 2>debug.log 1>issues.json
 ```
 
 ### Test Harness Logging (Conformance/Benchmark)
@@ -843,7 +841,7 @@ CONFORMANCE_SUMMARY=1
 # JUnit XML output for CI systems
 CONFORMANCE_JUNIT_XML=1
 
-# Failure context dump (stdout/stderr previews + .beads listing)
+# Failure context dump (stdout/stderr previews + .obr listing)
 CONFORMANCE_FAILURE_CONTEXT=1
 ```
 
@@ -865,23 +863,23 @@ conformance_junit.xml
 **Diagnosis:**
 ```bash
 # Check issue count
-br count
+obr count
 
 # Check database size
-du -h .beads/beads.db
+du -h .obr/obr.db
 ```
 
 **Solutions:**
 ```bash
 # Use limit
-br list --limit 50
+obr list --limit 50
 
 # Use specific filters
-br list -s open -t bug
+obr list -s open -t bug
 
 # Check whether derived-state repair is needed
-br doctor --json
-br doctor --repair --dry-run --json
+obr doctor --json
+obr doctor --repair --dry-run --json
 ```
 
 ---
@@ -891,20 +889,20 @@ br doctor --repair --dry-run --json
 **Diagnosis:**
 ```bash
 # Check dirty count
-br sync --status --json | jq '.dirty_count'
+obr sync --status --json | jq '.dirty_count'
 
 # Check JSONL size
-du -h .beads/issues.jsonl
-wc -l .beads/issues.jsonl
+du -h PLAN.org
+wc -l PLAN.org
 ```
 
 **Solutions:**
 ```bash
 # Flush only dirty issues (default)
-br sync --flush-only
+obr sync --flush-only
 
 # For large imports, use progress
-br sync --import-only -v
+obr sync --import-only -v
 ```
 
 ---
@@ -913,12 +911,12 @@ br sync --import-only -v
 
 ```bash
 # Monitor during operation
-/usr/bin/time -v br list --limit 0
+/usr/bin/time -v obr list --limit 0
 
 # For very large databases
 # Use incremental operations
-br list --limit 100
-br list --limit 100 --offset 100
+obr list --limit 100
+obr list --limit 100 --offset 100
 ```
 
 ---
@@ -932,13 +930,13 @@ br list --limit 100 --offset 100
 **Solution:**
 ```bash
 # Always use --json for programmatic access
-br list --json
+obr list --json
 
 # Suppress stderr if needed
-br list --json 2>/dev/null
+obr list --json 2>/dev/null
 
 # Check exit code
-br list --json || echo "Failed with code $?"
+obr list --json || echo "Failed with code $?"
 ```
 
 ---
@@ -950,11 +948,11 @@ br list --json || echo "Failed with code $?"
 **Solutions:**
 ```bash
 # Use lock timeout
-br update bd-123 --claim --lock-timeout 5000
+obr update bd-123 --claim --lock-timeout 5000
 
 # Retry on failure
 for i in 1 2 3; do
-  br list --json && break
+  obr list --json && break
   sleep 1
 done
 ```
@@ -963,15 +961,15 @@ done
 
 ### Actor not being recorded
 
-**Cause:** `BD_ACTOR` not set.
+**Cause:** `OBR_ACTOR` not set.
 
 **Solution:**
 ```bash
 # Set actor for audit trail
-export BD_ACTOR="claude-agent"
+export OBR_ACTOR="claude-agent"
 
 # Or per-command
-br --actor "my-agent" update bd-123 --claim
+obr --actor "my-agent" update bd-123 --claim
 ```
 
 ---
@@ -979,7 +977,7 @@ br --actor "my-agent" update bd-123 --claim
 ## Recovery Procedures
 
 Recovery starts with classification and evidence preservation. Do not delete,
-rename, or partially overwrite `.beads/` files as a first response. The repair
+rename, or partially overwrite `.obr/` files as a first response. The repair
 path should either prove that JSONL is authoritative and rebuild from it, or
 stop and preserve the evidence needed for manual repair.
 
@@ -988,38 +986,38 @@ stop and preserve the evidence needed for manual repair.
 Run these commands before attempting repair:
 
 ```bash
-br doctor --json
-br doctor --repair --dry-run --json
-br sync --status --json
-br where --json
-br config list -v
+obr doctor --json
+obr doctor --repair --dry-run --json
+obr sync --status --json
+obr where --json
+obr config list -v
 ```
 
-Also preserve the failing command, exact stdout/stderr, `.beads/issues.jsonl`,
-`.beads/metadata.json`, directory listings for `.beads/`, `.beads/.br_recovery/`,
-and `.beads/.br_history/`, plus the presence and hashes of `beads.db`,
-`beads.db-wal`, `beads.db-shm`, and `beads.db-journal` when present.
+Also preserve the failing command, exact stdout/stderr, `PLAN.org`,
+`.obr/metadata.json`, directory listings for `.obr/`, `.obr/recovery/`,
+and `.obr/history/`, plus the presence and hashes of `obr.db`,
+`obr.db-wal`, `obr.db-shm`, and `obr.db-journal` when present.
 
 ### Recoverable database family with valid JSONL
 
-Use this when `br doctor` classifies the DB family as recoverable and JSONL is
+Use this when `obr doctor` classifies the DB family as recoverable and JSONL is
 parseable, conflict-free, and pointed at the intended workspace.
 
 ```bash
 # Preview what repair will do
-br doctor --repair --dry-run --json
+obr doctor --repair --dry-run --json
 
 # Execute the supported repair path
-br doctor --repair --json
+obr doctor --repair --json
 
 # Verify health and freshness before mutating issues
-br doctor --json
-br sync --status --json
-br list --json
+obr doctor --json
+obr sync --status --json
+obr list --json
 ```
 
-Expected behavior: `br` preserves the original DB family under
-`.beads/.br_recovery/`, rebuilds from valid JSONL, and verifies the repaired
+Expected behavior: `obr` preserves the original DB family under
+`.obr/recovery/`, rebuilds from valid JSONL, and verifies the repaired
 workspace instead of asking the operator to remove individual database files.
 
 ### Unsafe JSONL or merge-conflict state
@@ -1030,16 +1028,16 @@ interchange file is corrected.
 
 ```bash
 # Find conflict markers or invalid JSONL
-grep -n "^<<<<<<\|^======\|^>>>>>>" .beads/issues.jsonl
-jq -c '.' .beads/issues.jsonl >/dev/null
+grep -n "^<<<<<<\|^======\|^>>>>>>" PLAN.org
+jq -c '.' PLAN.org >/dev/null
 
 # Edit the JSONL to one valid record per line, with the intended prefix
-$EDITOR .beads/issues.jsonl
+$EDITOR PLAN.org
 
 # Re-validate and import after the file is unambiguous
-jq -c '.' .beads/issues.jsonl >/dev/null
-br sync --import-only --json
-br doctor --json
+jq -c '.' PLAN.org >/dev/null
+obr sync --import-only --json
+obr doctor --json
 ```
 
 Do not use raw `git checkout --ours` or `git checkout --theirs` as a recovery
@@ -1053,19 +1051,19 @@ Use this when both sides are readable but disagree.
 
 ```bash
 # Classify freshness and path metadata first
-br sync --status --json
-br where --json
-br config list -v
+obr sync --status --json
+obr where --json
+obr config list -v
 
 # If JSONL is authoritative
-br sync --import-only --force
+obr sync --import-only --force
 
 # If SQLite is authoritative
-br sync --flush-only --force
+obr sync --flush-only --force
 
 # Verify after the chosen direction succeeds
-br sync --status --json
-br doctor --json
+obr sync --status --json
+obr doctor --json
 ```
 
 The important part is the explicit direction choice. Do not run a force flag as
@@ -1077,9 +1075,9 @@ a generic fix; it is an assertion about which side should win.
 to inspect valid JSONL, but it is not the normal recovery path for writes.
 
 ```bash
-br --no-db list --json
-br --no-db show <issue-id> --json
-br --no-db ready --json
+obr --no-db list --json
+obr --no-db show <issue-id> --json
+obr --no-db ready --json
 ```
 
 After inspection, return to the supported repair/import/export flows above.
@@ -1099,19 +1097,19 @@ If you're still stuck:
 
 2. **Run diagnostics:**
    ```bash
-   br doctor
-   br version
-   br config list
+   obr doctor
+   obr version
+   obr config list
    ```
 
 3. **Enable debug logging:**
    ```bash
-   RUST_LOG=debug br <command> 2>debug.log
+   RUST_LOG=debug obr <command> 2>debug.log
    ```
 
-4. **Check for updates:**
+4. **Reinstall from a newer commit:**
    ```bash
-   br upgrade --check
+   cargo install --git https://github.com/jwiegley/obr.git obr --locked --force
    ```
 
 ---

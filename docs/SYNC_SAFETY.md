@@ -1,27 +1,27 @@
-# br sync Safety Model
+# obr sync Safety Model
 
-> How `br sync` keeps your repository safe.
+> How `obr sync` keeps your repository safe.
 
 ---
 
 ## Overview
 
-`br` (beads_rust) is a local-first issue tracker. This document covers the
-safety model for the `br sync` command, which synchronizes your SQLite database
+`obr` (obr) is a local-first issue tracker. This document covers the
+safety model for the `obr sync` command, which synchronizes your SQLite database
 with a JSONL file for git-based collaboration.
 
-**Key safety principle**: with the default `.beads/` paths, `br sync` will never
+**Key safety principle**: with the default `.obr/` paths, `obr sync` will never
 modify your source code or execute git commands. External JSONL paths require
 explicit opt-in and remain subject to extension, symlink, traversal, and `.git/`
 guards.
 
 ---
 
-## What br sync Does
+## What obr sync Does
 
 | Operation | Description |
 |-----------|-------------|
-| **Export** (`--flush-only`) | Writes issues from SQLite to `.beads/issues.jsonl` |
+| **Export** (`--flush-only`) | Writes issues from SQLite to `PLAN.org` |
 | **Import** (`--import-only`) | Reads issues from JSONL into SQLite |
 | **Salvage import** (`--import-only --skip-invalid-records`) | Explicit additive recovery: removes invalid records after preserving an exact protected source backup, then imports the validated survivor generation |
 | **Merge** (`--merge`) | Three-way merge of base snapshot, SQLite, and JSONL |
@@ -31,47 +31,47 @@ guards.
 | **Rebuild** (`--import-only --rebuild`) | Treats JSONL as authoritative and rebuilds SQLite from it |
 | **Status** (`--status`) | Shows database/JSONL sync state without probing VCS |
 
-All file I/O is confined to the `.beads/` directory by default.
+All file I/O is confined to the `.obr/` directory by default.
 
 ---
 
-## What br sync Will NEVER Do
+## What obr sync Will NEVER Do
 
-These are explicit design non-goals for the sync command. `br sync` will never:
+These are explicit design non-goals for the sync command. `obr sync` will never:
 
 1. **Execute git commands** - No commits, no pushes, no staging
-2. **Modify files outside its sync allowlist** - Default writes stay in `.beads/`; external JSONL paths require explicit opt-in
+2. **Modify files outside its sync allowlist** - Default writes stay in `.obr/`; external JSONL paths require explicit opt-in
 3. **Install or invoke git hooks** - Fully manual hook setup if desired
 4. **Run as a daemon** - Simple CLI only, no background processes
 5. **Auto-commit changes** - Every git operation requires explicit user action
 6. **Connect to external services** - Offline-first, no network calls
 
-Other explicitly requested br commands have their own scope: for example,
-`br changelog`, `br orphans`, and commit-activity `br stats` inspect git
-history, while `br agents`, `br doctor --repair`, `br config`, and `br
+Other explicitly requested obr commands have their own scope: for example,
+`obr changelog`, `obr orphans`, and commit-activity `obr stats` inspect git
+history, while `obr agents`, `obr doctor --repair`, `obr config`, and `obr
 completions -o` can write the user-requested files they manage. Those commands
-do not weaken the `br sync` invariants described here.
+do not weaken the `obr sync` invariants described here.
 
 ### Explicit VCS diagnostics are separate
 
-`br sync --status --json` retains a compatibility `git_export` object, but it
+`obr sync --status --json` retains a compatibility `git_export` object, but it
 always reports:
 
 ```json
 {
   "available": false,
   "reason": "not_probed",
-  "diagnostic_command": "br vcs-status --json"
+  "diagnostic_command": "obr vcs-status --json"
 }
 ```
 
-Run `br vcs-status` only when you explicitly want Git visibility for the JSONL
+Run `obr vcs-status` only when you explicitly want Git visibility for the JSONL
 export. That command is isolated outside both sync source boundaries. Its probe
 budget starts before secure source capture; capture, every Git subprocess, and
 each in-process blob-hash chunk check the shared deadline between bounded
 operations. An individual filesystem read cannot itself be preempted. Subprocess output goes
 to anonymous temporary files with hard retained-output caps. On timeout or a
-runner failure, br terminates and reaps the direct child before returning;
+runner failure, obr terminates and reaps the direct child before returning;
 cleanup can extend past the probe budget. The v2 result compares exact
 HEAD/index identities and computes raw Git/SHA-256 hashes in-process from one
 immutable no-follow JSONL snapshot. Effective system/global/common/worktree
@@ -152,13 +152,13 @@ The `--force` flag bypasses export safety guards. Use it only when you understan
 
 ```bash
 # Safe: Export after intentionally clearing the database
-br sync --flush-only --force
+obr sync --flush-only --force
 
 # Safe: Import after confirming JSONL is authoritative
-br sync --import-only --force
+obr sync --import-only --force
 
 # Safe: Merge after confirming the newer timestamp should win
-br sync --merge --force
+obr sync --merge --force
 ```
 
 ### Recovering a historical malformed record
@@ -200,13 +200,13 @@ side of a merge conflict to win regardless of timestamps:
 
 ```bash
 # Keep local SQLite changes for merge conflicts
-br sync --merge --force-db
+obr sync --merge --force-db
 
 # Keep JSONL changes for merge conflicts
-br sync --merge --force-jsonl
+obr sync --merge --force-jsonl
 ```
 
-The merge base is `.beads/beads.base.jsonl`. A successful export or merge updates
+The merge base is `.obr/beads.base.jsonl`. A successful export or merge updates
 that snapshot so future `--merge` runs can distinguish local SQLite edits from
 JSONL edits.
 
@@ -222,23 +222,23 @@ Use `--rebuild` only when JSONL is the source of truth and the SQLite database
 should be made to match it:
 
 ```bash
-br sync --import-only --rebuild
+obr sync --import-only --rebuild
 ```
 
 `--rebuild` is import-only. It is rejected with every non-import mode,
 including `--flush-only`, `--merge`, `--status`, and `--witness`.
-After importing JSONL, br removes database entries absent from JSONL and
+After importing JSONL, obr removes database entries absent from JSONL and
 preserves deletion tombstones when they are still needed for sync safety.
 
-When rebuild is part of corruption recovery, br preserves the original database
-family under `.beads/.br_recovery/` before creating the repaired database. These
+When rebuild is part of corruption recovery, obr preserves the original database
+family under `.obr/recovery/` before creating the repaired database. These
 artifacts are evidence for diagnosis; inspect them before pruning anything.
 
 If `--rename-prefix` is combined with rebuild, imported IDs may be rewritten to
-the configured prefix. In that mode, br skips set-difference orphan cleanup
+the configured prefix. In that mode, obr skips set-difference orphan cleanup
 because the original JSONL IDs no longer match the rewritten database IDs. If
 open-time recovery already rebuilt the database before `--rename-prefix` could
-apply, br reports a rerun command with the needed flags.
+apply, obr reports a rerun command with the needed flags.
 
 ## Lossless Additive Recovery
 
@@ -247,18 +247,18 @@ but SQLite also contains rows or audit events that must not be discarded:
 
 ```bash
 # Read-only plan with complete source/database witnesses
-br sync --reconcile-additive --json
+obr sync --reconcile-additive --json
 
 # Apply only the exact conflict-free plan that was reviewed
-plan="$(br sync --reconcile-additive --robot)"
+plan="$(obr sync --reconcile-additive --robot)"
 plan_sha256="$(printf '%s\n' "$plan" | jq -r .plan_sha256)"
-br sync --reconcile-additive --apply \
+obr sync --reconcile-additive --apply \
   --expect-plan-sha256 "$plan_sha256" --robot
 ```
 
 The dry-run opens the current-schema database read-only and does not take the
 writer lock. Its v2 receipt includes an exact `plan_sha256`. The apply path
-requires that token, takes `.beads/.write.lock`, rebuilds the identically
+requires that token, takes `.obr/.write.lock`, rebuilds the identically
 configured plan, and rejects a mismatch before mutation. It rechecks exact JSONL
 bytes plus canonical content, size, mtime, issue payload, all relation rows,
 events, close metadata, gate-result tables, config, dirty/export state, metadata,
@@ -274,7 +274,7 @@ narrowly defined monotonic closure. A reviewed operator may use
 and never when JSONL is older than SQLite. Relation drift and lifecycle or
 tombstone transitions remain non-bypassable. The complete requested resolution
 set, including inapplicable IDs, is part of the plan token. The operation never
-writes the JSONL source, `.beads/beads.base.jsonl`, or a merge note. Preserved
+writes the JSONL source, `.obr/beads.base.jsonl`, or a merge note. Preserved
 SQLite-only state sets `needs_flush=true` rather than hiding divergence.
 
 Use authoritative rebuild only when deleting SQLite-only state is intentional.
@@ -315,27 +315,27 @@ that SQLite and filesystem rename share one physical transaction.
 
 ## External JSONL Paths
 
-By default, sync operates on `.beads/issues.jsonl`. To use a different path:
+By default, sync operates on `PLAN.org`. To use a different path:
 
 ```bash
 # Set via environment variable
-export BEADS_JSONL=/path/to/issues.jsonl
-br sync --flush-only --allow-external-jsonl
+export OBR_JSONL=/path/to/issues.jsonl
+obr sync --flush-only --allow-external-jsonl
 ```
 
-Paths outside `.beads/` require the explicit `--allow-external-jsonl` opt-in.
+Paths outside `.obr/` require the explicit `--allow-external-jsonl` opt-in.
 
-**Backups:** When exporting to a JSONL file that lives inside `.beads/` (including custom
-`BEADS_JSONL` paths that still target `.beads/`), br creates timestamped backups in
-`.beads/.br_history/` before overwriting.
+**Backups:** When exporting to a JSONL file that lives inside `.obr/` (including custom
+`OBR_JSONL` paths that still target `.obr/`), obr creates timestamped backups in
+`.obr/history/` before overwriting.
 
 **Safety notes:**
 - External paths bypass the default confinement
-- Symlinks pointing outside `.beads/` are rejected
+- Symlinks pointing outside `.obr/` are rejected
 - If import preflight rejects a path, it stops before opening or parsing that path
 - Automatic flush validates the JSONL target before inspecting an existing file
 - Startup auto-import and no-db prefix inference validate existing JSONL targets before hashing or reading them
-- `br sync --allow-external-jsonl` carries that path policy through startup recovery, config loading, and no-db startup imports
+- `obr sync --allow-external-jsonl` carries that path policy through startup recovery, config loading, and no-db startup imports
 - Paths are canonicalized before use
 
 ---
@@ -344,21 +344,21 @@ Paths outside `.beads/` require the explicit `--allow-external-jsonl` opt-in.
 
 ### Starting a session
 ```bash
-br sync --status           # Check if import is needed
-br sync --import-only      # Import any JSONL changes
+obr sync --status           # Check if import is needed
+obr sync --import-only      # Import any JSONL changes
 ```
 
 ### Ending a session
 ```bash
-br sync --flush-only       # Export DB changes to JSONL
-git add .beads/            # Stage for commit (manual!)
+obr sync --flush-only       # Export DB changes to JSONL
+git add .obr/            # Stage for commit (manual!)
 git commit -m "Update issues"
 ```
 
 ### After pulling changes
 ```bash
 git pull
-br sync --import-only      # Import collaborators' changes
+obr sync --import-only      # Import collaborators' changes
 ```
 
 ---
@@ -370,7 +370,7 @@ br sync --import-only      # Import collaborators' changes
 **Cause**: Your database has 0 issues, but the JSONL file has existing issues.
 
 **Fix**:
-- Run `br sync --import-only` first to populate the database
+- Run `obr sync --import-only` first to populate the database
 - Or use `--force` if you intentionally want an empty export
 
 ### "Refusing to export stale database..."
@@ -378,7 +378,7 @@ br sync --import-only      # Import collaborators' changes
 **Cause**: The JSONL file contains issues that don't exist in your database.
 
 **Fix**:
-- Run `br sync --import-only` first to import the missing issues
+- Run `obr sync --import-only` first to import the missing issues
 - Or use `--force` if you intentionally want to lose those issues
 
 ### "Merge conflict markers detected..."
@@ -394,20 +394,20 @@ br sync --import-only      # Import collaborators' changes
 
 ## Why These Guardrails Exist
 
-### The Incident That Shaped br
+### The Incident That Shaped obr
 
 The Go predecessor (`bd`) suffered a catastrophic failure where `bd sync` **deleted all repository source files**. This wasn't a theoretical risk—it actually happened, destroying irreplaceable work. The root cause was a sync operation that had too much authority: it could execute git commands, modify arbitrary files, and make irreversible changes without explicit confirmation.
 
-This incident motivated every design decision in `br`'s safety model.
+This incident motivated every design decision in `obr`'s safety model.
 
 ### Defense in Depth
 
-`br` employs multiple layers of protection:
+`obr` employs multiple layers of protection:
 
 | Layer | Protection | Failure Mode Blocked |
 |-------|------------|---------------------|
-| **No sync git operations** | `br sync` has no runtime git subprocess path | Eliminates the primary attack vector from the original incident |
-| **Sync write allowlist** | Default writes stay in `.beads/`; external JSONL writes require opt-in | Prevents accidental modification of source code, configs, or system files |
+| **No sync git operations** | `obr sync` has no runtime git subprocess path | Eliminates the primary attack vector from the original incident |
+| **Sync write allowlist** | Default writes stay in `.obr/`; external JSONL writes require opt-in | Prevents accidental modification of source code, configs, or system files |
 | **Path validation** | Rejects `.git`, traversal (`../`), symlink escapes, and disallowed extensions | Blocks path injection attacks and symlink-based escapes |
 | **Checked publication and transactions** | JSONL/base/manifest publication uses checked temporary replacement; database mutations use transactions and operation-specific rollback | Prevents partial publication and partial database mutation |
 | **Safety guards** | Empty DB and stale DB guards require `--force` to override | Makes destructive operations explicit and intentional |
@@ -417,7 +417,7 @@ This incident motivated every design decision in `br`'s safety model.
 The safety model is backed by an extensive test suite that ensures these guarantees cannot regress:
 
 - **Path guard unit tests** (`sync::path::tests`): 22 tests verify that traversal attempts, external paths, and disallowed file types are rejected
-- **File tree snapshot tests** (`e2e_sync_git_safety.rs`): Integration tests take complete snapshots of the directory tree before and after sync, verifying that only `.beads/issues.jsonl` and related files are touched
+- **File tree snapshot tests** (`e2e_sync_git_safety.rs`): Integration tests take complete snapshots of the directory tree before and after sync, verifying that only `PLAN.org` and related files are touched
 - **Authority sentinel matrix** (`e2e_every_sync_mode_has_zero_git_authority_and_zero_git_mutation`): supported sync operations and distinct option branches run with a fake `git` first on `PATH`, detecting ordinary executable-name dispatch; every invocation compares the complete `.git` tree byte-for-byte with no exceptions. The source and runtime-dependency guards cover absolute-path, shell, linked-library, and sibling-adapter authority surfaces separately
 - **Fail-closed source validation** (`SyncSafetyValidator::validate_no_git_authority_in_sync_sources`): recursively scans both `src/sync/**/*.rs` and `src/cli/commands/sync.rs`, rejecting subprocess construction, inclusion escape hatches, Git libraries, process-capable CLI delegation, missing/unreadable/non-UTF-8 paths, symlinks, and unsupported special filesystem entries; a parsed Cargo-manifest check rejects direct normal and target-runtime Git-library edges, while `cargo tree -e normal` is the separate transitive runtime-closure gate
 - **Atomic write tests** (`e2e_sync_failure_injection.rs`): Tests inject failures mid-export to verify the original file is preserved
@@ -429,8 +429,8 @@ When sync operations occur, structured logging records safety-critical decisions
 
 ```bash
 # Enable verbose logging to see safety checks
-br sync --flush-only -v
-br sync --flush-only -vv  # Even more detail
+obr sync --flush-only -v
+obr sync --flush-only -vv  # Even more detail
 ```
 
 Key logged events:
@@ -443,7 +443,7 @@ If a safety guard triggers unexpectedly, the verbose log will show exactly why.
 
 ### The Core Guarantee
 
-With default `.beads/` paths, sync is deliberately constrained to its storage
+With default `.obr/` paths, sync is deliberately constrained to its storage
 allowlist and has no intended process, Git-library, or CLI-adapter authority.
 External JSONL access requires explicit opt-in.
 
@@ -464,10 +464,10 @@ executable. The maintained evidence consists of:
 ## Further Reading
 
 For technical details, see:
-- `.beads/SYNC_THREAT_MODEL.md` - Incident analysis and failure scenarios
-- `.beads/SYNC_SAFETY_INVARIANTS.md` - Testable safety invariants
-- `.beads/SYNC_CLI_FLAG_SEMANTICS.md` - Flag matrix and opt-in rules
+- `docs/SYNC_THREAT_MODEL.md` - Incident analysis and failure scenarios
+- `docs/SYNC_SAFETY_INVARIANTS.md` - Testable safety invariants
+- `docs/SYNC_CLI_FLAG_SEMANTICS.md` - Flag matrix and opt-in rules
 
 ---
 
-*This document is part of the br safety hardening initiative.*
+*This document is part of the obr safety hardening initiative.*

@@ -1,6 +1,6 @@
 # Testing Guidelines
 
-Practical conventions for tests in `beads_rust`. Created 2026-05-09 as part of the audit-driven cleanup; the rules here are enforced by tests in `tests/no_id_pinning.rs` and the patterns in `tests/common/ordering.rs`.
+Practical conventions for tests in `obr`. Created 2026-05-09 as part of the audit-driven cleanup; the rules here are enforced by tests in `tests/no_id_pinning.rs` and the patterns in `tests/common/ordering.rs`.
 
 ## Don't pin generated content-hash IDs in assertions
 
@@ -74,10 +74,10 @@ For test fixtures that need a fixed ID, set the ID explicitly via the builder; d
 
 ```rust
 let issue = fixtures::IssueBuilder::new("Test issue")
-    .with_id("br-fixed-id")
+    .with_id("obr-fixed-id")
     .build();
 storage.create_issue(&issue, "tester")?;
-// Now assertions can reference "br-fixed-id" knowing it's a fixture, not a generated hash.
+// Now assertions can reference "obr-fixed-id" knowing it's a fixture, not a generated hash.
 ```
 
 ## Use the SOURCE_REPO normalization for snapshot tests
@@ -140,4 +140,4 @@ Pass-or-fail of those gates blocks merge. Document new gates here when adding th
 | `30ci` | `forced_cycle_close_audit.sh` + AGENTS.md policy section |
 | `s5se` | `tests/no_id_pinning.rs` lint test |
 | `lnqc` | `docs/audit_id_pinning_2026_05_09.md` (audit found 0 true ID-pinning hits) |
-| `6plg` | `docs/audit_bd_to_br_2026_05_09.md` (audit found migration essentially complete) |
+| `6plg` | bd→obr migration audit, 2026-05-09 (found migration essentially complete; document removed from the tree, available in git history) |
