@@ -2734,10 +2734,20 @@ fn execute_flush(
     // with the operator. Skip when the export had per-record errors — a
     // partial export must not become the merge base.
     //
-    // MERGE-NOTE (fork): re-taking upstream's `execute_flush` wholesale will
-    // revert this again. `cli_sync_flush_anchor_publication_failure_retains_
-    // dirty_state_and_retries` in tests/e2e_sync_failure_injection.rs is the
-    // witness; if it goes red after a merge, this block was dropped.
+    // MERGE-NOTE (fork): upstream converged on the same fail-closed ordering
+    // in b3f36377 (v0.3.2), so this is no longer a fork-only block. The fork's
+    // version is the one kept across the 0.3.2 port: it names the anchor path
+    // in the failure text and is paired with the no-op flush branch above,
+    // which upstream does not have. Re-taking upstream's `execute_flush`
+    // wholesale still costs both. `cli_sync_flush_anchor_publication_failure_
+    // retains_dirty_state_and_retries` in tests/e2e_sync_failure_injection.rs
+    // is the witness; if it goes red after a merge, this block was dropped.
+    //
+    // Scope, measured on the ported tree (obr-1dp): this covers explicit
+    // `obr sync --flush-only` only. `sync::auto_flush` — the export a mutating
+    // command runs on its way out — still rewrites the surface without
+    // republishing the anchor, so the next `obr doctor` reports `base_jsonl`
+    // stale. b3f36377 does not close that; obr-1dp stays open.
     if !report.has_errors() {
         let anchor_path = config::merge_base_jsonl_path(&path_policy.obr_dir);
         refresh_base_snapshot_from_flushed_jsonl_snapshot(
