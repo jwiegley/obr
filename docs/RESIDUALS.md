@@ -11,6 +11,10 @@ Three categories, and the distinction matters:
   and did not close.
 - **Deliberate** — decided, not overlooked.
 
+Commit hashes cited in entries dated before 2026-08-17 may refer to the fork's
+pre-compaction history, which was deliberately squashed away; those cites stay
+as dated records even where the hashes no longer resolve from a fresh clone.
+
 ---
 
 ## Carried from upstream
@@ -502,7 +506,7 @@ Copyright for the upstream work remains with Jeffrey Emanuel. `CHANGELOG.md` is
 retained verbatim as that project's history. Contributions made in this fork are
 MIT. Read [`LICENSE`](../LICENSE) in full before depending on this project.
 
-## CI: what is still red, and why (2026-08-12)
+## CI: what is still red, and why (2026-08-12 — historical; hosted CI has been fully green since f3fe87fc, 2026-08-18)
 
 CI is telemetry; lefthook is the gate. That is a decision, not a description: a
 job is kept only if it can fail, jobs that cannot pass are marked informational
@@ -615,6 +619,10 @@ outside `ci.yml`'s `cancel-in-progress` group, with 120 minutes, a disk-reclaim
 step, `cache-targets: false` and `CARGO_PROFILE_TEST_DEBUG: "0"`. Whether that is
 enough disk is unmeasured on the runner side; the first nightly run is the
 experiment.
+
+**Update 2026-08-18:** the experiment ran. The nightly completes in ~62 minutes
+under the 120-minute cap and reports a verdict (red, as the committed full-suite
+inventory predicts) instead of dying at the ceiling.
 
 ### Tests
 
@@ -783,7 +791,7 @@ reports 12 of 38 pins as `disallowed_downgrade` and 7 as `update_available`. The
 audit script is advisory and nothing gates on it; refreshing it is unfinished
 work, not a defect.
 
-## CI: the picture after the fresh-workspace pass (2026-08-13)
+## CI: the picture after the fresh-workspace pass (2026-08-13 — historical; superseded by the port and the green shakeout of 2026-08-18)
 
 Measured on run for `d6d4ca8d`. Six jobs that were red or unverdicted above are
 now green, and what remains has been diagnosed rather than merely observed.

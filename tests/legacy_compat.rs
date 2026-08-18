@@ -1,8 +1,9 @@
-//! Legacy-name compatibility (LR) coverage for the `beads`/`bd`/`br` → `obr`
+//! Legacy-name compatibility coverage for the `beads`/`bd`/`br` → `obr`
 //! rename.
 //!
-//! Every test here pins one row of the rename map and asserts the same three
-//! things: the pre-rename name still works, it produces exactly one deprecation
+//! Every test here pins one row of the rename map — the row IDs (`a1`…`a17`,
+//! `e*`, `m1`) live on in the test names — and asserts the same three things:
+//! the pre-rename name still works, it produces exactly one deprecation
 //! warning on stderr, and the *current* name is what gets written.
 //!
 //! Deprecation warnings are once-per-process, so every assertion about warning
@@ -72,7 +73,7 @@ impl Sandbox {
     /// Build a workspace, then rewrite it into its pre-rename shape.
     ///
     /// `dir_name` selects which legacy workspace directory to produce
-    /// (`.beads` or `_obr`). The database is renamed to `beads.db` and the
+    /// (`.beads` or `_beads`). The database is renamed to `beads.db` and the
     /// recorded database name is dropped from `metadata.json`, which is exactly
     /// the on-disk state a workspace created before the rename has.
     ///
@@ -581,14 +582,6 @@ fn a17_agents_update_replaces_a_legacy_marker_block_in_place() {
     assert!(!content.contains("old blurb body"));
     assert!(content.contains("Some prose."), "surrounding prose lost");
 }
-
-// ---------------------------------------------------------------------------
-// E1-E7, E9-E14 — environment variables
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// D — user config chain
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // M1 — versioned schema identifiers

@@ -643,8 +643,8 @@ mod tests {
     /// pre-rename sentence in `src/model/mod.rs` becomes a machine-published
     /// claim without anyone ever editing an output string. Nothing else
     /// executes these strings, which is how "bd parity" and `bd-abc123`
-    /// survived four rename passes and a 43-item comment audit: the goldens
-    /// were re-baselined around them.
+    /// survived every rename sweep: the goldens were re-baselined around
+    /// them.
     ///
     /// The allowlist has exactly one entry — the Go implementation. That
     /// reference is factual, not residue: `tests/conformance.rs` runs the

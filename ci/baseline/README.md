@@ -27,7 +27,8 @@ on day one. Shrink the inventories as debt is paid down; never grow them.
 
 `full-suite-inventory-Darwin.txt` records the complete failure set of
 `cargo test --all-features --no-fail-fast` — 11 failures across 149 targets at
-b867ed05, down from 43 at 02663b0d on the 0.2.22 base. **No script reads it.** It is named so it can never be mistaken for
+b867ed05 (0.3.2 base), down from 43 in the prior record on the 0.2.22 base
+(pre-compaction history; that commit no longer resolves). **No script reads it.** It is named so it can never be mistaken for
 `integration-failures-baseline-$(uname -s).txt`, which unit-gate WOULD honour and
 which would weaken the integration set from "fully green" to "no new failures".
 

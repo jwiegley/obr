@@ -108,7 +108,7 @@ const LIST_ISSUES_SINGLE_ARG_KEYS: &[&str] = &[
 ///
 /// Every agent-facing string that shows an example ID must go through this,
 /// so the example matches the IDs the client will really see instead of a
-/// hard-coded prefix from some earlier name of the tool.
+/// hard-coded prefix.
 pub(super) fn resolved_issue_prefix(state: &ObrState) -> &str {
     state
         .issue_prefix
@@ -3211,9 +3211,8 @@ mod tests {
     }
 
     /// Every example ID an MCP client is shown must carry the prefix this
-    /// workspace actually mints. The published example was `obr-1a2b3c` — a
-    /// prefix from an earlier name of the tool that no obr workspace ever
-    /// produces — sitting beside a state that knew the real one.
+    /// workspace actually mints, not a literal baked into the schema beside a
+    /// state that already knows the real one.
     #[test]
     fn mcp_tool_schema_example_id_uses_the_workspace_issue_prefix() {
         let temp = TempDir::new().expect("tempdir");

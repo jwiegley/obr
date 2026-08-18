@@ -4,10 +4,9 @@
 //! ## Contract
 //!
 //! Every disk-write under `--repair` flows through [`mutate`]. No
-//! exceptions. This list is the contract itself — it was previously
-//! attributed to a `references/methodology/` document that does not exist
-//! in this repository, leaving the rule that governs every repair write
-//! with an unreachable authority:
+//! exceptions. This list is the contract itself — there is no
+//! `references/methodology/` document in this repository for it to defer
+//! to:
 //!
 //! 1. Acquire a per-path advisory lock.
 //! 2. Compute SHA-256 `before_hash` (empty hash if the file does not

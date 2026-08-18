@@ -16,9 +16,7 @@
 #      with a one-line summary and the recommended next step. ANY finding
 #      blocks, including warn-level ones on an otherwise healthy workspace —
 #      `workspace_health` is read only to sharpen the message, never to soften
-#      the verdict. This comment used to claim the health had to be non-healthy
-#      too, which was never what the code did; the block below keys on the exit
-#      status alone.
+#      the verdict. The block below keys on the exit status alone.
 #
 #      Practical consequence, since it will bite: a warn is enough to wedge
 #      every commit until it is cleared. Bumping the version in Cargo.toml

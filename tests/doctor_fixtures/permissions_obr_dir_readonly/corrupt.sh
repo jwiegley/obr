@@ -23,6 +23,6 @@ if [ -e .fixture_baseline ]; then
   exit 1
 fi
 mkdir -p .fixture_baseline
-# tar must run BEFORE the read-only chmod completes because tar can read
-# regardless, but we still tar the post-chmod state so undo restores it.
+# tar captures the POST-chmod state so undo restores mode 0444; tar reads a
+# mode-0444 file regardless of the missing user-write bit.
 tar --exclude=.fixture_baseline -cf .fixture_baseline/state.tar .

@@ -2081,30 +2081,6 @@ fn local_repair_message(local_repair: &LocalRepairResult) -> String {
     }
 }
 
-/// Literal root-`.gitignore` lines that hide the tracked surface from git.
-///
-/// D-SURFACE inverted this check. `.obr/` is per-machine cache and SHOULD be
-/// ignored, so `.obr` patterns are no longer offending; the file git must be
-/// able to see is the surface, and hiding it is what breaks the model.
-///
-/// The set is derived from where the surface actually resolves, because the
-/// repair fixer DELETES every matching line from the operator's `.gitignore`.
-/// Anchoring matters: `/*.org` hides `<root>/PLAN.org` but not
-/// `<root>/doc/PLAN.org`, so it is only offending in the first case.
-///
-/// Whole-directory forms (`doc/`, `doc/*`) are listed as BROAD, never exact.
-/// Deleting them would unmask files the operator meant to ignore — and for
-/// `doc/` specifically git cannot re-include a file under an excluded directory
-/// at all — so removing the line is a rewrite of intent, not a repair, and the
-/// fixer must never do it.
-///
-/// But declining to REPAIR is not a reason to decline to REPORT, and for a long
-/// time this conflated the two: a repository that ignored `doc/` wholesale got
-/// an invisible surface and a doctor run that answered `healthy` with zero
-/// non-OK checks. Issues accumulated in the per-machine `.obr/` cache, git never
-/// saw the surface, and a fresh clone got nothing — silently, while the tool
-/// said everything was fine. The surface reaching git IS the product; failing to
-/// mention that it cannot is the worst answer available.
 /// The `.gitignore` lines that would hide the surface, split by how much they
 /// mean.
 ///
@@ -2132,6 +2108,30 @@ fn surface_hiding_gitignore_patterns(surface: &Path, root: &Path) -> Vec<String>
     surface_hiding_gitignore_pattern_kinds(surface, root).all()
 }
 
+/// Literal root-`.gitignore` lines that hide the tracked surface from git.
+///
+/// D-SURFACE inverted this check. `.obr/` is per-machine cache and SHOULD be
+/// ignored, so `.obr` patterns are no longer offending; the file git must be
+/// able to see is the surface, and hiding it is what breaks the model.
+///
+/// The set is derived from where the surface actually resolves, because the
+/// repair fixer DELETES every matching line from the operator's `.gitignore`.
+/// Anchoring matters: `/*.org` hides `<root>/PLAN.org` but not
+/// `<root>/doc/PLAN.org`, so it is only offending in the first case.
+///
+/// Whole-directory forms (`doc/`, `doc/*`) are listed as BROAD, never exact.
+/// Deleting them would unmask files the operator meant to ignore — and for
+/// `doc/` specifically git cannot re-include a file under an excluded directory
+/// at all — so removing the line is a rewrite of intent, not a repair, and the
+/// fixer must never do it.
+///
+/// But declining to REPAIR is not a reason to decline to REPORT, and for a long
+/// time this conflated the two: a repository that ignored `doc/` wholesale got
+/// an invisible surface and a doctor run that answered `healthy` with zero
+/// non-OK checks. Issues accumulated in the per-machine `.obr/` cache, git never
+/// saw the surface, and a fresh clone got nothing — silently, while the tool
+/// said everything was fine. The surface reaching git IS the product; failing to
+/// mention that it cannot is the worst answer available.
 fn surface_hiding_gitignore_pattern_kinds(surface: &Path, root: &Path) -> SurfaceHidingPatterns {
     let Some(name) = surface.file_name().and_then(|n| n.to_str()) else {
         return SurfaceHidingPatterns::default();
@@ -11314,9 +11314,9 @@ fn should_fallback_to_workspace_jsonl(obr_dir: &Path, paths: &config::ConfigPath
 
     // The fallback exists for the DEFAULTED export: a missing default is a
     // warning ("no export file found"), while a missing PINNED export is an
-    // error. P6-06 moved the defaulted export to the tracked surface outside
-    // `.obr/`, so testing for the old in-dir shape made this predicate always
-    // false and turned every fresh workspace's missing surface into an error.
+    // error. The defaulted export is the tracked surface outside `.obr/`, so
+    // testing for an in-dir shape here would make this predicate always false
+    // and turn every fresh workspace's missing surface into an error.
     !has_env_override
         && config::is_defaulted_jsonl_export(&paths.metadata.jsonl_export)
         && paths.jsonl_path
@@ -12145,8 +12145,8 @@ fn execute_repair_indexes(
             }
         };
 
-    // Specific refusals before the fail-closed one — the same ordering 3afb23ec
-    // established for `--repair`, applied to the path that kept the old order.
+    // Specific refusals before the fail-closed one — the same ordering
+    // `--repair` established, applied to the path that kept the old order.
     // `refuse_doctor_mutation_if_merge_pending` fails closed on ANY inspection
     // error, so whatever it reaches first it turns into "could not prove that no
     // sync merge is pending", burying a gate that can name the actual problem.
@@ -13521,9 +13521,9 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
                     }
                 }
             };
-            // Same ordering rule as `--repair` (3afb23ec) and
-            // `--repair-indexes` above: let a gate that can name the problem
-            // speak before the one that can only fail closed.
+            // Same ordering rule as `--repair` and `--repair-indexes` above:
+            // let a gate that can name the problem speak before the one that
+            // can only fail closed.
             match refuse_gates::run_all(&obr_dir, &paths.db_path) {
                 GateOutcome::Allow => {}
                 GateOutcome::Refuse {
@@ -22120,9 +22120,9 @@ mod tests {
             // finds nothing and jsonl.parse warns ("no export file found").
             // This is the Warn-producing shape this test needs — an
             // explicitly *pinned* export that is missing is an Error by
-            // design, which is a different (stronger) finding. Since P6-06 the
-            // defaulted export is the tracked surface, so the path has to be
-            // the surface location for this to stay the DEFAULTED case.
+            // design, which is a different (stronger) finding. The defaulted
+            // export is the tracked surface, so the path has to be the
+            // surface location for this to stay the DEFAULTED case.
             jsonl_path: config::computed_surface_path(obr_dir.parent().expect("workspace root")),
             metadata: config::Metadata::default(),
         };
@@ -24893,8 +24893,8 @@ mod tests {
     fn make_doctor_fixture(tmp: &Path) -> (PathBuf, PathBuf, DoctorReport) {
         let obr_dir = tmp.join(".obr");
         fs::create_dir_all(&obr_dir).unwrap();
-        // P6-06 inverted this finding: the offending line is the one that hides
-        // the tracked surface, not the one that hides `.obr/`.
+        // The offending line is the one that hides the tracked surface, not
+        // the one that hides `.obr/`.
         let surface = config::computed_surface_path(tmp);
         fs::write(&surface, b"").unwrap();
         let gitignore = tmp.join(".gitignore");

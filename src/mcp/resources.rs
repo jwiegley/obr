@@ -1126,8 +1126,8 @@ mod tests {
     ///
     /// Everything except the deliberately-named legacy case below must go
     /// through [`mcp_resource_state`], which uses the name `obr init` creates
-    /// today; a fixture that hand-builds a legacy name is what let a stale
-    /// `.beads` assertion pass for four rename passes.
+    /// today; a fixture that hand-builds a legacy name is what lets a stale
+    /// `.beads` assertion keep passing after the name changes.
     fn mcp_resource_state_in(
         temp: &TempDir,
         workspace_dir_name: &str,

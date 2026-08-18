@@ -1,7 +1,17 @@
-//! G-org-roundtrip as a permanent test (docs/research/upgrade/UPSTREAM_SYNC_AND_RENAME_PLAN.md §7.3):
-//! init → create issues incl. labels/deps/comments/unicode → flush → verify
-//! the surface is well-formed → re-import into a fresh DB → field-level
-//! equality; plus flush determinism and the `--no-db` phantom-change guard.
+//! The Org round-trip gate: the Org surface is a lossless representation of
+//! the database. Anything obr can store must survive a flush and come back
+//! identical, with exactly one documented normalization — the seven instant
+//! fields floor to the minute, the precision an Org timestamp can carry.
+//!
+//! init → create issues carrying labels, dependencies, comments and non-ASCII
+//! text → flush → the surface parses as well-formed Org → re-import into a
+//! fresh DB → field-level equality against the originals. A field that stops
+//! round-tripping is a regression, not a known loss to be widened for.
+//!
+//! Two adjacent guarantees ride along, because they are the ways this same
+//! invariant rots without any single field going missing: flushing from
+//! unchanged state must be deterministic, and `--no-db` must not manufacture
+//! phantom changes in blocks it did not touch.
 
 mod common;
 
@@ -79,7 +89,7 @@ fn show_issue_json(workspace: &ObrWorkspace, id: &str, label: &str) -> Value {
     values.remove(0)
 }
 
-/// The full G-org-roundtrip gate: field-level equality after re-import into
+/// The full Org round-trip gate: field-level equality after re-import into
 /// a fresh database.
 #[test]
 #[allow(clippy::too_many_lines)]
@@ -261,8 +271,8 @@ fn no_db_show_reads_an_org_workspace() {
     assert_eq!(issue["title"], "Shown issue");
 }
 
-/// The direct regression test for the fork-era phantom-change failure mode
-/// (dossier R23/gap §3.7): a `--no-db` mutation must rewrite the export
+/// The direct regression test for the fork-era phantom-change failure mode:
+/// a `--no-db` mutation must rewrite the export
 /// deterministically, changing only the affected issue's block, and an
 /// untouched issue's block must survive byte-identically.
 #[test]
@@ -290,8 +300,8 @@ fn no_db_create_changes_only_one_block() {
         .collect();
     assert!(!stable_block_before.is_empty(), "stable block missing");
 
-    // Mutate via --no-db: seeds the in-memory DB from issues.org, creates a
-    // new issue, writes the file back.
+    // Mutate via --no-db: seeds the in-memory DB from the tracked surface,
+    // creates a new issue, writes the file back.
     let no_db = run_obr(
         &workspace,
         ["--no-db", "create", "No-db issue", "--type", "task"],

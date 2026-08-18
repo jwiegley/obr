@@ -65,8 +65,7 @@
           pname = "obr";
           # Read from Cargo.toml rather than repeating it: the binary bakes in
           # CARGO_PKG_VERSION at compile time, so a literal here is a second
-          # source of truth that silently drifts on every bump (it did — the
-          # 0.2.22 -> 0.2.22+1 change left this behind).
+          # source of truth that silently drifts on every bump.
           version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
 
           src = obrSource;
@@ -194,10 +193,12 @@
 
         # nix flake check
         #
-        # Deliberately only build + formatting: upstream's tree is red at
-        # baseline under both clippy (85 first-party pedantic/nursery errors)
-        # and `cargo test --lib --bins` (266 failures + 4 process-aborting
-        # tests), so sandboxed clippy/test checks would fail unconditionally.
+        # Deliberately only build + formatting: the tree is red at baseline
+        # under clippy (first-party pedantic/nursery findings, inventoried in
+        # ci/baseline/clippy-lints-baseline.txt) and not fully green under
+        # `cargo test --lib --bins` (known failures, inventoried in
+        # ci/baseline/unit-failures-baseline-Darwin.txt), so sandboxed
+        # clippy/test checks would fail unconditionally.
         # Lint and unit regressions are gated by the no-NEW-failures scripts
         # (scripts/lint-gate.sh, scripts/unit-gate.sh) used by lefthook and CI
         # instead. Do not add a check that is known-red.

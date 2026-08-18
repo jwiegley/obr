@@ -84,7 +84,7 @@ fn write_single_issue_jsonl(workspace: &ObrWorkspace, issue: &Value) {
     fs::write(&jsonl_path, format!("{serialized}\n")).expect("write issues.jsonl");
 }
 
-/// Read the workspace's default export artifact (Org since the P3-09 flip).
+/// Read the workspace's default export artifact (Org).
 ///
 /// Routing tests that only need to confirm a routed write reached the target
 /// workspace's flat file are not about JSONL, so they follow whatever format

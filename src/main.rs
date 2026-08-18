@@ -1925,10 +1925,8 @@ fn handle_error(err: &BeadsError, json_mode: bool, color_mode: bool) -> ! {
 
 /// Only reachable with `--robot-triage`: the startup lock-failure branch is
 /// entered only when the lock was needed, i.e. `--repair` / `--repair-indexes`,
-/// and repair-without-triage exits ConcurrencyLost before reaching here. The
-/// non-triage JSON payload builder this used to select was therefore dead code
-/// with a passing unit test — the defect class this effort exists to remove — so
-/// it and the parameter that selected it are gone (obr-fpc).
+/// and repair-without-triage exits ConcurrencyLost before reaching here. There
+/// is therefore no non-triage JSON payload path to select (obr-fpc).
 fn emit_read_only_doctor_write_lock_diagnostic(
     obr_dir: Option<&Path>,
     err: &BeadsError,
@@ -2000,10 +1998,8 @@ fn is_write_lock_contention_error(lock_path: &Path, err: &BeadsError) -> bool {
 
 /// Only reachable with `--robot-triage`: the startup lock-failure branch is
 /// entered only when the lock was needed, i.e. `--repair` / `--repair-indexes`,
-/// and repair-without-triage exits ConcurrencyLost before reaching here. The
-/// non-triage JSON payload builder this used to select was therefore dead code
-/// with a passing unit test — the defect class this effort exists to remove — so
-/// it and the parameter that selected it are gone (obr-fpc).
+/// and repair-without-triage exits ConcurrencyLost before reaching here. There
+/// is therefore no non-triage JSON payload path to select (obr-fpc).
 fn emit_read_only_doctor_live_write_lock_diagnostic(
     obr_dir: Option<&Path>,
     err: &BeadsError,
@@ -2499,10 +2495,9 @@ mod tests {
     #[test]
     fn write_lock_contention_detection_is_path_scoped() {
         let lock = PathBuf::from("/workspace/.beads/.write.lock");
-        // Built by the real producer, not hand-spelled. This test is the twin of
-        // the one that let the "Failed to open write lock" matcher rot: it agreed
-        // with its own literal while src/sync had moved on. If the timeout message
-        // changes shape now, this fails instead of quietly passing.
+        // Built by the real producer, not hand-spelled — a hand-spelled fixture
+        // agrees with its own literal while src/sync moves on. If the timeout
+        // message changes shape now, this fails instead of quietly passing.
         let timeout = obr::sync::write_lock_timeout_error(
             obr::sync::WORKSPACE_WRITE_LOCK_ROLE,
             &lock.display().to_string(),

@@ -1210,19 +1210,6 @@ fn regression_sync_never_touches_source_files() {
 // Verifies sync operations only touch allowed files in .obr/
 // ============================================================================
 
-/// Files that sync is allowed to modify within `.obr/`.
-///
-/// This matches the allowlist in `src/sync/path.rs` for sync-direct writes,
-/// PLUS recognizes recovery artifacts under `.obr/recovery/` that may
-/// be created as a side effect of storage recovery flows triggered during
-/// sync's invocation (e.g., `obr sync --import-only --force` may invoke a
-/// rebuild that backs up the existing DB family to `recovery/<name>.<stamp>.bak`
-/// before overwriting). The recovery flow has its own path validation in
-/// `src/config/mod.rs::backup_database_family_for_recovery`; it does not
-/// flow through `src/sync/path.rs::validate_sync_path`.
-///
-/// See `docs/SYNC_SAFETY_INVARIANTS.md` invariant **PC-RECOVERY** for the
-/// precise contract.
 /// True for the tracked surface, given a path relative to the workspace root.
 ///
 /// Exact-path only: `PLAN.org` at the root or under one of the surface
@@ -1251,6 +1238,19 @@ fn is_surface_sync_file(rel_path: &str) -> bool {
         })
 }
 
+/// Files that sync is allowed to modify within `.obr/`.
+///
+/// This matches the allowlist in `src/sync/path.rs` for sync-direct writes,
+/// PLUS recognizes recovery artifacts under `.obr/recovery/` that may
+/// be created as a side effect of storage recovery flows triggered during
+/// sync's invocation (e.g., `obr sync --import-only --force` may invoke a
+/// rebuild that backs up the existing DB family to `recovery/<name>.<stamp>.bak`
+/// before overwriting). The recovery flow has its own path validation in
+/// `src/config/mod.rs::backup_database_family_for_recovery`; it does not
+/// flow through `src/sync/path.rs::validate_sync_path`.
+///
+/// See `docs/SYNC_SAFETY_INVARIANTS.md` invariant **PC-RECOVERY** for the
+/// precise contract.
 fn is_allowed_sync_file(rel_path: &str) -> bool {
     // D-SURFACE: the tracked surface is the one artifact sync writes OUTSIDE
     // `.obr/`, by design — it is what git is meant to see.

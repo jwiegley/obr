@@ -58,7 +58,7 @@ fn git_ok(root: &Path, args: &[&str]) {
 
 /// Re-include the pinned in-dir export so git reports it as UNTRACKED.
 ///
-/// P6-06 made `.obr/` self-ignoring, which correctly turns an in-dir export
+/// `.obr/` is self-ignoring, which correctly turns an in-dir export
 /// into an *ignored* file. Scenarios whose subject is the untracked → staged
 /// → dirty progression need the untracked state to exist at all, so they
 /// negate the rule for this one leaf rather than assert the ignored state and
@@ -75,7 +75,7 @@ fn unignore_export(root: &Path) {
 
 /// `git add` for the pinned in-dir export these tests deliberately track.
 ///
-/// P6-06 made `.obr/` self-ignoring, so a plain `git add .obr/issues.jsonl`
+/// `.obr/` is self-ignoring, so a plain `git add .obr/issues.jsonl`
 /// is refused. These scenarios exist precisely to exercise git states for a
 /// tracked in-dir leaf, so forcing the add is the honest expression of the
 /// setup — it does not change what any assertion checks.

@@ -2747,7 +2747,7 @@ fn execute_flush(
     // `obr sync --flush-only` only. `sync::auto_flush` — the export a mutating
     // command runs on its way out — still rewrites the surface without
     // republishing the anchor, so the next `obr doctor` reports `base_jsonl`
-    // stale. b3f36377 does not close that; obr-1dp stays open.
+    // stale. b3f36377 does not close that.
     if !report.has_errors() {
         let anchor_path = config::merge_base_jsonl_path(&path_policy.obr_dir);
         refresh_base_snapshot_from_flushed_jsonl_snapshot(

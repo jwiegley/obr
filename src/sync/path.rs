@@ -53,8 +53,8 @@
 //! passing through [`validate_sync_path`]. The WRITE boundary is
 //! `docs/SYNC_SAFETY_INVARIANTS.md` PC-1 — writes stay inside the workspace
 //! directory or an explicitly user-specified JSONL path — plus D-SURFACE.
-//! Reading this table as the write boundary is what let two filesystem
-//! witnesses assert an inventory obr never implemented.
+//! Reading this table as the write boundary lets a filesystem witness assert
+//! an inventory obr never implemented.
 //!
 //! # External export paths
 //!
@@ -182,7 +182,7 @@ const WRITE_AUTHORITY_DIGEST_LEN: usize = 24;
 /// import from a file named `*.lock`, and `obr sync` refuses any target whose
 /// extension is not `.jsonl`/`.org`. It exists so filesystem witnesses can
 /// recognise a production-owned sidecar by asking production instead of
-/// hand-copying its spelling — which is exactly how both witnesses drifted.
+/// hand-copying its spelling — hand-copied spellings are how witnesses drift.
 #[must_use]
 pub fn is_workspace_lock_sidecar_name(file_name: &str) -> bool {
     if file_name == ".write.lock" || file_name == super::SYNC_LOCK_FILENAME {
@@ -1073,7 +1073,7 @@ fn validate_external_jsonl_path(path: &Path) -> Result<()> {
         .unwrap_or_default();
 
     // Case-sensitive check is intentional: JSONL files should use lowercase .jsonl extension.
-    // External export paths remain JSONL-only by policy (docs/research/upgrade/DECISIONS.md U-EXTERNAL):
+    // External export paths remain JSONL-only by policy (docs/DECISIONS.md U-EXTERNAL):
     // the escape hatch keeps the narrowest possible safety surface.
     #[allow(clippy::case_sensitive_file_extension_comparisons)]
     if !file_name.ends_with(".jsonl") && !is_allowed_temp_name_for(&file_name, "jsonl") {
@@ -3439,7 +3439,7 @@ mod tests {
 
     #[test]
     fn external_paths_remain_jsonl_only() {
-        // docs/research/upgrade/DECISIONS.md U-EXTERNAL: the external escape hatch stays JSONL-only.
+        // docs/DECISIONS.md U-EXTERNAL: the external escape hatch stays JSONL-only.
         assert!(validate_external_jsonl_path(Path::new("/tmp/export.jsonl")).is_ok());
         assert!(validate_external_jsonl_path(Path::new("/tmp/export.org")).is_err());
     }

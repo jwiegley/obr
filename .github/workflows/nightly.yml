@@ -46,8 +46,8 @@ jobs:
   full-test-suite:
     name: Full Test Suite (all features)
     runs-on: ubuntu-latest
-    # Not an estimate: the full suite has never once run to completion, so
-    # this is a ceiling chosen to let the first verdict actually land.
+    # Measured, not estimated: a completed run takes ~62 minutes on this
+    # runner (2026-08-18); the ceiling leaves headroom for cold caches.
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1

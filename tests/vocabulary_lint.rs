@@ -5,11 +5,11 @@
 //! Goldens detect CHANGE, not staleness. Every rename pass in this fork
 //! re-baselined the snapshots, so strings that were already wrong were
 //! re-frozen as "expected" — and one golden went further and masked the
-//! offending line behind a `.*$`. Meanwhile the Rich branch (88 gates across
-//! 33 files) is unreachable from a piped harness, so a whole output mode was
-//! never executed at all: `obr init` told users for four releases that it had
-//! created `.beads/`, `beads.db` and `issues.org` while the filesystem held
-//! `.obr/`, `obr.db` and `PLAN.org`.
+//! offending line behind a `.*$`. Meanwhile the Rich branch (gated across
+//! dozens of files) is unreachable from a piped harness, so a whole output
+//! mode was never executed at all: `obr init` told users it had created
+//! `.beads/`, `beads.db` and `issues.org` while the filesystem held `.obr/`,
+//! `obr.db` and `PLAN.org`.
 //!
 //! So this test asserts nothing about what obr *should* say. It asserts what
 //! obr must never say again — the vocabulary of the pre-fork tool — across

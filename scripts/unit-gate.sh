@@ -4,11 +4,12 @@
 # Two phases, both fail-closed:
 #
 #   1. the unit suite (`cargo test --lib --bins`). It is not fully green (see
-#      ci/baseline/README.md), and four doctor tests abort the harness
-#      process, truncating parallel runs at an unpredictable point. This phase
+#      ci/baseline/README.md), and under macOS's default symlinked TMPDIR
+#      doctor tests abort the harness outright — which is why this script
+#      pins a canonical TMPDIR below before recording anything. This phase
 #      runs the fast (parallel) tier and fails only on failure NAMES absent
-#      from the committed baseline inventory. The full serial tier (with the
-#      aborters skipped) is the release procedure; see ci/baseline/README.md.
+#      from the committed baseline inventory (recorded under the same
+#      canonical-TMPDIR contract; see ci/baseline/README.md).
 #
 #   2. a small, curated INTEGRATION set. Until this phase existed the gate ran
 #      `--lib --bins` only, so no integration test guarded a commit at all —

@@ -11,7 +11,7 @@
   inode wedges nothing.
 - **obr-m6m — the reason string changed, and why that is a correction**: this
   used to demand `details.reason == "persistent_advisory_inode"`. That string
-  is emitted nowhere in `src/` and never was; `docs/research/upgrade/DECISIONS.md`
+  is emitted nowhere in `src/` and never was; `docs/DECISIONS.md`
   lists it under "Born-broken tests" as a never-implemented classification. The
   implemented vocabulary is `probe_acquired_free` /
   `probe_would_block_live_holder` / `stale_mtime`, and `probe_acquired_free` is

@@ -1235,8 +1235,7 @@ fn normalize_version_snapshot(value: &mut Value) {
                 // MCP is filtered out the two are making the same statement,
                 // so an empty list must normalize to no list — otherwise this
                 // check reports the checked-in baseline as stale on every
-                // `--all-features` run, which is how it spent the 0.2.22 line
-                // sitting in the full-suite inventory.
+                // `--all-features` run.
                 object.remove("features");
             }
         }

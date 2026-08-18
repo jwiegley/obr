@@ -5939,9 +5939,9 @@ fn first_prefix_from_resolved_jsonl(
 
 /// Read `#+ISSUE_PREFIX:` from an Org export, if the file is Org and declares it.
 fn issue_prefix_keyword_from_org(path: &Path) -> Option<String> {
-    // `ExportFormat` owns the extension probe; the hand-rolled version here
-    // also missed staged `.org.<pid>.tmp` names, so this silently declined to
-    // read the prefix out of a file it was about to publish.
+    // `ExportFormat` owns the extension probe, including staged
+    // `.org.<pid>.tmp` names — ask it rather than re-deriving the answer
+    // from the extension here.
     if !crate::sync::org_bridge::ExportFormat::for_path(path).is_org() {
         return None;
     }
@@ -9346,12 +9346,11 @@ routing:
         assert_eq!(resolved, obr_dir.join("issues.jsonl"));
     }
 
-    /// The deliberate reclassification trap (INTEGRATION_PLAN P3-09): every
-    /// workspace created before the Org default carries
-    /// `"jsonl_export": "issues.jsonl"` in metadata.json. After the flip that
-    /// value is no longer "the default" — it is an explicit override, so
-    /// legacy workspaces keep reading and writing their JSONL and never
-    /// silently change format. Do not "fix" this.
+    /// The deliberate reclassification trap: every workspace created before
+    /// the Org default carries `"jsonl_export": "issues.jsonl"` in
+    /// metadata.json. Under the Org default that value is not "the default" —
+    /// it is an explicit override, so legacy workspaces keep reading and
+    /// writing their JSONL and never silently change format. Do not "fix" this.
     #[test]
     fn legacy_jsonl_metadata_pins_the_workspace_to_jsonl_after_the_flip() {
         let temp = TempDir::new().expect("tempdir");
@@ -12403,7 +12402,8 @@ routing:
         fs::write(&db_path, b"database").expect("db");
         let wal = obr_dir.join("obr.db-wal");
         // Verbatim what sidecar_wal_without_shm ships: 42 bytes of plain text,
-        // long enough to clear the old length-only check.
+        // long enough to clear the 32-byte length floor — only the magic
+        // check can condemn it.
         let payload = b"stale wal sidecar from interrupted writer
 ";
         fs::write(&wal, payload).expect("wal");
@@ -12536,11 +12536,8 @@ routing:
         fs::create_dir_all(&obr_dir).expect("create obr dir");
 
         fs::write(&db_path, b"db").expect("write db");
-        // A real header, not 32 zero bytes. The fixture used zeros because the
-        // check was length-only and could not tell them apart; now that it
-        // reads the magic, zeros are correctly recognised as not-a-WAL. The
-        // assertions below are unchanged — this only makes the fixture match
-        // the name.
+        // A real header, not 32 zero bytes: the check reads the WAL magic, so
+        // 32 zero bytes are provably not a WAL and would be quarantined.
         let mut valid_wal = vec![0x37_u8, 0x7f, 0x06, 0x82];
         valid_wal.resize(32, 0);
         fs::write(&wal_path, &valid_wal).expect("write valid wal");

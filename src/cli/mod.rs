@@ -2861,7 +2861,7 @@ pub const DEFAULT_WITNESS_PARALLELISM: usize = 64;
 #[derive(Args, Debug, Clone, Default)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct SyncArgs {
-    /// Export database to the workspace export file (DB → .obr/issues.org)
+    /// Export database to the tracked export surface (DB → PLAN.org)
     ///
     /// Writes all issues from the `SQLite` database to the workspace's
     /// flat-file format (Org by default; JSONL when pinned).

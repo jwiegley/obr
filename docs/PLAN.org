@@ -126,6 +126,43 @@ So disabling org-hash on PLAN.org surfaces is now safe. It also removes the :HAS
 
 Keeping org-hash is equally fine; its :MODIFIED: bump simply becomes belt-and-braces rather than load-bearing.
 
+* DONE [#C] Deadwood sweep: delete intermediate research/planning docs; audit fork-added comments
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       obr-2en
+:LABELS:   []
+:ISSUE_TYPE: task
+:CREATED:  [2026-08-18 Tue 12:13]
+:MODIFIED: [2026-08-18 Tue 13:16]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-18 Tue 13:13]
+:CLOSE_REASON: done
+:SOURCE_REPO: obr
+:SOURCE_REPO_PATH: /Users/johnw/src/obr
+:ORIGINAL_SIZE: 0
+:END:
+
+** Comments
+
+#+begin_src json
+[
+  {
+    "id": 50,
+    "issue_id": "obr-2en",
+    "author": "johnw",
+    "text": "Done in f3fe87fc via a 14-agent workflow (3 doc auditors, 6 comment batches carrying the comment-audit skill's taxonomy, 4 appliers, 2 verifiers) plus a manual triage pass over everything the agents escalated.\n\nDeleted (50 files, ~2.3 MB): docs/research/** except the decision register — prior-session maps/gaps/analyses/web research, upgrade plans R1–R4 + INTEGRATION_PLAN + CRITIQUE + BASELINE + v3-* snapshots, the productize plan, the 2026-05-14 upgrade log. The three docs/research root files were byte-duplicates of prior-session copies (verified by shasum).\n\nRelocated: docs/research/upgrade/DECISIONS.md → docs/DECISIONS.md, trimmed to rulings still in force and corrected where the plan diverged from what shipped (U2 sanitized-Org default, U-MERGEART artifact names, D-DOMAINSEP separator count, D-AUDIT now blocking). Seven citing sites repointed; e2e_org_roundtrip's header now states its own invariant.\n\nComment audit: 2,477 fork-touched comments extracted (diff base v0.3.2); 2,352 audited, 1,000 rename-only touches of upstream comments skipped per scope; 45 high-confidence edits applied by agents + ~20 more from my triage of the 28 escalations. Dead pre-compaction SHAs dropped from live surfaces (doctor.rs x2, sync/mod.rs, ci/baseline/README.md); unverifiable counts removed; two glued rustdoc blocks moved onto their items. KEEP rulings: regression-bug citations, measured rationale for constants (the 1200ms BUDGET flake log), obr-issue-ID cites.\n\nRecords preserved: PLAN.org untouched by hand; RESIDUALS.md annotated only (header note on pre-compaction hashes, two CI sections marked historical, nightly entry updated with the measured 62-minute completed run).\n\nSpawned: obr-lcw (install.sh frankensqlite clone for a nonexistent [patch.crates-io]); evidence appended to obr-upz (vocabulary matrix invoker-PATH sensitivity, measured both ways).\n\nLeftover accepted: three PLAN.org diagnosis comments still cite the old docs/research/upgrade/DECISIONS.md path — they are dated records of past diagnoses, same status as commit messages.\n\nVerified: cargo check --tests clean; snapshots 264/264; e2e_schema 174/174; vocabulary_lint 7/7 (gate PATH); legacy_compat 22/22; e2e_org_roundtrip 167/167; every edited .sh parses; lefthook full gates green on the commit.\n",
+    "created_at": "2026-08-18T20:13:20Z"
+  },
+  {
+    "id": 51,
+    "issue_id": "obr-2en",
+    "author": "johnw",
+    "text": "Correction: the previous comment says \"Done in f3fe87fc\" — that SHA is the pre-sweep tip, captured while the sweep commit was still blocked by the doctor gate (stale merge anchor; regenerated via obr doctor --repair). The sweep landed in the commit titled \"docs: sweep the deadwood — delete the research estate, keep the decisions\", which also carries this tracker close.\n",
+    "created_at": "2026-08-18T20:16:34Z"
+  }
+]
+#+end_src
+
 * DONE [#D] Replay corpus stops on a hand-authored -journal that fsqlite refuses to open past :fsqlite:tests:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
@@ -1154,6 +1191,34 @@ Not a CI blocker: .obr/ is gitignored, so is_available(KnownDataset::Obr) is fal
 
 Fix is to resolve the export path the way the product does rather than hardcoding the pre-D-SURFACE location, or to treat a missing export as 'dataset not available' and skip.
 
+* TODO [#D] install.sh --from-source clones frankensqlite for a [patch.crates-io] that no longer exists
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       obr-lcw
+:LABELS:   []
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-18 Tue 12:55]
+:MODIFIED: [2026-08-18 Tue 12:56]
+:CREATED_BY: johnw
+:SOURCE_REPO: obr
+:SOURCE_REPO_PATH: /Users/johnw/src/obr
+:ORIGINAL_SIZE: 0
+:END:
+
+** Comments
+
+#+begin_src json
+[
+  {
+    "id": 48,
+    "issue_id": "obr-lcw",
+    "author": "johnw",
+    "text": "Found by the 2026-08-18 deadwood sweep's comment audit (batch 6), escalated as a code question rather than a comment fix.\n\ninstall.sh:1173 says: \"Clone frankensqlite next to the checkout — Cargo.toml [patch.crates-io] overrides fsqlite crates with path deps at ../frankensqlite/crates/*\", and install.sh:1176-1181 clones the repo and DIES if the clone fails.\n\nCargo.toml:172-184 states the opposite in as many words: \"NOTE: no `[patch.crates-io]` here … this crate resolves everything from the registry out of the box\", and there is no .cargo/config.toml in the tree. The same claim exists at v0.3.2, so this is inherited upstream debt, not fork damage.\n\nConsequence: the --from-source path performs a mandatory network clone whose product nothing consumes, and fails installs on machines that cannot reach that repo.\n\nFix direction: drop the clone (and the comment) from the --from-source path, or make it conditional on an actual [patch.crates-io] section being present. Either is a code change with installer-behavior consequences — needs its own test pass (e2e_installer covers the lock path, not this).\n",
+    "created_at": "2026-08-18T19:56:00Z"
+  }
+]
+#+end_src
+
 * DONE [#C] doctor's write_lock check cannot detect an orphan; orphaned_write_lock passes vacuously
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
@@ -1866,7 +1931,7 @@ the path themselves.
 :LABELS:   []
 :ISSUE_TYPE: bug
 :CREATED:  [2026-08-16 Sun 15:24]
-:MODIFIED: [2026-08-16 Sun 15:24]
+:MODIFIED: [2026-08-18 Tue 13:04]
 :CREATED_BY: johnw
 :SOURCE_REPO: obr
 :SOURCE_REPO_PATH: /Users/johnw/src/obr
@@ -1911,6 +1976,20 @@ chosen, since nothing documents it.
 Also worth noting: these two cases run only in release, so the debug-profile gate has
 never exercised the pty matrix at all. That is the obr-rh0 shape again — a gate
 covering less than its name suggests.
+
+** Comments
+
+#+begin_src json
+[
+  {
+    "id": 49,
+    "issue_id": "obr-upz",
+    "author": "johnw",
+    "text": "Additional evidence from the 2026-08-18 deadwood sweep, same env-sensitivity class as this issue:\n\nThe vocabulary_lint command matrix is invoker-PATH-sensitive. The spawned obr (correctly resolved via cargo_bin!) runs doctor, whose obr_path_dupes check scans the INHERITED $PATH and warns on >1 obr; the warn makes doctor exit non-zero, and the matrix treats non-zero as \"a command that never ran proves nothing\" and panics.\n\nMeasured on 2026-08-18: under `direnv exec .` (PATH carries ~/Products/obr/target/{debug,release} plus the system install = 3 obr) both command_matrix tests FAIL; with the two target dirs stripped from PATH the suite is 7/7 green. Plain `git commit` (no direnv PATH additions) is why the lefthook trio has always passed.\n\nFix direction when this issue is picked up: pin PATH hermetically in the test harness env layer (rich_pty::clear_inherited_obr_env / pin_fixture_identity already exist for exactly this class), so the matrix result stops depending on the invoker's shell.\n",
+    "created_at": "2026-08-18T20:04:59Z"
+  }
+]
+#+end_src
 
 * DONE [#C] CI runs raw cargo test on a tree that is red at baseline                         :ci:
 :PROPERTIES:

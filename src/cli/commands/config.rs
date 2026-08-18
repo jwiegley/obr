@@ -1436,9 +1436,9 @@ fn get_user_config_path() -> Option<PathBuf> {
 ///
 /// These strings are unreachable from every piped harness in the estate — the
 /// test helpers force `NO_COLOR`/a pipe, which selects the Plain branch — so
-/// the Rich branch went four rename passes advertising a `.beads/config`
-/// source column and a "no .beads directory found" notice on workspaces whose
-/// real directory is `.obr`. `OutputContext::with_mode(Rich)` forces the
+/// the Rich branch can advertise a `.beads/config` source column and a
+/// "no .beads directory found" notice on workspaces whose real directory is
+/// `.obr` without any piped test noticing. `OutputContext::with_mode(Rich)` forces the
 /// branch in-process; the panel/table builders are the ones `show_config` and
 /// `get_config_value` actually render, so what is captured here is what ships.
 #[cfg(test)]

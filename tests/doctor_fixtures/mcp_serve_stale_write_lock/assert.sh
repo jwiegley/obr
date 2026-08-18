@@ -64,14 +64,14 @@ case "$stage" in
             exit 1
         fi
         assert_lock_artifacts_preserved
-        # obr-m6m: this demanded `details.reason == "persistent_advisory_inode"`.
-        # That string is emitted NOWHERE in src/ and never was — it is listed in
-        # docs/research/upgrade/DECISIONS.md under "Born-broken tests" as a
-        # never-implemented classification. The implemented vocabulary for a
-        # probed lock is `probe_acquired_free` / `probe_would_block_live_holder`
-        # / `stale_mtime`, and the correct answer for THIS fixture's scenario —
-        # an old lock inode whose owning process is gone, so nothing holds the
-        # advisory lock — is `probe_acquired_free`.
+        # obr-m6m: this demanded `details.reason == "persistent_advisory_inode"`,
+        # a classification docs/DECISIONS.md lists under
+        # "Born-broken tests". Upstream's 0.3.2 payload split later gave that
+        # string a real meaning — see the PORT-NOTE on annotate_self_held_write_lock
+        # in src/cli/commands/doctor.rs — but the branches that emit it are
+        # "fresh, within threshold" and "held by a live process". Neither is this
+        # fixture's scenario: an old lock inode whose owning process is gone, so
+        # nothing holds the advisory lock, is `probe_acquired_free`.
         #
         # This is not the assertion being loosened to whatever the product
         # happens to say. It is being pointed at a real observation for the

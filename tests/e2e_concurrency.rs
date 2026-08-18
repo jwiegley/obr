@@ -761,9 +761,8 @@ fn e2e_doctor_reports_live_write_lock_without_mutating_workspace() {
     let db_path = root.join(".obr/obr.db");
     // Class B: doctor's refusal to mutate is the subject, so witness the
     // default (Org) export; the artifact's format is incidental here. Ask for
-    // the surface rather than naming it — this test spent an unknown number of
-    // releases dead at exactly this line, panicking on a hard-coded
-    // `.obr/issues.org` after the tracked surface moved out of `.obr/`.
+    // the surface rather than naming it — a hard-coded path dies the moment
+    // the tracked surface moves.
     let export_path = obr::config::computed_surface_path(&root);
     let db_before = fs::read(&db_path).expect("read database before contention");
     let export_before = fs::read(&export_path).expect("read export before contention");
@@ -932,11 +931,10 @@ fn e2e_doctor_reports_live_write_lock_without_mutating_workspace() {
         .and_then(|checks| checks.iter().find(|check| check["name"] == "write_lock"))
         .expect("write_lock check after recovery");
     assert_eq!(lock_check["status"], "ok", "{lock_check}");
-    // obr-m6m: this demanded `persistent_advisory_inode`, a classification
-    // emitted nowhere in `src/` and catalogued in
-    // docs/research/upgrade/DECISIONS.md as never implemented. The released
-    // lock is free and the probe says so; pairing this with the held-lock
-    // assertion above is what makes either one mean anything.
+    // obr-m6m: this demanded `persistent_advisory_inode`, which doctor emits
+    // for an unprobed or held lock, never for one the probe acquired. The
+    // released lock is free and the probe says so; pairing this with the
+    // held-lock assertion above is what makes either one mean anything.
     assert_eq!(
         lock_check["details"]["reason"], "probe_acquired_free",
         "{lock_check}"

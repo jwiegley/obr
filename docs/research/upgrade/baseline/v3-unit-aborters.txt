@@ -1,4 +1,0 @@
-cli::commands::doctor::tests::execute_repair_indexes_clears_stale_sidecar_snapshots_from_previous_run
-cli::commands::doctor::tests::execute_repair_indexes_dry_run_skips_mutation
-cli::commands::doctor::tests::execute_repair_indexes_quotes_names_that_need_quoting
-cli::commands::doctor::tests::execute_repair_indexes_succeeds_against_healthy_db_and_retains_snapshot

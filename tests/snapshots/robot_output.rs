@@ -146,8 +146,9 @@ fn assert_bv_golden_version() -> bool {
 }
 /// `bv` (`Dicklesworthstone/beads_viewer`) is a separate third-party Go tool,
 /// not an earlier spelling of this binary, and no workflow installs it. The
-/// three goldens below capture output `bv` emits; `obr` has no `--robot-next`,
-/// `--robot-triage` or `--robot-plan` surface and cannot regenerate them. Report
+/// three goldens below capture output `bv` emits; `obr` has no top-level
+/// `--robot-*` flags matching `bv`'s (`obr doctor --robot-triage` is a
+/// different surface) and cannot regenerate them. Report
 /// why `bv` is unusable so those tests skip with a reason instead of panicking
 /// inside [`run_bv`].
 fn bv_skip_reason() -> Option<String> {

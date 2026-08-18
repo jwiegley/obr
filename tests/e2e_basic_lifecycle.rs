@@ -1738,10 +1738,7 @@ fn e2e_pending_merge_gate_refuses_file_only_mutations_without_changing_witnesses
     assert_obr_success(&init, "pending file-mutation gate init");
     // Class A: this test drives JSONL-specific machinery (merge.base.jsonl,
     // external JSONL, malformed-JSON rewriters), so it pins the workspace to
-    // the legacy export the way every other Class A test does. It was missed
-    // when the surface moved out of `.obr/` because it is
-    // #[cfg(target_os = "linux")] and so never ran on the machine doing the
-    // moving.
+    // the legacy export the way every other Class A test does.
     common::cli::pin_jsonl(&workspace.root.join(".obr"));
 
     let create = run_obr(
@@ -2024,10 +2021,7 @@ fn e2e_sync_merge_capacity_warning_survives_receipt_resume_and_renders_human() {
     assert_obr_success(&init, "merge-capacity warning init");
     // Class A: this test drives JSONL-specific machinery (merge.base.jsonl,
     // external JSONL, malformed-JSON rewriters), so it pins the workspace to
-    // the legacy export the way every other Class A test does. It was missed
-    // when the surface moved out of `.obr/` because it is
-    // #[cfg(target_os = "linux")] and so never ran on the machine doing the
-    // moving.
+    // the legacy export the way every other Class A test does.
     common::cli::pin_jsonl(&workspace.root.join(".obr"));
 
     let first_create = run_obr(
@@ -2385,10 +2379,7 @@ fn e2e_no_db_sync_jsonl_rewriters_lock_before_loading_the_snapshot() {
     assert_obr_success(&init, "init failed");
     // Class A: this test drives JSONL-specific machinery (merge.base.jsonl,
     // external JSONL, malformed-JSON rewriters), so it pins the workspace to
-    // the legacy export the way every other Class A test does. It was missed
-    // when the surface moved out of `.obr/` because it is
-    // #[cfg(target_os = "linux")] and so never ran on the machine doing the
-    // moving.
+    // the legacy export the way every other Class A test does.
     common::cli::pin_jsonl(&workspace.root.join(".obr"));
     let create = run_obr(
         &workspace,
@@ -2893,17 +2884,13 @@ fn e2e_sync_additive_reconciliation_is_read_only_then_lossless_and_idempotent() 
     // `sync --reconcile-additive` refuses an Org surface by design — its strict
     // unknown-field semantics are undefined against a drawer that ignores
     // unknown properties on purpose — so this workspace has to be a JSONL one.
-    // The test always wrote and read `.obr/issues.jsonl`; it just never pinned
-    // the workspace to it, so the command it exists to exercise never ran.
     common::cli::pin_jsonl(&workspace.root.join(".obr")); // Class A: JSONL-specific machinery
 
-    // Ask for the IDs rather than dictating them. This used to pass
-    // `--id bd-db-seed`, and `obr create` has no `--id` — it has `--slug`,
-    // which embeds a slug in an ID that still carries the workspace prefix and
-    // a uniquifying suffix — so the test failed at setup with "unexpected
-    // argument '--id' found" and never reached what it exists to check.
-    // Nothing here needs a *particular* ID, only a stable handle to the two
-    // rows, so read back what create generated.
+    // Ask for the IDs rather than dictating them: `obr create` has no `--id`.
+    // It has `--slug`, which embeds a slug in an ID that still carries the
+    // workspace prefix and a uniquifying suffix. Nothing here needs a
+    // *particular* ID, only a stable handle to the two rows, so read back what
+    // create generated.
     let create = run_obr(
         &workspace,
         ["create", "Database audit seed", "--json", "--no-auto-flush"],

@@ -1,4 +1,4 @@
-//! P6-06 (D-SURFACE): the tracked human surface is `PLAN.org`.
+//! D-SURFACE: the tracked human surface is `PLAN.org`.
 //!
 //! `.obr/` holds only per-machine cache and is ignored wholesale; the one
 //! artifact this workspace puts in version control is `PLAN.org`, under the

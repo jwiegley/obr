@@ -223,8 +223,8 @@ fn assert_rich_frame(output: &str, command: &str, width: usize) {
 
 /// Names that were true before the workspace rename and the D-SURFACE move.
 /// For any workspace obr creates today they are lies, and the `obr init` panel
-/// printed all three — hardcoded — for four releases, because the panel only
-/// renders on a TTY and nothing in the suite ever gave it one.
+/// printed all three, hardcoded, because the panel only renders on a TTY and
+/// nothing in the suite ever gave it one.
 const STALE_INIT_LITERALS: &[&str] = &[".beads", "beads.db", "issues.org"];
 
 fn assert_panel_says(output: &str, case: &str, expected: &[&str]) {

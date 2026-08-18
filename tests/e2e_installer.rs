@@ -577,8 +577,7 @@ fn e2e_installer_lock_prevents_concurrent() {
     // The name is derived exactly the way `acquire_lock` derives it —
     // `${TMPDIR}/obr-install.<DEST with every non-alphanumeric byte mapped to
     // '_'>.lock.d`. A hand-spelled name here plants the lock somewhere the
-    // installer never looks, which is how this test passed for months while
-    // asserting nothing about locking at all.
+    // installer never looks, and the test then asserts nothing about locking.
     let dest_dir = temp.path().join("bin");
     let dest_key: String = dest_dir
         .to_str()
@@ -658,11 +657,6 @@ fn e2e_installer_uninstall_removes_binary() {
 // ============================================================================
 
 /// `OBR_INSTALL_DIR` must actually override the install destination.
-///
-/// This test used to run the installer and assert nothing at all — its only
-/// content was a comment claiming the directory "should be created" — so it
-/// stayed green while the script read `OOBR_INSTALL_DIR` (doubled O) and the
-/// documented override did nothing.
 ///
 /// `--uninstall` is what makes the override observable without a network
 /// fetch: it names `$DEST` in its own output, and the environment override is

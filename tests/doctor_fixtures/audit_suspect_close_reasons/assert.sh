@@ -68,8 +68,7 @@ print(f"has_label={has_label} bead_present={bead_present} status={status}")
 PY
 )
     # The bead must still be present, still closed, and must NOT carry the audit
-    # label. All three are asserted; `bead_present` used to be computed, printed,
-    # and never checked.
+    # label. All three are asserted below.
     case "$py_out" in
       *db_error=*)
         echo "ASSERT FAIL[$stage]: database unqueryable after --repair: $py_out" >&2

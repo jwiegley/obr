@@ -107,8 +107,7 @@ jobs:
           # not carry here — this ran in the bare checkout, where `.obr` is
           # gitignored and therefore absent. obr then emitted the `obr_dir`
           # error envelope, which has no `.schema_version`, and the assertion
-          # below failed rather than checking anything. Red since the step was
-          # added; the assertions have never actually run.
+          # below failed rather than checking anything.
           workspace="$(mktemp -d)"
           (cd "$workspace" && "$GITHUB_WORKSPACE/target/release/obr" init --quiet)
           cd "$workspace"

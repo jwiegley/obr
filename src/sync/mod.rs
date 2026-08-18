@@ -2157,7 +2157,7 @@ fn verify_database_authority_path_still_missing(path: &Path) -> Result<()> {
 /// `is_write_lock_contention_error` in `main.rs` and the tests around it — can
 /// build their fixtures from the real producer instead of hand-spelling it. A
 /// hand-spelled copy is what let the sibling "Failed to open write lock" matcher
-/// die silently for six weeks (b35507be).
+/// die silently for six weeks.
 #[must_use]
 pub fn write_lock_timeout_error(
     role: &str,
@@ -13124,7 +13124,7 @@ fn try_incremental_auto_flush(
         // The incremental path splices individual JSONL *lines* in place;
         // every step assumes one issue = one line, which is meaningless for
         // multi-line Org records. Decline, and the caller falls through to
-        // the full exporter (accepted Org perf trade — docs/research/upgrade/DECISIONS.md U6).
+        // the full exporter (accepted Org perf trade — docs/DECISIONS.md U6).
         return Ok(None);
     }
 
@@ -17101,7 +17101,7 @@ mod tests {
         let obr_dir = temp.path().join(".beads");
         std::fs::create_dir_all(&obr_dir).unwrap();
         // Dodge the macOS /var -> /private/var symlink, which the capture
-        // layer rejects (same cause as several baseline failures).
+        // layer rejects.
         let obr_dir = obr_dir.canonicalize().unwrap();
 
         let org_path = obr_dir.join("issues.org");

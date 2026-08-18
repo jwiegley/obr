@@ -728,7 +728,7 @@ mod tests {
         init_logging();
         let temp = TempDir::new().unwrap();
 
-        // Build a REAL workspace, then rename it back to the pre-P6-02/03
+        // Build a REAL workspace, then rename it back to the pre-rename
         // names and un-record the database, so metadata is defaulted exactly
         // as it is in a workspace created before the rename.
         init_workspace(Some("legacy".into()), false, Some(temp.path())).unwrap();
@@ -831,8 +831,9 @@ mod tests {
         let result = execute(None, false, Some(temp_dir.path()), &ctx);
 
         assert!(result.is_ok());
-        // P6-02/03 renamed the workspace directory and database; P6-06 moved
-        // the export out of it entirely, so the seeded surface is at the root.
+        // The workspace directory and database carry the current names, and
+        // the export lives outside the workspace, so the surface is seeded at
+        // the project root.
         assert!(temp_dir.path().join(".obr").exists());
         assert!(temp_dir.path().join(".obr/obr.db").exists());
         assert!(temp_dir.path().join(".obr/metadata.json").exists());

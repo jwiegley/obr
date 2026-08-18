@@ -451,8 +451,8 @@ impl ObrState {
         // SQLite treats an empty file as a new database and applies the schema
         // — so without this check MCP would answer reads with an empty tracker
         // while the issues are still in PLAN.org. A confident wrong answer is
-        // worse than the refusal this restores, and zero-length is the most
-        // common real corruption there is.
+        // worse than this refusal, and zero-length is the most common real
+        // corruption there is.
         if crate::sync::database_file_is_provably_not_a_database(&self.db_path) {
             return Err(BeadsError::SyncConflict {
                 message: format!(
@@ -657,8 +657,8 @@ mod tests {
     }
 
     /// Workspace directory for a fixture, under the name `obr init` creates
-    /// today. Hard-coding a legacy spelling here is what let a stale
-    /// assertion pass for four rename passes.
+    /// today. Hard-coding a legacy spelling here is what lets a stale
+    /// assertion keep passing after the name changes.
     fn workspace_dir(temp: &TempDir) -> PathBuf {
         temp.path().join(config::WORKSPACE_DIR_NAME)
     }
@@ -1006,9 +1006,7 @@ mod tests {
     }
 
     /// Every path an MCP client is told to go fix must be the path this
-    /// workspace actually uses. These strings sat beside correctly-computed
-    /// `obr_dir`/`jsonl_path` fields while naming a pre-rename artifact, and
-    /// no harness executed them.
+    /// workspace actually uses.
     #[test]
     fn mcp_error_recovery_strings_name_the_resolved_workspace_paths() {
         let temp = TempDir::new().unwrap();

@@ -62,11 +62,9 @@ pub fn last_touched_path(obr_dir: &Path) -> PathBuf {
 // The database path is NOT resolved here. `config::resolve_db_path` (reached
 // through `ConfigPaths::resolve`) owns that question, including the
 // `metadata.json` database name and the pre-rename `beads.db` fallback. A
-// second resolver used to live here for `init` alone, with its own copies of
-// both filename constants and a legacy fallback that was a bare existence
-// probe rather than config's "only when metadata does not name a database" —
-// so `obr init` and every other command could disagree about which file is
-// the workspace's database.
+// second resolver here — with its own copies of both filename constants and
+// its own legacy fallback — would let `obr init` and every other command
+// disagree about which file is the workspace's database.
 
 /// Best-effort write of the last-touched issue ID.
 ///

@@ -801,14 +801,11 @@ fn push_opt_time(out: &mut String, key: &str, value: Option<DateTime<Utc>>) {
 /// rewrites the identical bytes. That invariant is grep-checkable: no
 /// `:KEY: value` string is formatted anywhere else in this module.
 ///
-/// This used to apply to `:ID:` and the timestamps only, on the grounds that
-/// aligning the rest was "a pure-formatting change nobody has asked for".
-/// Somebody asked: a drawer mixing `:LABELS: []` (column 9) with
-/// `:ID:       x` (column 11) is exactly what Org's own
-/// `org--align-node-property` rewrites the moment the entry is re-indented,
-/// so the single-spaced keys were a standing churn loop against Emacs.
-/// Widening is invisible to the reader, which trims property values before
-/// matching, so files written either way import identically.
+/// A drawer mixing `:LABELS: []` (column 9) with `:ID:       x` (column 11)
+/// is exactly what Org's own `org--align-node-property` rewrites the moment
+/// the entry is re-indented, so single-spaced keys are a standing churn loop
+/// against Emacs. Widening is invisible to the reader, which trims property
+/// values before matching, so files written either way import identically.
 const ORG_PROPERTY_KEY_WIDTH: usize = 10;
 
 fn push_aligned(out: &mut String, key: &str, value: &str) {
@@ -1049,7 +1046,7 @@ fn push_text_child(out: &mut String, heading: &str, value: Option<&str>) {
 /// Emit a free-text body in whichever representation round-trips exactly.
 ///
 /// Preferred: sanitized Org text, so intentional structure (lists, tables,
-/// src blocks) stays native and human-editable (docs/research/upgrade/DECISIONS.md U2). But some
+/// src blocks) stays native and human-editable (docs/DECISIONS.md U2). But some
 /// texts — typically pasted code under a real list bullet — reconstruct with
 /// drifting indentation in the org2jsonl writer (+2 spaces per import/flush
 /// cycle, observed unbounded on the real tracker corpus). For any body whose
@@ -2334,11 +2331,10 @@ mod tests {
                 // Mirror chrono's real ordering: `Ambiguous` is ordered by UTC
                 // OFFSET (larger first), NOT by instant, so standard (-08:00)
                 // precedes daylight (-07:00) and `.0` is the LATER instant.
-                // The previous mock had these reversed, which made the
-                // fall-back test pass against production code that picked the
-                // wrong hour. A mock that encodes an assumption about a
-                // dependency instead of the dependency's behavior is worse
-                // than no mock.
+                // A mock that encodes an assumption about a dependency instead
+                // of the dependency's behavior is worse than no mock: reversing
+                // these two would make the fall-back test pass against
+                // production code that picks the wrong hour.
                 LocalResult::Ambiguous(Self::standard(), Self::daylight())
             } else if *local >= gap_end && *local < fold_start {
                 LocalResult::Single(Self::daylight())
@@ -3957,21 +3953,18 @@ mod tests {
             prop_assert_eq!(&parsed[0].title, &title);
         }
 
-        /// The full-domain round-trip property (the ~10-line test dossier R9
-        /// says would have caught R9), over the *un-normalized* domain:
-        /// padded titles and property values, bodies with leading/trailing
-        /// and interior blank lines, whitespace-only bodies, reasons that
-        /// canonicalize from multi-line to single-line, `Status::Pinned`
-        /// with `pinned: false`, and labels carrying `:END:`.
+        /// The full-domain round-trip property, over the *un-normalized*
+        /// domain: padded titles and property values, bodies with
+        /// leading/trailing and interior blank lines, whitespace-only bodies,
+        /// reasons that canonicalize from multi-line to single-line,
+        /// `Status::Pinned` with `pinned: false`, and labels carrying `:END:`.
         ///
         /// Two assertions, and the first is the product invariant: the file
         /// is a fixpoint from the FIRST write. The second compares fields
         /// against [`normalized_for_org`], the explicit statement of what
         /// the surface normalizes once — so an emitter that fails to apply
         /// one of those normalizations fails the test instead of being
-        /// hand-fixed by the generator, which is what the previous version
-        /// (`issue.pinned = issue.status == Status::Pinned`, `title.trim()`,
-        /// `desc.trim_end_matches('\n')`) did.
+        /// hand-fixed by the generator.
         #[test]
         fn full_domain_issue_roundtrip(
             status_idx in 0usize..8,

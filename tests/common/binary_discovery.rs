@@ -29,7 +29,7 @@ const MIN_BD_VERSION: &str = "0.46.0";
 /// `no-db` (JSONL-only, no SQLite) the default for `bd init`. A v0.50+ binary is
 /// therefore not a valid conformance reference:
 ///
-/// - `bd init` writes no `obr.db`, so the schema conformance suite has no
+/// - `bd init` writes no `beads.db`, so the schema conformance suite has no
 ///   database to introspect.
 /// - `config.yaml` changed shape entirely, so `conformance_init_config` compares
 ///   two unrelated documents.

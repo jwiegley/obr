@@ -103,13 +103,6 @@ jobs:
     # the unit tier (`--lib --bins`, measured at ~108 s locally) plus doctests;
     # the full `--all-features` run moved to .github/workflows/nightly.yml.
     #
-    # 40, not 25: at 25 this job passed every step and still wore a `cancelled`
-    # badge, because it finished in 25 m 01 s. Almost none of that is the tests
-    # (2827 of them run in 42 s) — it is two compiles of the whole graph, 12 m
-    # 06 s for `--all-features` and 10 m 16 s for `--no-default-features`, which
-    # share no artifacts because the feature set differs. The cap has to clear
-    # both builds plus a cold cache, or a green run reports as cancelled.
-    #
     # WHAT A GREEN TICK ON THIS JOB COVERS, and what it does not (obr-rh0).
     # Covered here: the unit tier (`--lib --bins`, both feature sets) and
     # doctests. NOT covered here: the `tests/*.rs` integration targets, which
@@ -155,18 +148,15 @@ jobs:
       - name: Unit tests (lib + bins, all features)
         run: |
           set -euo pipefail
-          # Informational, in the same idiom as .github/workflows/doctor.yml's
-          # health step: the unit tier is knowingly not green (2 baseline
-          # failures in ci/baseline/unit-failures-baseline-Darwin.txt, and four
-          # doctor tests abort the harness process outright, truncating a
-          # parallel run at an unpredictable point — see scripts/unit-gate.sh).
-          # HARD FAILURE as of obr-rh0. The comment above described Darwin: the
-          # two baseline failures are in `unit-failures-baseline-Darwin.txt`, and
-          # the harness aborts there because the default macOS TMPDIR sits under
-          # a `/var` symlink that obr refuses as a database route. Neither
-          # applies to this runner. Measured green on linux across the runs
-          # preceding this change, so the stated precondition ("once the unit
-          # tier is clean here") is met and the wrapper is gone.
+          # Hard failure by design (obr-rh0): the unit tier is measured green on
+          # this linux runner, so its failures fail the job.
+          #
+          # The two known-red conditions are Darwin-only and do not apply here:
+          # the baseline failures in
+          # ci/baseline/unit-failures-baseline-Darwin.txt, and the harness
+          # aborts caused by the default macOS TMPDIR sitting under a `/var`
+          # symlink that obr refuses as a database route (see
+          # scripts/unit-gate.sh).
           #
           # If this turns red on linux, that is the point — do not restore the
           # `|| status=$?`. A tier whose failures are downgraded to a warning
