@@ -1060,15 +1060,17 @@ This is the first time the job has ever executed. Every previous run was skipped
 
 Each of the six is diagnosed and either fixed or recorded in docs/RESIDUALS.md with its cause. The job then either passes or is explicitly informational.
 
-* TODO [#C] Hosted CI kills cold-graph compiles with exit 143 since the v0.3.2 promotion
+* DONE [#C] Hosted CI kills cold-graph compiles with exit 143 since the v0.3.2 promotion
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       obr-joz
 :LABELS:   []
 :ISSUE_TYPE: bug
 :CREATED:  [2026-08-18 Tue 01:31]
-:MODIFIED: [2026-08-18 Tue 02:42]
+:MODIFIED: [2026-08-18 Tue 05:11]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-18 Tue 05:11]
+:CLOSE_REASON: Full CI green at f4daadf5. Four rounds: exit-137 kernel OOM attributed by instrumentation (transient-infra and account-limit hypotheses falsified first), CARGO_BUILD_JOBS=2 on the four full-graph jobs, the probe made harmless after it failed three matrix builds itself, the witness allowlist taught the engine-owned -wal* family (confirmed hosted), and the Test Suite cap raised 40->60 after being outgrown a second time by the same mechanism. Caveat recorded: current caches are warm; if a future cache-bust reproduces the OOM despite -j2, reopen.
 :SOURCE_REPO: obr
 :SOURCE_REPO_PATH: /Users/johnw/src/obr
 :ORIGINAL_SIZE: 0
