@@ -206,6 +206,36 @@ Nothing regenerates this automatically — it is maintained by hand as
 
 ## Deliberate
 
+### Read-only doctor is lock-free — decided 2026-08-16, completed 2026-08-17
+
+Plain `obr doctor` (no `--repair`/`--fix`/`--repair-indexes`) does not take the
+workspace write lock. Three observable consequences, all decided rather than
+incidental:
+
+- **Under a live foreign lock holder, doctor inspects and exits 0**, reporting
+  the holder through the `write_lock` probe — where it previously refused with
+  `concurrency_lost` / exit 5. A diagnostic that refuses whenever another
+  process is running is close to useless on multi-agent repositories, and this
+  is what makes the orphan probe meaningful at all.
+- **Divergence findings can be transiently wrong under concurrent writers.**
+  `counts.db_vs_jsonl` and `sync.metadata` compare two stores read at different
+  instants with no lock held; when they are non-OK on a lock-free run they carry
+  `details.unsynchronized_read: true` and a note saying a re-run confirms or
+  clears the drift. Consumers should treat a single unsynchronised divergence as
+  a prompt, not a verdict.
+- **`db.write_probe` — the one check that writes — takes the workspace lock for
+  its own duration**, with a bounded (1.5 s) wait: under `--repair` the process
+  already holds the lock on another file description, so an unbounded wait would
+  deadlock, and a busy foreign writer should not stall a diagnostic. On timeout
+  the probe still runs under SQLite's own locking and reports
+  `details.serialized: false`.
+
+`--repair` still holds the lock for its whole run; its own `write_lock` finding
+is annotated `probe_would_block_self_held` rather than reporting a phantom
+foreign holder.
+
+
+
 ### Packaging checksums are placeholders
 
 `packaging/homebrew/obr.rb`, `packaging/scoop/obr.json` and both AUR PKGBUILDs

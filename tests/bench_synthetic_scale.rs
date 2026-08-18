@@ -409,6 +409,26 @@ impl SyntheticDataset {
             )));
         }
 
+        // D-SURFACE pin (Class A, same as tests/doctor_fixtures/run_all.sh's
+        // TOOL_BIN shim): `obr init` seeds an Org surface and points metadata at
+        // it, so the in-dir issues.jsonl this generator writes was NOT read —
+        // `sync --import-only` no-opped against an empty surface, the corpus was
+        // never imported, and every benchmark operation ran on an EMPTY
+        // workspace. Eight of ten "passed" that way; only the two per-issue
+        // graph operations were honest enough to fail (obr-oz9). Pin the export
+        // back to the in-dir JSONL before writing the corpus.
+        let metadata_path = obr_dir.join("metadata.json");
+        let meta_raw = fs::read_to_string(&metadata_path)?;
+        let mut meta: serde_json::Value =
+            serde_json::from_str(&meta_raw).map_err(std::io::Error::other)?;
+        meta["jsonl_export"] = serde_json::Value::String("issues.jsonl".to_string());
+        fs::write(
+            &metadata_path,
+            serde_json::to_string_pretty(&meta).map_err(std::io::Error::other)?,
+        )?;
+        let _ = fs::remove_file(root.join("PLAN.org"));
+        let _ = fs::remove_file(obr_dir.join("issues.org"));
+
         let generated = write_synthetic_jsonl(&config, &obr_dir.join("issues.jsonl"))?;
         let sync_import_ok = run_obr_status(
             obr_path,
@@ -2899,7 +2919,12 @@ fn synthetic_ci_profile_benchmarks_graph_projection_workloads() {
         );
     }
 
-    if Path::new("/usr/bin/time").is_file() {
+    // Same capability gate as run_measured_obr_command: presence of
+    // /usr/bin/time does not imply GNU time (macOS ships BSD time there, which
+    // rejects -v), and only GNU time yields the RSS this asserts. The wrapper's
+    // probe was fixed for obr-oz9; this assertion had kept the old path check
+    // and so demanded RSS the harness correctly never collected.
+    if gnu_time_supports_verbose() {
         let missing_rss = benchmark
             .operations
             .iter()

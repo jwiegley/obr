@@ -3017,8 +3017,9 @@ fn build_issue_write_probe_check(
     issue_id: &str,
     update_result: std::result::Result<usize, FrankenError>,
     rollback_result: std::result::Result<usize, FrankenError>,
+    serialized: bool,
 ) -> CheckResult {
-    let mut details = serde_json::json!({ "issue_id": issue_id });
+    let mut details = serde_json::json!({ "issue_id": issue_id, "serialized": serialized });
 
     match (update_result, rollback_result) {
         (Ok(affected_rows), Ok(_)) => {
@@ -3029,7 +3030,10 @@ fn build_issue_write_probe_check(
                     message: Some(format!(
                         "Rollback-only issue write succeeded for {issue_id}"
                     )),
-                    details: None,
+                    // The success arm used to discard the details built above,
+                    // which silently ate the `serialized` fact this check now
+                    // carries (obr-6zp item 2).
+                    details: Some(details),
                 }
             } else {
                 details["affected_rows"] = serde_json::json!(affected_rows);
@@ -8474,7 +8478,22 @@ fn fix_null_defaults_if_warned(
     any
 }
 
-fn check_issue_write_probe(conn: &Connection, checks: &mut Vec<CheckResult>) {
+/// obr-6zp item 2. This is the one check that WRITES — a rollback-only INSERT —
+/// and once read-only doctor stopped holding the workspace lock (obr-m6m) it ran
+/// unserialised against other obr processes. Take the lock for the probe's
+/// duration only, late in the check order so the read-only checks have already
+/// observed the lock in its natural state.
+///
+/// The wait is BOUNDED, not the default timeout, for two reasons: under
+/// `--repair` this process already holds the lock on another file description
+/// and flock treats that as contention, so an unbounded wait would deadlock a
+/// path that is in fact perfectly serialised; and a busy foreign writer should
+/// not stall a diagnostic for thirty seconds. On timeout the probe still runs —
+/// SQLite's own locking guards the write — and the finding says so via
+/// `details.serialized: false`.
+fn check_issue_write_probe(obr_dir: &Path, conn: &Connection, checks: &mut Vec<CheckResult>) {
+    let probe_guard = crate::sync::blocking_write_lock_with_timeout(obr_dir, Some(1_500)).ok();
+    let serialized = probe_guard.is_some();
     let issue_id = match conn.query_row("SELECT id FROM issues ORDER BY id LIMIT 1") {
         Ok(row) => row
             .get(0)
@@ -8531,6 +8550,7 @@ fn check_issue_write_probe(conn: &Connection, checks: &mut Vec<CheckResult>) {
         &issue_id,
         update_result,
         rollback_result,
+        serialized,
     ));
 }
 
@@ -12585,8 +12605,38 @@ fn collect_doctor_report_annotated(
     let mut run = collect_doctor_report_for_cli(obr_dir, paths, cli)?;
     if self_holds_write_lock {
         annotate_self_held_write_lock(&mut run.report);
+    } else {
+        annotate_unsynchronized_divergence(&mut run.report);
     }
     Ok(run)
+}
+
+/// obr-6zp item 1. Read-only doctor no longer holds the workspace lock, so the
+/// divergence checks compare two stores read at different instants: a concurrent
+/// writer can make them disagree for reasons that are not drift, and the
+/// disagreement vanishes on the next run. Carry that caveat in the findings'
+/// DETAILS — deliberately not the message, which fixtures and matchers pin — so
+/// a consumer can distinguish "possibly torn read" from "confirmed drift".
+fn annotate_unsynchronized_divergence(report: &mut DoctorReport) {
+    for check in &mut report.checks {
+        if !matches!(check.name.as_str(), "counts.db_vs_jsonl" | "sync.metadata") {
+            continue;
+        }
+        if matches!(check.status, CheckStatus::Ok) {
+            continue;
+        }
+        if let Some(details) = check.details.as_mut().and_then(|d| d.as_object_mut()) {
+            details.insert("unsynchronized_read".to_string(), serde_json::json!(true));
+            details.insert(
+                "unsynchronized_read_note".to_string(),
+                serde_json::json!(
+                    "read without the workspace write lock; a concurrent writer can make \
+                     the database and export disagree transiently — re-run to confirm \
+                     persistent drift"
+                ),
+            );
+        }
+    }
 }
 
 /// Rewrite a `write_lock` finding that reports a live holder when the holder is
@@ -13407,7 +13457,7 @@ fn inspect_existing_doctor_database(
                 );
             }
             check_sync_metadata(&conn, snapshot_db_path, jsonl_path, checks);
-            check_issue_write_probe(&conn, checks);
+            check_issue_write_probe(real_obr_dir, &conn, checks);
         }
         conn.close()?;
         Ok(())
@@ -13741,6 +13791,8 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
             collect_doctor_report_with_mode_and_no_db(&obr_dir, &paths, inspection_mode, no_db)?;
         if self_holds_write_lock {
             annotate_self_held_write_lock(&mut run.report);
+        } else {
+            annotate_unsynchronized_divergence(&mut run.report);
         }
         run
     };
@@ -23260,7 +23312,7 @@ mod tests {
 
         let conn = Connection::open(db_path.to_string_lossy().into_owned()).unwrap();
         let mut checks = Vec::new();
-        check_issue_write_probe(&conn, &mut checks);
+        check_issue_write_probe(temp.path(), &conn, &mut checks);
 
         let check = find_check(&checks, "db.write_probe").expect("check present");
         assert!(matches!(check.status, CheckStatus::Ok));
@@ -23323,6 +23375,7 @@ mod tests {
             "bd-probe",
             Ok(1),
             Err(FrankenError::Internal("rollback failed".to_string())),
+            true,
         );
 
         assert!(matches!(check.status, CheckStatus::Error));
@@ -23339,7 +23392,7 @@ mod tests {
 
     #[test]
     fn test_build_issue_write_probe_check_marks_zero_row_update_as_error() {
-        let check = build_issue_write_probe_check("bd-probe", Ok(0), Ok(0));
+        let check = build_issue_write_probe_check("bd-probe", Ok(0), Ok(0), true);
 
         assert!(matches!(check.status, CheckStatus::Error));
         assert!(
@@ -23363,6 +23416,7 @@ mod tests {
             "bd-probe",
             Ok(0),
             Err(FrankenError::Internal("rollback failed".to_string())),
+            true,
         );
 
         assert!(matches!(check.status, CheckStatus::Error));
@@ -23394,6 +23448,7 @@ mod tests {
             "bd-probe",
             Err(FrankenError::Internal("write failed".to_string())),
             Ok(0),
+            true,
         );
 
         assert!(matches!(check.status, CheckStatus::Error));
