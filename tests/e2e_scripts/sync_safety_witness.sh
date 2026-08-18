@@ -93,7 +93,13 @@ is_allowed_path() {
 	esac
 	case "$rel" in
 	.obr/.manifest.json | .obr/metadata.json | .obr/last-touched) return 0 ;;
-	.obr/*.jsonl | .obr/*.jsonl.tmp | .obr/*.db | .obr/*.db-wal | .obr/*.db-shm | .obr/*.db-journal) return 0 ;;
+	# *.db-wal* (not just *.db-wal): FrankenSQLite 0.3.1 manages WAL-certificate
+	# sidecars (-wal-cert, -wal-cert-head) through the same create/delete
+	# lifecycle as the WAL itself, and upstream's eadc8ed6 declares the whole
+	# -wal* namespace engine-owned with exactly this glob. Without it the
+	# witness flagged the engine deleting its own cert sidecars as a PC-1
+	# violation (obr-joz, first real red after the v0.3.2 port).
+	.obr/*.jsonl | .obr/*.jsonl.tmp | .obr/*.db | .obr/*.db-wal* | .obr/*.db-shm | .obr/*.db-journal) return 0 ;;
 	.obr/*.db-fsqlite-ns-gate | .obr/*.db-fsqlite-ns-use) return 0 ;;
 	# D-SURFACE: the history payload follows the tracked surface. It was
 	# .obr/history/issues.<stamp>.jsonl, which the *.jsonl arm above matched
