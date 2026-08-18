@@ -137,8 +137,8 @@ A release URL has two version-shaped parts and they are not the same string:
   flattened to `.`, because GitHub rewrites a `+` in an uploaded asset name.
 
 ```bash
-TAG=v0.5.7+1     # the release tag: the version verbatim
-ASSET=0.5.7.1    # the same version with '+' flattened to '.'
+TAG=v0.5.7+1   # the release tag: the version verbatim
+ASSET=0.5.7.1  # the same version with '+' flattened to '.'
 
 # Example for Linux x86_64
 curl -L "https://github.com/jwiegley/obr/releases/download/${TAG}/obr-${ASSET}-linux_amd64.tar.gz" -o obr.tar.gz

@@ -10002,7 +10002,7 @@ fn check_binary_version_mismatch(obr_dir: &Path, checks: &mut Vec<CheckResult>) 
 
     // LOAD-BEARING SUBTLETY: this fork versions as `<upstream>+<N>` (see
     // README's Status section), so the bumps this check most needs to catch —
-    // `0.2.22+1` -> `0.2.22+2` — differ ONLY in build metadata.
+    // `0.3.2+1` -> `0.3.2+2` — differ ONLY in build metadata.
     // semver.org §10 says build metadata is ignored for precedence, but the
     // `semver` crate derives `Ord` over its fields (build last) and compares
     // numeric identifiers numerically, so the comparison below DOES order it
@@ -26114,8 +26114,8 @@ edition = "2024"
         // so the fixture cannot distinguish them — but `+10` vs `+2` can, and
         // the fork generation will reach 10. Pin it directly.
         assert!(
-            semver::Version::parse("0.2.22+2").expect("valid semver")
-                < semver::Version::parse("0.2.22+10").expect("valid semver"),
+            semver::Version::parse("0.3.2+2").expect("valid semver")
+                < semver::Version::parse("0.3.2+10").expect("valid semver"),
             "the semver crate must order build metadata numerically; a lexical \
              comparison would call generation 10 older than generation 2"
         );

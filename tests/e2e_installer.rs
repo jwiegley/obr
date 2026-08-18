@@ -281,9 +281,9 @@ fn e2e_installer_uses_tagless_release_asset_names() {
         printf 'asset_from_plain=%s\n' "$(release_asset_version "0.2.10")"
         printf 'tag_from_tag=%s\n' "$(release_download_tag "v0.2.10")"
         printf 'tag_from_plain=%s\n' "$(release_download_tag "0.2.10")"
-        printf 'asset_from_metadata=%s\n' "$(release_asset_version "v0.2.22+1")"
-        printf 'tag_from_metadata=%s\n' "$(release_download_tag "v0.2.22+1")"
-        printf 'tag_from_bare_metadata=%s\n' "$(release_download_tag "0.2.22+1")"
+        printf 'asset_from_metadata=%s\n' "$(release_asset_version "v0.3.2+1")"
+        printf 'tag_from_metadata=%s\n' "$(release_download_tag "v0.3.2+1")"
+        printf 'tag_from_bare_metadata=%s\n' "$(release_download_tag "0.3.2+1")"
         printf 'asset_keeps_prerelease=%s\n' "$(release_asset_version "v1.2.3-rc.1")"
         trap - EXIT
         exit 0
@@ -303,22 +303,22 @@ fn e2e_installer_uses_tagless_release_asset_names() {
     assert!(stdout.contains("tag_from_tag=v0.2.10"));
     assert!(stdout.contains("tag_from_plain=v0.2.10"));
 
-    // obr's version carries semver build metadata (`0.2.22+1` = tracked
+    // obr's version carries semver build metadata (`0.3.2+1` = tracked
     // upstream release + fork generation). The two helpers must disagree about
     // it, in exactly one direction: the release TAG keeps the `+`, the asset
     // FILE NAME flattens it to `.`, because GitHub's upload API rewrites a `+`
     // in an asset name and .github/workflows/release.yml publishes the
     // flattened form. Reconstructing the `+` form here downloads nothing.
     assert!(
-        stdout.contains("asset_from_metadata=0.2.22.1"),
+        stdout.contains("asset_from_metadata=0.3.2.1"),
         "asset name must flatten build metadata: {stdout}"
     );
     assert!(
-        stdout.contains("tag_from_metadata=v0.2.22+1"),
+        stdout.contains("tag_from_metadata=v0.3.2+1"),
         "release tag must keep build metadata verbatim: {stdout}"
     );
     assert!(
-        stdout.contains("tag_from_bare_metadata=v0.2.22+1"),
+        stdout.contains("tag_from_bare_metadata=v0.3.2+1"),
         "a version without the leading v must still tag verbatim: {stdout}"
     );
     // Only `+` is a problem; a pre-release identifier is a legal file name.

@@ -25,7 +25,7 @@ fn e2e_version_short_flag() {
 
     // `--short` prints the version and nothing else. Assert that against the
     // semver grammar rather than a character whitelist: obr's own version is
-    // `0.2.22+1` (the tracked upstream release plus the fork generation
+    // `0.3.2+1` (the tracked upstream release plus the fork generation
     // since it), and a digits-and-dots whitelist rejects the `+` — as well as
     // any `-rc.1` this project might cut — while still accepting nonsense like
     // `....`.

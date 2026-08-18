@@ -117,7 +117,7 @@ fn test_scoop_manifest_schema() {
     );
     assert_eq!(
         json.get("license").and_then(serde_json::Value::as_str),
-        Some("https://github.com/Dicklesworthstone/beads_rust/blob/main/LICENSE"),
+        Some("https://github.com/jwiegley/obr/blob/main/LICENSE"),
         "Scoop must link to the repository's rider-bearing license"
     );
     assert!(json.get("bin").is_some(), "Manifest must have 'bin' field");
@@ -343,13 +343,13 @@ fn parse_version(raw: &str, source: &str) -> Result<semver::Version, String> {
 /// The fork generation `N` from a `+N` build metadata tag.
 ///
 /// The grammar is the whole of the build metadata and nothing else: obr
-/// versions as `<upstream core>+<generation>`, so `0.2.22+7` yields `7`.
+/// versions as `<upstream core>+<generation>`, so `0.3.2+7` yields `7`.
 ///
 /// Anything that is not that grammar returns `None` rather than a default, and
 /// [`not_ahead_of`] turns `None` into a reported error instead of a silent
 /// pass. That matters for exactly the inputs a bad edit produces: an empty
-/// build (`0.2.22`), a stale `obr.`-prefixed generation (`0.2.22+obr.1`), a
-/// dotted metadata (`0.2.22+1.2`), a hyphenated identifier (`0.2.22+-1`), or a
+/// build (`0.3.2`), a stale `obr.`-prefixed generation (`0.3.2+obr.1`), a
+/// dotted metadata (`0.3.2+1.2`), a hyphenated identifier (`0.3.2+-1`), or a
 /// value too large for `u64`. A parser that defaulted those to 0 would call
 /// every manifest "behind Cargo.toml" and assert nothing.
 fn fork_generation(version: &semver::Version) -> Option<u64> {
@@ -415,29 +415,29 @@ fn not_ahead_of(
 fn fork_generation_parses_bare_digits_and_rejects_everything_else() {
     let generation = |raw: &str| fork_generation(&semver::Version::parse(raw).expect(raw));
 
-    assert_eq!(generation("0.2.22+1"), Some(1));
-    assert_eq!(generation("0.2.22+7"), Some(7));
+    assert_eq!(generation("0.3.2+1"), Some(1));
+    assert_eq!(generation("0.3.2+7"), Some(7));
     // Past the point where a lexical comparison would invert.
-    assert_eq!(generation("0.2.22+10"), Some(10));
-    assert_eq!(generation("0.2.22+999"), Some(999));
+    assert_eq!(generation("0.3.2+10"), Some(10));
+    assert_eq!(generation("0.3.2+999"), Some(999));
 
     // No build metadata at all: not a fork generation. `not_ahead_of` reads
     // this as "manifest is lagging", which is why it must be distinguishable.
-    assert_eq!(generation("0.2.22"), None);
+    assert_eq!(generation("0.3.2"), None);
     // The superseded `+obr.N` spelling must not be silently accepted.
-    assert_eq!(generation("0.2.22+obr.1"), None);
+    assert_eq!(generation("0.3.2+obr.1"), None);
     // Dotted, alphabetic, hyphenated, and mixed identifiers are all legal
     // semver build metadata and all outside this grammar.
-    assert_eq!(generation("0.2.22+1.2"), None);
-    assert_eq!(generation("0.2.22+build"), None);
-    assert_eq!(generation("0.2.22+1a"), None);
-    assert_eq!(generation("0.2.22+-1"), None);
+    assert_eq!(generation("0.3.2+1.2"), None);
+    assert_eq!(generation("0.3.2+build"), None);
+    assert_eq!(generation("0.3.2+1a"), None);
+    assert_eq!(generation("0.3.2+-1"), None);
     // Numeric but unrepresentable: `None`, never a truncated or default value.
-    assert_eq!(generation("0.2.22+99999999999999999999999999"), None);
+    assert_eq!(generation("0.3.2+99999999999999999999999999"), None);
 
     // And the pre-release tail is not the fork generation either.
-    assert_eq!(generation("0.2.22-rc.1"), None);
-    assert_eq!(generation("0.2.22-rc.1+4"), Some(4));
+    assert_eq!(generation("0.3.2-rc.1"), None);
+    assert_eq!(generation("0.3.2-rc.1+4"), Some(4));
 }
 
 /// Test that all package manifests carry a version no newer than Cargo.toml.
@@ -569,9 +569,9 @@ fn test_package_manifests_use_dsr_asset_names() {
 /// A release URL carries the version twice, spelled two different ways, and
 /// the manifests must get both right.
 ///
-/// The tag path segment is the version verbatim — `v0.2.22+1`. Git accepts
+/// The tag path segment is the version verbatim — `v0.3.2+1`. Git accepts
 /// `+` in a refname and so does a URL path segment. The asset FILE name is the
-/// same version with `+` flattened to `.` — `obr-0.2.22.1-…` — because
+/// same version with `+` flattened to `.` — `obr-0.3.2.1-…` — because
 /// GitHub's release-asset upload API takes the asset name as a URL *query*
 /// parameter, where a literal `+` decodes to a space and is stored back as
 /// `.`. `.github/workflows/release.yml` therefore flattens it before uploading,
@@ -681,7 +681,7 @@ fn test_update_package_manifests_workflow_uses_current_checksums() {
         "workflow_dispatch inputs must normalize an optional leading v before building asset names"
     );
     // The sidecar names come from the flattened asset version, never the raw
-    // one: release.yml publishes `obr-0.2.22.1-*.sha256`, so reconstructing
+    // one: release.yml publishes `obr-0.3.2.1-*.sha256`, so reconstructing
     // the `+` form here would 404 and abort the manifest update.
     assert!(
         workflow.contains(r#"ASSET_VERSION="${VERSION//+/.}""#),

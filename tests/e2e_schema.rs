@@ -1229,6 +1229,16 @@ fn normalize_version_snapshot(value: &mut Value) {
             // surface. The all-features gate adds MCP independently, just as
             // it adds the optional `serve` help entry filtered above.
             features.retain(|feature| feature.as_str() != Some("mcp"));
+            if features.is_empty() {
+                // A default-feature binary omits the key entirely; an
+                // all-features one emits it with MCP as its only member. Once
+                // MCP is filtered out the two are making the same statement,
+                // so an empty list must normalize to no list — otherwise this
+                // check reports the checked-in baseline as stale on every
+                // `--all-features` run, which is how it spent the 0.2.22 line
+                // sitting in the full-suite inventory.
+                object.remove("features");
+            }
         }
         for key in ["build", "rust_version", "target"] {
             if object.contains_key(key) {

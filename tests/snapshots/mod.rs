@@ -66,7 +66,7 @@ static OWNER_RE: LazyLock<Regex> =
 /// The optional semver tail that may follow `MAJOR.MINOR.PATCH`: a
 /// pre-release (`-rc.1`), build metadata (`+1`), or both.
 ///
-/// obr's own version carries build metadata. `0.2.22+1` reads as "the
+/// obr's own version carries build metadata. `0.3.2+1` reads as "the
 /// upstream beads_rust release this fork tracks, plus the first fork
 /// generation since it" (README, "Status"). A mask that stopped at the patch
 /// digit would leave `+1` sitting in every golden, which is the same
@@ -935,28 +935,28 @@ mod golden_snapshot_tests {
 
     /// Build metadata must mask to the same placeholder as a bare version.
     ///
-    /// obr's shipped version is `0.2.22+1` — an upstream release plus a fork
+    /// obr's shipped version is `0.3.2+1` — an upstream release plus a fork
     /// generation. If `+1` survived the mask, every golden that shows a
     /// version would have to be rewritten on each fork bump, and the goldens
     /// would be asserting the version number rather than the output.
     #[test]
     fn test_mask_build_metadata_version() {
         let plain = TextSnapshot::golden("obr version 1.2.3 (dev)");
-        let metadata = TextSnapshot::golden("obr version 0.2.22+1 (dev)");
+        let metadata = TextSnapshot::golden("obr version 0.3.2+1 (dev)");
         assert_eq!(metadata.normalized, plain.normalized);
         assert_eq!(metadata.normalized, "obr version X.Y.Z (BUILD)");
 
         // The superseded `+obr.N` spelling must mask too: goldens recorded
         // before the rename, and any stray literal, still normalize away.
-        let legacy = TextSnapshot::golden("obr version 0.2.22+obr.1 (dev)");
+        let legacy = TextSnapshot::golden("obr version 0.3.2+obr.1 (dev)");
         assert_eq!(legacy.normalized, plain.normalized);
 
         // The bare `obr <semver>` form the doctor prints, and the parenthesized
         // manifest version that only BINARY_VERSION_TREE_RE can see, both carry
         // metadata too — and must reach the same placeholders.
         let doctor = TextSnapshot::golden(
-            "OK binary_version: Running obr 0.2.22+1; matches (or is ahead of) \
-             Cargo.toml at /repo/Cargo.toml (0.2.22+1)",
+            "OK binary_version: Running obr 0.3.2+1; matches (or is ahead of) \
+             Cargo.toml at /repo/Cargo.toml (0.3.2+1)",
         );
         assert_eq!(
             doctor.normalized,

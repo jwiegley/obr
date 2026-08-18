@@ -16,9 +16,8 @@ pkgrel=1
 pkgdesc="Issue tracker with an Org-file surface (SQLite cache + Org export)"
 arch=('x86_64' 'aarch64')
 url="https://github.com/jwiegley/obr"
-# MIT, but carrying an additional rider; the full text is installed below and
-# lives in the repository LICENSE file.
-license=('MIT')
+# The additional rider makes this non-SPDX; package installs full license below.
+license=('LicenseRef-MIT-OpenAI-Anthropic-Rider')
 provides=('obr')
 conflicts=('obr' 'obr-git')
 depends=('gcc-libs')

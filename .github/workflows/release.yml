@@ -328,12 +328,12 @@ jobs:
           ASSET_VERSION="${TAG#v}"
           # Flatten semver build metadata for FILE NAMES ONLY.
           #
-          # obr's version is `0.2.22+1`; the tag keeps that `+` verbatim and
+          # obr's version is `0.3.2+1`; the tag keeps that `+` verbatim and
           # so does the binary. Asset file names must not: GitHub's release
           # asset upload API takes the asset name as a URL QUERY parameter,
           # where a literal `+` decodes to a space, and GitHub then stores the
-          # space back as `.` — so an uploaded `obr-0.2.22+1-*.tar.gz`
-          # lands as `obr-0.2.22.1-*.tar.gz` and every checksum line,
+          # space back as `.` — so an uploaded `obr-0.3.2+1-*.tar.gz`
+          # lands as `obr-0.3.2.1-*.tar.gz` and every checksum line,
           # `.minisig` name and packaging URL that reconstructs the `+` form
           # points at a file that does not exist.
           # (github/rest-api-description#2968; and see adoptium/temurin*-binaries,

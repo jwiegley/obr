@@ -54,7 +54,7 @@ static TMP_PATH_RE: LazyLock<Regex> = LazyLock::new(|| {
 static VERSION_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\((?:[A-Za-z0-9._/-]+)@[a-f0-9]+\)").expect("version regex"));
 /// A semver version, including any pre-release (`-rc.1`) and build-metadata
-/// (`+1`) tail. obr's own version carries the latter — `0.2.22+1` is
+/// (`+1`) tail. obr's own version carries the latter — `0.3.2+1` is
 /// the tracked upstream release plus the fork generation since it — so a mask
 /// that stopped at the patch digit would leave `+1` in the compared text
 /// and make this conformance pass version-dependent.

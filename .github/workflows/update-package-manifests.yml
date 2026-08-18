@@ -42,7 +42,7 @@ jobs:
           fi
           VERSION="${VERSION#v}"
           # Two derived strings, and they are not interchangeable:
-          #   version       — the true version (`0.2.22+1`). Goes into the
+          #   version       — the true version (`0.3.2+1`). Goes into the
           #                   manifests' version fields and the `v<tag>` path
           #                   segment of every download URL.
           #   asset_version — the same string with semver build metadata's `+`

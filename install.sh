@@ -811,11 +811,11 @@ release_asset_version() {
 	local stripped="${raw#v}"
 	# Flatten semver build metadata's `+` to `.` for FILE NAMES ONLY.
 	#
-	# obr's version is `0.2.22+1`, and the release tag carries that `+`
+	# obr's version is `0.3.2+1`, and the release tag carries that `+`
 	# verbatim — release_download_tag above keeps it. Asset file names cannot:
 	# GitHub's release-asset upload API takes the asset name as a URL query
 	# parameter, where a literal `+` decodes to a space and is stored back as
-	# `.`, so .github/workflows/release.yml publishes `obr-0.2.22.1-*`.
+	# `.`, so .github/workflows/release.yml publishes `obr-0.3.2.1-*`.
 	# Reconstructing the `+` form here would ask for a file that is not there.
 	printf '%s\n' "${stripped//+/.}"
 }

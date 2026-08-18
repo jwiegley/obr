@@ -1,18 +1,18 @@
 {
     "$schema": "https://raw.githubusercontent.com/ScoopInstaller/Scoop/HEAD/schema.json",
-    "version": "0.2.22+1",
+    "version": "0.5.7+1",
     "description": "Issue tracker with an Org-file surface (SQLite cache + Org export)",
     "homepage": "https://github.com/jwiegley/obr",
-    "license": "MIT",
+    "license": "https://github.com/jwiegley/obr/blob/main/LICENSE",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/jwiegley/obr/releases/download/v0.2.22+1/obr-0.2.22.1-windows_amd64.zip",
+            "url": "https://github.com/jwiegley/obr/releases/download/v0.5.7+1/obr-0.5.7.1-windows_amd64.zip",
             "hash": "0000000000000000000000000000000000000000000000000000000000000000"
         }
     },
     "bin": "obr.exe",
     "##": [
-        "The version is `<upstream core>+<fork generation>` — 0.2.22+1. checkver",
+        "The version is `<upstream core>+<fork generation>` — 0.5.7+1. checkver",
         "captures the two halves separately on purpose: the release TAG joins",
         "them with `+` and the asset FILE NAME joins them with `.`, because",
         "GitHub's asset-upload API rewrites a literal `+` in an asset name.",

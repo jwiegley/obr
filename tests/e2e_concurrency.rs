@@ -206,8 +206,47 @@ fn parse_created_id(stdout: &str) -> String {
         .to_string()
 }
 
+/// Anomaly codes that say "a writer is mid-flight", not "the database is
+/// damaged".
+///
+/// `doctor --json` exits non-zero for any degraded workspace health, and under
+/// mixed parallel load the export legitimately lags the database between a
+/// mutation and its flush. Treating that as an unexpected failure would demand
+/// that concurrent writers never leave a transient divergence behind — a
+/// property obr neither has nor wants. Corruption anomalies are deliberately
+/// absent from this list, so a real integrity finding still fails the run.
+const TRANSIENT_DIVERGENCE_ANOMALIES: [&str; 4] = [
+    "db_jsonl_count_mismatch",
+    "db_jsonl_id_set_mismatch",
+    "db_newer",
+    "jsonl_newer",
+];
+
+/// True when a non-zero `doctor --json` run complains only of that divergence.
+fn is_transient_divergence_report(result: &ObrResult) -> bool {
+    let Ok(payload) = serde_json::from_str::<serde_json::Value>(result.stdout.trim()) else {
+        return false;
+    };
+    let Some(anomalies) = payload["reliability_audit"]["anomalies"].as_array() else {
+        return false;
+    };
+    !anomalies.is_empty()
+        && anomalies.iter().all(|anomaly| {
+            anomaly["code"]
+                .as_str()
+                .is_some_and(|code| TRANSIENT_DIVERGENCE_ANOMALIES.contains(&code))
+        })
+}
+
 fn is_expected_contention_failure(result: &ObrResult) -> bool {
-    let combined = format!("{} {}", result.stdout, result.stderr).to_lowercase();
+    if result.success {
+        return false;
+    }
+    if is_transient_divergence_report(result) {
+        return true;
+    }
+    let combined =
+        without_finding_ids(&format!("{} {}", result.stdout, result.stderr)).to_lowercase();
     !result.success
         && (combined.contains("busy")
             || combined.contains("locked")
@@ -232,7 +271,7 @@ fn has_integrity_failure_signal(result: &ObrResult) -> bool {
 }
 
 fn contains_integrity_failure_signal(output: &str) -> bool {
-    let output = output.to_lowercase();
+    let output = without_finding_ids(output).to_lowercase();
     output.contains("unique constraint failed: blocked_issues_cache.issue_id")
         || output.contains("constraint failed")
         || output.contains("constraint")
@@ -240,6 +279,51 @@ fn contains_integrity_failure_signal(output: &str) -> bool {
         || output.contains("malformed")
         || output.contains("unexpected token")
         || output.contains("panic")
+}
+
+/// Remove `"finding_id":"…"` pairs before scanning for corruption vocabulary.
+///
+/// Every doctor check — the OK ones included — carries a `finding_id` naming
+/// the failure mode it rules out, and several of those names contain the very
+/// words this scan looks for: `fm-state_files-sqlite-page-malformed`,
+/// `fm-routes_external-routes-jsonl-corrupt`,
+/// `fm-state_files-jsonl-malformed-utf8`. A raw substring scan therefore calls
+/// a perfectly healthy report an integrity failure the moment doctor exits
+/// non-zero for an unrelated reason — which it does under this test's mixed
+/// parallel load, where DB and export legitimately diverge mid-flight. Strip
+/// the identifiers and scan the report's actual prose and error payloads.
+fn without_finding_ids(output: &str) -> String {
+    const KEY: &str = "\"finding_id\"";
+    let mut cleaned = String::with_capacity(output.len());
+    let mut rest = output;
+    while let Some(idx) = rest.find(KEY) {
+        cleaned.push_str(&rest[..idx]);
+        let after = &rest[idx..];
+        // `"finding_id"` supplies two quotes; the string value supplies the
+        // next two. Drop through the value's closing quote. A non-string value
+        // (`null`) never reaches four, so leave the remainder untouched rather
+        // than swallowing the rest of the payload.
+        let mut quotes = 0_u8;
+        let mut consumed = None;
+        for (offset, ch) in after.char_indices() {
+            if ch == '"' {
+                quotes += 1;
+                if quotes == 4 {
+                    consumed = Some(offset + 1);
+                    break;
+                }
+            }
+        }
+        match consumed {
+            Some(end) => rest = &after[end..],
+            None => {
+                rest = after;
+                break;
+            }
+        }
+    }
+    cleaned.push_str(rest);
+    cleaned
 }
 
 fn assert_no_integrity_failure_signals(role: &str, results: &[ObrResult]) {
@@ -718,8 +802,16 @@ fn e2e_doctor_reports_live_write_lock_without_mutating_workspace() {
         .and_then(|checks| checks.iter().find(|check| check["name"] == "write_lock"))
         .expect("write_lock check while the owner holds the lock");
     assert_eq!(lock_check["status"], "ok", "{lock_check}");
-    assert_eq!(
-        lock_check["details"]["reason"], "probe_would_block_live_holder",
+    // PORT-NOTE (0.3.2): upstream 7bf01cf6 split this payload. `reason` now
+    // names the lock's nature (`persistent_advisory_inode`) and the probe
+    // verdict moved to `probe_result`. `annotate_self_held_write_lock` in
+    // src/cli/commands/doctor.rs recognises both spellings for exactly this
+    // reason; assert the held verdict wherever it lands rather than pinning
+    // the pre-split key, which would make this assertion unfallible.
+    let details = &lock_check["details"];
+    assert!(
+        details["reason"] == "probe_would_block_live_holder"
+            || details["probe_result"] == "would_block_live_holder",
         "a genuinely held lock must be reported as held: {lock_check}"
     );
     assert_eq!(
