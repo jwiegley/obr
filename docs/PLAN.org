@@ -25,15 +25,17 @@ Not in ci/baseline/unit-failures-baseline-Darwin.txt because the gate runs the p
 
 Fix: assert per-profile with the same cfg! the function uses, or split the verbosity-0 case into its own debug-gated test.
 
-* TODO [#D] Tracker flush leaves the merge anchor stale, so the pre-commit hook blocks the next commit
+* DONE [#D] Tracker flush leaves the merge anchor stale, so the pre-commit hook blocks the next commit
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       obr-1dp
 :LABELS:   []
 :ISSUE_TYPE: bug
 :CREATED:  [2026-08-16 Sun 13:58]
-:MODIFIED: [2026-08-16 Sun 13:58]
+:MODIFIED: [2026-08-18 Tue 00:12]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-18 Tue 00:12]
+:CLOSE_REASON: Resolved on main by the port: upstream's b3f36377 anchor-publish merged with the fork's no-op-flush certification. Verified empirically — create/flush/doctor is clean and a second flush is a no-op. The hook no longer blocks routine tracker commits.
 :SOURCE_REPO: obr
 :SOURCE_REPO_PATH: /Users/johnw/src/obr
 :ORIGINAL_SIZE: 0
@@ -79,6 +81,20 @@ decision rather than an obvious bug.
 
 Not urgent — it is friction, not data risk, and `--repair` fixes it every time.
 #+end_example
+
+** Comments
+
+#+begin_src json
+[
+  {
+    "id": 44,
+    "issue_id": "obr-1dp",
+    "author": "johnw",
+    "text": "RESOLVED ON THE PORT BRANCH (port/v0.3.2), pending promotion to main.\n\nVerified empirically with the ported binary (0.3.2+1): the exact sequence this\nissue records — create, sync --flush-only, git-hook doctor — now reports ok:true\nwith zero non-ok checks, and a second flush is a clean no-op with doctor still\ngreen. On main (0.2.22+7) the same sequence still warns base_jsonl and blocks\nthe commit.\n\nThe fix is the reconciliation of upstream's b3f36377 with the fork's flush path:\nthe anchor is published BEFORE finalize_export (skipped when the report has\nerrors, metadata preserved on failure — upstream's semantic), and the fork's\nno-op-flush branch certifies the stored JSONL content hash against the snapshot\nbefore touching the anchor, which makes `sync --flush-only` an idempotent\nrecovery. Both halves survive; upstream's standalone version is subsumed.\n\nClose this when port/v0.3.2 becomes main. If the port is abandoned, option (a)\nfrom the original filing remains the recommendation.\n",
+    "created_at": "2026-08-18T01:29:28Z"
+  }
+]
+#+end_src
 
 * DONE [#C] Decide whether org-hash still runs on PLAN.org surfaces                         :org:
 :PROPERTIES:
@@ -177,6 +193,45 @@ workspace_failure_replay either reports 0 failures beyond the dev-box-only datas
 ]
 #+end_src
 
+* TODO [#D] Port follow-ups: dropped upstream inspector test; franken_sync migration undocumented
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       obr-3vp
+:LABELS:   []
+:ISSUE_TYPE: task
+:CREATED:  [2026-08-17 Mon 18:29]
+:MODIFIED: [2026-08-17 Mon 18:29]
+:CREATED_BY: johnw
+:SOURCE_REPO: obr
+:SOURCE_REPO_PATH: /Users/johnw/src/obr
+:ORIGINAL_SIZE: 0
+:END:
+
+Port follow-ups from the adversarial diff attribution on port/v0.3.2 (b424a29f).
+Two anomalies found; neither blocks promotion, both should not be forgotten.
+
+A1 — one upstream regression test dropped without a recorded decision.
+`pending_sync_merge_authority_inspector_treats_missing_database_as_absent`
+(upstream v0.3.2 src/cli/commands/doctor.rs:13792-13815, from 23cd3659) is
+absent from the port. Its sibling from the same commit IS present, the
+production behaviour it witnesses WAS adopted (the SQLite-header probe plus the
+startup advisory inspector), and the fork's stronger spent-sidecars test covers
+most of the ground — but the bare no-sidecar missing-database case at the
+doctor-level inspector is asserted nowhere. Port the ~20-line test, renamed.
+
+A2 — the port's single largest adopted change is undocumented. Upstream's
+fsqlite 0.1.18 -> 0.3.1 migration brought a new top-level src/franken_sync.rs
+(+502 lines) and an asupersync =0.4.4 bridge; every Connection in 15 src files
+now routes through that facade. docs/ARCHITECTURE.md still describes
+SqliteStorage as using fsqlite directly, and the relocated UPGRADE_LOG under
+docs/operations/ has no 0.3.2 entry (upstream wrote 52 lines about this
+migration in its own UPGRADE_LOG; the fork inherited none of it). Write the
+0.3.2+1 entry and touch up ARCHITECTURE.md's storage section.
+
+Also inherited, not new: the orphaned duplicate #[test] attribute at
+doctor.rs (the *.org broad-rule doc-comment whose body is gone) is the ported
+build's only warning — same as on main. Fold into obr-6p2's cleanup.
+
 * DONE [#C] Six export detectors report ok for any symlinked surface
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
@@ -257,15 +312,17 @@ Smaller findings from the verification pass on 5f33e93f and its three predecesso
    cannot repair. The check was still blind in it, and --repair was itself vacuous
    there, so the conclusion stands but the stated justification is not exhaustive.
 
-* TODO [#C] Unpriced consequences of read-only doctor going lock-free
+* DONE [#C] Unpriced consequences of read-only doctor going lock-free
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       obr-6zp
 :LABELS:   []
 :ISSUE_TYPE: bug
 :CREATED:  [2026-08-15 Sat 20:38]
-:MODIFIED: [2026-08-16 Sun 21:27]
+:MODIFIED: [2026-08-18 Tue 00:12]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-18 Tue 00:12]
+:CLOSE_REASON: All six decisions implemented and verified on main (0.3.2+1): self-held probe annotation, bounded serialized write probe, unsynchronized-read divergence caveat, documented foreign-holder contract. Linux soak clean.
 :SOURCE_REPO: obr
 :SOURCE_REPO_PATH: /Users/johnw/src/obr
 :ORIGINAL_SIZE: 0
@@ -321,6 +378,13 @@ found by the verification pass. Filing so they are not rediscovered by surprise.
     "author": "johnw",
     "text": "DECIDED by the owner, 2026-08-16. All four items have a direction.\n\nITEM 3 — repair-path probe: POST-PROCESS IN `execute`.\n`execute` already holds `repair_write_authority` in scope and receives the collected\nreport, so it can rewrite that single check's reason to say this run holds the lock\nitself. Roughly ten lines, no signature churn across the 28 callers of\n`collect_doctor_report_for_cli`, and no global state. I missed this when I first\nsized the work and proposed either threading or an AtomicBool; the caller already\nknows the fact, so neither is needed.\n\nITEM 2 — `db.write_probe`: ACQUIRE THE LOCK FOR THE PROBE ONLY.\nIt is a write and should hold the write lock while writing. Take it just for the\nprobe's duration, late in the check order, so the read-only checks have already\nobserved the lock in its natural state. Keeps both properties: the orphan probe\nstays honest and the write stays serialised.\n\nITEM 1 — torn reads: MARK THE AFFECTED FINDINGS AS UNSYNCHRONISED.\nThe divergence checks (counts.db_vs_jsonl, sync.metadata and siblings) compare two\nstores read at different instants with no lock held, so a concurrent writer can make\nthem disagree for reasons that are not drift. Say so in those findings' details\nrather than reporting them flat. Not chosen: re-reading on divergence (doubles the\ncost of exactly the checks that run on the busiest workspaces) and taking a shared\nlock (would re-break the orphan probe, since a held shared lock still fails a\nnon-blocking exclusive probe).\n\nITEM 4 — foreign-holder contract: ACCEPT, AND DOCUMENT.\nPlain `obr doctor` under a live foreign holder now inspects and exits 0, reporting\nthe holder, instead of refusing with concurrency_lost/exit 5. That is the\nimprovement, not a side effect: a diagnostic that refuses whenever another process\nis running is close to useless on the multi-agent repositories this targets, and the\nholder is still surfaced by the probe. Needs a line in the docs and in RESIDUALS,\nbecause it is a real change in observable behaviour.\n",
     "created_at": "2026-08-17T04:27:39Z"
+  },
+  {
+    "id": 45,
+    "issue_id": "obr-6zp",
+    "author": "johnw",
+    "text": "All six decisions implemented, verified, and now on main (0.3.2+1, d4281f25).\n\nEarlier: post-process annotation in execute (probe_would_block_self_held on\n--repair), and the foreign-holder contract accepted. This final round:\n\n- Item 1: non-OK counts.db_vs_jsonl / sync.metadata on a lock-free run carry\n  details.unsynchronized_read + a re-run note. Details only — fixtures pin the\n  messages. Verified firing on a dirty workspace, absent on a clean one.\n- Item 2: db.write_probe takes the workspace lock for its own duration, bounded\n  at 1.5s (unbounded would deadlock --repair, which holds the lock on another\n  fd). Measured: free lock -> serialized:true; foreign 12s holder -> serialized:\n  false with doctor finishing in 2s; --repair -> 2s, no deadlock. The success\n  arm of the probe was discarding its details object entirely — details: None\n  hardcoded — which the behavioural check caught after a clean compile did not.\n- Item 4: the contract is documented in docs/RESIDUALS.md under Deliberate.\n\nLinux soak (andoria-t2, full --all-features): 22131 passed / 8 failed, the 8\nbeing exactly the known e2e_routing residue. Zero new names.\n",
+    "created_at": "2026-08-18T07:12:09Z"
   }
 ]
 #+end_src
@@ -1246,15 +1310,17 @@ audit.
 
 Fix: distinguish "no export resolved" from "both sides agree" and report the former.
 
-* TODO [#C] Two inherited nightly failures: chokepoint undo refused, synthetic bench all-ops-fail
+* DONE [#C] Two inherited nightly failures: chokepoint undo refused, synthetic bench all-ops-fail
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       obr-oz9
 :LABELS:   []
 :ISSUE_TYPE: bug
 :CREATED:  [2026-08-16 Sun 11:11]
-:MODIFIED: [2026-08-16 Sun 21:29]
+:MODIFIED: [2026-08-18 Tue 00:12]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-18 Tue 00:12]
+:CLOSE_REASON: Chokepoint half fixed (real workspace + gate ordering; upstream 0.3.x cured the two inherited downgrade tests in the port). Bench half fixed: corpus imports, ten of ten ops run populated, RSS assertion capability-gated. Green on Darwin and the Linux soak.
 :SOURCE_REPO: obr
 :SOURCE_REPO_PATH: /Users/johnw/src/obr
 :ORIGINAL_SIZE: 0
@@ -1335,6 +1401,13 @@ setup or timeout failure rather than an assertion. Worth a look with the others.
     "author": "johnw",
     "text": "DIAGNOSIS DONE, and it supersedes my ID-prediction hypothesis. Good call requiring\nthis before changing anything — the fix I proposed would have been aimed at the\nwrong cause.\n\nThe synthetic corpus is never imported. `SyntheticDataset::generate` writes it to\n`obr_dir.join(\"issues.jsonl\")` (bench_synthetic_scale.rs ~line 413) and then runs\n`obr sync --import-only`. Under D-SURFACE that path is not the export any more, and\nobr says so:\n\n  {\"warning\":{\"code\":\"WORKSPACE_ADVISORY\",\"message\":\"<root>/PLAN.org is now the\n   workspace's export; the in-dir <root>/.obr/issues.jsonl is no longer read or\n   written and can be removed once you have ch...\"}}\n\nConstructed to confirm: `obr init`, write one well-formed record to\n`.obr/issues.jsonl`, `sync --import-only` -> `obr list --json` returns zero issues,\nand `obr graph <that id>` exits 3 (not found). The importer is not rejecting the\nrecords; it is reading a different file.\n\nSo `graph_hot_hub` and `dep_tree_hot_leaf` fail because THE WORKSPACE IS EMPTY, not\nbecause the predicted ids are wrong. The ids are almost certainly fine.\n\nMORE IMPORTANT CONSEQUENCE. The other eight operations — list, list_open, ready,\nstats, search, blocked, graph_all_components, sync_flush — are passing against an\nempty database. They \"succeed\" because listing nothing is a success. So this\nbenchmark has been measuring an empty workspace, and its timings mean nothing. Only\nthe two operations that require a specific issue to exist were honest enough to\nfail. That is the same shape as everything else found in this session: the failing\nsignal was the truthful one, and the passing ones were the lie.\n\nFIX, once someone takes it: make the generator write to the resolved export rather\nthan the pre-D-SURFACE in-dir path. The doctor fixture harness already solved this\nexact problem — tests/doctor_fixtures/run_all.sh pins the workspace to\n`.obr/issues.jsonl` with a TOOL_BIN shim that rewrites metadata.json after `init`\n(see its `.no_jsonl_pin` marker for the opt-out). Either reuse that approach or\nresolve the surface and write there.\n\nDo NOT just fix the two failing operations. The eight passing ones are the bigger\nproblem, and they will keep reporting success on an empty corpus until the import\nworks.\n",
     "created_at": "2026-08-17T04:29:06Z"
+  },
+  {
+    "id": 46,
+    "issue_id": "obr-oz9",
+    "author": "johnw",
+    "text": "All parts resolved, now on main (0.3.2+1, d4281f25).\n\n- Chokepoint half: the test builds a real workspace via obr_init (the product's\n  refusal of an unverifiable database stands); gate ordering finished on undo and\n  --repair-indexes. The two inherited refuse_gate_blocks_downgrade failures and\n  the schema-migration barrier test were cured by upstream's 0.3.x line during\n  the port — the post-port inventory shows no chokepoint failures at all.\n- Bench half: the synthetic corpus now actually imports (the generator pins the\n  export to the in-dir JSONL exactly as the doctor fixture harness does), so all\n  ten operations run against a populated workspace for the first time. Fixing\n  the import unmasked one more instance of the probe-vs-capability bug — the RSS\n  assertion still gated on Path::new(\"/usr/bin/time\").is_file() — now aligned\n  with gnu_time_supports_verbose(). The test passes on Darwin AND on the Linux\n  soak (it is absent from the soak's failure list).\n\nFull bench target 171/0. The eight remaining e2e_routing failures are upstream\nresidue, documented in ci/baseline/full-suite-inventory-Darwin.txt.\n",
+    "created_at": "2026-08-18T07:12:10Z"
   }
 ]
 #+end_src
