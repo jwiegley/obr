@@ -38,9 +38,11 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16  # v2.9.1
       - name: Runner resource probe (obr-ci-143)
         run: |
-          echo "=== disk ==="; df -h / /home 2>/dev/null | head -4
-          echo "=== memory ==="; free -m | head -3
-          echo "=== cpus ==="; nproc
+          # Diagnostic only; must never fail a job (it already failed three
+          # macOS/Windows builds once, which is why the matrix job has none).
+          df -h / 2>/dev/null | head -3 || true
+          free -m 2>/dev/null | head -3 || true
+          nproc 2>/dev/null || true
 
       - name: Check formatting
         # cargo-fmt binary, not `cargo fmt`: the space form resolves through
@@ -88,6 +90,12 @@ jobs:
 
   test:
     name: Test Suite
+    env:
+      # obr-joz: exit 137 (kernel OOM) during parallel dep compilation of the
+      # post-v0.3.2 graph on 16GB runners. Half the rustc parallelism halves
+      # peak memory; the first green run warms the cache and mostly retires
+      # the cost.
+      CARGO_BUILD_JOBS: "2"
     runs-on: ubuntu-latest
     # The full suite never produced a verdict here: one run died at 22.6
     # minutes on the runner's own "No space left on device", the next was
@@ -130,9 +138,11 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16  # v2.9.1
       - name: Runner resource probe (obr-ci-143)
         run: |
-          echo "=== disk ==="; df -h / /home 2>/dev/null | head -4
-          echo "=== memory ==="; free -m | head -3
-          echo "=== cpus ==="; nproc
+          # Diagnostic only; must never fail a job (it already failed three
+          # macOS/Windows builds once, which is why the matrix job has none).
+          df -h / 2>/dev/null | head -3 || true
+          free -m 2>/dev/null | head -3 || true
+          nproc 2>/dev/null || true
 
       - name: Unit tests (lib + bins, all features)
         run: |
@@ -182,9 +192,11 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16  # v2.9.1
       - name: Runner resource probe (obr-ci-143)
         run: |
-          echo "=== disk ==="; df -h / /home 2>/dev/null | head -4
-          echo "=== memory ==="; free -m | head -3
-          echo "=== cpus ==="; nproc
+          # Diagnostic only; must never fail a job (it already failed three
+          # macOS/Windows builds once, which is why the matrix job has none).
+          df -h / 2>/dev/null | head -3 || true
+          free -m 2>/dev/null | head -3 || true
+          nproc 2>/dev/null || true
 
       - name: Failure-corpus replay and doctor/recovery postconditions
         run: cargo test --test workspace_failure_replay -- --nocapture
@@ -223,6 +235,12 @@ jobs:
 
   audit-gates:
     name: Audit Guardrails (2026-05-09)
+    env:
+      # obr-joz: exit 137 (kernel OOM) during parallel dep compilation of the
+      # post-v0.3.2 graph on 16GB runners. Half the rustc parallelism halves
+      # peak memory; the first green run warms the cache and mostly retires
+      # the cost.
+      CARGO_BUILD_JOBS: "2"
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: check
@@ -246,9 +264,11 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16  # v2.9.1
       - name: Runner resource probe (obr-ci-143)
         run: |
-          echo "=== disk ==="; df -h / /home 2>/dev/null | head -4
-          echo "=== memory ==="; free -m | head -3
-          echo "=== cpus ==="; nproc
+          # Diagnostic only; must never fail a job (it already failed three
+          # macOS/Windows builds once, which is why the matrix job has none).
+          df -h / 2>/dev/null | head -3 || true
+          free -m 2>/dev/null | head -3 || true
+          nproc 2>/dev/null || true
 
       - name: Install cargo-insta
         uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518  # v2.86.5
@@ -424,21 +444,6 @@ jobs:
         with:
           key: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}
 
-      - name: Runner resource probe (obr-ci-143)
-        if: runner.os != 'Windows'
-        run: |
-          echo "=== disk ==="; df -h / /home 2>/dev/null | head -4 || true
-          echo "=== memory ==="; (free -m || vm_stat) | head -3
-          echo "=== cpus ==="; nproc || sysctl -n hw.ncpu
-
-      - name: Runner resource probe (obr-ci-143)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Write-Output '=== disk ==='; Get-PSDrive -PSProvider FileSystem
-          Write-Output '=== memory ==='; Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize
-          Write-Output '=== cpus ==='; (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
-
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
 
@@ -466,6 +471,12 @@ jobs:
 
   bench:
     name: Benchmarks
+    env:
+      # obr-joz: exit 137 (kernel OOM) during parallel dep compilation of the
+      # post-v0.3.2 graph on 16GB runners. Half the rustc parallelism halves
+      # peak memory; the first green run warms the cache and mostly retires
+      # the cost.
+      CARGO_BUILD_JOBS: "2"
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: check
@@ -482,9 +493,11 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16  # v2.9.1
       - name: Runner resource probe (obr-ci-143)
         run: |
-          echo "=== disk ==="; df -h / /home 2>/dev/null | head -4
-          echo "=== memory ==="; free -m | head -3
-          echo "=== cpus ==="; nproc
+          # Diagnostic only; must never fail a job (it already failed three
+          # macOS/Windows builds once, which is why the matrix job has none).
+          df -h / 2>/dev/null | head -3 || true
+          free -m 2>/dev/null | head -3 || true
+          nproc 2>/dev/null || true
 
       - name: Restore criterion baseline cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
@@ -575,6 +588,12 @@ jobs:
 
   e2e-quick:
     name: Quick E2E
+    env:
+      # obr-joz: exit 137 (kernel OOM) during parallel dep compilation of the
+      # post-v0.3.2 graph on 16GB runners. Half the rustc parallelism halves
+      # peak memory; the first green run warms the cache and mostly retires
+      # the cost.
+      CARGO_BUILD_JOBS: "2"
     runs-on: ubuntu-latest
     # The cap is for the --release build, not the suite. scripts/e2e.sh now
     # compiles the test binaries before it starts timing (a `timeout` wrapped
@@ -596,9 +615,11 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16  # v2.9.1
       - name: Runner resource probe (obr-ci-143)
         run: |
-          echo "=== disk ==="; df -h / /home 2>/dev/null | head -4
-          echo "=== memory ==="; free -m | head -3
-          echo "=== cpus ==="; nproc
+          # Diagnostic only; must never fail a job (it already failed three
+          # macOS/Windows builds once, which is why the matrix job has none).
+          df -h / 2>/dev/null | head -3 || true
+          free -m 2>/dev/null | head -3 || true
+          nproc 2>/dev/null || true
 
       - name: Run quick E2E tests
         run: scripts/e2e.sh

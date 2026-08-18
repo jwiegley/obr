@@ -1067,7 +1067,7 @@ Each of the six is diagnosed and either fixed or recorded in docs/RESIDUALS.md w
 :LABELS:   []
 :ISSUE_TYPE: bug
 :CREATED:  [2026-08-18 Tue 01:31]
-:MODIFIED: [2026-08-18 Tue 01:31]
+:MODIFIED: [2026-08-18 Tue 02:42]
 :CREATED_BY: johnw
 :SOURCE_REPO: obr
 :SOURCE_REPO_PATH: /Users/johnw/src/obr
@@ -1112,6 +1112,20 @@ probe's numbers in hand.
 NOTE the irony, approvingly: run 2's Test Suite failure is the obr-rh0
 hardening working — pre-hardening, a killed unit tier would have printed
 ::warning:: and shown green.
+
+** Comments
+
+#+begin_src json
+[
+  {
+    "id": 47,
+    "issue_id": "obr-joz",
+    "author": "johnw",
+    "text": "ATTRIBUTED: memory, by the kernel's own signature.\n\nRun 3 (d66b090e) killed Test Suite with exit 137 — SIGKILL, the Linux OOM killer\n— 13 minutes into parallel dep compilation (criterion, proptest, insta,\nassert_cmd, flate2 in flight concurrently with the fsqlite 0.3.1 giants). The\nearlier 143s were the runner agent reacting to the same pressure. The start-of-\njob probes rule disk out decisively: 145G with 84G free.\n\nTwo hypotheses died on the way here, on the record: transient infra (falsified\nby rerun), account limits (falsified by the repo being public). A third bug was\nmine: the probe used free/nproc, which failed the three macOS/Windows matrix\nbuilds outright — the probe is now ubuntu-only and incapable of failing a job.\n\nMITIGATION APPLIED: CARGO_BUILD_JOBS=2 on the four full-graph ubuntu jobs (Test\nSuite, Quick E2E, Benchmarks, Audit Guardrails). Half the parallel rustc, half\nthe peak memory. The first green run warms each job's cache, after which the\nserialisation cost mostly retires. If Test Suite's two cold compiles now brush\nits 40-minute cap, the cap moves — the same trade this repo already made once at\n35bf99ff, recorded in the job header.\n\nClose when a full CI run is green on a cold cache, not before.\n",
+    "created_at": "2026-08-18T09:42:51Z"
+  }
+]
+#+end_src
 
 * DONE [#D] dataset_registry tests assume .obr/issues.jsonl, which D-SURFACE no longer creates
 :PROPERTIES:
