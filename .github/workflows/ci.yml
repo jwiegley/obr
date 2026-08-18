@@ -124,7 +124,15 @@ jobs:
     # from 60/65 to 65/65 fixtures — and nothing on the push path could see them
     # (obr-oz9). If you add an integration test, know that it is nightly-only
     # unless a named job runs it.
-    timeout-minutes: 40
+    #
+    # 60, not 40, not 25 — this cap has been outgrown twice by the same
+    # mechanism. At 25 the job passed every step and wore a `cancelled` badge
+    # at 25m01s; at 40 it happened again the day the v0.3.2 port landed: the
+    # graph grew (fsqlite 0.3.1 + asupersync) AND the two whole-graph compiles
+    # now run at CARGO_BUILD_JOBS=2 to stay inside the runner's 16GB (obr-joz:
+    # exit 137, kernel OOM, at -j4). The tests are seconds; the cap exists to
+    # clear both artifact-sharing-free builds at -j2 on a cold cache.
+    timeout-minutes: 60
     needs: check
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
