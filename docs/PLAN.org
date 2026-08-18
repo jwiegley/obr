@@ -1060,6 +1060,59 @@ This is the first time the job has ever executed. Every previous run was skipped
 
 Each of the six is diagnosed and either fixed or recorded in docs/RESIDUALS.md with its cause. The job then either passes or is explicitly informational.
 
+* TODO [#C] Hosted CI kills cold-graph compiles with exit 143 since the v0.3.2 promotion
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       obr-joz
+:LABELS:   []
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-18 Tue 01:31]
+:MODIFIED: [2026-08-18 Tue 01:31]
+:CREATED_BY: johnw
+:SOURCE_REPO: obr
+:SOURCE_REPO_PATH: /Users/johnw/src/obr
+:ORIGINAL_SIZE: 0
+:END:
+
+Hosted CI kills compile phases with exit 143 since the v0.3.2 promotion. Not a
+code failure — a runner-resource one — and not yet attributed to disk vs memory.
+
+EVIDENCE:
+- Run 32110402264 (89745faa): Quick E2E SIGTERMed 13.5 min into "Building obr
+  binary..." (its own cap is 30 min; the build phase has no internal timeout).
+  Benchmarks concluded failure with every step green. Test Suite PASSED.
+- Run 32114139319 (c4c0da77, same tree): Quick E2E killed again at ~14 min;
+  Test Suite killed 12 min into compiling small DEBUG crates (proptest,
+  assert_cmd, flate2); Audit Guardrails killed mid-compile too. Three kills
+  within six minutes (08:20:15 / 08:21:51 / 08:26:17) on three separate VMs —
+  which looks like an account event until you notice all three started together
+  and each died ~12-14 min into ITS OWN heavy-compile phase.
+- Repo is public (unmetered), so not billing. Linux OOM-killer would give 137,
+  not 143; GH's runner agent sends 143 for its own terminations, which covers
+  both disk exhaustion and agent-level kills.
+- The same tree passes everything when compiles complete: full Linux soak
+  22131/8 (known residue), Doctor 65/65 hosted, Test Suite passed run 1, all
+  five platform builds green both runs.
+
+WHY NOW: the port moved the dependency graph to fsqlite 0.3.1 + asupersync under
+`lto = true, codegen-units = 1`, and changed Cargo.lock — so every job's
+Swatinem cache missed and every job cold-built the fattest graph this repo has
+ever had, concurrently, on 4-vCPU/16GB/~14GB-free runners. Failures are
+non-deterministic because runner headroom varies.
+
+INSTRUMENTED: ci.yml now runs a resource probe (df/free/nproc) after every
+cache restore, so the next kill comes with the numbers that attribute it.
+
+LIKELY SELF-HEALING: once one run of each job completes, its cache is warm and
+the pressure drops an order of magnitude. Quick E2E has not yet completed once
+post-port, so its cache never saves — that job may need CARGO_BUILD_JOBS=2 or a
+one-off cap relief to get its first green. Escalate to that only with the
+probe's numbers in hand.
+
+NOTE the irony, approvingly: run 2's Test Suite failure is the obr-rh0
+hardening working — pre-hardening, a killed unit tier would have printed
+::warning:: and shown green.
+
 * DONE [#D] dataset_registry tests assume .obr/issues.jsonl, which D-SURFACE no longer creates
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
