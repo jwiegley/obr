@@ -1087,9 +1087,9 @@ mod tests {
             .expect("issue exists after retry");
         assert_eq!(updated.status, crate::model::Status::InProgress);
 
-        // Both certificate sidecars were quarantined into `.br_recovery`
-        // with their original bytes preserved.
-        let recovery_dir = obr_dir.join(".br_recovery");
+        // Both certificate sidecars were quarantined into `recovery` with
+        // their original bytes preserved.
+        let recovery_dir = obr_dir.join(crate::config::RECOVERY_DIR_NAME);
         let backups: Vec<_> = fs::read_dir(&recovery_dir)
             .expect("recovery dir exists after quarantine")
             .filter_map(std::result::Result::ok)
@@ -1103,15 +1103,15 @@ mod tests {
                 })
             })
         };
-        let cert_backup = backup_named("beads.db-wal-cert.")
-            .expect("quarantined -wal-cert backup present in .br_recovery");
+        let cert_backup = backup_named("obr.db-wal-cert.")
+            .expect("quarantined -wal-cert backup present in recovery");
         assert_eq!(
             fs::read(cert_backup).expect("read quarantined -wal-cert backup"),
             stale_cert,
             "-wal-cert bytes must be preserved in the recovery backup"
         );
-        let head_backup = backup_named("beads.db-wal-cert-head.")
-            .expect("quarantined -wal-cert-head backup present in .br_recovery");
+        let head_backup = backup_named("obr.db-wal-cert-head.")
+            .expect("quarantined -wal-cert-head backup present in recovery");
         assert_eq!(
             fs::read(head_backup).expect("read quarantined -wal-cert-head backup"),
             b"stale-cert-head",
@@ -1123,7 +1123,7 @@ mod tests {
         assert!(
             !backups.iter().any(|path| {
                 path.file_name()
-                    .is_some_and(|name| name.to_string_lossy().starts_with("beads.db-wal."))
+                    .is_some_and(|name| name.to_string_lossy().starts_with("obr.db-wal."))
             }),
             "the -wal file must never be quarantined by the stale-cert path"
         );

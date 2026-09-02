@@ -543,7 +543,7 @@ schemas:
   BlockedPage:
     "$schema": "https://json-schema.org/draft/2020-12/schema"
     title: BlockedPage
-    description: "Paginated machine-readable output from `br blocked`.\n\n`total` is the complete filtered blocked set before `limit` is applied.\nThis prevents a bounded page from being mistaken for the complete\ndependency-graph result (GitHub #452)."
+    description: "Paginated machine-readable output from `obr blocked`.\n\n`total` is the complete filtered blocked set before `limit` is applied.\nThis prevents a bounded page from being mistaken for the complete\ndependency-graph result (GitHub #452)."
     type: object
     properties:
       issues:
@@ -1614,7 +1614,7 @@ schemas:
           - "$ref": #/$defs/RollupSummary
           - type: "null"
       inherited_context:
-        description: "Inherited governing context from ancestor beads (beads_rust#297).\nPresent only when the project has opted in to inherited-context\nemission and an ancestor supplies `agent_context`; populated for\nJSON/TOON output so structured consumers receive the same governing\ncontext that text mode renders (beads_rust#430)."
+        description: "Inherited governing context from ancestor issues (upstream #297).\nPresent only when the project has opted in to inherited-context\nemission and an ancestor supplies `agent_context`; populated for\nJSON/TOON output so structured consumers receive the same governing\ncontext that text mode renders (upstream #430)."
         type: array
         items:
           "$ref": #/$defs/InheritedBlock

@@ -110,7 +110,7 @@ pub struct BlockedIssueOutput {
     pub updated_at: DateTime<Utc>,
 }
 
-/// Paginated machine-readable output from `br blocked`.
+/// Paginated machine-readable output from `obr blocked`.
 ///
 /// `total` is the complete filtered blocked set before `limit` is applied.
 /// This prevents a bounded page from being mistaken for the complete
@@ -187,11 +187,11 @@ pub struct IssueDetails {
     /// local parent-child children (GitHub #384 phase 3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollup: Option<RollupSummary>,
-    /// Inherited governing context from ancestor beads (beads_rust#297).
+    /// Inherited governing context from ancestor issues (upstream #297).
     /// Present only when the project has opted in to inherited-context
     /// emission and an ancestor supplies `agent_context`; populated for
     /// JSON/TOON output so structured consumers receive the same governing
-    /// context that text mode renders (beads_rust#430).
+    /// context that text mode renders (upstream #430).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inherited_context: Vec<crate::inheritance::InheritedBlock>,
 }

@@ -314,12 +314,11 @@ fn without_finding_ids(output: &str) -> String {
                 }
             }
         }
-        match consumed {
-            Some(end) => rest = &after[end..],
-            None => {
-                rest = after;
-                break;
-            }
+        if let Some(end) = consumed {
+            rest = &after[end..];
+        } else {
+            rest = after;
+            break;
         }
     }
     cleaned.push_str(rest);

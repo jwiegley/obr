@@ -1372,14 +1372,14 @@ mod tests {
     #[test]
     fn test_byte_budget_prunes_oldest_pairs_globally_and_retains_oversized_newest() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        let history_dir = beads_dir.join(".br_history");
+        let beads_dir = temp.path().join(".obr");
+        let history_dir = beads_dir.join(HISTORY_DIR_NAME);
         fs::create_dir_all(&beads_dir).unwrap();
         let config = HistoryConfig {
             min_interval_secs: 0,
             ..HistoryConfig::default()
         };
-        let issues = beads_dir.join("issues.jsonl");
+        let issues = beads_dir.join("issues.org");
         let external = beads_dir.join("external.jsonl");
 
         fs::write(&issues, vec![b'a'; 32]).unwrap();
@@ -1425,10 +1425,10 @@ mod tests {
     #[test]
     fn test_byte_budget_preserves_unclassifiable_incomplete_pairs() {
         let temp = TempDir::new().unwrap();
-        let beads_dir = temp.path().join(".beads");
-        let history_dir = beads_dir.join(".br_history");
+        let beads_dir = temp.path().join(".obr");
+        let history_dir = beads_dir.join(HISTORY_DIR_NAME);
         fs::create_dir_all(&history_dir).unwrap();
-        let target = beads_dir.join("issues.jsonl");
+        let target = beads_dir.join("issues.org");
         let config = HistoryConfig {
             min_interval_secs: 0,
             ..HistoryConfig::default()

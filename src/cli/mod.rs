@@ -2877,10 +2877,10 @@ pub struct SyncArgs {
 
     /// Recover an import by removing invalid JSONL records
     ///
-    /// Only valid with --import-only. Before replacing issues.jsonl, br keeps
-    /// an exact non-rotating backup under .beads/.br_history, reports every
-    /// rejected line, and validates the remaining generation. Merge-conflict
-    /// markers are never skipped.
+    /// Only valid with --import-only. Before replacing the tracked surface,
+    /// obr keeps an exact non-rotating backup, reports every rejected line,
+    /// and validates the remaining generation. Merge-conflict markers are
+    /// never skipped.
     #[arg(long, requires = "import_only")]
     pub skip_invalid_records: bool,
 
@@ -3056,7 +3056,7 @@ pub struct SyncArgs {
     ///
     /// Notes: without --force the import (and therefore the rename) is
     /// skipped when the JSONL content hash is unchanged since the last
-    /// import, and a following `br sync --flush-only` needs `--force` to
+    /// import, and a following `obr sync --flush-only` needs `--force` to
     /// write the renamed ids back to the JSONL.
     #[arg(long)]
     pub rename_prefix: bool,

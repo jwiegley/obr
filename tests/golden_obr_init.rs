@@ -72,6 +72,12 @@ fn is_transient_sqlite(name: &str) -> bool {
         // fsqlite 0.3.6+ engine-upgrade bookkeeping, written beside the DB
         // and recreated on demand.
         || name.ends_with(".fsqlite-migration-state")
+        // Shared read-opener lease is a process-coordination sidecar, not
+        // persistent workspace state.
+        || (name.starts_with(".br-db-openers-")
+            && std::path::Path::new(name)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("lock")))
 }
 
 fn build_directory_listing(obr_dir: &std::path::Path) -> String {

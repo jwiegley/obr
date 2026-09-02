@@ -51,6 +51,7 @@
             ./Cargo.lock
             ./Cargo.toml
             ./README.md
+            ./LICENSE
             ./build.rs
             ./docs/AGENT_INTEGRATION.md
             ./docs/CLI_REFERENCE.md
@@ -212,6 +213,7 @@
             test -f ${obrSource}/src/main.rs
             test -f ${obrSource}/build.rs
             test -f ${obrSource}/docs/CLI_REFERENCE.md
+            test -f ${obrSource}/LICENSE
             test ! -e ${obrSource}/docs/PLAN.org
             test ! -e ${obrSource}/tests
             touch $out

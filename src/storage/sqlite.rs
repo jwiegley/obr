@@ -19384,7 +19384,6 @@ impl SqliteStorage {
             })
             .collect())
     }
-
     fn inspect_pending_sync_merge_in_current_transaction(
         &self,
     ) -> Result<PendingSyncMergeInspection> {
@@ -19441,9 +19440,9 @@ impl SqliteStorage {
     /// cannot contain a pending receipt and is classified `Absent`. Valid
     /// SQLite files with stale/future schemas, route mismatches, open errors,
     /// query errors, and receipt validation failures all fail closed. The
-    /// read-only storage carries the caller's authority, so
-    /// `with_read_transaction` verifies it before the transaction, immediately
-    /// before COMMIT, and again after COMMIT.
+    /// The caller's authority keeps the copied database family coherent; the
+    /// snapshot isolates fsqlite's read-side WAL/SHM bookkeeping from live
+    /// workspace bytes.
     pub(crate) fn inspect_pending_sync_merge_under_authority(
         path: &Path,
         authority: &Arc<crate::sync::DatabaseFamilyWriteLock>,
@@ -19494,36 +19493,30 @@ impl SqliteStorage {
                     .to_string(),
             });
         }
-        let Some(mut storage) = Self::open_current_read_only(path)? else {
-            let found = effective_database_user_version(path)?;
-            return match found {
-                Some(found) => Err(BeadsError::SchemaMismatch {
-                    expected: CURRENT_SCHEMA_VERSION,
-                    found: i32::try_from(found).unwrap_or(i32::MAX),
-                }),
-                // Symmetric with the absent-main-file branch above. A receipt
-                // lives in a table inside the SQLite database, so when the main
-                // file provably holds no SQLite database and no sidecar can
-                // still carry committed pages, no member of the family can hold
-                // one. Refusing here would be refusing to protect bytes that do
-                // not exist, and it strands every repair path that exists to
-                // rebuild exactly this workspace.
-                None if crate::sync::database_file_is_provably_not_a_database(path)
-                    && !authority.database_sidecars_may_hold_committed_bytes()? =>
-                {
-                    authority.verify_database_authority()?;
-                    Ok(PendingSyncMergeInspection::Absent)
-                }
-                None => Err(BeadsError::SyncConflict {
-                    message:
-                        "Pending sync-merge state is unknown because the database schema is missing or unreadable"
-                            .to_string(),
-                }),
+        let inspection = crate::config::with_database_family_snapshot(path, |snapshot| {
+            let Some(storage) = Self::open_current_read_only(snapshot)? else {
+                let found = effective_database_user_version(snapshot)?;
+                return match found {
+                    Some(found) => Err(BeadsError::SchemaMismatch {
+                        expected: CURRENT_SCHEMA_VERSION,
+                        found: i32::try_from(found).unwrap_or(i32::MAX),
+                    }),
+                    None if crate::sync::database_file_is_provably_not_a_database(snapshot)
+                        && !authority.database_sidecars_may_hold_committed_bytes()? =>
+                    {
+                        Ok(PendingSyncMergeInspection::Absent)
+                    }
+                    None => Err(BeadsError::SyncConflict {
+                        message:
+                            "Pending sync-merge state is unknown because the database schema is missing or unreadable"
+                                .to_string(),
+                    }),
+                };
             };
-        };
+            storage.inspect_pending_sync_merge()
+        })?;
         authority.verify_database_authority()?;
-        storage.attach_write_authority(Arc::clone(authority));
-        storage.inspect_pending_sync_merge()
+        Ok(inspection)
     }
 
     pub(crate) fn pending_sync_merge_receipt(&self) -> Result<Option<SyncMergePendingReceipt>> {

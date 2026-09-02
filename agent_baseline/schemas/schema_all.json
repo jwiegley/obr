@@ -3429,7 +3429,7 @@
           ]
         },
         "inherited_context": {
-          "description": "Inherited governing context from ancestor beads (beads_rust#297).\nPresent only when the project has opted in to inherited-context\nemission and an ancestor supplies `agent_context`; populated for\nJSON/TOON output so structured consumers receive the same governing\ncontext that text mode renders (beads_rust#430).",
+          "description": "Inherited governing context from ancestor issues (upstream #297).\nPresent only when the project has opted in to inherited-context\nemission and an ancestor supplies `agent_context`; populated for\nJSON/TOON output so structured consumers receive the same governing\ncontext that text mode renders (upstream #430).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/InheritedBlock"
