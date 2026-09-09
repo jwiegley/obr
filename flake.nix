@@ -4,6 +4,7 @@
 #   nix build              Build the obr binary
 #   nix run                Run obr directly
 #   nix develop            Enter development shell
+#   nix flake check        Build, formatting, compiler identity, unit gate, Clippy
 #
 {
   description = "obr - Agent-first issue tracker (SQLite + Org-mode)";
@@ -25,16 +26,15 @@
           overlays = [ rust-overlay.overlays.default ];
         };
 
-        # Nightly Rust toolchain via rust-overlay (required by rust-toolchain.toml;
-        # the flake.lock pins the exact nightly for reproducibility).
-        rustToolchain = pkgs.rust-bin.nightly.latest.default.override {
-          extensions = [
+        # Cargo, Nix builds, and checks use the same pinned nightly. The overlay
+        # lock must contain this date; it must never silently select latest.
+        toolchainChannel = (builtins.fromTOML (builtins.readFile ./rust-toolchain.toml)).toolchain.channel;
+        rustToolchain = (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml).override (args: {
+          extensions = args.extensions ++ [
             "rust-src"
             "rust-analyzer"
-            "clippy"
-            "rustfmt"
           ];
-        };
+        });
 
         # Custom rustPlatform using the nightly toolchain
         rustPlatform = pkgs.makeRustPlatform {
@@ -45,17 +45,33 @@
         # Keep tracker-only changes (especially docs/PLAN.org) out of the
         # release derivation. These are the complete compiler inputs; the three
         # documentation files are embedded with include_str!.
+        obrFiles = pkgs.lib.fileset.unions [
+          ./Cargo.lock
+          ./Cargo.toml
+          ./README.md
+          ./LICENSE
+          ./build.rs
+          ./docs/AGENT_INTEGRATION.md
+          ./docs/CLI_REFERENCE.md
+          ./src
+        ];
         obrSource = pkgs.lib.fileset.toSource {
           root = ./.;
+          fileset = obrFiles;
+        };
+
+        # All-target linting needs every Rust test and benchmark; the unit gate
+        # also reads integration snapshots and the committed failure inventories.
+        checkSource = pkgs.lib.fileset.toSource {
+          root = ./.;
           fileset = pkgs.lib.fileset.unions [
-            ./Cargo.lock
-            ./Cargo.toml
-            ./README.md
-            ./LICENSE
-            ./build.rs
-            ./docs/AGENT_INTEGRATION.md
-            ./docs/CLI_REFERENCE.md
-            ./src
+            obrFiles
+            ./rust-toolchain.toml
+            ./tests
+            ./benches
+            ./ci/baseline
+            ./scripts/unit-gate.sh
+            ./scripts/lint-gate.sh
           ];
         };
 
@@ -88,6 +104,8 @@
             pkgs.apple-sdk_15
           ];
 
+          # The release build does not run tests. `nix flake check` runs the
+          # source-owned baseline-unit and baseline-lint gates below.
           doCheck = false;
 
           postInstall = ''
@@ -112,7 +130,7 @@
         checkCommon = {
           pname = "obr-check";
           version = obr.version;
-          src = ./.;
+          src = checkSource;
 
           cargoLock = {
             lockFile = ./Cargo.lock;
@@ -131,6 +149,11 @@
           ];
 
           doCheck = false;
+          # Custom gates retain the standard Cargo hooks' build/test job budget.
+          preCheck = ''
+            export CARGO_BUILD_JOBS="$NIX_BUILD_CORES"
+            export RUST_TEST_THREADS="$NIX_BUILD_CORES"
+          '';
         };
 
       in
@@ -194,15 +217,9 @@
 
         # nix flake check
         #
-        # Deliberately only build + formatting: the tree is red at baseline
-        # under clippy (first-party pedantic/nursery findings, inventoried in
-        # ci/baseline/clippy-lints-baseline.txt) and not fully green under
-        # `cargo test --lib --bins` (known failures, inventoried in
-        # ci/baseline/unit-failures-baseline-Darwin.txt), so sandboxed
-        # clippy/test checks would fail unconditionally.
-        # Lint and unit regressions are gated by the no-NEW-failures scripts
-        # (scripts/lint-gate.sh, scripts/unit-gate.sh) used by lefthook and CI
-        # instead. Do not add a check that is known-red.
+        # The unit gate accepts no new unit failures and runs its curated
+        # integration set, which has no failure inventory. Clippy is strict;
+        # a test-only mutant verifies that the real lint gate executes it.
         checks = {
           # Verify the package builds
           build = self.packages.${system}.default;
@@ -216,15 +233,100 @@
             test -f ${obrSource}/LICENSE
             test ! -e ${obrSource}/docs/PLAN.org
             test ! -e ${obrSource}/tests
+            test -f ${checkSource}/tests/vocabulary_lint.rs
+            test -f ${checkSource}/tests/golden_obr_init.rs
+            test -f ${checkSource}/tests/golden_rich_panels.rs
+            test -d ${checkSource}/tests/snapshots
+            test -f ${checkSource}/ci/baseline/vocabulary-debt.txt
+            test -f ${checkSource}/scripts/unit-gate.sh
+            test -f ${checkSource}/scripts/lint-gate.sh
+            test ! -e ${checkSource}/docs/PLAN.org
+            test ! -e ${checkSource}/.obr
             touch $out
           '';
+
+          # rustc's commit date can precede the nightly distribution date.
+          # Compare its actual release with the overlay's version and the
+          # requested distribution date, and retain the full compiler identity.
+          toolchain-identity = pkgs.runCommand "obr-toolchain-identity" { } ''
+            ${rustToolchain}/bin/rustc --version --verbose > "$out"
+            release=$(sed -n 's/^release: //p' "$out")
+            test ${pkgs.lib.escapeShellArg rustToolchain.version} = \
+              "$release"-${pkgs.lib.escapeShellArg (pkgs.lib.removePrefix "nightly-" toolchainChannel)}
+          '';
+
+          baseline-unit = rustPlatform.buildRustPackage (checkCommon // {
+            pname = "obr-baseline-unit";
+            dontBuild = true;
+            doCheck = true;
+            nativeCheckInputs = with pkgs; [ git sqlite unixtools.script ];
+            checkPhase = ''
+              runHook preCheck
+              bash scripts/unit-gate.sh
+              runHook postCheck
+            '';
+            installPhase = ''
+              mkdir -p "$out"
+            '';
+          });
+
+          baseline-lint = rustPlatform.buildRustPackage (checkCommon // {
+            pname = "obr-baseline-lint";
+            # cargo-auditable replaces Clippy's RUSTC_WORKSPACE_WRAPPER.
+            auditable = false;
+            dontBuild = true;
+            doCheck = true;
+            checkPhase = ''
+              runHook preCheck
+              bash scripts/lint-gate.sh
+              runHook postCheck
+            '';
+            installPhase = ''
+              mkdir -p "$out"
+            '';
+          });
+
+          clippy-execution = self.checks.${system}.baseline-lint.overrideAttrs (old: {
+            pname = "obr-clippy-execution";
+            # eq_op exempts #[test] functions; use a helper compiled only for tests.
+            postPatch = (old.postPatch or "") + ''
+              cat >> src/lib.rs <<'EOF'
+
+              #[cfg(test)]
+              mod nix_clippy_execution_probe {
+                  #[allow(dead_code)]
+                  fn equal_operands() -> bool {
+                      1 == 1
+                  }
+              }
+              EOF
+            '';
+            checkPhase = ''
+              runHook preCheck
+              if bash scripts/lint-gate.sh > clippy-execution.log 2>&1; then
+                cat clippy-execution.log >&2
+                echo "clippy-execution: the test-only lint was accepted" >&2
+                exit 1
+              fi
+              if ! grep -F 'clippy::eq_op' clippy-execution.log; then
+                cat clippy-execution.log >&2
+                echo "clippy-execution: missing the injected Clippy diagnostic" >&2
+                exit 1
+              fi
+              runHook postCheck
+            '';
+            installPhase = ''
+              mkdir -p "$out"
+              cp clippy-execution.log "$out/"
+            '';
+          });
 
           # Check source formatting with cargo fmt
           formatting = rustPlatform.buildRustPackage (checkCommon // {
             pname = "obr-fmt";
 
             buildPhase = ''
-              cargo fmt --all -- --check
+              cargo-fmt --all -- --check
             '';
 
             installPhase = ''

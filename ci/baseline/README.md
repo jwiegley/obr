@@ -1,17 +1,15 @@
-# CI/hook gate baselines
+# CI/hook gate policy and historical inventories
 
-Three inventories back the no-NEW-findings gates (one of them deliberately
-absent — see the integration set below):
+The unit gate uses a failure inventory; the Clippy gate requires zero findings.
+This directory also preserves inventories that no longer govern a gate:
 
-- **clippy** (`pedantic` + `nursery`, `-D warnings`, nightly 1.99):
+- **historical clippy** (`pedantic` + `nursery`, `-D warnings`, nightly 1.99):
   `clippy-lints-baseline.txt` is a histogram of the `-D clippy::<lint>`
   *notes* clippy prints (`count lint`, single-space separated) — 21 lines
   summing to 54. That is deliberately NOT the finding count: clippy emits one
-  such note per lint kind per compilation unit, while the tree currently
-  reports ~86 individual first-party errors. `scripts/lint-gate.sh` derives
-  the same histogram from a fresh run and compares it per lint kind, so the
-  number to reconcile against when paying down debt is the per-lint count in
-  this file, not a total.
+  such note per lint kind per compilation unit; the recording reported ~86
+  individual first-party errors. `scripts/lint-gate.sh` no longer reads this
+  inventory or grants any allowance. The file remains historical evidence.
 - **unit tests** (`cargo test --lib --bins`): 2 failures, in
   `unit-failures-baseline-Darwin.txt`.
 - **the curated integration set** (`vocabulary_lint`, `golden_obr_init`,
@@ -19,9 +17,27 @@ absent — see the integration set below):
   green everywhere they run and `scripts/unit-gate.sh` phase 2 demands a
   clean run. See "The integration set" below.
 
-`scripts/lint-gate.sh` and `scripts/unit-gate.sh` compare against these
-inventories and fail only on NEW findings — tightening gates that are green
-on day one. Shrink the inventories as debt is paid down; never grow them.
+`scripts/unit-gate.sh` rejects new unit failures and incomplete runs, then
+requires its curated integration set to pass. Shrink the unit inventory as
+debt is paid down; never grow it. `scripts/lint-gate.sh` directly executes
+all-target Clippy with warnings denied and returns the command's exit status.
+
+Nix executes these same scripts as `checks.<system>.baseline-lint` and
+`checks.<system>.baseline-unit`, using the compiler selected from
+`rust-toolchain.toml`. The scripts locate the source tree from their own paths,
+so the checks work in filtered source archives without `.git`. The release
+package itself does not run tests; `nix flake check` builds the package and
+runs these gates, formatting, source-filter, and compiler-identity checks.
+The lint derivation disables Cargo's auditable wrapper because it replaces
+`RUSTC_WORKSPACE_WRAPPER`, preventing Clippy from running. The release package
+retains its normal auditable build. Despite its existing `baseline-lint`
+output name, the lint check is strict and does not consult an inventory.
+
+`checks.<system>.clippy-execution` derives from that same lint check, injects
+an equal-operands lint under `#[cfg(test)]`, and invokes the real source-owned
+lint gate. It requires a nonzero status and the specific `clippy::eq_op`
+diagnostic, so a missing `--all-targets` argument or a wrapper suppressing
+Clippy cannot pass silently. The check retains its compiler log in the output.
 
 ## Not a gate: the full-suite inventory
 
@@ -88,10 +104,11 @@ what may and may not go in it.
 ## Environment contract for the unit inventory
 
 **Record and compare under a canonical, symlink-free `TMPDIR`.**
-`scripts/unit-gate.sh` enforces this itself: on Darwin it mints a run
-directory under `/private/tmp` and exports it, because macOS's default
-`TMPDIR` lives under `/var`, which is a symlink to `/private/var`. Linux
-`/tmp` is already canonical and is left alone.
+`scripts/unit-gate.sh` enforces this itself: on Darwin it resolves the inherited
+`TMPDIR` (or `/tmp`) to its physical path, mints a run directory there, and
+exports it. macOS's default `TMPDIR` lives under `/var`, which is a symlink to
+`/private/var`; a Nix build instead keeps its own writable temporary root.
+Linux `/tmp` is already canonical and is left alone.
 
 This is not a formality. Under the default macOS `TMPDIR` the unit suite
 reports **266** failures and the harness process then exits abnormally,
@@ -169,3 +186,10 @@ therefore "no NEW pin failures"; reconciling the inventory is upstream debt.
 `cargo clippy` / `cargo fmt` (space form) resolve through `$CARGO_HOME/bin`
 rustup shims *before* `PATH` and can silently run a stale nightly. Always
 invoke the `cargo-clippy` / `cargo-fmt` binaries directly.
+
+For Clippy, the complete direct invocation is
+`cargo-clippy clippy --all-targets -- -D warnings`: its argument parser skips
+the executable name and the `clippy` subcommand before reading options.
+Omitting that subcommand silently drops `--all-targets`. The lint gate streams
+Clippy's diagnostics and propagates its exit status directly. It neither
+parses a histogram nor accepts failures from a historical inventory.

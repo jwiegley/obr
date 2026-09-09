@@ -103,7 +103,18 @@ obr --version
 ```
 
 The repository pins a nightly toolchain via `rust-toolchain.toml`;
-`nix develop` provides a matching shell if you use Nix.
+Nix uses that same file for its compiler and development shell. When changing
+the pinned date, update the `rust-overlay` input in `flake.lock` so it supplies
+that nightly.
+
+`nix build` builds the release binary without running tests. `nix flake check`
+also checks compiler identity, source filtering and formatting, and executes
+the source-owned `scripts/unit-gate.sh` and `scripts/lint-gate.sh`. These gates
+reject new unit failures against the committed inventory and require a clean
+all-target Clippy run. The unit gate also runs its three curated integration
+targets; a separate Nix check injects a test-only lint and requires the real
+lint gate to reject it. Passing these checks does not mean the full test suite
+is green. See [the gate contract](ci/baseline/README.md).
 
 ## Quick start
 

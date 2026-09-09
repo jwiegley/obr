@@ -8,10 +8,9 @@
 # resolve through $CARGO_HOME/bin rustup shims ahead of any toolchain on
 # PATH and can silently run a stale nightly (see ci/baseline/README.md).
 #
-# NOTE on gates: upstream's tree is red at baseline under clippy and the
-# unit suite; the lint/unit hooks run the no-NEW-failures gate scripts
-# against the committed inventories in ci/baseline/ rather than raw
-# commands that would block every commit.
+# NOTE on gates: the lint hook requires a clean all-target Clippy run.
+# The unit hook compares failures against the committed unit inventory
+# and requires its curated integration set to pass (see ci/baseline/).
 pre-commit:
   parallel: true
   commands:

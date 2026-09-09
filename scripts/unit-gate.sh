@@ -44,7 +44,9 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_OBJECT_DIRECTORY
 unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_AUTHOR_DATE
 unset GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE
 
-repo_root="$(git rev-parse --show-toplevel)"
+# Source archives and Nix builds have no .git directory.
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)" || exit 2
+cd -- "$repo_root" || exit 2
 # Unit failures are platform-dependent (filesystem semantics, permission
 # models, and OS-gated tests all differ), so each OS carries its own
 # inventory. An inventory recorded elsewhere would absolve the wrong names, so
@@ -75,10 +77,12 @@ trap 'rm -f "$log" "$integration_log"; [ -n "$gate_tmpdir" ] && rm -rf "$gate_tm
 # compare it against the path they were handed fail for a reason that has
 # nothing to do with the code. That masked real failures behind an inflated
 # baseline once already (see ci/baseline/README.md), so the baseline and every
-# run compared against it must share one symlink-free temporary root. Linux
-# /tmp is already canonical and is left alone.
+# run compared against it must share one symlink-free temporary root. Resolve
+# the inherited temporary root so sandboxed builds stay within their writable
+# directory. Linux /tmp is already canonical and is left alone.
 if [ "$(uname -s)" = "Darwin" ]; then
-	gate_tmpdir="$(mktemp -d /private/tmp/obr-gate.XXXXXX)"
+	tmp_root="$(cd -- "${TMPDIR:-/tmp}" && pwd -P)" || exit 2
+	gate_tmpdir="$(mktemp -d "$tmp_root/obr-gate.XXXXXX")" || exit 2
 	export TMPDIR="$gate_tmpdir"
 fi
 
@@ -142,6 +146,13 @@ new_failures_vs() {
 		LC_ALL=C comm -13 <(LC_ALL=C sort -u "$inventory") -
 }
 
+# Retain assertion evidence in the gate log before the temporary logs are removed.
+print_failure_contexts() {
+	echo "unit-gate: failure assertion contexts (up to 200 lines):" >&2
+	grep -A 24 -B 2 -E '^---- .* stdout ----$|^thread .* panicked at ' "$1" |
+		head -n 200 >&2
+}
+
 # --- phase 1: unit suite ----------------------------------------------------
 
 cargo test --lib --bins >"$log" 2>&1
@@ -156,6 +167,7 @@ new_failures=$(new_failures_vs "$log" "$baseline")
 if [ -n "$new_failures" ]; then
 	echo "unit-gate: NEW unit failures vs baseline:" >&2
 	echo "$new_failures" >&2
+	print_failure_contexts "$log"
 	exit 1
 fi
 
@@ -177,6 +189,7 @@ if [ -n "$new_integration_failures" ]; then
 	echo "unit-gate: NEW integration failures vs baseline:" >&2
 	echo "$new_integration_failures" >&2
 	echo "unit-gate: (set: ${INTEGRATION_TESTS[*]})" >&2
+	print_failure_contexts "$integration_log"
 	exit 1
 fi
 
