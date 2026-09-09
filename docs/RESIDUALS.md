@@ -27,17 +27,17 @@ was measured against a build of the fork point, not estimated.
 | Area | What |
 |---|---|
 | Unit suite | 2 failures at baseline, inventoried in `ci/baseline/unit-failures-baseline-Darwin.txt`. Measured under a canonical `TMPDIR`; the default macOS one reports 266 failures and then truncates the run, for reasons that belong to the recording host rather than the tree. See `ci/baseline/README.md`. |
-| Clippy | ~86 first-party findings under `pedantic` + `nursery`. `ci/baseline/clippy-lints-baseline.txt` histograms the per-lint-kind `-D` notes (54), which is what the gate compares — see `ci/baseline/README.md`. |
+| Clippy | ~86 first-party findings at the fork point under `pedantic` + `nursery`. `ci/baseline/clippy-lints-baseline.txt` preserves the historical per-lint-kind `-D` notes (54). The current gate requires a clean all-target run and no longer reads that inventory — see `ci/baseline/README.md`. |
 | Workflow action pins | `tests/workflow_action_pins.rs::repository_workflow_action_pins_are_inventory_backed` — upstream's `.github/action-pins.jsonl` drifted from its own workflows before the fork. Every SHA mismatch it reports is upstream's. |
 | Sidecar allowlist | Three `e2e_sync_git_safety` integration tests fail because sync writes `.br-jsonl-write-<digest>.lock` authority sidecars that the test's allowlist does not admit. |
 | Routing | ~23 `e2e_routing` failures, largely lock-timeout behaviour under the routing paths. |
 | Empty-directory init guard | `e2e_env_overrides` external-JSONL and no-DB rows, five in total, around `OBR_JSONL` pointing outside the workspace. |
 | Concurrency | `e2e_concurrency` is genuinely flaky here: three consecutive full-suite runs produced 2, 4 and 3 failures from a fluctuating set, and the ones that look new pass in isolation. |
 
-`scripts/unit-gate.sh` and `scripts/lint-gate.sh` exist because of the first two
-rows: they fail only on findings **absent from the committed baseline**, which
-is what makes a red suite still useful as a gate. Shrink the inventories as debt
-is paid; never grow them.
+`scripts/unit-gate.sh` rejects findings **absent from the committed unit
+baseline**, keeping the partially red unit suite useful as a gate. Shrink that
+inventory as debt is paid; never grow it. `scripts/lint-gate.sh` now requires
+a clean all-target Clippy run; the historical lint inventory grants no allowance.
 
 ### Doctor fixtures: 12 of 65 still failing
 
@@ -755,9 +755,10 @@ anomaly. Either the prose or the three code sites should move; nothing decided.
 reports **clippy 0.1.95** — the space form resolves through `$CARGO_HOME/bin`
 rustup shims ahead of anything on `PATH`. Invoking the binary directly,
 `cargo-clippy --version`, reports **clippy 0.1.99 (3d6c19bb9a 2026-08-11)**, which
-is what CI runs. `scripts/lint-gate.sh` already does the latter and documents why;
-it exits 0 on this tree ("no new clippy findings vs baseline"). Anything that
-shells `cargo clippy` or `cargo fmt` by name is measuring a stale toolchain.
+was the compiler used for that observation. `scripts/lint-gate.sh` invokes
+`cargo-clippy clippy --all-targets -- -D warnings` directly and now requires
+zero findings. The exact current Nix compiler comes from `rust-toolchain.toml`;
+the recorded versions above describe the earlier shim mismatch.
 
 **`unit-gate.sh` inherits a stray workspace.** On Darwin the gate pins
 `TMPDIR` under `/private/tmp` (`scripts/unit-gate.sh:79-82`) to avoid the
