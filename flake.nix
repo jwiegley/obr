@@ -69,6 +69,7 @@
             ./rust-toolchain.toml
             ./tests
             ./benches
+            ./proptest-regressions
             ./ci/baseline
             ./scripts/unit-gate.sh
             ./scripts/lint-gate.sh
@@ -237,6 +238,7 @@
             test -f ${checkSource}/tests/golden_obr_init.rs
             test -f ${checkSource}/tests/golden_rich_panels.rs
             test -d ${checkSource}/tests/snapshots
+            test -f ${checkSource}/proptest-regressions/sync/org_bridge.txt
             test -f ${checkSource}/ci/baseline/vocabulary-debt.txt
             test -f ${checkSource}/scripts/unit-gate.sh
             test -f ${checkSource}/scripts/lint-gate.sh

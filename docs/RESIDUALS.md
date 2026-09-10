@@ -760,14 +760,14 @@ was the compiler used for that observation. `scripts/lint-gate.sh` invokes
 zero findings. The exact current Nix compiler comes from `rust-toolchain.toml`;
 the recorded versions above describe the earlier shim mismatch.
 
-**`unit-gate.sh` inherits a stray workspace.** On Darwin the gate pins
-`TMPDIR` under `/private/tmp` (`scripts/unit-gate.sh:79-82`) to avoid the
-symlinked `/var`. Any `.obr/` directory left in `/private/tmp` therefore becomes
-an ancestor workspace of every test temp dir, and
+**`unit-gate.sh` can inherit a stray workspace.** Any `.obr/` directory above
+the selected temporary root becomes an ancestor workspace of test temp dirs, and
 `util::tests::isolated_temp_root_is_obr_free_and_usable` fails with "temp dir …
 resolved a obr workspace; TMPDIR is inside one". Flip-tested: under
 `/private/tmp/obr-gate.X` it fails, under `/private/var/tmp/obr-gate.X` it passes.
-The fix is to delete the stray `/private/tmp/.obr`, not to touch the test.
+Those paths describe the earlier fixed-root behavior. The current Darwin gate
+creates a canonical subdirectory beneath the inherited `TMPDIR`. Select a private
+temporary root outside existing Obr workspaces; the test remains unchanged.
 
 **Parts of the harness are GNU-only.**
 `cli::commands::doctor::tests::test_fix_recovery_artifacts_aged_is_idempotent_no_op_on_second_call`
