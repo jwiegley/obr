@@ -499,4 +499,947 @@ mod tests {
 
         assert_eq!(row_count, 1);
     }
+
+    #[cfg(unix)]
+    mod observer_feasibility {
+        use std::collections::BTreeMap;
+        use std::fs::{self, File, OpenOptions};
+        use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+        use std::os::fd::OwnedFd;
+        use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
+        use std::os::unix::net::UnixStream;
+        use std::path::{Path, PathBuf};
+        use std::process::{Child, Command, ExitStatus, Stdio};
+        use std::time::{Duration, Instant};
+
+        use fsqlite_vfs::{
+            DatabaseNamespaceBinding, FileIdentity, NamespaceOpenIntent, PendingNamespaceOpen,
+        };
+        use sha2::{Digest as _, Sha256};
+
+        use super::*;
+
+        const WORKER_STACK_BYTES: usize = 16 * 1024 * 1024;
+        const CHILD_MODE: &str = "OBR_OBSERVER_FEASIBILITY_CHILD";
+        const CHILD_DATABASE: &str = "OBR_OBSERVER_FEASIBILITY_DATABASE";
+        const CHILD_LEASE: &str = "OBR_OBSERVER_FEASIBILITY_LEASE";
+        const CHILD_TEST: &str = concat!(
+            "franken_sync::tests::observer_feasibility::",
+            "observer_feasibility_subprocess_worker"
+        );
+
+        #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+        struct FileEvidence {
+            sha256: Option<String>,
+            device: u64,
+            inode: u64,
+            mode: u32,
+            links: u64,
+            uid: u32,
+            gid: u32,
+            bytes: u64,
+            modified: (i64, i64),
+            changed: (i64, i64),
+        }
+
+        #[derive(Debug)]
+        struct Probe {
+            // Field order keeps engine teardown ahead of every retained guard during unwinding.
+            connection: Connection,
+            namespace: std::sync::Arc<DatabaseNamespaceBinding>,
+            identity_file: File,
+            _lease: File,
+        }
+
+        struct ProbeChild {
+            process: Child,
+            control: BufReader<UnixStream>,
+        }
+
+        impl ProbeChild {
+            fn start(mode: &str, database: &Path, lease: &Path) -> Self {
+                let (parent, peer) = UnixStream::pair().expect("owned child control socket");
+                parent
+                    .set_read_timeout(Some(Duration::from_secs(10)))
+                    .expect("bounded child control reads");
+                parent
+                    .set_write_timeout(Some(Duration::from_secs(10)))
+                    .expect("bounded child control writes");
+                let input =
+                    Stdio::from(OwnedFd::from(peer.try_clone().expect("child input socket")));
+                let output = Stdio::from(OwnedFd::from(peer));
+                let process =
+                    Command::new(std::env::current_exe().expect("native test executable"))
+                        .args([
+                            "--exact",
+                            CHILD_TEST,
+                            "--ignored",
+                            "--nocapture",
+                            "--test-threads=1",
+                        ])
+                        .env(CHILD_MODE, mode)
+                        .env(CHILD_DATABASE, database)
+                        .env(CHILD_LEASE, lease)
+                        .env("RUST_BACKTRACE", "0")
+                        .stdin(input)
+                        .stdout(output)
+                        .stderr(Stdio::piped())
+                        .spawn()
+                        .expect("owned native fixture subprocess");
+                Self {
+                    process,
+                    control: BufReader::new(parent),
+                }
+            }
+
+            fn message(&mut self) -> String {
+                loop {
+                    let mut line = String::new();
+                    let bytes = self
+                        .control
+                        .read_line(&mut line)
+                        .expect("bounded child message");
+                    assert_ne!(bytes, 0, "child exited before its expected control message");
+                    if let Some((_, message)) = line.split_once("OBSERVER_CHILD_") {
+                        return message.trim().to_owned();
+                    }
+                }
+            }
+
+            fn send(&mut self, message: &str) {
+                writeln!(self.control.get_mut(), "{message}").expect("child control command");
+                self.control.get_mut().flush().expect("flush child command");
+            }
+
+            fn finish(&mut self) -> ExitStatus {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                loop {
+                    if let Some(status) = self.process.try_wait().expect("owned child status") {
+                        return status;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "native child missed exit deadline"
+                    );
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+
+            fn stderr(&mut self) -> String {
+                let mut text = String::new();
+                self.process
+                    .stderr
+                    .take()
+                    .expect("owned child error pipe")
+                    .take(16 * 1024)
+                    .read_to_string(&mut text)
+                    .expect("bounded child error output");
+                text
+            }
+        }
+
+        impl Drop for ProbeChild {
+            fn drop(&mut self) {
+                if matches!(self.process.try_wait(), Ok(None)) && self.process.kill().is_ok() {
+                    let _ = self.process.wait();
+                }
+            }
+        }
+
+        fn file_evidence(root: &Path) -> BTreeMap<PathBuf, FileEvidence> {
+            let paths = std::iter::once(root.to_owned()).chain(
+                fs::read_dir(root)
+                    .expect("read fixture directory")
+                    .map(|entry| entry.expect("fixture entry").path()),
+            );
+            paths
+                .map(|path| {
+                    let metadata = fs::symlink_metadata(&path).expect("fixture metadata");
+                    let sha256 = metadata.is_file().then(|| {
+                        crate::util::hex_encode(&Sha256::digest(
+                            fs::read(&path).expect("fixture bytes"),
+                        ))
+                    });
+                    (
+                        path.strip_prefix(root)
+                            .expect("fixture-relative path")
+                            .to_owned(),
+                        FileEvidence {
+                            sha256,
+                            device: metadata.dev(),
+                            inode: metadata.ino(),
+                            mode: metadata.mode(),
+                            links: metadata.nlink(),
+                            uid: metadata.uid(),
+                            gid: metadata.gid(),
+                            bytes: metadata.len(),
+                            modified: (metadata.mtime(), metadata.mtime_nsec()),
+                            changed: (metadata.ctime(), metadata.ctime_nsec()),
+                        },
+                    )
+                })
+                .collect()
+        }
+
+        fn protected_evidence(
+            evidence: &BTreeMap<PathBuf, FileEvidence>,
+        ) -> BTreeMap<PathBuf, FileEvidence> {
+            let mut protected = evidence.clone();
+            // WAL-index bytes/times are bookkeeping; its identity and every other file stay protected.
+            if let Some(shm) = protected.get_mut(Path::new("observer.db-shm")) {
+                shm.sha256 = None;
+                shm.modified = (0, 0);
+                shm.changed = (0, 0);
+            }
+            protected
+        }
+
+        fn write_fixture_issue(database: &Path, id: &str) {
+            let mut writer = crate::storage::SqliteStorage::open(database)
+                .expect("prepare through ordinary obr storage writer");
+            let now = chrono::Utc::now();
+            let issue = crate::model::Issue {
+                id: id.to_owned(),
+                title: "Native observer fixture".to_owned(),
+                created_at: now,
+                updated_at: now,
+                ..crate::model::Issue::default()
+            };
+            writer
+                .create_issue(&issue, "observer-feasibility")
+                .expect("seed issue");
+        }
+
+        fn prepared_fixture() -> (PathBuf, PathBuf, PathBuf) {
+            let root = tempfile::Builder::new()
+                .prefix("obr-observer-feasibility-")
+                .tempdir()
+                .expect("external fixture directory")
+                .keep()
+                .canonicalize()
+                .expect("canonical fixture directory");
+            let database = root.join("observer.db");
+            write_fixture_issue(&database, "probe-1");
+            fs::write(root.join("config.yaml"), "issue-prefix: probe\n")
+                .expect("fixture application configuration");
+            fs::write(
+                root.join("PLAN.org"),
+                "#+TITLE: External observer fixture\n",
+            )
+            .expect("fixture tracked surface");
+            let leases: Vec<_> = fs::read_dir(&root)
+                .expect("fixture entries")
+                .map(|entry| entry.expect("fixture entry").path())
+                .filter(|path| {
+                    path.file_name()
+                        .expect("fixture filename")
+                        .to_string_lossy()
+                        .starts_with(".br-db-openers-")
+                })
+                .collect();
+            assert_eq!(leases.len(), 1, "ordinary writer prepared one opener lease");
+            eprintln!("OBSERVER_FIXTURE {}", root.display());
+            (root, database, leases[0].clone())
+        }
+
+        fn verify_protected(root: &Path, before: &BTreeMap<PathBuf, FileEvidence>, stage: &str) {
+            let after = file_evidence(root);
+            eprintln!(
+                "OBSERVER_CHECK {stage} {} {}",
+                root.display(),
+                serde_json::to_string(&(before, &after)).expect("serialize file-family evidence")
+            );
+            assert_eq!(
+                protected_evidence(before),
+                protected_evidence(&after),
+                "{stage} must preserve application state and protected file attributes"
+            );
+        }
+
+        fn existing_input(path: &Path) -> Result<File, String> {
+            let expected = fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+            if !expected.is_file() || expected.nlink() != 1 {
+                return Err(format!(
+                    "unsafe nonregular/aliased input: {}",
+                    path.display()
+                ));
+            }
+            let file = OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+                .open(path)
+                .map_err(|error| error.to_string())?;
+            let held = file.metadata().map_err(|error| error.to_string())?;
+            if !held.is_file()
+                || held.nlink() != 1
+                || held.dev() != expected.dev()
+                || held.ino() != expected.ino()
+            {
+                return Err(format!(
+                    "input changed during descriptor admission: {}",
+                    path.display()
+                ));
+            }
+            Ok(file)
+        }
+
+        #[allow(clippy::incompatible_msrv)]
+        fn open_probe(database: &Path, lease_path: &Path) -> Result<Probe, String> {
+            let lease =
+                existing_input(lease_path).map_err(|error| format!("opener lease: {error}"))?;
+            lease
+                .try_lock_shared()
+                .map_err(|error| format!("opener lease lock: {error:?}"))?;
+            let retained =
+                existing_input(database).map_err(|error| format!("database input: {error}"))?;
+            let metadata = retained.metadata().map_err(|error| error.to_string())?;
+            if metadata.len() < 100 {
+                return Err("database input: missing complete header".to_owned());
+            }
+            let identity = FileIdentity::from_file(&retained)
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| "native descriptor identity unsupported".to_owned())?;
+            let pending =
+                PendingNamespaceOpen::begin(database, NamespaceOpenIntent::ReadOnlyExisting)
+                    .map_err(|error| format!("namespace admission: {error}"))?;
+            if pending.expected_identity() != Some(identity) {
+                return Err("namespace generation absent or mismatched".to_owned());
+            }
+            let namespace = pending.bind(identity).map_err(|error| error.to_string())?;
+            namespace
+                .validate_path_identity()
+                .map_err(|error| error.to_string())?;
+            let path = database.to_str().ok_or_else(|| {
+                "database pathname is not representable by the native API".to_owned()
+            })?;
+            let inner = drive(
+                fsqlite::Connection::open_schema_only_with_expected_identity(
+                    path.to_owned(),
+                    identity,
+                ),
+            )
+            .map_err(|error| format!("native open: {error}"))?;
+            let connection =
+                Connection::from_inner(inner, false).map_err(|error| error.to_string())?;
+            Ok(Probe {
+                connection,
+                namespace,
+                identity_file: retained,
+                _lease: lease,
+            })
+        }
+
+        fn read_sample(probe: &Probe) -> Result<i64, String> {
+            let conn = &probe.connection;
+            conn.execute("BEGIN").map_err(|error| error.to_string())?;
+            let observed = (|| {
+                let version = conn
+                    .query_row("PRAGMA user_version")
+                    .map_err(|error| error.to_string())?;
+                let version = version.get(0).and_then(SqliteValue::as_integer);
+                if version != Some(17) {
+                    return Err(format!("unsupported schema: {version:?}"));
+                }
+                let row = conn
+                    .query_row("SELECT count(*) FROM issues")
+                    .map_err(|error| error.to_string())?;
+                row.get(0)
+                    .and_then(SqliteValue::as_integer)
+                    .ok_or_else(|| "issue count is not an integer".to_owned())
+            })();
+            let finish = if observed.is_ok() {
+                "COMMIT"
+            } else {
+                "ROLLBACK"
+            };
+            conn.execute(finish).map_err(|error| error.to_string())?;
+            observed
+        }
+
+        #[allow(clippy::incompatible_msrv)]
+        fn checkpoint_available(lease_path: &Path) -> bool {
+            let file = File::open(lease_path).expect("existing checkpoint contender");
+            match file.try_lock() {
+                Ok(()) => true,
+                Err(std::fs::TryLockError::WouldBlock) => false,
+                Err(error) => panic!("unexpected checkpoint-lock failure: {error:?}"),
+            }
+        }
+
+        fn prepared_native_read() {
+            let (root, database, lease_path) = prepared_fixture();
+            let before = file_evidence(&root);
+            for stage in ["first-open", "warm-open"] {
+                let mut probe =
+                    open_probe(&database, &lease_path).expect("native observer admission");
+                assert_eq!(read_sample(&probe), Ok(1));
+                let length = probe
+                    .connection
+                    .query_row(
+                        "SELECT length(CAST(title AS BLOB)) FROM issues WHERE id = 'probe-1'",
+                    )
+                    .expect("native byte-length preflight candidate");
+                assert_eq!(length.get(0).and_then(SqliteValue::as_integer), Some(23));
+                for statement in [
+                    "UPDATE issues SET title = 'forbidden' WHERE id = 'probe-1'",
+                    "CREATE TABLE forbidden_observer_schema_change (id INTEGER)",
+                ] {
+                    assert!(
+                        matches!(
+                            probe.connection.execute(statement),
+                            Err(FrankenError::ReadOnly)
+                        ),
+                        "native read-only handle must refuse {statement}"
+                    );
+                }
+                assert!(!checkpoint_available(&lease_path));
+                probe
+                    .connection
+                    .close_in_place()
+                    .expect("explicit owner-thread close");
+                probe
+                    .namespace
+                    .validate_path_identity()
+                    .expect("namespace bound through close");
+                assert!(
+                    probe
+                        .connection
+                        .query("SELECT count(*) FROM issues")
+                        .is_err()
+                );
+                assert!(
+                    !checkpoint_available(&lease_path),
+                    "close does not release the guard early"
+                );
+                drop(probe);
+                assert!(checkpoint_available(&lease_path));
+                verify_protected(&root, &before, stage);
+            }
+        }
+
+        fn missing_and_unsafe_inputs() {
+            for stage in [
+                "missing-db",
+                "empty-db",
+                "missing-lease",
+                "missing-namespace",
+                "stale-namespace",
+            ] {
+                let (root, database, lease_path) = prepared_fixture();
+                match stage {
+                    "missing-db" => fs::rename(&database, root.join("retired.db"))
+                        .expect("owned missing-DB setup"),
+                    "empty-db" => fs::write(&database, []).expect("owned empty-DB setup"),
+                    "missing-lease" => fs::rename(&lease_path, root.join("lease-away"))
+                        .expect("owned missing-lease setup"),
+                    "missing-namespace" => fs::rename(
+                        root.join("observer.db-fsqlite-ns-use"),
+                        root.join("namespace-away"),
+                    )
+                    .expect("owned missing-namespace setup"),
+                    "stale-namespace" => fs::write(
+                        root.join("observer.db-fsqlite-ns-use"),
+                        b"invalid namespace record",
+                    )
+                    .expect("owned stale-namespace setup"),
+                    _ => unreachable!(),
+                }
+                let before = file_evidence(&root);
+                let error =
+                    open_probe(&database, &lease_path).expect_err("unsafe input must refuse");
+                let expected = if stage.ends_with("db") {
+                    "database input:"
+                } else if stage == "missing-lease" {
+                    "opener lease:"
+                } else {
+                    "namespace"
+                };
+                assert!(error.starts_with(expected), "{stage}: {error}");
+                assert!(stage == "missing-lease" || checkpoint_available(&lease_path));
+                verify_protected(&root, &before, stage);
+            }
+            let (root, database, lease_path) = prepared_fixture();
+            let symlink = root.join("symlink.db");
+            std::os::unix::fs::symlink(&database, &symlink).expect("owned symlink alias");
+            let before = file_evidence(&root);
+            assert!(
+                open_probe(&symlink, &lease_path)
+                    .expect_err("symlink refused")
+                    .contains("unsafe")
+            );
+            verify_protected(&root, &before, "symlink-alias");
+            let alias = root.join("hardlink.db");
+            fs::hard_link(&database, &alias).expect("owned hard-link alias");
+            let before = file_evidence(&root);
+            for path in [&database, &alias] {
+                assert!(
+                    open_probe(path, &lease_path)
+                        .expect_err("hard links refused")
+                        .contains("unsafe")
+                );
+            }
+            verify_protected(&root, &before, "hardlink-alias");
+        }
+
+        #[allow(clippy::incompatible_msrv)]
+        fn contended_admission() {
+            let (root, database, lease_path) = prepared_fixture();
+            let exclusive = File::open(&lease_path).expect("exclusive lease contender");
+            exclusive.try_lock().expect("exclusive lease setup");
+            let before = file_evidence(&root);
+            assert!(
+                open_probe(&database, &lease_path)
+                    .expect_err("exclusive opener must block")
+                    .starts_with("opener lease lock:")
+            );
+            verify_protected(&root, &before, "exclusive-opener-refusal");
+            drop(exclusive);
+            let exclusive =
+                PendingNamespaceOpen::begin(&database, NamespaceOpenIntent::ReservedExclusive)
+                    .expect("exclusive native namespace setup");
+            let before = file_evidence(&root);
+            assert!(
+                open_probe(&database, &lease_path)
+                    .expect_err("exclusive namespace must block")
+                    .starts_with("namespace")
+            );
+            assert!(checkpoint_available(&lease_path));
+            verify_protected(&root, &before, "exclusive-namespace-refusal");
+            drop(exclusive);
+            let mut probe =
+                open_probe(&database, &lease_path).expect("admission recovers after contention");
+            assert_eq!(read_sample(&probe), Ok(1));
+            probe
+                .connection
+                .close_in_place()
+                .expect("close recovered reader");
+            drop(probe);
+        }
+
+        fn schema_and_corruption_refusals() {
+            for version in [16, 18] {
+                let (root, database, lease_path) = prepared_fixture();
+                let writer = Connection::open(database.to_string_lossy().into_owned())
+                    .expect("fixture version writer");
+                writer
+                    .execute(&format!("PRAGMA user_version = {version}"))
+                    .expect("fixture version change");
+                writer.close().expect("close fixture version writer");
+                let before = file_evidence(&root);
+                let mut probe =
+                    open_probe(&database, &lease_path).expect("native schema-only open");
+                assert_eq!(
+                    read_sample(&probe),
+                    Err(format!("unsupported schema: Some({version})"))
+                );
+                probe
+                    .connection
+                    .close_in_place()
+                    .expect("close refused-schema reader");
+                drop(probe);
+                assert!(checkpoint_available(&lease_path));
+                verify_protected(&root, &before, &format!("schema-{version}-refusal"));
+            }
+            let (root, database, lease_path) = prepared_fixture();
+            fs::write(&database, [0_u8; 100]).expect("owned corrupt-header fixture");
+            let before = file_evidence(&root);
+            assert!(
+                open_probe(&database, &lease_path)
+                    .expect_err("corrupt header refused")
+                    .starts_with("native open:")
+            );
+            assert!(checkpoint_available(&lease_path));
+            verify_protected(&root, &before, "corrupt-header-refusal");
+        }
+
+        fn wal_resident_schema() {
+            let (root, database, lease_path) = prepared_fixture();
+            let writer = Connection::open(database.to_string_lossy().into_owned())
+                .expect("fixture WAL writer");
+            writer
+                .execute("PRAGMA user_version = 16")
+                .expect("old main version");
+            writer
+                .execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                .expect("checkpoint fixture before observation");
+            writer
+                .execute("PRAGMA user_version = 17")
+                .expect("current version only in WAL");
+            let bytes = fs::read(&database).expect("main header witness");
+            assert_eq!(
+                u32::from_be_bytes(bytes[60..64].try_into().expect("user_version bytes")),
+                16
+            );
+            let before = file_evidence(&root);
+            let mut probe = open_probe(&database, &lease_path).expect("WAL-aware native reader");
+            assert_eq!(read_sample(&probe), Ok(1));
+            probe
+                .connection
+                .close_in_place()
+                .expect("close WAL-aware reader");
+            drop(probe);
+            verify_protected(&root, &before, "WAL-resident-schema-17");
+            writer
+                .close()
+                .expect("close fixture writer after observation evidence");
+        }
+
+        fn replacement_and_close_error() {
+            let (root, database, lease_path) = prepared_fixture();
+            let mut probe =
+                open_probe(&database, &lease_path).expect("native reader before invalidation");
+            probe
+                .connection
+                .execute("BEGIN")
+                .expect("active read transaction");
+            probe
+                .connection
+                .query_row("SELECT count(*) FROM issues")
+                .expect("materialize read snapshot");
+            fs::rename(&database, root.join("retired.db"))
+                .expect("owned uncooperative path invalidation");
+            let before = file_evidence(&root);
+            let error = probe
+                .connection
+                .close_in_place()
+                .expect_err("namespace drift must fail native rollback/close");
+            eprintln!("OBSERVER_CLOSE_ERROR {error}");
+            assert!(
+                !checkpoint_available(&lease_path),
+                "failed close retains opener guard"
+            );
+            assert!(matches!(
+                PendingNamespaceOpen::begin(&database, NamespaceOpenIntent::ReservedExclusive),
+                Err(FrankenError::Busy)
+            ));
+            drop(probe);
+            assert!(checkpoint_available(&lease_path));
+            let exclusive =
+                PendingNamespaceOpen::begin(&database, NamespaceOpenIntent::ReservedExclusive)
+                    .expect("native namespace locks released after failed-close teardown");
+            drop(exclusive);
+            verify_protected(&root, &before, "native-close-error-and-drop");
+        }
+
+        fn identity_replacement_refusal() {
+            let (root, database, lease) = prepared_fixture();
+            let (other_root, other_database, _) = prepared_fixture();
+            let probe = open_probe(&database, &lease).expect("identity-bound reader guard");
+            let retained = existing_input(&other_database).expect("unrelated retained identity");
+            let wrong = FileIdentity::from_file(&retained)
+                .expect("unrelated identity")
+                .expect("native identity");
+            let before = file_evidence(&root);
+            let result = drive(
+                fsqlite::Connection::open_schema_only_with_expected_identity(
+                    database.to_str().expect("fixture pathname").to_owned(),
+                    wrong,
+                ),
+            );
+            assert!(matches!(result, Err(FrankenError::CannotOpen { .. })));
+            verify_protected(&root, &before, "wrong-retained-identity");
+            let expected = FileIdentity::from_file(&probe.identity_file)
+                .expect("retained identity")
+                .expect("native identity");
+            fs::rename(&database, root.join("retired.db")).expect("owned retired generation");
+            fs::rename(&other_database, &database).expect("owned pathname replacement");
+            let before = file_evidence(&root);
+            let other_before = file_evidence(&other_root);
+            let result = drive(
+                fsqlite::Connection::open_schema_only_with_expected_identity(
+                    database.to_str().expect("fixture pathname").to_owned(),
+                    expected,
+                ),
+            );
+            assert!(matches!(result, Err(FrankenError::CannotOpen { .. })));
+            assert!(
+                open_probe(&database, &lease)
+                    .expect_err("replacement needs new approval")
+                    .starts_with("namespace")
+            );
+            drop(probe);
+            assert!(checkpoint_available(&lease));
+            verify_protected(&root, &before, "replacement-between-identity-and-open");
+            verify_protected(&other_root, &other_before, "replacement-source-unchanged");
+        }
+
+        fn child_notice(message: &str) {
+            println!("OBSERVER_CHILD_{message}");
+            std::io::stdout()
+                .flush()
+                .expect("flush child control notice");
+        }
+
+        fn subprocess_worker() {
+            let mode = std::env::var(CHILD_MODE).expect("parent-selected native child role");
+            let database =
+                PathBuf::from(std::env::var_os(CHILD_DATABASE).expect("owned fixture DB"));
+            let lease = PathBuf::from(std::env::var_os(CHILD_LEASE).expect("owned fixture lease"));
+            let root = database
+                .parent()
+                .expect("fixture parent")
+                .canonicalize()
+                .expect("fixture root");
+            assert!(
+                root.starts_with(
+                    std::env::temp_dir()
+                        .canonicalize()
+                        .expect("external temp root")
+                )
+            );
+            assert!(
+                root.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("obr-observer-feasibility-"))
+            );
+            assert_eq!(
+                database.file_name().and_then(|name| name.to_str()),
+                Some("observer.db")
+            );
+            assert_eq!(lease.parent(), database.parent());
+            if mode == "writer" {
+                write_fixture_issue(&database, "probe-2");
+                child_notice("WRITTEN");
+                return;
+            }
+            assert_eq!(mode, "reader");
+            let mut probe = open_probe(&database, &lease).expect("child native reader");
+            probe
+                .connection
+                .execute("BEGIN")
+                .expect("child read transaction");
+            let row = probe
+                .connection
+                .query_row("SELECT count(*) FROM issues")
+                .expect("child snapshot");
+            assert_eq!(row.get(0).and_then(SqliteValue::as_integer), Some(1));
+            child_notice("READY");
+            loop {
+                let mut command = String::new();
+                assert_ne!(
+                    std::io::stdin()
+                        .read_line(&mut command)
+                        .expect("child command"),
+                    0
+                );
+                match command.trim() {
+                    "close" => {
+                        probe
+                            .connection
+                            .close_in_place()
+                            .expect("native close before guard release");
+                        child_notice("CLOSED");
+                    }
+                    "release" => {
+                        drop(probe);
+                        child_notice("RELEASED");
+                        return;
+                    }
+                    "panic" => panic!("intentional native observer panic"),
+                    "exit" => std::process::exit(0),
+                    other => panic!("unexpected owned child command: {other}"),
+                }
+            }
+        }
+
+        fn subprocess_lifetimes() {
+            for mode in ["close", "drop", "panic", "exit"] {
+                let (root, database, lease) = prepared_fixture();
+                let before = file_evidence(&root);
+                let mut child = ProbeChild::start("reader", &database, &lease);
+                assert_eq!(child.message(), "READY");
+                assert!(!checkpoint_available(&lease));
+                match mode {
+                    "close" => {
+                        child.send("close");
+                        assert_eq!(child.message(), "CLOSED");
+                        assert!(
+                            !checkpoint_available(&lease),
+                            "explicit close retains guard until release"
+                        );
+                        child.send("release");
+                    }
+                    "drop" => child.send("release"),
+                    "panic" | "exit" => child.send(mode),
+                    _ => unreachable!(),
+                }
+                if matches!(mode, "close" | "drop") {
+                    assert_eq!(child.message(), "RELEASED");
+                }
+                let status = child.finish();
+                let errors = child.stderr();
+                if mode == "panic" {
+                    assert!(!status.success(), "intentional panic must be detected");
+                    assert!(
+                        errors.contains("intentional native observer panic"),
+                        "{errors}"
+                    );
+                } else {
+                    assert!(status.success(), "{mode}: {errors}");
+                }
+                eprintln!(
+                    "OBSERVER_CHILD_EXIT mode={mode} pid={} code={:?} stderr={errors:?}",
+                    child.process.id(),
+                    status.code()
+                );
+                assert!(checkpoint_available(&lease));
+                let exclusive =
+                    PendingNamespaceOpen::begin(&database, NamespaceOpenIntent::ReservedExclusive)
+                        .expect("kernel namespace locks released after child shutdown");
+                drop(exclusive);
+                verify_protected(&root, &before, &format!("subprocess-{mode}"));
+            }
+        }
+
+        fn subprocess_coherent_reads() {
+            let (root, database, lease) = prepared_fixture();
+            let before = file_evidence(&root);
+            let mut probe = open_probe(&database, &lease).expect("reader before separate writer");
+            probe
+                .connection
+                .execute("BEGIN")
+                .expect("pinned read transaction");
+            let row = probe
+                .connection
+                .query_row("SELECT count(*) FROM issues")
+                .expect("pre-commit issue count");
+            assert_eq!(row.get(0).and_then(SqliteValue::as_integer), Some(1));
+            let mut child = ProbeChild::start("writer", &database, &lease);
+            assert_eq!(child.message(), "WRITTEN");
+            let status = child.finish();
+            let errors = child.stderr();
+            assert!(status.success(), "{errors}");
+            eprintln!(
+                "OBSERVER_WRITER_EXIT pid={} code={:?} stderr={errors:?}",
+                child.process.id(),
+                status.code()
+            );
+            for table in ["issues", "events"] {
+                let row = probe
+                    .connection
+                    .query_row(&format!("SELECT count(*) FROM {table}"))
+                    .expect("same committed snapshot");
+                assert_eq!(
+                    row.get(0).and_then(SqliteValue::as_integer),
+                    Some(1),
+                    "{table} must remain on the old snapshot"
+                );
+            }
+            probe
+                .connection
+                .execute("COMMIT")
+                .expect("finish old snapshot");
+            probe.connection.close_in_place().expect("close old reader");
+            drop(probe);
+            assert!(checkpoint_available(&lease));
+            let mut probe =
+                open_probe(&database, &lease).expect("fresh reader after writer commit");
+            assert_eq!(read_sample(&probe), Ok(2));
+            let events = probe
+                .connection
+                .query_row("SELECT count(*) FROM events")
+                .expect("new complete event state");
+            assert_eq!(events.get(0).and_then(SqliteValue::as_integer), Some(2));
+            probe
+                .connection
+                .close_in_place()
+                .expect("close fresh reader");
+            drop(probe);
+            let after = file_evidence(&root);
+            for file in ["config.yaml", "PLAN.org"] {
+                assert_eq!(before[Path::new(file)], after[Path::new(file)]);
+            }
+            eprintln!(
+                "OBSERVER_COHERENCE {} old=1 after_writer=1 reopened=2 writer_pid={}",
+                root.display(),
+                child.process.id()
+            );
+        }
+
+        fn application_mutation_control() {
+            let (root, database, _) = prepared_fixture();
+            let before = file_evidence(&root);
+            write_fixture_issue(&database, "probe-2");
+            let after = file_evidence(&root);
+            assert_ne!(
+                before[Path::new("observer.db")].sha256,
+                after[Path::new("observer.db")].sha256,
+                "ordinary committed issue creation changes the database"
+            );
+            assert_ne!(protected_evidence(&before), protected_evidence(&after));
+            fs::write(root.join("config.yaml"), "issue-prefix: changed\n")
+                .expect("positive control application-config mutation");
+            assert_ne!(
+                protected_evidence(&after),
+                protected_evidence(&file_evidence(&root)),
+                "the bookkeeping exception must not hide application-config writes"
+            );
+        }
+
+        fn on_worker(probe: fn()) {
+            std::thread::Builder::new()
+                .name("observer-feasibility".to_owned())
+                .stack_size(WORKER_STACK_BYTES)
+                .spawn(probe)
+                .expect("native observer worker")
+                .join()
+                .expect("native observer probe passed");
+        }
+
+        #[test]
+        fn observer_feasibility_prepared_native_read_preserves_application_state() {
+            on_worker(prepared_native_read);
+        }
+
+        #[test]
+        fn observer_feasibility_detects_application_mutation() {
+            on_worker(application_mutation_control);
+        }
+
+        #[test]
+        fn observer_feasibility_missing_and_unsafe_inputs_refuse() {
+            on_worker(missing_and_unsafe_inputs);
+        }
+
+        #[test]
+        fn observer_feasibility_contention_refuses_without_degrading() {
+            on_worker(contended_admission);
+        }
+
+        #[test]
+        fn observer_feasibility_schema_and_corruption_refuse() {
+            on_worker(schema_and_corruption_refusals);
+        }
+
+        #[test]
+        fn observer_feasibility_schema_is_wal_aware() {
+            on_worker(wal_resident_schema);
+        }
+
+        #[test]
+        fn observer_feasibility_real_close_error_retains_and_releases_guards() {
+            on_worker(replacement_and_close_error);
+        }
+
+        #[test]
+        fn observer_feasibility_identity_mismatch_and_replacement_refuse() {
+            on_worker(identity_replacement_refusal);
+        }
+
+        #[test]
+        fn observer_feasibility_subprocess_close_drop_panic_exit_release_locks() {
+            on_worker(subprocess_lifetimes);
+        }
+
+        #[test]
+        fn observer_feasibility_separate_writer_preserves_snapshot() {
+            on_worker(subprocess_coherent_reads);
+        }
+
+        #[test]
+        #[ignore = "native subprocess entrypoint exercised by parent tests"]
+        fn observer_feasibility_subprocess_worker() {
+            on_worker(subprocess_worker);
+        }
+    }
 }
