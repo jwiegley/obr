@@ -770,16 +770,16 @@ fn e2e_sync_rename_prefix_preserves_id_remainder_and_reports_mapping() {
     // Rewrite the exported ids into a foreign prefix: a plain mismatch, a
     // doubled prefix, and a challenger whose preserved id would collide with
     // the occupant that keeps its matching `target-` id.
-    let issues_path = workspace.root.join(".obr").join("issues.jsonl");
-    let jsonl = fs::read_to_string(&issues_path).expect("read issues jsonl");
+    let issues_path = export_path(&workspace);
+    let exported = fs::read_to_string(&issues_path).expect("read issue export");
     let old_slugged = format!("legacy-{rem_slugged}");
     let old_doubled = format!("legacy-legacy-{rem_doubled}");
     let old_challenger = format!("legacy-{rem_occupant}");
-    let rewritten = jsonl
+    let rewritten = exported
         .replace(&id_slugged, &old_slugged)
         .replace(&id_doubled, &old_doubled)
         .replace(&id_challenger, &old_challenger);
-    fs::write(&issues_path, rewritten).expect("rewrite jsonl");
+    fs::write(&issues_path, rewritten).expect("rewrite issue export");
 
     let alt_db = workspace.root.join(".obr").join("rename-receipt-alt.db");
     let result = run_obr(
@@ -4304,17 +4304,16 @@ fn e2e_sync_rebuild_accepts_legacy_prefixed_ids_without_renaming() {
         flush.stderr
     );
 
-    // Simulate the migrated workspace: rewrite one issue's id in the sidecar
-    // to a legacy project-scoped prefix that does not match the configured
-    // `bd` prefix.
+    // Rewrite one id in the canonical export to a foreign project-scoped prefix.
     let legacy_id = "midas_edge-0077";
-    let issues_path = workspace.root.join(".obr").join("issues.jsonl");
-    let jsonl = fs::read_to_string(&issues_path).expect("read issues jsonl");
+    let issues_path = export_path(&workspace);
+    let exported = fs::read_to_string(&issues_path).expect("read issue export");
     assert!(
-        jsonl.contains(&original_id),
-        "flushed JSONL should contain the created id"
+        exported.contains(&original_id),
+        "flushed export should contain the created id"
     );
-    fs::write(&issues_path, jsonl.replace(&original_id, legacy_id)).expect("rewrite jsonl");
+    fs::write(&issues_path, exported.replace(&original_id, legacy_id))
+        .expect("rewrite issue export");
 
     // Delegated rebuild runs the exact same repair path automatic post-write
     // recovery uses (`recover_database_from_jsonl`).
@@ -4332,7 +4331,7 @@ fn e2e_sync_rebuild_accepts_legacy_prefixed_ids_without_renaming() {
     );
     assert!(
         rebuild.status.success(),
-        "rebuild over a mixed-prefix JSONL must succeed without renaming: stdout={} stderr={}",
+        "rebuild over a mixed-prefix export must succeed without renaming: stdout={} stderr={}",
         rebuild.stdout,
         rebuild.stderr
     );
