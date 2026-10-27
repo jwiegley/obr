@@ -1,7 +1,8 @@
 mod common;
 
 use common::cli::{
-    ObrWorkspace, extract_issues_array, extract_json_payload, run_obr, run_obr_with_env,
+    ObrWorkspace, configure_jsonl_export, extract_issues_array, extract_json_payload, run_obr,
+    run_obr_with_env,
 };
 use serde_json::Value;
 use std::fs;
@@ -350,6 +351,7 @@ fn e2e_blocked_default_page_reports_true_total_and_truncation() {
     let workspace = ObrWorkspace::new();
     let init = run_obr(&workspace, ["init"], "init_blocked_page");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    configure_jsonl_export(&workspace.root.join(".obr"));
 
     fs::write(
         workspace.root.join(".obr/issues.jsonl"),
@@ -359,7 +361,7 @@ fn e2e_blocked_default_page_reports_true_total_and_truncation() {
 
     let import = run_obr(
         &workspace,
-        ["sync", "--import-only", "--force"],
+        ["sync", "--import-only", "--force", "--json"],
         "import_blocked_page",
     );
     assert!(
@@ -368,6 +370,8 @@ fn e2e_blocked_default_page_reports_true_total_and_truncation() {
         import.stdout,
         import.stderr
     );
+    let imported: Value = serde_json::from_str(&import.stdout).expect("parse fixture import");
+    assert_eq!(imported["created"], 61);
 
     let text = run_obr(&workspace, ["blocked"], "blocked_default_text_page");
     assert!(
