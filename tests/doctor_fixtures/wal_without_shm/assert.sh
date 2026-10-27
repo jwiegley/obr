@@ -3,14 +3,14 @@
 set -euo pipefail
 target_dir="${1:?usage: assert.sh <target_dir> <stage>}"
 stage="${2:?usage: assert.sh <target_dir> <stage>}"
-tool_bin="${TOOL_BIN:-br}"
+tool_bin="${TOOL_BIN:-obr}"
 cd "$target_dir"
 
 case "$stage" in
   detect)
     out=$("$tool_bin" doctor --json 2>/dev/null) || true
-    # db.sidecars must be healthy since FrankenSQLite intentionally keeps its
-    # WAL index in process-local memory rather than a sibling SHM file.
+    # The input had no SHM; a native read may create regular shared-index
+    # bookkeeping. Both valid WAL layouts must remain healthy.
     echo "$out" | jq -e '
       .checks[] | select(.name == "db.sidecars") | select(.status == "ok")
       | select(.message | test("WAL sidecar"; "i"))

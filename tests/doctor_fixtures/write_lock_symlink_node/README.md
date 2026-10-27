@@ -4,17 +4,18 @@
 
 ## Shape
 
-`.beads/.write.lock` is a **symlink** to a sibling regular file
-(`.beads/.lock_target`). Startup `OpenOptions` follows the symlink, so the
-workspace still opens and doctor runs — but the advisory flock has silently
-moved to the target inode, splitting mutual exclusion away from the canonical
-lock path.
+`.obr/.write.lock` is a **symlink** to a sibling regular file
+(`.obr/.lock_target`). Write admission must reject this node from `lstat`
+before opening it: following the symlink would move mutual exclusion to
+another inode and split authority from the canonical lock path. Read-only
+doctor can inspect and report this node without acquiring write admission.
 
 ## Contract
 
-- **Detect:** `write_lock` classifies the node from `lstat` alone as
-  `status: error` with `reason: non_regular_lock_node`, `node_kind: symlink`.
-  Doctor exits non-zero (fail closed).
+- **Detect:** `write_lock` reports `status: error`,
+  `reason: non_regular_lock_node` and `node_kind: symlink`; doctor exits
+  non-zero. A separate mutator must fail with the typed startup refusal
+  while leaving database bytes unchanged.
 - **Never mutates:** neither the symlink nor its target is removed, renamed,
   retargeted, or replaced in any stage, including `--repair` and undo. Moving
   a lock node aside while a holder has the old inode locked would split

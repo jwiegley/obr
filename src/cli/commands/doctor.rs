@@ -2535,13 +2535,10 @@ fn inspect_database_sidecars(db_path: &Path) -> Result<SidecarInspection> {
     }
 
     if wal_kind.is_regular_file() && !shm_kind.exists() {
-        // FrankenSQLite keeps its WAL index in process-local memory, so a WAL
-        // with no `-shm` sidecar is the normal steady state, not a fault.
-        // Record the layout as informational; do not quarantine a valid WAL or
-        // degrade an otherwise healthy workspace. The integrity and
-        // rollback-only write probes below remain the authoritative gates.
+        // A WAL-only layout is not itself corruption; retain its committed frames.
+        // Integrity and rollback-only write probes remain the authoritative gates.
         inspection.informational_findings.push(format!(
-            "WAL sidecar exists without a matching SHM sidecar at {} (expected for frankensqlite)",
+            "WAL sidecar exists without a matching SHM sidecar at {} (database integrity is checked separately)",
             PathBuf::from(format!("{}-wal", db_path.to_string_lossy())).display()
         ));
     }
@@ -2556,14 +2553,10 @@ fn inspect_database_sidecars(db_path: &Path) -> Result<SidecarInspection> {
     }
 
     if shm_kind.is_regular_file() && wal_kind.is_regular_file() {
-        // frankensqlite never reads or writes the classic `-shm` index — the
-        // WAL index lives in process-local memory — so an SHM beside a live
-        // WAL is inert heritage (e.g. an orphan the engine's own open later
-        // paired with a fresh WAL). Classify it explicitly instead of
-        // silently absorbing it into a "full family" that this engine does
-        // not actually use; the file stays in place because it is harmless.
+        // Regular WAL/SHM files can be live shared-index bookkeeping.
+        // File presence alone does not establish corruption or justify quarantine.
         inspection.informational_findings.push(format!(
-            "SHM sidecar at {} is inert beside the WAL (a WAL-only family is expected for frankensqlite; the WAL index lives in process memory)",
+            "WAL sidecar has a matching SHM sidecar at {} (storage-engine WAL-index bookkeeping; not an anomaly by file presence alone)",
             PathBuf::from(format!("{}-shm", db_path.to_string_lossy())).display()
         ));
     }
@@ -22921,10 +22914,10 @@ mod tests {
 
     #[test]
     fn test_check_database_sidecars_accepts_wal_without_shm() -> Result<()> {
-        // frankensqlite does not create SHM files — WAL without SHM is expected and should
-        // be informational without degrading an otherwise healthy workspace.
-        let temp = TempDir::new().unwrap();
-        let db_path = temp.path().join("beads.db");
+        // WAL-only and regular WAL/SHM layouts are informational; other probes
+        // validate database content rather than inferring corruption from file presence.
+        let temp = TempDir::new().unwrap().keep();
+        let db_path = temp.join("obr.db");
         fs::write(&db_path, b"sqlite-header-placeholder")?;
         fs::write(
             PathBuf::from(format!("{}-wal", db_path.to_string_lossy())),
@@ -22947,6 +22940,34 @@ mod tests {
             "unexpected sidecar message: {:?}",
             check.message
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_check_database_sidecars_accepts_shared_wal_index_bookkeeping() -> Result<()> {
+        let root = TempDir::new()?.keep();
+        let db = root.join("obr.db");
+        let wal = root.join("obr.db-wal");
+        let shm = root.join("obr.db-shm");
+        fs::write(&db, b"sqlite-header-placeholder")?;
+        fs::write(&wal, b"synthetic wal")?;
+        fs::write(&shm, b"synthetic shared index")?;
+
+        let mut checks = Vec::new();
+        check_database_sidecars(&db, &mut checks)?;
+        let check = find_check(&checks, "db.sidecars").expect("sidecar check");
+        assert_eq!(check.status, CheckStatus::Ok, "{check:?}");
+        assert!(
+            check.message.as_deref().is_some_and(|message| {
+                message.starts_with("WAL sidecar has a matching SHM sidecar")
+                    && !message.contains("inert")
+                    && !message.contains("process memory")
+            }),
+            "shared-index bookkeeping must not be misreported: {check:?}"
+        );
+        assert_eq!(fs::read(db)?, b"sqlite-header-placeholder");
+        assert_eq!(fs::read(wal)?, b"synthetic wal");
+        assert_eq!(fs::read(shm)?, b"synthetic shared index");
         Ok(())
     }
 

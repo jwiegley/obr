@@ -3,21 +3,29 @@
 set -euo pipefail
 target_dir="${1:?usage: assert.sh <target_dir> <stage>}"
 stage="${2:?usage: assert.sh <target_dir> <stage>}"
-tool_bin="${TOOL_BIN:-br}"
+tool_bin="${TOOL_BIN:-obr}"
 cd "$target_dir"
 
 assert_symlink_and_target_untouched() {
-  [ -L .beads/.write.lock ] || {
+  [ -L .obr/.write.lock ] || {
     echo "ASSERT FAIL[$stage]: symlinked .write.lock was removed or replaced (doctor must never touch the node)" >&2
     exit 1
   }
-  [ -f .beads/.lock_target ] || {
+  [ -f .obr/.lock_target ] || {
     echo "ASSERT FAIL[$stage]: symlink target vanished (target traversal / mutation is forbidden)" >&2
     exit 1
   }
+  [ "$(readlink .obr/.write.lock)" = ".lock_target" ] || {
+    echo "ASSERT FAIL[$stage]: symlink target changed" >&2
+    exit 1
+  }
+  [ ! -s .obr/.lock_target ] || {
+    echo "ASSERT FAIL[$stage]: symlink target bytes changed" >&2
+    exit 1
+  }
   expected_identity=$(cat .fixture_target_identity)
-  actual_identity=$(stat -c '%d:%i' .beads/.lock_target 2>/dev/null \
-    || stat -f '%d:%i' .beads/.lock_target)
+  actual_identity=$(stat -c '%d:%i' .obr/.lock_target 2>/dev/null \
+    || stat -f '%d:%i' .obr/.lock_target)
   if [ "$actual_identity" != "$expected_identity" ]; then
     echo "ASSERT FAIL[$stage]: symlink target inode changed $expected_identity -> $actual_identity" >&2
     exit 1
@@ -31,22 +39,42 @@ case "$stage" in
     out=$("$tool_bin" doctor --json 2>&1)
     doctor_rc=$?
     set -e
-    # Fail closed at startup: `blocking_write_lock` refuses a non-regular
-    # lock node from lstat alone before any open, so doctor exits
-    # non-zero with the typed refusal instead of running its checks.
+    # Read-only doctor reports the unsafe node; mutators must refuse admission.
     if [ "$doctor_rc" -eq 0 ]; then
       echo "ASSERT FAIL[$stage]: symlinked .write.lock did not fail doctor (beads_rust-5sej)" >&2
       echo "$out" >&2
       exit 1
     fi
-    echo "$out" | grep -q "Refusing unsafe workspace write lock path" || {
-      echo "ASSERT FAIL[$stage]: startup refusal diagnostic missing for symlinked .write.lock" >&2
+    echo "$out" | jq -e '
+      .ok == false and any(.checks[];
+        .name == "write_lock" and .status == "error"
+        and .details.reason == "non_regular_lock_node"
+        and .details.node_kind == "symlink")
+    ' >/dev/null || {
+      echo "ASSERT FAIL[$stage]: typed write-lock diagnostic missing" >&2
       echo "$out" >&2
       exit 1
     }
-    echo "$out" | grep -q "expected a regular file, not a symlink or special file" || {
-      echo "ASSERT FAIL[$stage]: refusal did not name the non-regular shape" >&2
-      echo "$out" >&2
+    before_db=$(sha256sum .obr/obr.db | awk '{print $1}')
+    set +e
+    mutation=$("$tool_bin" create "Unsafe lock must refuse admission" --json 2>&1)
+    mutation_rc=$?
+    set -e
+    if [ "$mutation_rc" -eq 0 ]; then
+      echo "ASSERT FAIL[$stage]: mutator admitted an unsafe write lock" >&2
+      exit 1
+    fi
+    echo "$mutation" | grep -q "Refusing unsafe workspace write lock path" || {
+      echo "ASSERT FAIL[$stage]: mutator startup refusal missing: $mutation" >&2
+      exit 1
+    }
+    echo "$mutation" | grep -q "expected a regular file, not a symlink or special file" || {
+      echo "ASSERT FAIL[$stage]: mutator refusal did not identify unsafe shape" >&2
+      exit 1
+    }
+    after_db=$(sha256sum .obr/obr.db | awk '{print $1}')
+    [ "$before_db" = "$after_db" ] || {
+      echo "ASSERT FAIL[$stage]: refused mutator changed database bytes" >&2
       exit 1
     }
     assert_symlink_and_target_untouched
@@ -56,7 +84,7 @@ case "$stage" in
     assert_symlink_and_target_untouched
     ;;
   post_undo)
-    [ -d .beads ] || { echo "ASSERT FAIL[$stage]: .beads gone after undo" >&2; exit 1; }
+    [ -d .obr ] || { echo "ASSERT FAIL[$stage]: .obr gone after undo" >&2; exit 1; }
     assert_symlink_and_target_untouched
     ;;
   *)
