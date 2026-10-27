@@ -582,7 +582,7 @@
           "type": "object",
           "properties": {
             "source_id": {
-              "description": "The ancestor's bead id (e.g. \"bd-abc123\").",
+              "description": "The ancestor's issue ID, in the workspace's own prefix — for example\n\"obr-abc123\" under the default `obr` prefix.",
               "type": "string"
             },
             "source_role": {

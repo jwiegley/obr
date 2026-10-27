@@ -1,6 +1,5 @@
 ---
 source: tests/snapshots/schema_output.rs
-assertion_line: 858
 expression: normalized_toon
 ---
 tool: obr
@@ -566,7 +565,7 @@ schemas:
     required[5]: issues,total,limit,offset,has_more
     "$defs":
       BlockedIssueOutput:
-        description: "Minimal issue output for blocked command (bd parity).\n\nContains only the fields that bd's blocked command outputs, plus `blocked_by` info.\nDoes NOT include: `compaction_level`, `original_size`"
+        description: "Row emitted by `obr blocked --json`.\n\nDeliberately narrower than [`Issue`]: it carries the field set the Go\n`bd` implementation emits for its own `blocked` command, plus the\n`blocked_by` information. That is a real constraint, not a historical\nnote — `tests/conformance.rs` compares the structure of\n`obr blocked --json` against `bd blocked --json` whenever a `bd` binary is\ninstalled, so removing or adding a field here breaks conformance.\nDoes NOT include: `compaction_level`, `original_size`"
         type: object
         properties:
           blocked_by:
@@ -1742,7 +1741,7 @@ schemas:
         type: object
         properties:
           source_id:
-            description: "The ancestor's bead id (e.g. \"bd-abc123\")."
+            description: "The ancestor's issue ID, in the workspace's own prefix — for example\n\"obr-abc123\" under the default `obr` prefix."
             type: string
           source_role:
             description: "\"epic\" when the ancestor is the root and has `issue_type = epic`,\n\"root\" when the ancestor is the root but not an epic,\n\"parent\" when the ancestor is the immediate parent."
@@ -2003,6 +2002,109 @@ schemas:
           - type: string
             enum[8]: open,in_progress,blocked,deferred,draft,closed,tombstone,pinned
           - type: string
+  SourceRepoPathMigrationReceipt:
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+    title: SourceRepoPathMigrationReceipt
+    type: object
+    properties:
+      schema.type: string
+      mode.type: string
+      applied.type: boolean
+      no_op.type: boolean
+      plan_sha256.type: string
+      target_path.type: string
+      target_path_sha256.type: string
+      source_records:
+        type: integer
+        format: uint
+        minimum: 0
+      database_records:
+        type: integer
+        format: uint
+        minimum: 0
+      source_only_created:
+        type: integer
+        format: uint
+        minimum: 0
+      source_newer_updated:
+        type: integer
+        format: uint
+        minimum: 0
+      database_newer_preserved:
+        type: integer
+        format: uint
+        minimum: 0
+      equal_records:
+        type: integer
+        format: uint
+        minimum: 0
+      tombstones_preserved:
+        type: integer
+        format: uint
+        minimum: 0
+      ephemeral_source_records_skipped:
+        type: integer
+        format: uint
+        minimum: 0
+      paths_normalized:
+        type: integer
+        format: uint
+        minimum: 0
+      changed_issue_ids:
+        type: array
+        items.type: string
+      jsonl_rewrite_required.type: boolean
+      source_repo_preserved.type: boolean
+      vcs_status.type: string
+      warnings:
+        type: array
+        items:
+          "$ref": #/$defs/WorkflowCapacityWarning
+      receipt_id.type[2]: string,"null"
+    required[20]: schema,mode,applied,no_op,plan_sha256,target_path,target_path_sha256,source_records,database_records,source_only_created,source_newer_updated,database_newer_preserved,equal_records,tombstones_preserved,ephemeral_source_records_skipped,paths_normalized,changed_issue_ids,jsonl_rewrite_required,source_repo_preserved,vcs_status
+    "$defs":
+      WorkflowCapacityWarning:
+        description: "Structured evidence emitted after a successful transition reaches or\nexceeds an advisory workflow-capacity threshold.\n\nWarnings deliberately mirror the hard-rejection evidence so human and\nmachine consumers can use one stable vocabulary. `hard_limit` remains\noptional because a project may configure an advisory ceiling without a\ncorresponding hard stop."
+        type: object
+        properties:
+          issue_id.type: string
+          from_status.type[2]: string,"null"
+          to_status.type: string
+          capacity_kind.type: string
+          capacity_name.type: string
+          scope.type: string
+          scope_key:
+            description: "Partition key within a non-repository scope (GitHub #384 phase 5).\nAbsent for repository-scope evidence, keeping the pre-scope shape\nbyte-stable."
+            type[2]: string,"null"
+          counting_mode.type: string
+          aggregate_parents_excluded:
+            description: "Prospective active issues excluded from the count as hierarchy\naggregates (`leaf_work`/`roots` only; absent under `all`/`weighted`)."
+            type[2]: integer,"null"
+            format: uint32
+            minimum: 0
+          exempt:
+            description: "Prospective occupancy excluded because the issues hold active,\nauthorized exemptions for this capacity (absent when zero, keeping\nthe pre-exemption evidence shape byte-stable). Same unit as\n`current`/`prospective`: issue counts, or weights under `weighted`."
+            type[2]: integer,"null"
+            format: uint32
+            minimum: 0
+          current:
+            type: integer
+            format: uint32
+            minimum: 0
+          prospective:
+            type: integer
+            format: uint32
+            minimum: 0
+          soft_limit:
+            type: integer
+            format: uint32
+            minimum: 0
+          hard_limit:
+            type[2]: integer,"null"
+            format: uint32
+            minimum: 0
+          policy_path.type: string
+        required[12]: issue_id,from_status,to_status,capacity_kind,capacity_name,scope,counting_mode,current,prospective,soft_limit,hard_limit,policy_path
   StaleIssue:
     "$schema": "https://json-schema.org/draft/2020-12/schema"
     title: StaleIssue
@@ -2650,6 +2752,12 @@ commands:
     item_schema: Statistics
     error_envelope_on_stderr: false
     notes: Alias for `stats` — identical envelope.
+  "sync --migrate-source-repo-path":
+    shape: object
+    jq_filter: .
+    item_schema: SourceRepoPathMigrationReceipt
+    error_envelope_on_stderr: false
+    notes: Read-only plan by default. Apply requires the exact plan_sha256 from an identically configured reviewed dry-run via --expect-plan-sha256. Uses the crash-recoverable sync publication saga and never probes Git.
   "sync --reconcile-additive":
     shape: object
     jq_filter: .

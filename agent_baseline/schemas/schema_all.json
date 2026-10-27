@@ -1208,6 +1208,156 @@
         }
       }
     },
+    "BlockedPage": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "BlockedPage",
+      "description": "Paginated machine-readable output from `obr blocked`.\n\n`total` is the complete filtered blocked set before `limit` is applied.\nThis prevents a bounded page from being mistaken for the complete\ndependency-graph result (GitHub #452).",
+      "type": "object",
+      "properties": {
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BlockedIssueOutput"
+          }
+        },
+        "total": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "limit": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "offset": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "has_more": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "issues",
+        "total",
+        "limit",
+        "offset",
+        "has_more"
+      ],
+      "$defs": {
+        "BlockedIssueOutput": {
+          "description": "Row emitted by `obr blocked --json`.\n\nDeliberately narrower than [`Issue`]: it carries the field set the Go\n`bd` implementation emits for its own `blocked` command, plus the\n`blocked_by` information. That is a real constraint, not a historical\nnote — `tests/conformance.rs` compares the structure of\n`obr blocked --json` against `bd blocked --json` whenever a `bd` binary is\ninstalled, so removing or adding a field here breaks conformance.\nDoes NOT include: `compaction_level`, `original_size`",
+          "type": "object",
+          "properties": {
+            "blocked_by": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "blocked_by_count": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "created_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "created_by": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "issue_type": {
+              "$ref": "#/$defs/IssueType"
+            },
+            "priority": {
+              "$ref": "#/$defs/Priority"
+            },
+            "status": {
+              "$ref": "#/$defs/Status"
+            },
+            "title": {
+              "type": "string"
+            },
+            "updated_at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "blocked_by",
+            "blocked_by_count",
+            "created_at",
+            "id",
+            "issue_type",
+            "priority",
+            "status",
+            "title",
+            "updated_at"
+          ]
+        },
+        "IssueType": {
+          "description": "Issue type category.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "task",
+                "bug",
+                "feature",
+                "epic",
+                "chore",
+                "docs",
+                "question"
+              ]
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "Priority": {
+          "description": "Issue priority (0=Critical, 4=Backlog).",
+          "type": "integer",
+          "format": "int32"
+        },
+        "Status": {
+          "description": "Issue lifecycle status.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "open",
+                "in_progress",
+                "blocked",
+                "deferred",
+                "draft",
+                "closed",
+                "tombstone",
+                "pinned"
+              ]
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
     "CoordinationClaimRow": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "title": "CoordinationClaimRow",
@@ -3724,7 +3874,7 @@
           "type": "object",
           "properties": {
             "source_id": {
-              "description": "The ancestor's bead id (e.g. \"bd-abc123\").",
+              "description": "The ancestor's issue ID, in the workspace's own prefix — for example\n\"obr-abc123\" under the default `obr` prefix.",
               "type": "string"
             },
             "source_role": {
@@ -4320,6 +4470,225 @@
             {
               "type": "string"
             }
+          ]
+        }
+      }
+    },
+    "SourceRepoPathMigrationReceipt": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "SourceRepoPathMigrationReceipt",
+      "type": "object",
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "applied": {
+          "type": "boolean"
+        },
+        "no_op": {
+          "type": "boolean"
+        },
+        "plan_sha256": {
+          "type": "string"
+        },
+        "target_path": {
+          "type": "string"
+        },
+        "target_path_sha256": {
+          "type": "string"
+        },
+        "source_records": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "database_records": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "source_only_created": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "source_newer_updated": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "database_newer_preserved": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "equal_records": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "tombstones_preserved": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "ephemeral_source_records_skipped": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "paths_normalized": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "changed_issue_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "jsonl_rewrite_required": {
+          "type": "boolean"
+        },
+        "source_repo_preserved": {
+          "type": "boolean"
+        },
+        "vcs_status": {
+          "type": "string"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WorkflowCapacityWarning"
+          }
+        },
+        "receipt_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "mode",
+        "applied",
+        "no_op",
+        "plan_sha256",
+        "target_path",
+        "target_path_sha256",
+        "source_records",
+        "database_records",
+        "source_only_created",
+        "source_newer_updated",
+        "database_newer_preserved",
+        "equal_records",
+        "tombstones_preserved",
+        "ephemeral_source_records_skipped",
+        "paths_normalized",
+        "changed_issue_ids",
+        "jsonl_rewrite_required",
+        "source_repo_preserved",
+        "vcs_status"
+      ],
+      "$defs": {
+        "WorkflowCapacityWarning": {
+          "description": "Structured evidence emitted after a successful transition reaches or\nexceeds an advisory workflow-capacity threshold.\n\nWarnings deliberately mirror the hard-rejection evidence so human and\nmachine consumers can use one stable vocabulary. `hard_limit` remains\noptional because a project may configure an advisory ceiling without a\ncorresponding hard stop.",
+          "type": "object",
+          "properties": {
+            "issue_id": {
+              "type": "string"
+            },
+            "from_status": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "to_status": {
+              "type": "string"
+            },
+            "capacity_kind": {
+              "type": "string"
+            },
+            "capacity_name": {
+              "type": "string"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "scope_key": {
+              "description": "Partition key within a non-repository scope (GitHub #384 phase 5).\nAbsent for repository-scope evidence, keeping the pre-scope shape\nbyte-stable.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "counting_mode": {
+              "type": "string"
+            },
+            "aggregate_parents_excluded": {
+              "description": "Prospective active issues excluded from the count as hierarchy\naggregates (`leaf_work`/`roots` only; absent under `all`/`weighted`).",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "exempt": {
+              "description": "Prospective occupancy excluded because the issues hold active,\nauthorized exemptions for this capacity (absent when zero, keeping\nthe pre-exemption evidence shape byte-stable). Same unit as\n`current`/`prospective`: issue counts, or weights under `weighted`.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "current": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "prospective": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "soft_limit": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "hard_limit": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "policy_path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "issue_id",
+            "from_status",
+            "to_status",
+            "capacity_kind",
+            "capacity_name",
+            "scope",
+            "counting_mode",
+            "current",
+            "prospective",
+            "soft_limit",
+            "hard_limit",
+            "policy_path"
           ]
         }
       }
@@ -5308,11 +5677,12 @@
   },
   "commands": {
     "blocked": {
-      "shape": "array",
-      "jq_filter": ".[]",
-      "items_at": ".",
+      "shape": "object",
+      "jq_filter": ".issues[]",
+      "items_at": ".issues",
       "item_schema": "BlockedIssue",
-      "error_envelope_on_stderr": false
+      "error_envelope_on_stderr": false,
+      "notes": "Wrapper object with `total`, `limit`, `offset`, and `has_more`; iterate with `.issues[]`."
     },
     "capabilities": {
       "shape": "object",
@@ -5402,7 +5772,7 @@
       "items_at": ".issues",
       "item_schema": "IssueWithCounts",
       "error_envelope_on_stderr": false,
-      "notes": "Stable wrapper object `{\"issues\": [...], \"hidden_closed_count\": N}`; iterate with `.issues[]`. The count is zero when no closed matches were hidden or the selected corpus already includes closed issues."
+      "notes": "Stable wrapper object `{\"issues\": [...], \"hidden_closed_count\": N}`; iterate with `.issues[]`. The count is zero when no closed matches were hidden or the selected corpus already includes closed issues. Pagination metadata also reports `limit`, `offset`, and `has_more`; `has_more` discloses truncation."
     },
     "show": {
       "shape": "array",
@@ -5432,6 +5802,13 @@
       "item_schema": "Statistics",
       "error_envelope_on_stderr": false,
       "notes": "Alias for `stats` — identical envelope."
+    },
+    "sync --migrate-source-repo-path": {
+      "shape": "object",
+      "jq_filter": ".",
+      "item_schema": "SourceRepoPathMigrationReceipt",
+      "error_envelope_on_stderr": false,
+      "notes": "Read-only plan by default. Apply requires the exact plan_sha256 from an identically configured reviewed dry-run via --expect-plan-sha256. Uses the crash-recoverable sync publication saga and never probes Git."
     },
     "sync --reconcile-additive": {
       "shape": "object",
