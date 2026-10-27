@@ -609,7 +609,9 @@ fn e2e_vcs_status_honors_linked_worktree_effective_config() {
     use std::os::unix::fs::PermissionsExt;
 
     let _log = common::test_log("e2e_vcs_status_honors_linked_worktree_effective_config");
-    let workspace = tracked_workspace();
+    let mut workspace = tracked_workspace();
+    workspace.temp_dir.disable_cleanup(true);
+    eprintln!("VCS_LINKED_CONFIG_FIXTURE {}", workspace.root.display());
     git_ok(
         &workspace.root,
         &["config", "extensions.worktreeConfig", "true"],
@@ -622,18 +624,17 @@ fn e2e_vcs_status_honors_linked_worktree_effective_config() {
         &workspace.root,
         &["worktree", "add", "-b", "linked-config", linked_text],
     );
-    // Give the linked worktree its own local store. Since #429, workspace
-    // discovery resolves a linked worktree whose `.beads` holds only tracked
-    // artifacts to the PRIMARY checkout's `.beads`; the probes would then run
-    // in the primary worktree, where the `--worktree` git configuration this
-    // test exercises never applies (and the global `core.autocrlf = true`
-    // below would surface as `git_content_transform_required` instead).
-    for artifact in ["beads.db", "metadata.json"] {
-        let source = workspace.root.join(".beads").join(artifact);
-        if source.is_file() {
-            std::fs::copy(&source, linked.join(".beads").join(artifact))
-                .expect("copy primary workspace store into linked worktree");
-        }
+    // A local store keeps discovery in the linked checkout, where --worktree config applies.
+    for artifact in [obr::config::DEFAULT_DB_FILENAME, "metadata.json"] {
+        let source = workspace.root.join(".obr").join(artifact);
+        let target = linked.join(".obr").join(artifact);
+        std::fs::copy(&source, &target)
+            .expect("copy required primary workspace store into linked worktree");
+        assert_eq!(
+            std::fs::read(&target).expect("linked store artifact"),
+            std::fs::read(&source).expect("primary store artifact"),
+            "linked store must retain the required {artifact}"
+        );
     }
     let linked_home = workspace.root.join("linked-global-home");
     std::fs::create_dir(&linked_home).expect("linked-worktree global config HOME");
