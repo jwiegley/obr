@@ -14590,10 +14590,33 @@ fn stream_import_actions_in_tx(
     Ok(tx_result)
 }
 
-/// Materialize the issue and dependency defaults written for omitted import fields.
+/// Model import defaults and the exact empty-text readback of `issue_from_row`.
 pub(crate) fn canonicalize_persisted_issue_defaults(issue: &mut Issue) {
     issue.source_repo.get_or_insert_with(|| ".".to_string());
     issue.original_size.get_or_insert(0);
+    for value in [
+        &mut issue.description,
+        &mut issue.design,
+        &mut issue.acceptance_criteria,
+        &mut issue.notes,
+        &mut issue.assignee,
+        &mut issue.owner,
+        &mut issue.created_by,
+        &mut issue.close_reason,
+        &mut issue.closed_by_session,
+        &mut issue.source_system,
+        &mut issue.source_repo,
+        &mut issue.source_repo_path,
+        &mut issue.deleted_by,
+        &mut issue.delete_reason,
+        &mut issue.original_type,
+        &mut issue.sender,
+        &mut issue.agent_context,
+    ] {
+        if value.as_deref() == Some("") {
+            *value = None;
+        }
+    }
     for dependency in &mut issue.dependencies {
         dependency
             .created_by
@@ -21979,9 +22002,10 @@ mod tests {
     #[test]
     fn test_import_semantic_verifier_rejects_field_shift_with_equal_counts() {
         let mut storage = SqliteStorage::open_memory().unwrap();
-        let temp_dir = TempDir::new().unwrap();
-        let jsonl_path = temp_dir.path().join("issues.jsonl");
-        let issue = make_test_issue("bd-import-semantic", "Expected title");
+        let temp_dir = TempDir::new().unwrap().keep();
+        let jsonl_path = temp_dir.join("issues.jsonl");
+        let mut issue = make_test_issue("bd-import-semantic", "Expected title");
+        issue.acceptance_criteria = Some(String::new());
         fs::write(
             &jsonl_path,
             format!("{}\n", serde_json::to_string(&issue).unwrap()),
@@ -22015,6 +22039,52 @@ mod tests {
                 .contains("does not match its normalized JSONL payload"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn test_import_semantic_verifier_matches_empty_text_readback() {
+        for text in ["", " ", "explicit"] {
+            let storage = SqliteStorage::open_memory().unwrap();
+            let mut issue = make_test_issue("bd-empty-text", "Canonical text readback");
+            issue.description = Some(text.to_string());
+            issue.design = Some(text.to_string());
+            issue.acceptance_criteria = Some(text.to_string());
+            issue.notes = Some(text.to_string());
+            issue.assignee = Some(text.to_string());
+            issue.owner = Some(text.to_string());
+            issue.created_by = Some(text.to_string());
+            issue.close_reason = Some(text.to_string());
+            issue.closed_by_session = Some(text.to_string());
+            issue.source_system = Some(text.to_string());
+            issue.source_repo = Some(text.to_string());
+            issue.source_repo_path = Some(text.to_string());
+            issue.deleted_by = Some(text.to_string());
+            issue.delete_reason = Some(text.to_string());
+            issue.original_type = Some(text.to_string());
+            issue.sender = Some(text.to_string());
+            issue.agent_context = Some(text.to_string());
+            issue.external_ref = Some(String::new());
+            issue.compacted_at_commit = Some(String::new());
+            storage
+                .upsert_issue_and_relations_for_import(&issue)
+                .unwrap();
+
+            verify_applied_import_issue_semantics(&storage, std::slice::from_ref(&issue))
+                .expect("expected payload must match the existing storage readback contract");
+            let actual = storage.get_issue(&issue.id).unwrap().unwrap();
+            assert_eq!(actual.external_ref.as_deref(), Some(""));
+            assert_eq!(actual.compacted_at_commit.as_deref(), Some(""));
+            assert_eq!(
+                actual.description.as_deref(),
+                (!text.is_empty()).then_some(text)
+            );
+
+            issue.description = Some("unexpected field shift".to_string());
+            assert!(
+                verify_applied_import_issue_semantics(&storage, &[issue]).is_err(),
+                "equal counts must not hide nonempty field corruption"
+            );
+        }
     }
 
     #[test]
