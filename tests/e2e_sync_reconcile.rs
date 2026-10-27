@@ -4,8 +4,9 @@
 //! state, the CASS-shaped recovery fixture (183 creates / 5 updates / all
 //! events preserved), timestamp classification, tombstone protection,
 //! relation preservation, orphan handling, malformed input, dry-run
-//! zero-mutation, plan/apply witness rollback, lock contention, external
-//! path policy, empty inputs, and a 2K+ issue bulk run.
+//! application-state stability, plan/apply witness rollback, lock contention,
+//! external path policy, empty inputs, and a 2K+ issue bulk run. Native reader
+//! bookkeeping is recorded separately from protected task/schema/config/export state.
 //!
 //! Reconcile must NEVER: delete issues, write events, write JSONL or base
 //! snapshots, or reset tables. Several tests assert this byte-for-byte.
@@ -80,67 +81,168 @@ fn create_issue(ws: &ObrWorkspace, title: &str, label: &str) -> String {
         .to_string()
 }
 
-/// Hash every file under `dir` recursively → map of rel-path to SHA-256.
+/// Hash every fixture file, failing closed on unreadable or unsafe entries.
 fn hash_files_under(dir: &Path) -> BTreeMap<String, String> {
     fn visit(dir: &Path, base: &Path, map: &mut BTreeMap<String, String>) {
-        if let Ok(entries) = fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
+        for entry in fs::read_dir(dir).expect("read fixture directory") {
+            let path = entry.expect("fixture directory entry").path();
+            let metadata = fs::symlink_metadata(&path).expect("fixture entry metadata");
+            assert!(
+                metadata.is_file() || metadata.is_dir(),
+                "unsafe fixture entry: {}",
+                path.display()
+            );
+            if metadata.is_file() {
                 let rel = path
                     .strip_prefix(base)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
-                    .to_string();
-                if path.is_file() {
-                    if let Ok(contents) = fs::read(&path) {
-                        let mut digest = Sha256::new();
-                        digest.update(&contents);
-                        map.insert(rel, obr::util::hex_encode(&digest.finalize()));
-                    }
-                } else if path.is_dir() {
-                    visit(&path, base, map);
-                }
+                    .expect("fixture-relative path")
+                    .to_str()
+                    .expect("UTF-8 fixture path")
+                    .to_owned();
+                let contents = fs::read(&path).expect("read complete fixture file");
+                map.insert(rel, obr::util::hex_encode(&Sha256::digest(contents)));
+            } else {
+                visit(&path, base, map);
             }
         }
     }
     let mut map = BTreeMap::new();
-    if dir.exists() {
-        visit(dir, dir, &mut map);
-    }
+    visit(dir, dir, &mut map);
     map
 }
 
-/// Stat witness (mtime nanos + len) for every file under `dir`.
-fn stat_files_under(dir: &Path) -> BTreeMap<String, (u128, u64)> {
-    fn visit(dir: &Path, base: &Path, map: &mut BTreeMap<String, (u128, u64)>) {
-        if let Ok(entries) = fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let rel = path
-                    .strip_prefix(base)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
-                    .to_string();
-                if path.is_file() {
-                    if let Ok(meta) = fs::metadata(&path) {
-                        let mtime = meta
-                            .modified()
-                            .ok()
-                            .and_then(|t| t.duration_since(std::time::SystemTime::UNIX_EPOCH).ok())
-                            .map_or(0, |d| d.as_nanos());
-                        map.insert(rel, (mtime, meta.len()));
-                    }
-                } else if path.is_dir() {
-                    visit(&path, base, map);
-                }
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+struct FileStat {
+    modified: u128,
+    len: u64,
+    directory: bool,
+    readonly: bool,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(unix)]
+    links: u64,
+    #[cfg(unix)]
+    mode: u32,
+    #[cfg(unix)]
+    uid: u32,
+    #[cfg(unix)]
+    gid: u32,
+    #[cfg(unix)]
+    changed: (i64, i64),
+}
+
+/// Include directory membership and file identity/ownership, excluding read-induced atime.
+fn stat_files_under(dir: &Path) -> BTreeMap<String, FileStat> {
+    fn visit(path: &Path, base: &Path, map: &mut BTreeMap<String, FileStat>) {
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt as _;
+
+        let meta = fs::symlink_metadata(path).expect("fixture stat metadata");
+        assert!(
+            meta.is_file() || meta.is_dir(),
+            "unsafe fixture stat entry: {}",
+            path.display()
+        );
+        let rel = path
+            .strip_prefix(base)
+            .expect("fixture-relative stat path")
+            .to_str()
+            .expect("UTF-8 fixture stat path")
+            .to_owned();
+        map.insert(
+            rel,
+            FileStat {
+                modified: meta
+                    .modified()
+                    .expect("fixture mtime")
+                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                    .expect("fixture epoch")
+                    .as_nanos(),
+                len: meta.len(),
+                directory: meta.is_dir(),
+                readonly: meta.permissions().readonly(),
+                #[cfg(unix)]
+                device: meta.dev(),
+                #[cfg(unix)]
+                inode: meta.ino(),
+                #[cfg(unix)]
+                links: meta.nlink(),
+                #[cfg(unix)]
+                mode: meta.mode(),
+                #[cfg(unix)]
+                uid: meta.uid(),
+                #[cfg(unix)]
+                gid: meta.gid(),
+                #[cfg(unix)]
+                changed: (meta.ctime(), meta.ctime_nsec()),
+            },
+        );
+        if meta.is_dir() {
+            for entry in fs::read_dir(path).expect("read fixture stat directory") {
+                visit(
+                    &entry.expect("fixture stat directory entry").path(),
+                    base,
+                    map,
+                );
             }
         }
     }
     let mut map = BTreeMap::new();
-    if dir.exists() {
-        visit(dir, dir, &mut map);
-    }
+    visit(dir, dir, &mut map);
     map
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+struct ReadOnlyEvidence {
+    hashes: BTreeMap<String, String>,
+    stats: BTreeMap<String, FileStat>,
+}
+
+impl ReadOnlyEvidence {
+    fn capture(ws: &ObrWorkspace) -> Self {
+        let dir = obr_dir(ws);
+        Self {
+            hashes: hash_files_under(&dir),
+            stats: stat_files_under(&dir),
+        }
+    }
+
+    fn protected(&self) -> Self {
+        let mut evidence = self.clone();
+        if let Some(hash) = evidence.hashes.get_mut("obr.db-shm") {
+            hash.clear();
+        }
+        // Admission may refresh root/engine times; membership and all other attributes stay guarded.
+        for name in [
+            "",
+            "obr.db-shm",
+            "obr.db-fsqlite-ns-use",
+            "obr.db-fsqlite-ns-gate",
+        ] {
+            if let Some(stat) = evidence.stats.get_mut(name) {
+                stat.modified = 0;
+                #[cfg(unix)]
+                {
+                    stat.changed = (0, 0);
+                }
+            }
+        }
+        evidence
+    }
+}
+
+fn assert_read_only_evidence(before: &ReadOnlyEvidence, after: &ReadOnlyEvidence) {
+    eprintln!(
+        "RECONCILE_READ_ONLY_EVIDENCE {}",
+        serde_json::to_string(&(before, after)).unwrap()
+    );
+    assert_eq!(
+        before.protected(),
+        after.protected(),
+        "read-only reconcile changed protected application state or engine identity/attributes"
+    );
 }
 
 /// Simulate the false-equal generator: record the CURRENT file's content hash
@@ -936,11 +1038,9 @@ fn dry_run_mutates_no_files_and_is_deterministic() {
     let ws = ObrWorkspace::new();
     build_false_equal_workspace(&ws, "nomut");
 
-    let before_hashes = hash_files_under(&obr_dir(&ws));
-    let before_stats = stat_files_under(&obr_dir(&ws));
+    let before = ReadOnlyEvidence::capture(&ws);
 
-    // The read-only fast open engages with the explicit no-auto opt-outs;
-    // the dry-run contract is zero mutation including the -wal/-shm family.
+    // Native reader bookkeeping is allowed; application state and identities are not.
     let first = run_obr(
         &ws,
         [
@@ -955,27 +1055,8 @@ fn dry_run_mutates_no_files_and_is_deterministic() {
     );
     assert!(first.status.success(), "dry-run failed: {}", first.stderr);
 
-    let after_hashes = hash_files_under(&obr_dir(&ws));
-    let after_stats = stat_files_under(&obr_dir(&ws));
-    assert_eq!(
-        before_hashes, after_hashes,
-        "dry-run must not change any .obr file contents (incl. -wal/-shm)"
-    );
-    // Stat comparison: the fsqlite namespace-admission sidecars
-    // (`*-fsqlite-ns-use` / `*-fsqlite-ns-gate`) get their mtime refreshed by
-    // the engine on EVERY database open, read-only included. Their contents
-    // are covered by the hash assertion above; exempt only their stats.
-    let strip_ns_sidecars = |m: &BTreeMap<String, (u128, u64)>| -> BTreeMap<String, (u128, u64)> {
-        m.iter()
-            .filter(|(k, _)| !k.contains("-fsqlite-ns-"))
-            .map(|(k, v)| (k.clone(), *v))
-            .collect()
-    };
-    assert_eq!(
-        strip_ns_sidecars(&before_stats),
-        strip_ns_sidecars(&after_stats),
-        "dry-run must not touch any .obr file stat (mtime/size)"
-    );
+    let after = ReadOnlyEvidence::capture(&ws);
+    assert_read_only_evidence(&before, &after);
 
     let second = run_obr(
         &ws,
@@ -999,6 +1080,80 @@ fn dry_run_mutates_no_files_and_is_deterministic() {
         parse_json_value(&second.stdout),
         "identical state must produce an identical receipt"
     );
+    assert_read_only_evidence(&before, &ReadOnlyEvidence::capture(&ws));
+}
+
+#[test]
+fn read_only_evidence_detects_protected_mutations() {
+    for kind in [
+        "task",
+        "config",
+        "export",
+        "shm-replacement",
+        "shm-size",
+        "shm-permissions",
+        "other-sidecar",
+    ] {
+        let ws = ObrWorkspace::new();
+        init_workspace(&ws, "evidence_control");
+        let id = create_issue(&ws, "Evidence control", "evidence_seed");
+        let before = ReadOnlyEvidence::capture(&ws);
+        match kind {
+            "task" => {
+                let change = run_obr(
+                    &ws,
+                    [
+                        "update",
+                        &id,
+                        "--title",
+                        "Changed control",
+                        "--no-auto-import",
+                        "--no-auto-flush",
+                        "--json",
+                    ],
+                    "evidence_task_change",
+                );
+                assert!(change.status.success(), "{}", change.stderr);
+            }
+            "config" => {
+                fs::write(obr_dir(&ws).join("config.yaml"), "issue-prefix: changed\n").unwrap();
+            }
+            "export" => fs::write(jsonl_path(&ws), "changed export\n").unwrap(),
+            "shm-replacement" => {
+                let shm = obr_dir(&ws).join("obr.db-shm");
+                let bytes = fs::read(&shm).expect("prepared SHM");
+                fs::rename(&shm, ws.root.join("retained-original-shm")).unwrap();
+                fs::write(shm, bytes).unwrap();
+            }
+            "shm-size" => {
+                use std::io::Write as _;
+                fs::OpenOptions::new()
+                    .append(true)
+                    .open(obr_dir(&ws).join("obr.db-shm"))
+                    .unwrap()
+                    .write_all(b"x")
+                    .unwrap();
+            }
+            "shm-permissions" => {
+                let shm = obr_dir(&ws).join("obr.db-shm");
+                let mut permissions = fs::metadata(&shm).unwrap().permissions();
+                permissions.set_readonly(true);
+                fs::set_permissions(shm, permissions).unwrap();
+            }
+            "other-sidecar" => fs::write(obr_dir(&ws).join("other.db-shm"), "not exempt").unwrap(),
+            _ => unreachable!(),
+        }
+        let after = ReadOnlyEvidence::capture(&ws);
+        assert_ne!(
+            before.protected(),
+            after.protected(),
+            "missed real {kind} mutation"
+        );
+        eprintln!(
+            "RECONCILE_MUTATION_CONTROL {kind} {}",
+            serde_json::to_string(&(before, after)).unwrap()
+        );
+    }
 }
 
 #[test]
@@ -1980,8 +2135,8 @@ fn cass_shaped_fixture_recovers_exactly() {
     // Plain `--import-only` heals uncovered hash matches, so this fixture goes
     // directly to reconcile to keep divergence intact for receipt assertions.
 
-    // Dry-run: exact counts, zero mutation.
-    let before_hashes = hash_files_under(&obr_dir(&ws));
+    // Dry-run: exact counts and unchanged protected application state.
+    let before = ReadOnlyEvidence::capture(&ws);
     let receipt = reconcile_receipt(&ws, true, "cass_dry");
     assert_eq!(plan_count(&receipt, "created"), JSONL_ONLY as u64);
     assert_eq!(plan_count(&receipt, "updated"), NEWER_SHARED as u64);
@@ -1992,11 +2147,7 @@ fn cass_shaped_fixture_recovers_exactly() {
         receipt["target"]["stored_hash_matches_jsonl"].as_bool(),
         Some(true)
     );
-    assert_eq!(
-        before_hashes,
-        hash_files_under(&obr_dir(&ws)),
-        "dry-run must leave every .obr file byte-identical"
-    );
+    assert_read_only_evidence(&before, &ReadOnlyEvidence::capture(&ws));
 
     // Apply: full recovery, events preserved exactly, JSONL untouched.
     let jsonl_before = fs::read(jsonl_path(&ws)).expect("jsonl bytes");
