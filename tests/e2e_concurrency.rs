@@ -673,8 +673,10 @@ fn e2e_mutating_command_fails_when_write_lock_path_unusable() {
 fn e2e_write_lock_contention_respects_lock_timeout() {
     let _log = common::test_log("e2e_write_lock_contention_respects_lock_timeout");
 
-    let temp_dir = isolated_temp_dir("temp dir");
+    let mut temp_dir = isolated_temp_dir("temp dir");
+    temp_dir.disable_cleanup(true);
     let root = temp_dir.path().to_path_buf();
+    eprintln!("WRITE_LOCK_TIMEOUT_FIXTURE {}", root.display());
 
     let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
@@ -685,7 +687,7 @@ fn e2e_write_lock_contention_respects_lock_timeout() {
         .write(true)
         .create(true)
         .truncate(false)
-        .open(lock_path)
+        .open(&lock_path)
         .expect("open .write.lock");
     write_lock.lock().expect("hold .write.lock");
 
@@ -711,14 +713,30 @@ fn e2e_write_lock_contention_respects_lock_timeout() {
         elapsed < Duration::from_secs(3),
         "write lock timeout should not block indefinitely; elapsed={elapsed:?}"
     );
-    let combined = format!("{}{}", create.stdout, create.stderr);
+    let error: serde_json::Value = serde_json::from_str(&create.stdout).unwrap_or_else(|error| {
+        panic!(
+            "invalid timeout JSON: {error}; stdout={} stderr={}",
+            create.stdout, create.stderr
+        )
+    });
+    assert_eq!(error["error"]["code"], "CONFIG_ERROR");
+    let message = error["error"]["message"].as_str().expect("timeout message");
+    let lock_display = lock_path.display().to_string();
+    // Earlier admission components may spend part of the same 75 ms budget.
     assert!(
-        combined.contains("Timed out after 75ms")
-            && combined.contains("write lock")
-            && combined.contains(".write.lock"),
-        "error should include bounded write-lock diagnostics: {combined}"
+        (0..=75).any(|remaining| {
+            message
+                == obr::sync::write_lock_timeout_error(
+                    "workspace write lock",
+                    &lock_display,
+                    remaining,
+                )
+                .to_string()
+        }),
+        "error must name the held lock, its role and a timeout within budget: {error}"
     );
 
+    write_lock.unlock().expect("release owned write lock");
     drop(write_lock);
     let after = run_obr_in_dir(&root, ["create", "After write lock timeout", "--json"]);
     assert!(
@@ -2458,8 +2476,10 @@ fn e2e_external_access_and_background_status_are_bounded_during_mutation() {
 fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
     let _log = common::test_log("e2e_actor_oriented_command_families_preserve_workspace_integrity");
 
-    let temp_dir = isolated_temp_dir("temp dir");
+    let mut temp_dir = isolated_temp_dir("temp dir");
+    temp_dir.disable_cleanup(true);
     let root = temp_dir.path().to_path_buf();
+    eprintln!("ACTOR_FAMILY_FIXTURE {}", root.display());
 
     let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
@@ -2636,6 +2656,13 @@ fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
     let comment_results = commenter.join().expect("commenter panicked");
     let label_results = labeler.join().expect("labeler panicked");
     let reader_results = reader.join().expect("reader panicked");
+    fs::write(
+        root.join("actor-results.log"),
+        format!(
+            "claim={claim_results:#?}\ndefer={defer_results:#?}\ncomments={comment_results:#?}\nlabels={label_results:#?}\nreader={reader_results:#?}\n"
+        ),
+    )
+    .expect("retain every actor result before checking progress");
 
     let claim_successes = assert_only_success_or_contention("claim", &claim_results);
     let defer_successes = assert_only_success_or_contention("defer", &defer_results);
@@ -2649,7 +2676,7 @@ fn e2e_actor_oriented_command_families_preserve_workspace_integrity() {
     );
     assert!(
         defer_successes > 0,
-        "expected at least one successful defer"
+        "expected at least one successful defer: {defer_results:#?}"
     );
     assert!(
         comment_successes > 0,
