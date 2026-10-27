@@ -191,6 +191,18 @@ impl Connection {
         Self::from_inner(inner, true)
     }
 
+    // Staged with its storage owner until O09 supplies the production observer facade.
+    #[cfg(all(test, unix))]
+    pub(crate) fn open_observer_existing(
+        path: &str,
+        identity: fsqlite_vfs::FileIdentity,
+    ) -> Result<Self, FrankenError> {
+        let inner = drive(
+            fsqlite::Connection::open_schema_only_with_expected_identity(path.to_owned(), identity),
+        )?;
+        Self::from_inner(inner, false)
+    }
+
     fn from_inner(inner: fsqlite::Connection, serialized: bool) -> Result<Self, FrankenError> {
         let connection = Self { inner };
         if !serialized {

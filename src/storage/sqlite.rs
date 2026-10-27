@@ -20069,6 +20069,665 @@ impl Drop for SqliteStorage {
     }
 }
 
+// Staged until O09 exposes fixed production reads; retain the Unix boundary.
+#[cfg(all(test, unix))]
+pub(crate) mod observer_lifecycle {
+    use super::{
+        BeadsError, Connection, Result, SqliteStorage, attest_runtime_schema_cookie,
+        namespace_sidecar_mode_repair_required,
+    };
+    use crate::sync::{DatabaseOpenerLease, ObserverLeaseError, ObserverOpenerLease};
+    use fsqlite_vfs::{
+        DatabaseNamespaceBinding, FileIdentity, NamespaceOpenIntent, PendingNamespaceOpen,
+    };
+    use std::fs::{self, File, Metadata, OpenOptions};
+    use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    #[derive(Debug, thiserror::Error)]
+    pub enum ObserverStorageError {
+        #[error(transparent)]
+        Registration(#[from] ObserverLeaseError),
+        #[error(transparent)]
+        Storage(#[from] BeadsError),
+    }
+
+    type ObserverResult<T> = std::result::Result<T, ObserverStorageError>;
+
+    #[derive(Debug)]
+    pub struct ObserverOpenInput {
+        database_path: PathBuf,
+        database_file: File,
+        database_identity: FileIdentity,
+        root_path: PathBuf,
+        root_file: File,
+    }
+
+    fn valid_input(metadata: &Metadata, directory: bool) -> bool {
+        if directory {
+            metadata.is_dir()
+        } else {
+            metadata.is_file() && metadata.nlink() == 1 && metadata.len() >= 100
+        }
+    }
+
+    fn input_identity_matches(path: &Path, file: &File, directory: bool) -> Result<()> {
+        let held = file.metadata()?;
+        let named = fs::symlink_metadata(path)?;
+        if !valid_input(&held, directory)
+            || !valid_input(&named, directory)
+            || (held.dev(), held.ino()) != (named.dev(), named.ino())
+        {
+            return Err(BeadsError::SyncConflict {
+                message: format!(
+                    "observer input identity changed or is unsafe: {}",
+                    path.display()
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    fn retain_input(path: &Path, directory: bool) -> Result<File> {
+        let before = fs::symlink_metadata(path)?;
+        if !valid_input(&before, directory) {
+            return Err(BeadsError::Config(format!(
+                "observer requires an existing unaliased {}: {}",
+                if directory {
+                    "directory"
+                } else {
+                    "database with a complete header"
+                },
+                path.display()
+            )));
+        }
+        let flags = libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC;
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(if directory {
+                flags | libc::O_DIRECTORY
+            } else {
+                flags
+            })
+            .open(path)?;
+        let held = file.metadata()?;
+        if (before.dev(), before.ino()) != (held.dev(), held.ino()) {
+            return Err(BeadsError::SyncConflict {
+                message: format!("observer input replaced during capture: {}", path.display()),
+            });
+        }
+        input_identity_matches(path, &file, directory)?;
+        Ok(file)
+    }
+
+    impl ObserverOpenInput {
+        // O03 must approve the route before this descriptor-only capture.
+        pub(crate) fn capture(path: &Path) -> Result<Self> {
+            if path.to_str().is_none() {
+                return Err(BeadsError::Config(
+                    "observer database pathname is not representable by the native API".to_owned(),
+                ));
+            }
+            if !path.is_absolute() {
+                return Err(BeadsError::Config(
+                    "observer requires an approved absolute database pathname".to_owned(),
+                ));
+            }
+            let root_path = path.parent().ok_or_else(|| {
+                BeadsError::Config("observer database has no containing directory".to_owned())
+            })?;
+            let root_file = retain_input(root_path, true)?;
+            let database_file = retain_input(path, false)?;
+            if fs::canonicalize(path)? != path {
+                return Err(BeadsError::Config(
+                    "observer requires the approved canonical cooperative pathname".to_owned(),
+                ));
+            }
+            let database_identity = FileIdentity::from_file(&database_file)?.ok_or_else(|| {
+                BeadsError::Config("observer descriptor identity is unsupported".to_owned())
+            })?;
+            let input = Self {
+                database_path: path.to_owned(),
+                database_file,
+                database_identity,
+                root_path: root_path.to_owned(),
+                root_file,
+            };
+            input.validate_identity()?;
+            Ok(input)
+        }
+
+        fn validate_identity(&self) -> Result<()> {
+            input_identity_matches(&self.root_path, &self.root_file, true)?;
+            input_identity_matches(&self.database_path, &self.database_file, false)
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct ObserverStorage {
+        // Rust drops fields in this order, including failed construction and unwind.
+        conn: Connection,
+        namespace: Arc<DatabaseNamespaceBinding>,
+        input: ObserverOpenInput,
+        lease: ObserverOpenerLease,
+    }
+
+    impl SqliteStorage {
+        pub(crate) fn open_observer(
+            input: ObserverOpenInput,
+            timeout: Duration,
+        ) -> ObserverResult<ObserverStorage> {
+            input.validate_identity()?;
+            let lease =
+                DatabaseOpenerLease::register_existing_observer(&input.database_path, timeout)?;
+            input.validate_identity()?;
+            if namespace_sidecar_mode_repair_required(&input.database_path)? {
+                return Err(BeadsError::Config(
+                    "observer namespace requires an explicit ordinary-obr repair".to_owned(),
+                )
+                .into());
+            }
+            let pending = PendingNamespaceOpen::begin(
+                &input.database_path,
+                NamespaceOpenIntent::ReadOnlyExisting,
+            )
+            .map_err(BeadsError::Database)?;
+            if pending.expected_identity() != Some(input.database_identity) {
+                return Err(BeadsError::SyncConflict {
+                    message: "observer namespace generation is absent or replaced".to_owned(),
+                }
+                .into());
+            }
+            let namespace = pending
+                .bind(input.database_identity)
+                .map_err(BeadsError::Database)?;
+            namespace
+                .validate_path_identity()
+                .map_err(BeadsError::Database)?;
+            let conn = Connection::open_observer_existing(
+                input.database_path.to_str().ok_or_else(|| {
+                    BeadsError::Config("observer database pathname is not representable".to_owned())
+                })?,
+                input.database_identity,
+            )
+            .map_err(BeadsError::Database)?;
+            let observer = ObserverStorage {
+                conn,
+                namespace,
+                input,
+                lease,
+            };
+            observer.validate_identity()?;
+            observer
+                .conn
+                .execute("BEGIN")
+                .map_err(BeadsError::Database)?;
+            if let Err(error) = attest_runtime_schema_cookie(&observer.conn) {
+                return Err(Self::rollback_transaction_error(
+                    &observer.conn,
+                    error,
+                    "observer schema attestation",
+                )
+                .into());
+            }
+            if let Err(error) = observer.conn.execute("COMMIT") {
+                return Err(Self::rollback_transaction_error(
+                    &observer.conn,
+                    BeadsError::Database(error),
+                    "observer schema COMMIT",
+                )
+                .into());
+            }
+            observer.validate_identity()?;
+            Ok(observer)
+        }
+    }
+
+    impl ObserverStorage {
+        fn validate_identity(&self) -> ObserverResult<()> {
+            self.input.validate_identity()?;
+            self.lease.validate_path_identity()?;
+            self.namespace
+                .validate_path_identity()
+                .map_err(BeadsError::Database)?;
+            Ok(())
+        }
+
+        pub(crate) fn close(&mut self) -> ObserverResult<()> {
+            self.conn.close_in_place().map_err(BeadsError::Database)?;
+            self.validate_identity()
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use sha2::{Digest as _, Sha256};
+        use std::collections::BTreeMap;
+        use std::io::Write as _;
+        use std::os::unix::ffi::OsStringExt as _;
+        use std::os::unix::fs::PermissionsExt as _;
+
+        #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+        struct Evidence {
+            hash: Option<String>,
+            link: Option<PathBuf>,
+            device: u64,
+            inode: u64,
+            mode: u32,
+            links: u64,
+            uid: u32,
+            gid: u32,
+            bytes: u64,
+            modified: (i64, i64),
+            changed: (i64, i64),
+        }
+
+        fn snapshot(root: &Path) -> BTreeMap<PathBuf, Evidence> {
+            let mut pending = vec![root.to_owned()];
+            let mut entries = BTreeMap::new();
+            while let Some(path) = pending.pop() {
+                let metadata = fs::symlink_metadata(&path).expect("owned fixture metadata");
+                if metadata.is_dir() {
+                    for entry in fs::read_dir(&path).expect("owned fixture directory") {
+                        pending.push(entry.expect("owned fixture entry").path());
+                    }
+                }
+                entries.insert(
+                    path.strip_prefix(root)
+                        .expect("owned fixture leaf")
+                        .to_owned(),
+                    Evidence {
+                        hash: metadata.is_file().then(|| {
+                            crate::util::hex_encode(&Sha256::digest(
+                                fs::read(&path).expect("owned fixture bytes"),
+                            ))
+                        }),
+                        link: metadata
+                            .file_type()
+                            .is_symlink()
+                            .then(|| fs::read_link(&path).expect("owned symlink")),
+                        device: metadata.dev(),
+                        inode: metadata.ino(),
+                        mode: metadata.mode(),
+                        links: metadata.nlink(),
+                        uid: metadata.uid(),
+                        gid: metadata.gid(),
+                        bytes: metadata.len(),
+                        modified: (metadata.mtime(), metadata.mtime_nsec()),
+                        changed: (metadata.ctime(), metadata.ctime_nsec()),
+                    },
+                );
+            }
+            entries
+        }
+
+        fn protected(mut evidence: BTreeMap<PathBuf, Evidence>) -> BTreeMap<PathBuf, Evidence> {
+            if let Some(shm) = evidence.get_mut(Path::new(".obr/observer.db-shm")) {
+                shm.hash = None;
+                shm.modified = (0, 0);
+                shm.changed = (0, 0);
+            }
+            evidence
+        }
+
+        fn verify(root: &Path, before: BTreeMap<PathBuf, Evidence>, stage: &str) {
+            let after = snapshot(root);
+            eprintln!(
+                "OBSERVER_LIFETIME_EVIDENCE {}",
+                serde_json::json!({
+                    "stage": stage, "root": root, "before": before, "after": after,
+                })
+            );
+            assert_eq!(
+                protected(before),
+                protected(after),
+                "protected application state: {stage}"
+            );
+        }
+
+        fn fixture() -> (PathBuf, PathBuf) {
+            let root = tempfile::tempdir().expect("owned observer fixture").keep();
+            let root = root.canonicalize().expect("canonical fixture");
+            fs::create_dir(root.join(".obr")).expect("owned namespace directory");
+            let database = root.join(".obr/observer.db");
+            let storage = SqliteStorage::open(&database).expect("ordinary fixture writer");
+            storage.conn.execute(
+                "INSERT INTO issues (id, title, status, priority, issue_type, created_at, updated_at) \
+                 VALUES ('obs-one', 'Observer fixture', 'open', 2, 'task', \
+                 '2026-10-27T00:00:00Z', '2026-10-27T00:00:00Z')",
+            ).expect("fixture issue");
+            storage
+                .conn
+                .execute("DELETE FROM metadata")
+                .expect("no observer metadata seeding");
+            storage
+                .conn
+                .execute("DELETE FROM config")
+                .expect("no observer configuration seeding");
+            drop(storage);
+            fs::write(root.join("PLAN.org"), "* Owned fixture\n").expect("protected export");
+            fs::write(root.join(".obr/config.yaml"), "issue_prefix: obs\n")
+                .expect("protected configuration");
+            fs::write(root.join(".obr/receipt"), "protected receipt\n")
+                .expect("protected evidence");
+            eprintln!("OBSERVER_LIFETIME_FIXTURE {}", root.display());
+            (root, database)
+        }
+
+        fn checkpoint_available(database: &Path) -> bool {
+            let mut contender =
+                DatabaseOpenerLease::register(database).expect("ordinary checkpoint contender");
+            assert!(contender.is_registered());
+            let Some(hold) = contender.try_exclusive() else {
+                return false;
+            };
+            contender.release_exclusive(hold);
+            true
+        }
+
+        fn namespace_available(database: &Path) -> bool {
+            match PendingNamespaceOpen::begin(database, NamespaceOpenIntent::ReservedExclusive) {
+                Ok(pending) => {
+                    drop(pending);
+                    true
+                }
+                Err(fsqlite_error::FrankenError::Busy) => false,
+                Err(error) => panic!("unexpected namespace contender error: {error}"),
+            }
+        }
+
+        fn open(database: &Path) -> ObserverStorage {
+            let input = ObserverOpenInput::capture(database).expect("captured approved fixture");
+            SqliteStorage::open_observer(input, Duration::from_millis(100))
+                .expect("native observer owner")
+        }
+
+        fn on_worker(test: impl FnOnce() + Send + 'static) {
+            std::thread::Builder::new()
+                .stack_size(16 * 1024 * 1024)
+                .spawn(test)
+                .expect("native worker")
+                .join()
+                .expect("native worker result");
+        }
+
+        #[test]
+        fn observer_open_current_schema_preserves_application_state() {
+            on_worker(|| {
+                let (root, database) = fixture();
+                let before = snapshot(&root);
+                let input = ObserverOpenInput::capture(&database).expect("read-only descriptors");
+                assert!((&input.database_file).write_all(b"forbidden").is_err());
+                let mut observer = SqliteStorage::open_observer(input, Duration::from_millis(100))
+                    .expect("current schema observer");
+                assert!(!checkpoint_available(&database));
+                assert!(!namespace_available(&database));
+                observer.conn.execute("BEGIN").expect("read snapshot");
+                assert_eq!(
+                    observer
+                        .conn
+                        .query_row("SELECT count(*) FROM issues")
+                        .expect("fixture count")
+                        .get(0),
+                    Some(&fsqlite_types::SqliteValue::Integer(1))
+                );
+                observer
+                    .conn
+                    .execute("COMMIT")
+                    .expect("finish read snapshot");
+                assert!(
+                    observer
+                        .conn
+                        .execute("UPDATE issues SET title = 'forbidden'")
+                        .is_err()
+                );
+                assert!(
+                    observer
+                        .conn
+                        .execute("CREATE TABLE forbidden (id TEXT)")
+                        .is_err()
+                );
+                assert!(
+                    observer
+                        .conn
+                        .execute("INSERT INTO metadata (key, value) VALUES ('forbidden', 'write')")
+                        .is_err()
+                );
+                observer.close().expect("explicit native close");
+                assert!(
+                    !checkpoint_available(&database),
+                    "owner retains guards until retirement"
+                );
+                drop(observer);
+                assert!(checkpoint_available(&database));
+                assert!(namespace_available(&database));
+                verify(&root, before, "open-read-write-refusal-close");
+            });
+        }
+
+        #[test]
+        fn observer_open_refuses_missing_zero_symlink_and_hardlink_databases() {
+            on_worker(|| {
+                for case in ["missing", "zero", "symlink", "hardlink"] {
+                    let (root, database) = fixture();
+                    if case == "hardlink" {
+                        fs::hard_link(&database, root.join("alias.db"))
+                            .expect("owned hardlink control");
+                    } else {
+                        let retired = root.join("retired.db");
+                        fs::rename(&database, &retired).expect("retain original fixture");
+                        if case == "zero" {
+                            fs::write(&database, []).expect("owned empty database");
+                        } else if case == "symlink" {
+                            std::os::unix::fs::symlink(&retired, &database)
+                                .expect("owned symlink control");
+                        }
+                    }
+                    let before = snapshot(&root);
+                    assert!(
+                        ObserverOpenInput::capture(&database).is_err(),
+                        "{case} must refuse"
+                    );
+                    verify(&root, before, case);
+                }
+            });
+        }
+
+        #[test]
+        fn observer_open_refuses_unrepresentable_path_before_filesystem_access() {
+            on_worker(|| {
+                let (root, _) = fixture();
+                let before = snapshot(&root);
+                let path = root.join(std::ffi::OsString::from_vec(vec![b'o', 0xff]));
+                let error = ObserverOpenInput::capture(&path).expect_err("unrepresentable input");
+                assert!(error.to_string().contains("not representable"));
+                verify(&root, before, "unrepresentable-path");
+            });
+        }
+
+        #[test]
+        fn observer_open_schema_refusals_retire_after_registration() {
+            on_worker(|| {
+                for sql in [
+                    "PRAGMA user_version=18",
+                    "PRAGMA user_version=16",
+                    "DROP TABLE comments",
+                ] {
+                    let (root, database) = fixture();
+                    let writer =
+                        SqliteStorage::open(&database).expect("ordinary schema fixture writer");
+                    writer.conn.execute(sql).expect("owned schema mutation");
+                    drop(writer);
+                    let before = snapshot(&root);
+                    let input =
+                        ObserverOpenInput::capture(&database).expect("existing schema input");
+                    let error = SqliteStorage::open_observer(input, Duration::from_millis(100))
+                        .expect_err("unsupported schema");
+                    assert!(matches!(
+                        &error,
+                        ObserverStorageError::Storage(BeadsError::Config(_))
+                    ));
+                    assert!(error.to_string().contains("runtime schema"));
+                    assert!(checkpoint_available(&database));
+                    assert!(namespace_available(&database));
+                    verify(&root, before, sql);
+                }
+            });
+        }
+
+        #[test]
+        fn observer_open_refuses_namespace_repair_without_modifying_permissions() {
+            on_worker(|| {
+                let (root, database) = fixture();
+                let gate = database.with_file_name("observer.db-fsqlite-ns-gate");
+                fs::set_permissions(&gate, fs::Permissions::from_mode(0o666))
+                    .expect("owned repair-needed control");
+                let before = snapshot(&root);
+                let input = ObserverOpenInput::capture(&database).expect("captured database");
+                let error = SqliteStorage::open_observer(input, Duration::from_millis(100))
+                    .expect_err("repair refused");
+                assert!(error.to_string().contains("explicit ordinary-obr repair"));
+                assert!(checkpoint_available(&database));
+                verify(&root, before, "namespace-repair-refusal");
+            });
+        }
+
+        #[test]
+        fn observer_open_rejects_replaced_captured_database_and_directory() {
+            on_worker(|| {
+                for replace_directory in [false, true] {
+                    let (root, database) = fixture();
+                    let input = ObserverOpenInput::capture(&database)
+                        .expect("captured original identities");
+                    if replace_directory {
+                        fs::rename(root.join(".obr"), root.join("retired-namespace"))
+                            .expect("retain original directory");
+                        fs::create_dir(root.join(".obr")).expect("owned replacement directory");
+                    } else {
+                        let (_, replacement) = fixture();
+                        fs::rename(&database, root.join("retired.db"))
+                            .expect("retain original inode");
+                        fs::copy(replacement, &database).expect("owned replacement inode");
+                    }
+                    let before = snapshot(&root);
+                    let error = SqliteStorage::open_observer(input, Duration::from_millis(100))
+                        .expect_err("captured identity replacement");
+                    assert!(matches!(
+                        error,
+                        ObserverStorageError::Storage(BeadsError::SyncConflict { .. })
+                    ));
+                    verify(
+                        &root,
+                        before,
+                        if replace_directory {
+                            "directory-replaced"
+                        } else {
+                            "database-replaced"
+                        },
+                    );
+                }
+            });
+        }
+
+        #[test]
+        fn observer_close_native_failure_retains_guards_until_retirement() {
+            on_worker(|| {
+                let (root, database) = fixture();
+                let mut observer = open(&database);
+                observer
+                    .conn
+                    .execute("BEGIN")
+                    .expect("active read transaction");
+                observer
+                    .conn
+                    .query_row("SELECT count(*) FROM issues")
+                    .expect("materialized snapshot");
+                fs::rename(&database, root.join("retired.db"))
+                    .expect("owned namespace invalidation");
+                let before = snapshot(&root);
+                let error = observer
+                    .close()
+                    .expect_err("native rollback/close must fail");
+                assert!(matches!(
+                    &error,
+                    ObserverStorageError::Storage(BeadsError::Database(_))
+                ));
+                assert!(
+                    observer
+                        .input
+                        .database_file
+                        .metadata()
+                        .expect("retained database descriptor")
+                        .is_file()
+                );
+                assert!(
+                    observer
+                        .input
+                        .root_file
+                        .metadata()
+                        .expect("retained directory descriptor")
+                        .is_dir()
+                );
+                assert!(!checkpoint_available(&database));
+                assert!(!namespace_available(&database));
+                eprintln!(
+                    "OBSERVER_LIFETIME_CLOSE_ERROR {}",
+                    serde_json::json!({"root": root, "error": error.to_string(), "lease_held": true, "namespace_held": true})
+                );
+                drop(observer);
+                assert!(checkpoint_available(&database));
+                assert!(namespace_available(&database));
+                verify(&root, before, "native-close-failure-and-retirement");
+            });
+        }
+
+        #[test]
+        fn observer_close_unwind_retires_native_handle_before_guards() {
+            on_worker(|| {
+                let (root, database) = fixture();
+                let before = snapshot(&root);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let observer = open(&database);
+                    observer
+                        .conn
+                        .execute("BEGIN")
+                        .expect("active read snapshot");
+                    observer
+                        .conn
+                        .query_row("SELECT count(*) FROM issues")
+                        .expect("materialized snapshot");
+                    assert!(!checkpoint_available(&database));
+                    assert!(!namespace_available(&database));
+                    panic!("owned observer unwind control");
+                }));
+                assert!(result.is_err());
+                assert!(checkpoint_available(&database));
+                assert!(namespace_available(&database));
+                verify(&root, before, "unwind-retirement");
+            });
+        }
+
+        #[test]
+        fn observer_open_evidence_detects_application_mutation() {
+            on_worker(|| {
+                let (root, _) = fixture();
+                let before = snapshot(&root);
+                fs::write(root.join("PLAN.org"), "* Intentional mutation control\n")
+                    .expect("owned negative control");
+                let after = snapshot(&root);
+                assert_ne!(protected(before.clone()), protected(after.clone()));
+                eprintln!(
+                    "OBSERVER_LIFETIME_MUTATION_CONTROL {}",
+                    serde_json::json!({"root": root, "before": before, "after": after})
+                );
+            });
+        }
+    }
+}
+
 #[cfg(test)]
 impl SqliteStorage {
     /// Execute raw SQL for tests.
