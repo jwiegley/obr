@@ -1675,7 +1675,9 @@ impl DatabaseOpenerLease {
     pub fn try_exclusive(&mut self) -> Option<File> {
         // Whole-file locks are per open file description, so this handle's
         // own shared registration must be released before probing.
-        self.shared.take()?;
+        if let Err(error) = self.shared.take()?.unlock() {
+            tracing::warn!(error = %error, "database opener shared lease unlock failed");
+        }
         let exclusive = match open_lock_sidecar(&self.path, "database opener lease") {
             Ok(file) => file,
             Err(error) => {
@@ -1702,7 +1704,11 @@ impl DatabaseOpenerLease {
 
     /// Return an exclusive hold obtained from [`Self::try_exclusive`] and
     /// re-register this handle as an ordinary shared opener.
+    #[allow(clippy::incompatible_msrv)]
     pub fn release_exclusive(&mut self, exclusive: File) {
+        if let Err(error) = exclusive.unlock() {
+            tracing::warn!(error = %error, "database opener exclusive lease unlock failed");
+        }
         drop(exclusive);
         self.restore_shared();
     }
@@ -1717,6 +1723,167 @@ impl DatabaseOpenerLease {
                 );
                 self.shared = None;
             }
+        }
+    }
+}
+
+impl Drop for DatabaseOpenerLease {
+    #[allow(clippy::incompatible_msrv)]
+    fn drop(&mut self) {
+        // Close alone can retain locks in descriptors inherited by a concurrent child launch.
+        if let Some(file) = &self.shared
+            && let Err(error) = file.unlock()
+        {
+            tracing::warn!(error = %error, "database opener lease unlock failed during retirement");
+        }
+    }
+}
+
+// Observer-only staging; the fixed-read facade will supply production callers.
+#[cfg(test)]
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ObserverLeaseError {
+    #[error("observer opener authority could not be resolved: {0}")]
+    Authority(#[source] BeadsError),
+    #[error("observer opener lease is missing: {0}")]
+    Missing(PathBuf),
+    #[error("unsafe or replaced observer opener lease: {0}")]
+    Unsafe(PathBuf),
+    #[error("observer opener lease is busy: {0}")]
+    Busy(PathBuf),
+    #[error("observer opener lease I/O failed at {path}: {source}")]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("read-access-only observer opener leases are unsupported on this platform")]
+    UnsupportedPlatform,
+}
+
+/// A retained shared registration with no checkpoint-upgrade operation.
+#[cfg(test)]
+#[derive(Debug)]
+pub(crate) struct ObserverOpenerLease {
+    path: PathBuf,
+    file: File,
+}
+
+#[cfg(test)]
+fn observer_lease_io_error(path: &Path, source: std::io::Error) -> ObserverLeaseError {
+    if source.kind() == std::io::ErrorKind::NotFound {
+        ObserverLeaseError::Missing(path.to_path_buf())
+    } else {
+        ObserverLeaseError::Io {
+            path: path.to_path_buf(),
+            source,
+        }
+    }
+}
+
+#[cfg(test)]
+fn observer_lease_same_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    if !left.is_file() || !right.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        left.dev() == right.dev()
+            && left.ino() == right.ino()
+            && left.nlink() == 1
+            && right.nlink() == 1
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+#[cfg(test)]
+impl DatabaseOpenerLease {
+    pub(crate) fn register_existing_observer(
+        database_path: &Path,
+        timeout: Duration,
+    ) -> std::result::Result<ObserverOpenerLease, ObserverLeaseError> {
+        if !cfg!(unix) {
+            return Err(ObserverLeaseError::UnsupportedPlatform);
+        }
+        let path =
+            database_opener_lease_path(database_path).map_err(ObserverLeaseError::Authority)?;
+        let before =
+            fs::symlink_metadata(&path).map_err(|error| observer_lease_io_error(&path, error))?;
+        if !observer_lease_same_identity(&before, &before) {
+            return Err(ObserverLeaseError::Unsafe(path));
+        }
+        let mut options = OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+        let file = options
+            .open(&path)
+            .map_err(|error| observer_lease_io_error(&path, error))?;
+        let held = file
+            .metadata()
+            .map_err(|error| observer_lease_io_error(&path, error))?;
+        if !observer_lease_same_identity(&before, &held) {
+            return Err(ObserverLeaseError::Unsafe(path));
+        }
+        ObserverOpenerLease::acquire_existing_file(path, file, timeout)
+    }
+}
+
+#[cfg(test)]
+impl ObserverOpenerLease {
+    #[allow(clippy::incompatible_msrv)]
+    fn acquire_existing_file(
+        path: PathBuf,
+        file: File,
+        timeout: Duration,
+    ) -> std::result::Result<Self, ObserverLeaseError> {
+        let lease = Self { path, file };
+        let started = Instant::now();
+        let timeout = timeout.min(Duration::from_millis(OPENER_LEASE_WAIT_MS));
+        loop {
+            lease.validate_path_identity()?;
+            match lease.file.try_lock_shared() {
+                Ok(()) => {
+                    lease.validate_path_identity()?;
+                    return Ok(lease);
+                }
+                Err(TryLockError::WouldBlock) => {}
+                Err(TryLockError::Error(error)) => {
+                    return Err(observer_lease_io_error(&lease.path, error));
+                }
+            }
+            let remaining = timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return Err(ObserverLeaseError::Busy(lease.path.clone()));
+            }
+            thread::sleep(WRITE_LOCK_POLL_INTERVAL.min(remaining));
+        }
+    }
+
+    pub(crate) fn validate_path_identity(&self) -> std::result::Result<(), ObserverLeaseError> {
+        let held = self
+            .file
+            .metadata()
+            .map_err(|error| observer_lease_io_error(&self.path, error))?;
+        let named = fs::symlink_metadata(&self.path)
+            .map_err(|error| observer_lease_io_error(&self.path, error))?;
+        if !observer_lease_same_identity(&held, &named) {
+            return Err(ObserverLeaseError::Unsafe(self.path.clone()));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+impl Drop for ObserverOpenerLease {
+    #[allow(clippy::incompatible_msrv)]
+    fn drop(&mut self) {
+        if let Err(error) = self.file.unlock() {
+            tracing::warn!(error = %error, "observer opener lease unlock failed during retirement");
         }
     }
 }
@@ -25324,6 +25491,8 @@ mod tests {
         assert!(first.is_registered());
         let second = DatabaseOpenerLease::register(&db_path).unwrap();
         assert!(second.is_registered());
+        let first_inherited = first.shared.as_ref().unwrap().try_clone().unwrap();
+        let second_inherited = second.shared.as_ref().unwrap().try_clone().unwrap();
 
         assert!(
             first.try_exclusive().is_none(),
@@ -25339,8 +25508,10 @@ mod tests {
             .try_exclusive()
             .expect("the sole opener takes the exclusive hold");
         assert!(!first.is_registered());
+        let exclusive_inherited = hold.try_clone().unwrap();
         first.release_exclusive(hold);
         assert!(first.is_registered());
+        drop((first_inherited, second_inherited, exclusive_inherited));
     }
 
     /// A newcomer waits out an in-flight exclusive hold instead of opening a
@@ -25371,6 +25542,244 @@ mod tests {
             "newcomer must have waited for the exclusive hold, waited {waited:?}"
         );
         assert!(holder.is_registered());
+    }
+
+    #[cfg(unix)]
+    #[allow(clippy::incompatible_msrv)]
+    mod observer_lease_tests {
+        use super::*;
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+
+        fn fixture(prepared: bool) -> (PathBuf, PathBuf, PathBuf) {
+            // Nested runner TMPDIRs can exceed Unix socket address limits.
+            let root = tempfile::Builder::new()
+                .prefix("obr-observer-lease-")
+                .tempdir_in("/tmp")
+                .unwrap()
+                .keep()
+                .canonicalize()
+                .unwrap();
+            let database = root.join("observer.db");
+            fs::write(&database, b"owned opener identity fixture").unwrap();
+            let path = database_opener_lease_path(&database).unwrap();
+            if prepared {
+                drop(DatabaseOpenerLease::register(&database).unwrap());
+            }
+            eprintln!("OBSERVER_LEASE_FIXTURE {}", root.display());
+            (root, database, path)
+        }
+
+        fn evidence(root: &Path) -> BTreeMap<PathBuf, serde_json::Value> {
+            let paths = std::iter::once(root.to_path_buf()).chain(
+                fs::read_dir(root)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path()),
+            );
+            paths
+                .map(|path| {
+                    let meta = fs::symlink_metadata(&path).unwrap();
+                    let bytes = if meta.is_file() {
+                        serde_json::to_value(
+                            fs::read(&path)
+                                .map(|bytes| hex_encode(&Sha256::digest(bytes)))
+                                .map_err(|error| format!("{:?}", error.kind())),
+                        )
+                        .unwrap()
+                    } else {
+                        serde_json::Value::Null
+                    };
+                    let value = serde_json::json!({
+                        "dev": meta.dev(), "ino": meta.ino(), "links": meta.nlink(),
+                        "mode": meta.mode(), "uid": meta.uid(), "gid": meta.gid(),
+                        "size": meta.len(), "mtime": [meta.mtime(), meta.mtime_nsec()],
+                        "ctime": [meta.ctime(), meta.ctime_nsec()],
+                        "symlink": meta.file_type().is_symlink(), "bytes": bytes,
+                    });
+                    (path.strip_prefix(root).unwrap().to_path_buf(), value)
+                })
+                .collect()
+        }
+
+        fn unchanged(root: &Path, before: &BTreeMap<PathBuf, serde_json::Value>) {
+            let after = evidence(root);
+            eprintln!(
+                "OBSERVER_LEASE_EVIDENCE {} {}",
+                root.display(),
+                serde_json::to_string(&(before, &after)).unwrap()
+            );
+            assert_eq!(*before, after);
+        }
+
+        #[test]
+        fn observer_lease_missing_refuses_without_creation() {
+            let (root, database, _) = fixture(false);
+            let before = evidence(&root);
+            assert!(matches!(
+                DatabaseOpenerLease::register_existing_observer(&database, Duration::ZERO),
+                Err(ObserverLeaseError::Missing(_))
+            ));
+            unchanged(&root, &before);
+        }
+
+        #[test]
+        fn observer_lease_zero_length_shared_peers_and_release() {
+            let (root, database, path) = fixture(true);
+            assert_eq!(fs::metadata(path).unwrap().len(), 0);
+            let before = evidence(&root);
+            let first =
+                DatabaseOpenerLease::register_existing_observer(&database, Duration::ZERO).unwrap();
+            let second = DatabaseOpenerLease::register_existing_observer(
+                &root.join("./observer.db"),
+                Duration::ZERO,
+            )
+            .unwrap();
+            first.validate_path_identity().unwrap();
+            assert_eq!(first.path, second.path);
+            let first_inherited = first.file.try_clone().unwrap();
+            let second_inherited = second.file.try_clone().unwrap();
+            let mut readonly = &first.file;
+            assert!(
+                readonly.write_all(b"forbidden").is_err(),
+                "the actual retained descriptor is read-access-only"
+            );
+            let mut writer = DatabaseOpenerLease::register(&database).unwrap();
+            assert!(writer.try_exclusive().is_none());
+            drop(second);
+            assert!(writer.try_exclusive().is_none());
+            drop(first);
+            let exclusive = writer
+                .try_exclusive()
+                .expect("observer release permits checkpoint admission");
+            writer.release_exclusive(exclusive);
+            drop((first_inherited, second_inherited));
+            unchanged(&root, &before);
+        }
+
+        #[test]
+        fn observer_lease_unsafe_and_permission_inputs_refuse() {
+            for kind in ["directory", "symlink", "hardlink", "socket", "unreadable"] {
+                let (root, database, path) = fixture(true);
+                let retired = root.join("retained-original.lease");
+                let socket = match kind {
+                    "directory" => {
+                        fs::rename(&path, &retired).unwrap();
+                        fs::create_dir(&path).unwrap();
+                        None
+                    }
+                    "symlink" => {
+                        fs::rename(&path, &retired).unwrap();
+                        std::os::unix::fs::symlink(&retired, &path).unwrap();
+                        None
+                    }
+                    "hardlink" => {
+                        fs::hard_link(&path, root.join("alias.lease")).unwrap();
+                        None
+                    }
+                    "socket" => {
+                        fs::rename(&path, &retired).unwrap();
+                        // Socket bind addresses have a smaller limit than filesystem names.
+                        let socket_path = root.join("socket");
+                        let socket = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+                        fs::rename(socket_path, &path).unwrap();
+                        Some(socket)
+                    }
+                    "unreadable" => {
+                        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+                        None
+                    }
+                    _ => unreachable!(),
+                };
+                let before = evidence(&root);
+                let result =
+                    DatabaseOpenerLease::register_existing_observer(&database, Duration::ZERO);
+                if kind == "unreadable" {
+                    assert!(
+                        matches!(result, Err(ObserverLeaseError::Io { source, .. }) if source.kind() == std::io::ErrorKind::PermissionDenied)
+                    );
+                } else {
+                    assert!(
+                        matches!(result, Err(ObserverLeaseError::Unsafe(_))),
+                        "{kind}"
+                    );
+                }
+                unchanged(&root, &before);
+                drop(socket);
+            }
+        }
+
+        #[test]
+        fn observer_lease_busy_is_typed_and_bounded() {
+            let (root, database, path) = fixture(true);
+            let holder = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(path)
+                .unwrap();
+            holder.try_lock().unwrap();
+            let before = evidence(&root);
+            let started = Instant::now();
+            assert!(matches!(
+                DatabaseOpenerLease::register_existing_observer(&database, Duration::ZERO),
+                Err(ObserverLeaseError::Busy(_))
+            ));
+            assert!(started.elapsed() < Duration::from_secs(2));
+            let started = Instant::now();
+            assert!(matches!(
+                DatabaseOpenerLease::register_existing_observer(
+                    &database,
+                    Duration::from_millis(20)
+                ),
+                Err(ObserverLeaseError::Busy(_))
+            ));
+            assert!(started.elapsed() >= Duration::from_millis(20));
+            assert!(started.elapsed() < Duration::from_secs(2));
+            drop(holder);
+            drop(
+                DatabaseOpenerLease::register_existing_observer(&database, Duration::ZERO).unwrap(),
+            );
+            unchanged(&root, &before);
+        }
+
+        #[test]
+        fn observer_lease_replacement_before_lock_refuses() {
+            let (root, _, path) = fixture(true);
+            let file = File::open(&path).unwrap();
+            fs::rename(&path, root.join("retained-old.lease")).unwrap();
+            fs::write(&path, b"").unwrap();
+            let before = evidence(&root);
+            assert!(matches!(
+                ObserverOpenerLease::acquire_existing_file(path, file, Duration::ZERO),
+                Err(ObserverLeaseError::Unsafe(_))
+            ));
+            unchanged(&root, &before);
+        }
+
+        #[test]
+        fn observer_lease_replacement_retains_original_hold_until_drop() {
+            let (root, database, path) = fixture(true);
+            let lease =
+                DatabaseOpenerLease::register_existing_observer(&database, Duration::ZERO).unwrap();
+            let retired = root.join("retained-old.lease");
+            fs::rename(&path, &retired).unwrap();
+            fs::write(&path, b"").unwrap();
+            let contender = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(retired)
+                .unwrap();
+            let before = evidence(&root);
+            assert!(matches!(
+                lease.validate_path_identity(),
+                Err(ObserverLeaseError::Unsafe(_))
+            ));
+            assert!(matches!(
+                contender.try_lock(),
+                Err(TryLockError::WouldBlock)
+            ));
+            drop(lease);
+            contender.try_lock().unwrap();
+            unchanged(&root, &before);
+        }
     }
 
     /// `checkpoint_full` is vetoed while another handle has the same persistent

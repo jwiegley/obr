@@ -543,12 +543,21 @@ mod tests {
         }
 
         #[derive(Debug)]
+        struct ProbeLease(File);
+
+        impl Drop for ProbeLease {
+            fn drop(&mut self) {
+                self.0.unlock().expect("release native probe opener lease");
+            }
+        }
+
+        #[derive(Debug)]
         struct Probe {
             // Field order keeps engine teardown ahead of every retained guard during unwinding.
             connection: Connection,
             namespace: std::sync::Arc<DatabaseNamespaceBinding>,
             identity_file: File,
-            _lease: File,
+            _lease: ProbeLease,
         }
 
         struct ProbeChild {
@@ -785,9 +794,11 @@ mod tests {
 
         #[allow(clippy::incompatible_msrv)]
         fn open_probe(database: &Path, lease_path: &Path) -> Result<Probe, String> {
-            let lease =
-                existing_input(lease_path).map_err(|error| format!("opener lease: {error}"))?;
+            let lease = ProbeLease(
+                existing_input(lease_path).map_err(|error| format!("opener lease: {error}"))?,
+            );
             lease
+                .0
                 .try_lock_shared()
                 .map_err(|error| format!("opener lease lock: {error:?}"))?;
             let retained =
@@ -860,7 +871,10 @@ mod tests {
         fn checkpoint_available(lease_path: &Path) -> bool {
             let file = File::open(lease_path).expect("existing checkpoint contender");
             match file.try_lock() {
-                Ok(()) => true,
+                Ok(()) => {
+                    file.unlock().expect("release checkpoint contender");
+                    true
+                }
                 Err(std::fs::TryLockError::WouldBlock) => false,
                 Err(error) => panic!("unexpected checkpoint-lock failure: {error:?}"),
             }
@@ -926,6 +940,11 @@ mod tests {
                 "stale-namespace",
             ] {
                 let (root, database, lease_path) = prepared_fixture();
+                eprintln!("OBSERVER_REFUSAL_STAGE {stage} {}", root.display());
+                assert!(
+                    checkpoint_available(&lease_path),
+                    "{stage}: ordinary fixture writer still holds its opener lease"
+                );
                 match stage {
                     "missing-db" => fs::rename(&database, root.join("retired.db"))
                         .expect("owned missing-DB setup"),
@@ -955,7 +974,10 @@ mod tests {
                     "namespace"
                 };
                 assert!(error.starts_with(expected), "{stage}: {error}");
-                assert!(stage == "missing-lease" || checkpoint_available(&lease_path));
+                assert!(
+                    stage == "missing-lease" || checkpoint_available(&lease_path),
+                    "{stage}: refused probe still holds its opener lease"
+                );
                 verify_protected(&root, &before, stage);
             }
             let (root, database, lease_path) = prepared_fixture();
