@@ -704,7 +704,7 @@ pub(crate) fn backup_before_jsonl_salvage(
     target_path: &Path,
     source: &JsonlSourceSnapshot,
 ) -> Result<PathBuf> {
-    let history_dir = beads_dir.join(".br_history");
+    let history_dir = history_dir_for_write(beads_dir)?;
     ensure_history_dir_path(&history_dir)?;
 
     let target_stem = target_path
@@ -1126,6 +1126,33 @@ mod tests {
             remaining
                 .iter()
                 .any(|b| b.path.to_string_lossy().contains(&t3.to_string()))
+        );
+    }
+
+    #[test]
+    fn salvage_backup_uses_canonical_history_and_keeps_receipt_path() {
+        let root = TempDir::new().unwrap().keep();
+        let obr_dir = root.join(".obr");
+        fs::create_dir_all(&obr_dir).unwrap();
+        let target = obr_dir.join("issues.jsonl");
+        let original = b"malformed historical bytes\n";
+        fs::write(&target, original).unwrap();
+        let source = capture_optional_jsonl_source(&target).unwrap().unwrap();
+
+        let backup = backup_before_jsonl_salvage(&obr_dir, &target, &source).unwrap();
+
+        assert_eq!(backup.parent().unwrap(), obr_dir.join(HISTORY_DIR_NAME));
+        assert!(!obr_dir.join(LEGACY_HISTORY_DIR_NAME).exists());
+        backup_before_export(&obr_dir, &HistoryConfig::default(), &target).unwrap();
+        assert_eq!(fs::read(&backup).unwrap(), original);
+        let entries = list_backups(&obr_dir.join(HISTORY_DIR_NAME), None).unwrap();
+        assert_eq!(entries.len(), 2);
+        let protected = entries.iter().find(|entry| entry.path == backup).unwrap();
+        assert!(protected.protected && protected.metadata_verified);
+        assert!(
+            entries
+                .iter()
+                .any(|entry| !entry.protected && entry.metadata_verified)
         );
     }
 

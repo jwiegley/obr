@@ -167,12 +167,14 @@ Ordinary import rejects any invalid issue record. If a pre-existing tracked
 JSONL is already malformed, use the explicit salvage flag:
 
 ```bash
-br sync --import-only --skip-invalid-records --json
+obr sync --import-only --skip-invalid-records --json
 ```
 
 Salvage does not weaken the default parser. It retains exact original bytes in
-a protected `.beads/.br_history/*pre-salvage*.jsonl` backup excluded from
-automatic age/count rotation, reports every rejected line in robot output,
+a protected `.obr/history/*pre-salvage*.jsonl` backup excluded from
+automatic age/count rotation. Salvage uses the same canonical history-write
+path as ordinary exports, so later exports do not move the receipt's backup.
+It reports every rejected line in robot output,
 refuses when no valid record would remain, and still hard-fails on
 merge-conflict markers. Explicit history pruning can still remove the backup.
 The cleaned file is conditionally published under the same JSONL-family
