@@ -10,7 +10,7 @@
 
 mod common;
 
-use common::cli::{ObrWorkspace, run_obr};
+use common::cli::{ObrWorkspace, read_export_issues, run_obr, run_obr_with_env};
 use std::fs;
 use std::thread;
 use std::time::Duration;
@@ -856,6 +856,52 @@ fn e2e_history_prune_json_output() {
     assert_eq!(json["action"], "prune", "action should be prune");
     assert!(json.get("deleted").is_some(), "should have deleted count");
     assert_eq!(json["keep"], 10, "keep should be 10");
+}
+
+#[test]
+fn e2e_history_automatic_budget_uses_obr_environment_only() {
+    let _log = common::test_log("e2e_history_automatic_budget_uses_obr_environment_only");
+    for (label, limit, legacy_limit, tiny) in [
+        ("tiny", " 1 ", "1073741824", true),
+        ("legacy_ignored", "1073741824", "1", false),
+        ("blank", " ", "1", false),
+        ("invalid", "invalid", "1", false),
+        ("overflow", "18446744073709551616", "1", false),
+    ] {
+        let mut workspace = setup_workspace_with_jsonl();
+        workspace.temp_dir.disable_cleanup(true);
+        eprintln!(
+            "HISTORY_BUDGET_FIXTURE {label} {}",
+            workspace.root.display()
+        );
+        let initial = list_backup_files(&workspace).len();
+        for index in 0..3 {
+            create_issue(
+                &workspace,
+                &format!("Budget {label} issue {index}"),
+                &format!("create_{label}_{index}"),
+            );
+            let flush = run_obr_with_env(
+                &workspace,
+                ["sync", "--flush-only", "--json"],
+                [
+                    ("OBR_HISTORY_MAX_BYTES", limit),
+                    ("BR_HISTORY_MAX_BYTES", legacy_limit),
+                ],
+                &format!("flush_{label}_{index}"),
+            );
+            assert!(flush.status.success(), "{label} flush failed: {flush:?}");
+        }
+
+        let backups = list_backup_files(&workspace);
+        let expected = if tiny { 1 } else { initial + 3 };
+        assert_eq!(backups.len(), expected, "{label}: {backups:?}");
+        assert_eq!(
+            read_export_issues(&workspace.root.join(".obr")).len(),
+            4,
+            "{label}: budget rotation must not change published task data"
+        );
+    }
 }
 
 #[test]

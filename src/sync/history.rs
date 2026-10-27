@@ -18,7 +18,7 @@ use std::io::{self, BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 
-/// Default logical-byte ceiling for ordinary `.br_history` backup pairs.
+/// Default logical-byte ceiling for ordinary `history/` backup pairs.
 /// Protected recovery evidence is excluded from automatic budget rotation.
 pub const DEFAULT_HISTORY_MAX_BYTES: u64 = 1_073_741_824;
 
@@ -766,7 +766,7 @@ fn rotate_history(history_dir: &Path, config: &HistoryConfig, target_key: &str) 
         tracing::debug!("Pruned {} old backup(s) for {}", deleted_count, target_key);
     }
 
-    let max_bytes = std::env::var("BR_HISTORY_MAX_BYTES")
+    let max_bytes = std::env::var("OBR_HISTORY_MAX_BYTES")
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
         .unwrap_or(DEFAULT_HISTORY_MAX_BYTES);

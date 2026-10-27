@@ -2039,8 +2039,9 @@ obr history <COMMAND>
 - Backups are created during `obr sync --flush-only` when overwriting a JSONL file inside `.obr/`, including custom `OBR_JSONL` paths that still target `.obr/`.
 - Ordinary automatic rotation applies a 1 GiB global logical-byte budget across
   all target stems after the per-target count/age limits. Set
-  `OBR_HISTORY_MAX_BYTES` to an integer byte count to override it. Protected
-  pre-salvage evidence is excluded from automatic rotation.
+  `OBR_HISTORY_MAX_BYTES` to an integer byte count to override it. Blank, invalid
+  or overflowing values use the default; legacy `BR_HISTORY_MAX_BYTES` is not
+  read. Protected pre-salvage evidence is excluded from automatic rotation.
 - Byte-budget pruning removes the oldest complete snapshot+metadata pairs
   deterministically. The globally newest pair is retained even when that one
   snapshot alone exceeds the budget; every older eligible pair is removed.
