@@ -1693,7 +1693,11 @@ mod tests {
 
     #[test]
     fn test_artifact_logger_writes_and_cleans() {
-        let suite = format!("harness_logger_{}", std::process::id());
+        let suite = format!(
+            "harness_logger_{}_{}",
+            std::process::id(),
+            module_path!().replace("::", "_")
+        );
         let test = "writes_and_cleans";
         let artifact_dir = PathBuf::from("target/test-artifacts")
             .join(&suite)
@@ -1762,7 +1766,11 @@ mod tests {
 
     #[test]
     fn test_artifact_logger_snapshot_writes_event() {
-        let suite = format!("harness_logger_snapshot_{}", std::process::id());
+        let suite = format!(
+            "harness_logger_snapshot_{}_{}",
+            std::process::id(),
+            module_path!().replace("::", "_")
+        );
         let test = "snapshot_event";
         let artifact_dir = PathBuf::from("target/test-artifacts")
             .join(&suite)
