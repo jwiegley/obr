@@ -3159,6 +3159,8 @@ fn e2e_parallel_writes_preserve_large_description_and_freelist() {
 
     let init = run_obr_in_dir(&root, ["init"]);
     assert!(init.success, "init failed: {}", init.stderr);
+    // This raw JSONL check must preserve the description's final newline.
+    common::cli::configure_jsonl_export(&root.join(".obr"));
 
     let description = overflow_page_description();
     assert!(description.len() > 14_000);

@@ -183,16 +183,26 @@ pub fn export_path(workspace: &ObrWorkspace) -> PathBuf {
     obr::config::computed_surface_path(&workspace.root)
 }
 
-/// Pin an initialized workspace to the legacy JSONL export format (Class A
-/// tests: they exercise JSONL-specific machinery, not the default path).
-///
-/// The default export is the Org surface; setting `metadata.json`'s
-/// `jsonl_export` to `issues.jsonl` makes it an explicit override
-/// (`resolve_jsonl_path` priority 2), which beats both discovery and the
-/// surface rule. Every seed `init` may have written — the tracked surface and
-/// the pre-D-SURFACE in-dir `issues.org` — is removed so discovery-order tests
-/// and directory assertions see a pure JSONL workspace.
-pub fn pin_jsonl(obr_dir: &Path) {
+/// Read the configured published artifact without querying the SQLite cache.
+pub fn read_export_issues(obr_dir: &Path) -> Vec<obr::model::Issue> {
+    let path = obr::config::resolve_paths(obr_dir, None)
+        .expect("resolve fixture export")
+        .jsonl_path;
+    let text = fs::read_to_string(&path).expect("read published fixture export");
+    match obr::sync::org_bridge::ExportFormat::for_path(&path) {
+        obr::sync::org_bridge::ExportFormat::Jsonl => text
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("parse published JSONL issue"))
+            .collect(),
+        obr::sync::org_bridge::ExportFormat::Org => {
+            obr::sync::org_bridge::org_text_to_issues(&text).expect("parse published Org issues")
+        }
+    }
+}
+
+/// Select JSONL for an empty initialized fixture without deleting its Org seed.
+pub fn configure_jsonl_export(obr_dir: &Path) {
     let metadata_path = obr_dir.join("metadata.json");
     let text = fs::read_to_string(&metadata_path).expect("read metadata.json");
     let mut value: serde_json::Value = serde_json::from_str(&text).expect("parse metadata.json");
@@ -207,6 +217,19 @@ pub fn pin_jsonl(obr_dir: &Path) {
     if !jsonl.exists() {
         fs::write(&jsonl, b"").expect("seed issues.jsonl");
     }
+}
+
+/// Pin an initialized workspace to the legacy JSONL export format (Class A
+/// tests: they exercise JSONL-specific machinery, not the default path).
+///
+/// The default export is the Org surface; setting `metadata.json`'s
+/// `jsonl_export` to `issues.jsonl` makes it an explicit override
+/// (`resolve_jsonl_path` priority 2), which beats both discovery and the
+/// surface rule. Every seed `init` may have written — the tracked surface and
+/// the pre-D-SURFACE in-dir `issues.org` — is removed so discovery-order tests
+/// and directory assertions see a pure JSONL workspace.
+pub fn pin_jsonl(obr_dir: &Path) {
+    configure_jsonl_export(obr_dir);
     let mut seeds = vec![obr_dir.join("issues.org")];
     if let Some(root) = obr_dir.parent() {
         seeds.push(obr::config::computed_surface_path(root));
@@ -608,5 +631,55 @@ mod tests {
             "workspace {} sits inside a obr workspace",
             workspace.root.display()
         );
+    }
+
+    #[test]
+    fn published_export_helpers_follow_metadata_without_deleting_seeds() {
+        let root = TempDir::new_in(isolated_temp_root()).unwrap().keep();
+        let obr_dir = root.join(".obr");
+        fs::create_dir(&obr_dir).unwrap();
+        let issue = obr::model::Issue {
+            id: "test-export".to_string(),
+            title: "Published export".to_string(),
+            description: Some("Recorded description".to_string()),
+            ..obr::model::Issue::default()
+        };
+        let jsonl = format!("{}\n", serde_json::to_string(&issue).unwrap());
+        let org = obr::sync::org_bridge::issues_to_org_text(std::slice::from_ref(&issue)).unwrap();
+        for (filename, text) in [("configured.jsonl", &jsonl), ("configured.org", &org)] {
+            fs::write(
+                obr_dir.join("metadata.json"),
+                serde_json::to_vec(&serde_json::json!({
+                    "database": "custom.db", "jsonl_export": filename
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            fs::write(obr_dir.join(filename), text).unwrap();
+            let exported = super::read_export_issues(&obr_dir);
+            assert_eq!(exported.len(), 1);
+            assert_eq!(exported[0].id, issue.id);
+            assert_eq!(exported[0].title, issue.title);
+            assert_eq!(exported[0].description, issue.description);
+        }
+
+        fs::write(root.join("PLAN.org"), &org).unwrap();
+        super::configure_jsonl_export(&obr_dir);
+        assert!(super::read_export_issues(&obr_dir).is_empty());
+        assert_eq!(fs::read_to_string(root.join("PLAN.org")).unwrap(), org);
+        assert_eq!(
+            fs::read_to_string(obr_dir.join("configured.org")).unwrap(),
+            org
+        );
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&fs::read(obr_dir.join("metadata.json")).unwrap()).unwrap();
+        assert_eq!(metadata["database"], "custom.db");
+        fs::write(obr_dir.join("issues.jsonl"), &jsonl).unwrap();
+        super::configure_jsonl_export(&obr_dir);
+        assert_eq!(
+            fs::read_to_string(obr_dir.join("issues.jsonl")).unwrap(),
+            jsonl
+        );
+        assert_eq!(super::read_export_issues(&obr_dir).len(), 1);
     }
 }

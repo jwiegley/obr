@@ -68,14 +68,12 @@ fn show_issue_json(workspace: &ObrWorkspace, issue_id: &str, label: &str) -> Vec
     serde_json::from_str(&extract_json_payload(&show.stdout)).expect("show json")
 }
 
-fn issue_from_jsonl(workspace: &ObrWorkspace, issue_id: &str) -> Value {
-    let jsonl_path = workspace.root.join(".obr").join("issues.jsonl");
-    let contents = fs::read_to_string(&jsonl_path).expect("read issues.jsonl");
-    contents
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).expect("parse issue jsonl line"))
-        .find(|issue| issue["id"].as_str() == Some(issue_id))
-        .expect("issue should exist in issues.jsonl")
+fn issue_from_export(workspace: &ObrWorkspace, issue_id: &str) -> Value {
+    let issue = common::cli::read_export_issues(&workspace.root.join(".obr"))
+        .into_iter()
+        .find(|issue| issue.id == issue_id)
+        .expect("issue should exist in the configured export");
+    serde_json::to_value(issue).expect("serialize published issue")
 }
 
 fn write_single_issue_jsonl(workspace: &ObrWorkspace, issue: &Value) {
@@ -103,9 +101,14 @@ fn switch_workspace_to_custom_database(workspace: &ObrWorkspace, database_name: 
     let old_db = obr_dir.join("obr.db");
     let new_db = obr_dir.join(database_name);
     fs::rename(&old_db, &new_db).expect("move db to custom metadata path");
+    let metadata_path = obr_dir.join("metadata.json");
+    let mut metadata: Value =
+        serde_json::from_slice(&fs::read(&metadata_path).expect("read metadata"))
+            .expect("parse metadata");
+    metadata["database"] = Value::String(database_name.to_string());
     fs::write(
-        obr_dir.join("metadata.json"),
-        format!(r#"{{"database":"{database_name}","jsonl_export":"issues.jsonl"}}"#),
+        &metadata_path,
+        serde_json::to_vec_pretty(&metadata).expect("serialize metadata"),
     )
     .expect("write metadata");
 }
@@ -762,7 +765,7 @@ fn e2e_routing_update_external_issue_via_main_workspace() {
     assert_eq!(shown.len(), 1);
     assert_eq!(shown[0]["status"].as_str(), Some("in_progress"));
 
-    let jsonl_issue = issue_from_jsonl(&external_workspace, &external_id);
+    let jsonl_issue = issue_from_export(&external_workspace, &external_id);
     assert_eq!(jsonl_issue["status"].as_str(), Some("in_progress"));
 }
 
@@ -914,7 +917,7 @@ fn e2e_routing_update_sets_invoking_workspace_last_touched_for_follow_up_close()
         serde_json::from_str(&extract_json_payload(&show_external.stdout)).expect("show json");
     assert_eq!(shown[0]["status"].as_str(), Some("closed"));
 
-    let jsonl_issue = issue_from_jsonl(&external_workspace, &external_id);
+    let jsonl_issue = issue_from_export(&external_workspace, &external_id);
     assert_eq!(jsonl_issue["status"].as_str(), Some("closed"));
 }
 
@@ -1057,7 +1060,7 @@ fn e2e_routing_close_sets_invoking_workspace_last_touched_for_follow_up_reopen()
         serde_json::from_str(&extract_json_payload(&show_external.stdout)).expect("show json");
     assert_eq!(shown[0]["status"].as_str(), Some("open"));
 
-    let jsonl_issue = issue_from_jsonl(&external_workspace, &external_id);
+    let jsonl_issue = issue_from_export(&external_workspace, &external_id);
     assert_eq!(jsonl_issue["status"].as_str(), Some("open"));
 }
 
@@ -1199,7 +1202,7 @@ fn e2e_routing_defer_and_undefer_external_issue_via_main_workspace() {
         serde_json::from_str(&extract_json_payload(&show_deferred.stdout)).expect("show json");
     assert_eq!(deferred_issue[0]["status"].as_str(), Some("deferred"));
 
-    let deferred_jsonl_issue = issue_from_jsonl(&external_workspace, &external_id);
+    let deferred_jsonl_issue = issue_from_export(&external_workspace, &external_id);
     assert_eq!(deferred_jsonl_issue["status"].as_str(), Some("deferred"));
 
     let undefer = run_obr(
@@ -1238,7 +1241,7 @@ fn e2e_routing_defer_and_undefer_external_issue_via_main_workspace() {
         serde_json::from_str(&extract_json_payload(&show_undeferred.stdout)).expect("show json");
     assert_eq!(undeferred_issue[0]["status"].as_str(), Some("open"));
 
-    let undeferred_jsonl_issue = issue_from_jsonl(&external_workspace, &external_id);
+    let undeferred_jsonl_issue = issue_from_export(&external_workspace, &external_id);
     assert_eq!(undeferred_jsonl_issue["status"].as_str(), Some("open"));
 }
 
@@ -1262,7 +1265,7 @@ fn e2e_routing_defer_and_undefer_import_stale_external_jsonl() {
     );
     let routed_input = routed_partial_id(&external_id);
 
-    let mut jsonl_issue = issue_from_jsonl(&external_workspace, &external_id);
+    let mut jsonl_issue = issue_from_export(&external_workspace, &external_id);
     jsonl_issue["title"] = Value::String("External defer title from JSONL".to_string());
     jsonl_issue["updated_at"] = Value::String("2099-01-01T00:00:00Z".to_string());
     write_single_issue_jsonl(&external_workspace, &jsonl_issue);
@@ -1284,7 +1287,7 @@ fn e2e_routing_defer_and_undefer_import_stale_external_jsonl() {
         Some("External defer title from JSONL")
     );
 
-    let deferred_jsonl_issue = issue_from_jsonl(&external_workspace, &external_id);
+    let deferred_jsonl_issue = issue_from_export(&external_workspace, &external_id);
     assert_eq!(
         deferred_jsonl_issue["title"].as_str(),
         Some("External defer title from JSONL")
@@ -1323,7 +1326,7 @@ fn e2e_routing_defer_and_undefer_import_stale_external_jsonl() {
         Some("External undefer title from JSONL")
     );
 
-    let undeferred_jsonl_issue = issue_from_jsonl(&external_workspace, &external_id);
+    let undeferred_jsonl_issue = issue_from_export(&external_workspace, &external_id);
     assert_eq!(
         undeferred_jsonl_issue["title"].as_str(),
         Some("External undefer title from JSONL")
@@ -1616,7 +1619,7 @@ fn e2e_routing_comments_list_imports_stale_external_jsonl() {
     );
     let routed_input = routed_partial_id(&external_id);
 
-    let mut jsonl_issue = issue_from_jsonl(&external_workspace, &external_id);
+    let mut jsonl_issue = issue_from_export(&external_workspace, &external_id);
     jsonl_issue["comments"] = serde_json::json!([
         {
             "id": 1,
@@ -2028,7 +2031,7 @@ fn e2e_routing_delete_external_issue_via_main_workspace() {
     assert_eq!(json["deleted_count"].as_u64(), Some(1));
     assert_eq!(json["deleted"][0].as_str(), Some(issue_id.as_str()));
 
-    let external_issue = issue_from_jsonl(&external_workspace, &issue_id);
+    let external_issue = issue_from_export(&external_workspace, &issue_id);
     assert_eq!(external_issue["status"].as_str(), Some("tombstone"));
 }
 
@@ -2141,10 +2144,10 @@ fn e2e_routing_delete_preview_does_not_mutate_earlier_local_batch() {
         "preview should include the routed external issue"
     );
 
-    let local_issue = issue_from_jsonl(&main_workspace, &local_id);
+    let local_issue = issue_from_export(&main_workspace, &local_id);
     assert_eq!(local_issue["status"].as_str(), Some("open"));
 
-    let external_issue = issue_from_jsonl(&external_workspace, &blocker_id);
+    let external_issue = issue_from_export(&external_workspace, &blocker_id);
     assert_eq!(external_issue["status"].as_str(), Some("open"));
 }
 
@@ -2229,11 +2232,11 @@ fn e2e_routing_delete_force_dry_run_reports_orphans_not_cascade() {
         "force dry-run must not report cascade deletes: {json}"
     );
 
-    let blocker_issue = issue_from_jsonl(&external_workspace, &blocker_id);
+    let blocker_issue = issue_from_export(&external_workspace, &blocker_id);
     assert_eq!(blocker_issue["status"].as_str(), Some("open"));
-    let child_issue = issue_from_jsonl(&external_workspace, &child_id);
+    let child_issue = issue_from_export(&external_workspace, &child_id);
     assert_eq!(child_issue["status"].as_str(), Some("open"));
-    let grandchild_issue = issue_from_jsonl(&external_workspace, &grandchild_id);
+    let grandchild_issue = issue_from_export(&external_workspace, &grandchild_id);
     assert_eq!(grandchild_issue["status"].as_str(), Some("open"));
 }
 
@@ -3022,6 +3025,15 @@ fn e2e_routing_show_mixed_no_db_batches_preserve_local_db_override() {
         .as_str()
         .expect("local issue id")
         .to_string();
+    let local_export =
+        obr::config::resolve_paths(&main_workspace.root.join(".obr"), Some(&local_db))
+            .expect("resolve local override export")
+            .jsonl_path;
+    assert!(
+        local_export.is_file(),
+        "local create did not publish its resolved override export: {}",
+        local_export.display()
+    );
 
     let create_external = run_obr(
         &external_workspace,
@@ -3054,7 +3066,7 @@ fn e2e_routing_show_mixed_no_db_batches_preserve_local_db_override() {
         ],
         "show_mixed_routed_override_jsonl",
     );
-    assert!(show.status.success(), "show failed: {}", show.stderr);
+    assert!(show.status.success(), "show failed: {show:?}");
     let shown: Vec<Value> =
         serde_json::from_str(&extract_json_payload(&show.stdout)).expect("show json");
     assert_eq!(shown.len(), 2);

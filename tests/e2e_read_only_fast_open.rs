@@ -546,6 +546,7 @@ fn cli_fast_open_healing_reuses_its_authority_for_a_newer_jsonl_import() {
         common::test_log("cli_fast_open_healing_reuses_its_authority_for_a_newer_jsonl_import");
     let workspace = ObrWorkspace::new();
     run_success(&workspace, &["init"], "init");
+    common::cli::configure_jsonl_export(&workspace.root.join(".obr"));
     let issue_id = create_issue(
         &workspace,
         &["create", "Database-side title"],

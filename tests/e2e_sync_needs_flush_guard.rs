@@ -329,6 +329,8 @@ fn e2e_hard_delete_removes_capacity_occupancy_and_preserves_db_health() {
     let workspace = ObrWorkspace::new();
     let init = run_obr(&workspace, ["init"], "init");
     assert!(init.status.success(), "init failed: {}", init.stderr);
+    // Reviewed-additive health validation requires its explicit JSONL source.
+    common::cli::configure_jsonl_export(&workspace.root.join(".obr"));
 
     let create = run_obr(&workspace, ["create", "Occupied victim"], "create_victim");
     assert!(create.status.success(), "create failed: {}", create.stderr);
