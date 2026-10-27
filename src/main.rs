@@ -3235,14 +3235,16 @@ mod tests {
                 .expect("open original database read-only"),
         );
 
-        let displaced_path = beads_dir.join("beads.displaced.db");
-        fs::rename(&paths.db_path, &displaced_path).expect("displace original database");
-        let mut replacement = beads_rust::storage::SqliteStorage::open(&paths.db_path)
-            .expect("create canonical replacement");
+        let replacement_path = beads_dir.join("prepared-replacement.db");
+        let mut replacement = beads_rust::storage::SqliteStorage::open(&replacement_path)
+            .expect("prepare replacement before displacing the active generation");
         replacement
             .set_metadata("fast_open_inode_marker", "replacement")
             .expect("mark replacement database");
         drop(replacement);
+        let displaced_path = beads_dir.join("beads.displaced.db");
+        fs::rename(&paths.db_path, &displaced_path).expect("displace original database");
+        fs::rename(&replacement_path, &paths.db_path).expect("install prepared replacement");
 
         let authority = Arc::new(
             beads_rust::sync::blocking_database_family_write_lock_with_timeout(

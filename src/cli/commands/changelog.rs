@@ -654,11 +654,15 @@ mod tests {
         commit_file(&repo_root, "initial", "2024-03-01T00:00:00Z");
 
         let tag = Command::new("git")
-            .args(["tag", "v1"])
+            .args(["-c", "tag.gpgsign=false", "tag", "v1"])
             .current_dir(&repo_root)
             .output()
             .unwrap();
-        assert!(tag.status.success(), "git tag failed");
+        assert!(
+            tag.status.success(),
+            "git tag failed: {}",
+            String::from_utf8_lossy(&tag.stderr)
+        );
 
         let dt = git_tag_date("v1", Some(&repo_root)).unwrap();
         assert_eq!(dt, Utc.with_ymd_and_hms(2024, 3, 1, 0, 0, 0).unwrap());

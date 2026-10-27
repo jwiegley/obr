@@ -10,8 +10,8 @@ This directory also preserves inventories that no longer govern a gate:
   such note per lint kind per compilation unit; the recording reported ~86
   individual first-party errors. `scripts/lint-gate.sh` no longer reads this
   inventory or grants any allowance. The file remains historical evidence.
-- **unit tests** (`cargo test --lib --bins`): 2 failures, in
-  `unit-failures-baseline-Darwin.txt`.
+- **unit tests** (`cargo test --lib --bins`): no allowed failures; the retained
+  `unit-failures-baseline-Darwin.txt` is empty.
 - **the curated integration set** (`vocabulary_lint`, `golden_obr_init`,
   `golden_rich_panels`): **no inventory file, by design** — all three are
   green everywhere they run and `scripts/unit-gate.sh` phase 2 demands a
@@ -167,13 +167,22 @@ Listing them would absolve tests that are usually green, which is worse than
 an occasional hook re-run. Tightening the assertions themselves is the real
 fix and is still open.
 
-## Known pre-existing failures
+## Resolved upstream unit fixture debt
 
-Both entries in the Darwin inventory are upstream debt, verified against an
-untouched upstream worktree:
+The Darwin inventory formerly held two failures verified against an untouched
+upstream worktree. Both fixtures now exercise the host honestly rather than
+requiring an allowance:
 
-- `cli::commands::changelog::tests::test_git_tag_date_falls_back_for_lightweight_tags`
-- `cli::commands::vcs::tests::non_utf8_jsonl_leaf_is_observed_without_lossy_argument_conversion`
+- `test_git_tag_date_falls_back_for_lightweight_tags` explicitly disables tag
+  signing for its owned lightweight-tag command, independent of user config.
+- `non_utf8_jsonl_leaf_is_observed_losslessly_or_explicitly_refused` retains
+  the real Git/lossless-path assertions when the filesystem supports the name.
+  If the filesystem refuses creation with `EILSEQ`, a real replacement-character
+  filename is planted as a control: raw source capture must not resolve to it.
+  This proves refusal without claiming APFS supports invalid-UTF-8 filenames.
+
+The inventory file remains present but empty; neither fixture is ignored and
+no new failure name is granted an allowance.
 
 Outside the unit suite,
 `tests/workflow_action_pins.rs::repository_workflow_action_pins_are_inventory_backed`

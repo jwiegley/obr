@@ -2083,7 +2083,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn non_utf8_jsonl_leaf_is_observed_without_lossy_argument_conversion() {
+    fn non_utf8_jsonl_leaf_is_observed_losslessly_or_explicitly_refused() {
         use std::os::unix::ffi::OsStringExt;
 
         let temp = TempDir::new().expect("temp dir");
@@ -2091,7 +2091,24 @@ mod tests {
         fs::create_dir_all(&obr_dir).expect("obr dir");
         let file_name = OsString::from_vec(b"issues-\xff.jsonl".to_vec());
         let path = obr_dir.join(&file_name);
-        fs::write(&path, b"{\"id\":\"bd-x\"}\n").expect("jsonl");
+        if let Err(error) = fs::write(&path, b"{\"id\":\"bd-x\"}\n") {
+            assert_eq!(error.raw_os_error(), Some(libc::EILSEQ), "{error}");
+            let lookalike = obr_dir.join(file_name.to_string_lossy().as_ref());
+            fs::write(&lookalike, b"{\"id\":\"bd-lookalike\"}\n").expect("lossy-name control");
+            assert!(
+                crate::sync::capture_optional_jsonl_source(&lookalike)
+                    .expect("capture representable control")
+                    .is_some()
+            );
+            assert!(
+                crate::sync::capture_optional_jsonl_source(&path)
+                    .expect("raw missing source probe")
+                    .is_none(),
+                "raw path must not resolve to its lossy-name control"
+            );
+            eprintln!("NON_UTF8_FIXTURE_REFUSED {error}; no lossy source substitution");
+            return;
+        }
 
         let init = Command::new("git")
             .args(["init", "--initial-branch=main"])
