@@ -14590,11 +14590,17 @@ fn stream_import_actions_in_tx(
     Ok(tx_result)
 }
 
-/// Materialize legacy schema defaults that are written even when older JSONL
-/// records omit the corresponding optional fields.
+/// Materialize the issue and dependency defaults written for omitted import fields.
 pub(crate) fn canonicalize_persisted_issue_defaults(issue: &mut Issue) {
     issue.source_repo.get_or_insert_with(|| ".".to_string());
     issue.original_size.get_or_insert(0);
+    for dependency in &mut issue.dependencies {
+        dependency
+            .created_by
+            .get_or_insert_with(|| "import".to_string());
+        dependency.metadata.get_or_insert_with(|| "{}".to_string());
+        dependency.thread_id.get_or_insert_with(String::new);
+    }
 }
 
 /// Compare every persisted import field while retaining the order-independent
@@ -14615,9 +14621,14 @@ fn verify_applied_import_issue_semantics(
         return Ok(());
     }
 
-    let ids = expected_issues
+    // Multiple applied records can target one ID; only the last write remains persisted.
+    let expected_by_id = expected_issues
         .iter()
-        .map(|issue| issue.id.clone())
+        .map(|issue| (issue.id.as_str(), issue))
+        .collect::<BTreeMap<_, _>>();
+    let ids = expected_by_id
+        .keys()
+        .map(|id| (*id).to_owned())
         .collect::<Vec<_>>();
     let actual_by_id = storage
         .get_issues_for_export(&ids)?
@@ -14625,7 +14636,7 @@ fn verify_applied_import_issue_semantics(
         .map(|issue| (issue.id.clone(), issue))
         .collect::<HashMap<_, _>>();
 
-    for expected in expected_issues {
+    for expected in expected_by_id.into_values() {
         let actual = actual_by_id.get(&expected.id).ok_or_else(|| {
             BeadsError::SyncConflict {
                 message: format!(
@@ -21977,7 +21988,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = import_from_jsonl(
+        let mut result = import_from_jsonl(
             &mut storage,
             &jsonl_path,
             &ImportConfig::default(),
@@ -21985,6 +21996,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result.applied_issues.len(), 1);
+        let mut superseded = result.applied_issues[0].clone();
+        superseded.title = "Superseded title".to_string();
+        superseded.content_hash = Some(crate::util::content_hash(&superseded));
+        result.applied_issues.insert(0, superseded);
+        verify_applied_import_issue_semantics(&storage, &result.applied_issues)
+            .expect("the final applied payload is the persisted expectation");
 
         storage
             .execute_raw(
@@ -21998,6 +22015,35 @@ mod tests {
                 .contains("does not match its normalized JSONL payload"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn test_persisted_import_dependency_defaults_preserve_explicit_fields() {
+        let mut issue = make_test_issue("bd-defaults", "Dependency defaults");
+        let missing = crate::model::Dependency {
+            issue_id: issue.id.clone(),
+            depends_on_id: "bd-parent".to_string(),
+            dep_type: crate::model::DependencyType::Blocks,
+            created_at: issue.created_at,
+            created_by: None,
+            metadata: None,
+            thread_id: None,
+        };
+        let explicit = crate::model::Dependency {
+            depends_on_id: "bd-explicit".to_string(),
+            created_by: Some(String::new()),
+            metadata: Some("{\"reason\":\"explicit\"}".to_string()),
+            thread_id: Some("thread-1".to_string()),
+            ..missing.clone()
+        };
+        issue.dependencies = vec![missing, explicit.clone()];
+
+        canonicalize_persisted_issue_defaults(&mut issue);
+
+        assert_eq!(issue.dependencies[0].created_by.as_deref(), Some("import"));
+        assert_eq!(issue.dependencies[0].metadata.as_deref(), Some("{}"));
+        assert_eq!(issue.dependencies[0].thread_id.as_deref(), Some(""));
+        assert_eq!(issue.dependencies[1], explicit);
     }
 
     #[test]
