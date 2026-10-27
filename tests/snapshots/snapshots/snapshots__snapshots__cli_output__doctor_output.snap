@@ -42,7 +42,7 @@ OK wal_size
 OK db.recovery_artifacts
 OK db.recovery_artifacts.aged
 OK db.foreign_recovery_debris
-OK db.sidecars: SHM sidecar at /TMP/.obr/obr.ID-REDACTED is inert beside the WAL (a ID-REDACTED family is expected for frankensqlite; the WAL index lives in process memory)
+OK db.sidecars: WAL sidecar has a matching SHM sidecar at /TMP/.obr/obr.ID-REDACTED (ID-REDACTED ID-REDACTED bookkeeping; not an anomaly by file presence alone)
 OK schema.tables
 OK schema.columns
 OK db.recoverable_anomalies

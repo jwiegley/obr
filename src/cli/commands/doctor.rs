@@ -1939,12 +1939,42 @@ fn is_benign_post_rebuild_finding(check: &CheckResult) -> bool {
 fn jsonl_rebuild_repair_verified(
     report: &DoctorReport,
     preserved_dirty_issue_ids: &[String],
+    verified_backups: &[config::RecoveryBackupVerification],
 ) -> bool {
+    if let Err(error) = config::verify_recovery_backup_receipts(verified_backups) {
+        tracing::error!(%error, "Recovery evidence changed before post-repair verification");
+        return false;
+    }
     report.ok
         && report.checks.iter().all(|check| {
             matches!(check.status, CheckStatus::Ok)
                 || is_benign_post_rebuild_finding(check)
+                || is_verified_rebuild_backup_warning(check, verified_backups)
                 || is_preserved_dirty_count_divergence(check, preserved_dirty_issue_ids)
+        })
+}
+
+fn is_verified_rebuild_backup_warning(
+    check: &CheckResult,
+    verified_backups: &[config::RecoveryBackupVerification],
+) -> bool {
+    if check.name != "db.recovery_artifacts.aged" || check.status != CheckStatus::Warn {
+        return false;
+    }
+    let Some(artifacts) = check
+        .details
+        .as_ref()
+        .and_then(|details| details.get("artifacts"))
+        .and_then(serde_json::Value::as_array)
+    else {
+        return false;
+    };
+    // Quarantine retains old mtimes; only this repair's reverified receipts explain them.
+    !artifacts.is_empty()
+        && artifacts.iter().all(|artifact| {
+            artifact
+                .as_str()
+                .is_some_and(|path| verified_backups.iter().any(|backup| backup.backup == path))
         })
 }
 
@@ -1962,7 +1992,7 @@ fn jsonl_rebuild_repair_verified(
 /// A quarantine preserves no dirty rows, so this is the rebuild predicate with
 /// an empty preserved set rather than a second copy of the same rule.
 fn quarantine_repair_verified(report: &DoctorReport) -> bool {
-    jsonl_rebuild_repair_verified(report, &[])
+    jsonl_rebuild_repair_verified(report, &[], &[])
 }
 
 /// GitHub #394: a rebuild that preserved dirty unflushed issues leaves the
@@ -10732,6 +10762,7 @@ fn fix_recovery_artifacts_aged_if_warned(
     obr_dir: &Path,
     db_path: &Path,
     report: &DoctorReport,
+    allow_repeated_repair: bool,
     ctx: &OutputContext,
     session: Option<&mut DoctorRepairSession>,
 ) -> bool {
@@ -10769,6 +10800,10 @@ fn fix_recovery_artifacts_aged_if_warned(
     session.set_fixer("doctor.recovery_artifacts_aged_quarantine");
     let mut quarantined = 0_usize;
     for source in &aged {
+        // Failure evidence must still gate rebuilds unless the operator permits retry.
+        if !allow_repeated_repair && is_failed_jsonl_rebuild_artifact(source) {
+            continue;
+        }
         let Some(name) = source.file_name() else {
             continue;
         };
@@ -13860,6 +13895,7 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
                 &obr_dir,
                 &paths.db_path,
                 &initial.report,
+                args.allow_repeated_repair,
                 ctx,
                 session.as_mut(),
             );
@@ -14730,6 +14766,7 @@ pub fn execute(args: &DoctorArgs, cli: &config::CliOverrides, ctx: &OutputContex
     let post_repair_verified = jsonl_rebuild_repair_verified(
         &post_repair.report,
         &repair_result.preserved_dirty_issue_ids,
+        &repair_result.verified_backups,
     );
     let verification_failure_marker = if post_repair_verified {
         None
@@ -24370,7 +24407,53 @@ mod tests {
         // Strict verifier (used by the light-repair path) rejects these...
         assert!(!repair_report_verified(&report));
         // ...but the rebuild path's verifier tolerates them.
-        assert!(jsonl_rebuild_repair_verified(&report, &[]));
+        assert!(jsonl_rebuild_repair_verified(&report, &[], &[]));
+    }
+
+    #[test]
+    fn jsonl_rebuild_verification_rechecks_exact_owned_aged_backups() {
+        let root = TempDir::new().unwrap().keep();
+        eprintln!("RECOVERY_OWNED_RECEIPT_FIXTURE {}", root.display());
+        let backup = root.join("obr.db.owned.bak");
+        fs::write(&backup, b"").unwrap();
+        let backup_name = backup.display().to_string();
+        let receipts = [config::RecoveryBackupVerification {
+            original: root.join("obr.db").display().to_string(),
+            backup: backup_name.clone(),
+            kind: "file".to_string(),
+            size_bytes: Some(0),
+            sha256: Some(
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string(),
+            ),
+            symlink_target: None,
+        }];
+        let mut report = report_with(vec![CheckResult {
+            name: "db.recovery_artifacts.aged".to_string(),
+            status: CheckStatus::Warn,
+            message: None,
+            details: Some(serde_json::json!({ "artifacts": [backup_name.clone()] })),
+        }]);
+        assert!(!jsonl_rebuild_repair_verified(&report, &[], &[]));
+        assert!(jsonl_rebuild_repair_verified(&report, &[], &receipts));
+
+        let foreign = root.join("obr.db.foreign.bak").display().to_string();
+        for artifacts in [
+            serde_json::json!([]),
+            serde_json::json!([foreign.clone()]),
+            serde_json::json!([backup_name.clone(), foreign]),
+            serde_json::json!([backup_name.clone(), null]),
+        ] {
+            report.checks[0].details = Some(serde_json::json!({ "artifacts": artifacts }));
+            assert!(!jsonl_rebuild_repair_verified(&report, &[], &receipts));
+        }
+        report.checks[0].details = None;
+        assert!(!jsonl_rebuild_repair_verified(&report, &[], &receipts));
+        report.checks[0].details = Some(serde_json::json!({ "artifacts": [backup_name] }));
+        report.checks[0].status = CheckStatus::Error;
+        assert!(!jsonl_rebuild_repair_verified(&report, &[], &receipts));
+        report.checks[0].status = CheckStatus::Warn;
+        fs::write(&backup, b"changed evidence").unwrap();
+        assert!(!jsonl_rebuild_repair_verified(&report, &[], &receipts));
     }
 
     #[test]
@@ -24388,7 +24471,7 @@ mod tests {
                 details: None,
             }],
         };
-        assert!(!jsonl_rebuild_repair_verified(&error_report, &[]));
+        assert!(!jsonl_rebuild_repair_verified(&error_report, &[], &[]));
 
         // A non-benign WARN (page anomaly) is NOT tolerated even though
         // report.ok is true: it signals residual corruption after rebuild.
@@ -24403,7 +24486,7 @@ mod tests {
                 details: None,
             }],
         };
-        assert!(!jsonl_rebuild_repair_verified(&page_warn_report, &[]));
+        assert!(!jsonl_rebuild_repair_verified(&page_warn_report, &[], &[]));
 
         // A db.sidecars ERROR (dangling non-file sidecar) is not tolerated
         // even though the check name is on the benign list.
@@ -24418,7 +24501,11 @@ mod tests {
                 details: None,
             }],
         };
-        assert!(!jsonl_rebuild_repair_verified(&sidecar_error_report, &[]));
+        assert!(!jsonl_rebuild_repair_verified(
+            &sidecar_error_report,
+            &[],
+            &[]
+        ));
     }
 
     /// Build a `sync.metadata` WARN carrying the drift flags `check_sync_metadata`
@@ -24456,7 +24543,7 @@ mod tests {
         // preserving local state, not a defect, and it must not make a
         // successful repair exit 7.
         let report = report_with(vec![sync_metadata_warn(false, true)]);
-        assert!(jsonl_rebuild_repair_verified(&report, &[]));
+        assert!(jsonl_rebuild_repair_verified(&report, &[], &[]));
         // The strict verifier used by the light-repair path is unchanged.
         assert!(!repair_report_verified(&report));
     }
@@ -24468,11 +24555,13 @@ mod tests {
         // did not land what it read.
         assert!(!jsonl_rebuild_repair_verified(
             &report_with(vec![sync_metadata_warn(true, false)]),
+            &[],
             &[]
         ));
         // Divergence (both directions) is likewise not benign.
         assert!(!jsonl_rebuild_repair_verified(
             &report_with(vec![sync_metadata_warn(true, true)]),
+            &[],
             &[]
         ));
     }
@@ -24489,6 +24578,7 @@ mod tests {
         assert!(!is_pending_export_only_sync_metadata(&no_details));
         assert!(!jsonl_rebuild_repair_verified(
             &report_with(vec![no_details]),
+            &[],
             &[]
         ));
 
@@ -24533,10 +24623,10 @@ mod tests {
         // verification.
         let preserved = vec!["bd-kept".to_string()];
         let report = report_with(vec![count_divergence_warn(&["bd-kept"], &[])]);
-        assert!(jsonl_rebuild_repair_verified(&report, &preserved));
+        assert!(jsonl_rebuild_repair_verified(&report, &preserved, &[]));
 
         // Without a preserved set, the same divergence stays fatal.
-        assert!(!jsonl_rebuild_repair_verified(&report, &[]));
+        assert!(!jsonl_rebuild_repair_verified(&report, &[], &[]));
     }
 
     #[test]
@@ -24546,13 +24636,15 @@ mod tests {
         // A DB-only id we did NOT restore is unexplained drift.
         assert!(!jsonl_rebuild_repair_verified(
             &report_with(vec![count_divergence_warn(&["bd-kept", "bd-mystery"], &[])]),
-            &preserved
+            &preserved,
+            &[]
         ));
 
         // A row missing from the DB is record loss, never benign.
         assert!(!jsonl_rebuild_repair_verified(
             &report_with(vec![count_divergence_warn(&["bd-kept"], &["bd-lost"])]),
-            &preserved
+            &preserved,
+            &[]
         ));
 
         // A warn without the id_delta details cannot be attributed.
@@ -24564,7 +24656,8 @@ mod tests {
         };
         assert!(!jsonl_rebuild_repair_verified(
             &report_with(vec![bare_warn]),
-            &preserved
+            &preserved,
+            &[]
         ));
 
         // A clipped preview (only_db shorter than only_db_count) cannot
@@ -24575,7 +24668,8 @@ mod tests {
         }
         assert!(!jsonl_rebuild_repair_verified(
             &report_with(vec![clipped]),
-            &preserved
+            &preserved,
+            &[]
         ));
     }
 
@@ -27110,6 +27204,67 @@ version = "2026-05-11-abc123"
         );
     }
 
+    #[test]
+    fn aged_recovery_cleanup_preserves_repeat_repair_refusal() {
+        let root = TempDir::new().unwrap().keep();
+        eprintln!("AGED_RECOVERY_MARKER_FIXTURE {}", root.display());
+        let obr_dir = root.join(".obr");
+        let recovery = obr_dir.join(config::RECOVERY_DIR_NAME);
+        fs::create_dir_all(&recovery).unwrap();
+        let db_path = obr_dir.join(config::DEFAULT_DB_FILENAME);
+        let marker = recovery.join("obr.db.previous.rebuild-failed");
+        let evidence = b"prior failed rebuild must require explicit approval";
+        fs::write(&marker, evidence).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&marker)
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH)
+            .unwrap();
+        let report = report_with(vec![CheckResult {
+            name: "db.recovery_artifacts.aged".to_string(),
+            status: CheckStatus::Warn,
+            message: None,
+            details: None,
+        }]);
+        let ctx = OutputContext::from_output_format(crate::cli::OutputFormat::Json, false, true);
+        let mut session = DoctorRepairSession::new(&root, false).unwrap();
+        assert!(!fix_recovery_artifacts_aged_if_warned(
+            &obr_dir,
+            &db_path,
+            &report,
+            false,
+            &ctx,
+            Some(&mut session),
+        ));
+        assert_eq!(fs::read(&marker).unwrap(), evidence);
+        assert!(
+            repeated_jsonl_rebuild_refusal_reason(&obr_dir, &db_path, false)
+                .unwrap()
+                .is_some()
+        );
+        assert!(fix_recovery_artifacts_aged_if_warned(
+            &obr_dir,
+            &db_path,
+            &report,
+            true,
+            &ctx,
+            Some(&mut session),
+        ));
+        let preserved = session
+            .run
+            .root
+            .join("quarantine/.obr")
+            .join(config::RECOVERY_DIR_NAME)
+            .join(marker.file_name().unwrap());
+        assert_eq!(fs::read(preserved).unwrap(), evidence);
+        assert!(
+            repeated_jsonl_rebuild_refusal_reason(&obr_dir, &db_path, false)
+                .unwrap()
+                .is_none()
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_fix_recovery_artifacts_aged_is_idempotent_no_op_on_second_call() {
@@ -27171,6 +27326,7 @@ version = "2026-05-11-abc123"
             &obr_dir,
             &db_path,
             &report,
+            false,
             &ctx,
             Some(&mut session),
         ));
@@ -27187,6 +27343,7 @@ version = "2026-05-11-abc123"
             &obr_dir,
             &db_path,
             &report,
+            false,
             &ctx,
             Some(&mut session),
         ));

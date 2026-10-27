@@ -2502,9 +2502,15 @@ fn verify_recovery_backup_manifest(backup_set: &RecoveryBackupSet) -> Result<()>
 
 fn verify_recovery_backup_set(backup_set: &RecoveryBackupSet) -> Result<()> {
     verify_recovery_backup_manifest(backup_set)?;
-    for ((_, backup), verification) in backup_set.files.iter().zip(&backup_set.verified_files) {
+    verify_recovery_backup_receipts(&backup_set.verified_files)
+}
+
+pub(crate) fn verify_recovery_backup_receipts(
+    receipts: &[RecoveryBackupVerification],
+) -> Result<()> {
+    for verification in receipts {
         verify_recovery_backup_artifact(
-            backup,
+            Path::new(&verification.backup),
             &expected_recovery_artifact_fingerprint(verification),
         )?;
     }

@@ -1858,6 +1858,15 @@ Checks database integrity, schema compatibility, and configuration.
 | `--repair` | Attempt to repair detected issues by rebuilding DB from JSONL |
 | `--allow-repeated-repair` | Allow another JSONL rebuild after prior failed recovery evidence |
 
+Recovery backups retain their original bytes and modification times. JSONL
+rebuild verification accepts an aged-artifact warning only when every listed
+path belongs to this repair's reverified backup receipts. The warning remains
+visible; unrelated, malformed, or changed evidence still prevents verification.
+
+Automatic aged-artifact quarantine retains failed-rebuild markers unless
+`--allow-repeated-repair` is supplied, so cleanup cannot silently remove the
+evidence that requires explicit retry approval.
+
 #### Reviewed schema migration
 
 Ordinary commands never upgrade an existing database across a schema-version

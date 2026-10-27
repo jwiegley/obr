@@ -16,10 +16,12 @@ struct FixtureWorkspace {
 }
 
 fn fixture_workspace(name: &str) -> FixtureWorkspace {
-    let isolated = isolated_workspace_failure_fixture(name).expect("isolated fixture");
+    let mut isolated = isolated_workspace_failure_fixture(name).expect("isolated fixture");
+    isolated.temp_dir.disable_cleanup(true);
     let metadata = isolated.fixture.metadata.clone();
     let root = isolated.root.clone();
     let obr_dir = isolated.obr_dir.clone();
+    eprintln!("WORKSPACE_REPLAY_FIXTURE {name} {}", root.display());
     let log_dir = root.join("logs");
     fs::create_dir_all(&log_dir).expect("log dir");
 
@@ -56,7 +58,7 @@ fn fixture_workspace(name: &str) -> FixtureWorkspace {
 }
 
 fn prepare_current_corrupt_db_text(fixture: &FixtureWorkspace) {
-    preserve_unowned_malformed_primary_wal(fixture);
+    assert_malformed_primary_without_wal(fixture);
 }
 
 fn prepare_current_interrupted_rebuild_leftovers(fixture: &FixtureWorkspace) {
@@ -64,32 +66,32 @@ fn prepare_current_interrupted_rebuild_leftovers(fixture: &FixtureWorkspace) {
     let backup_path = fixture.obr_dir.join("obr.db.bad_20260312T000000Z");
     let marker_path = fixture
         .obr_dir
-        .join(".obr_recovery")
+        .join("recovery")
         .join("obr.db.20260312T000000Z.rebuild-failed");
     let db_bytes = fs::read(&db_path).expect("read interrupted-rebuild live database");
     let backup_bytes = fs::read(&backup_path).expect("read interrupted-rebuild backup");
     let marker_bytes = fs::read(&marker_path).expect("read interrupted-rebuild marker");
 
-    preserve_unowned_malformed_primary_wal(fixture);
+    assert_malformed_primary_without_wal(fixture);
 
     assert_eq!(
         fs::read(db_path).expect("reread interrupted-rebuild live database"),
         db_bytes,
-        "WAL normalization must not change the malformed live database"
+        "fixture topology validation must not change the malformed live database"
     );
     assert_eq!(
         fs::read(backup_path).expect("reread interrupted-rebuild backup"),
         backup_bytes,
-        "WAL normalization must not change the preserved backup"
+        "fixture topology validation must not change the preserved backup"
     );
     assert_eq!(
         fs::read(marker_path).expect("reread interrupted-rebuild marker"),
         marker_bytes,
-        "WAL normalization must not change the rebuild-failure marker"
+        "fixture topology validation must not change the rebuild-failure marker"
     );
 }
 
-fn preserve_unowned_malformed_primary_wal(fixture: &FixtureWorkspace) {
+fn assert_malformed_primary_without_wal(fixture: &FixtureWorkspace) {
     let db_path = current_database_path(fixture);
     let db_bytes = fs::read(&db_path).expect("read malformed-primary fixture database");
     assert!(
@@ -98,37 +100,15 @@ fn preserve_unowned_malformed_primary_wal(fixture: &FixtureWorkspace) {
     );
 
     let wal_path = PathBuf::from(format!("{}-wal", db_path.display()));
-    let wal_bytes = fs::read(&wal_path)
-        .expect("malformed-primary fixture should retain its historical WAL artifact");
+    let wal_state = fs::symlink_metadata(&wal_path);
     assert!(
-        !wal_bytes.is_empty(),
-        "malformed-primary fixture WAL artifact must be nonempty"
-    );
-
-    // These fixtures intentionally present a plain-text primary database with
-    // valid JSONL available for recovery. Their historical captures also
-    // retained a committed legacy-schema WAL, which creates a different,
-    // deliberately fail-closed boundary: br must not discard committed frames
-    // when the main header cannot establish their authority. Keep that source
-    // artifact byte-for-byte in each isolated replay, but move it out of the
-    // active database family so the cases exercise the malformed-primary and
-    // recovery-debris contracts described by their fixture manifests.
-    preserve_generated_artifact(fixture, &wal_path);
-
-    let archived_wal = fixture
-        .obr_dir
-        .join(".fixture_current_import_artifacts")
-        .join("beads.db-wal");
-    assert!(!wal_path.exists(), "fixture WAL should not remain active");
-    assert_eq!(
-        fs::read(archived_wal).expect("read preserved malformed-primary fixture WAL"),
-        wal_bytes,
-        "preserved fixture WAL should retain its exact bytes"
+        matches!(&wal_state, Err(error) if error.kind() == std::io::ErrorKind::NotFound),
+        "the malformed-primary manifest does not declare a WAL: {wal_state:?}"
     );
     assert_eq!(
         fs::read(db_path).expect("reread malformed-primary fixture database"),
         db_bytes,
-        "preserving the unrelated WAL must not change the malformed primary"
+        "fixture topology validation must not change the malformed primary"
     );
 }
 
@@ -259,7 +239,7 @@ fn prepare_current_wal_without_shm(fixture: &FixtureWorkspace) {
     let wal_path = PathBuf::from(format!("{}-wal", db_path.display()));
     let shm_path = PathBuf::from(format!("{}-shm", db_path.display()));
     let historical_wal = fs::read(&wal_path).expect("read historical WAL-only fixture");
-    let import_recovery = fixture.obr_dir.join(".obr_recovery");
+    let import_recovery = fixture.obr_dir.join("recovery");
     match fs::symlink_metadata(&import_recovery) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Ok(_) => panic!("checked-in WAL-only fixture must not own recovery artifacts"),
@@ -270,7 +250,7 @@ fn prepare_current_wal_without_shm(fixture: &FixtureWorkspace) {
     let archived_historical_wal = fixture
         .obr_dir
         .join(".fixture_legacy_database_family")
-        .join("beads.db-wal");
+        .join("obr.db-wal");
     assert_eq!(
         fs::read(archived_historical_wal).expect("read preserved historical WAL placeholder"),
         historical_wal,
@@ -303,9 +283,8 @@ fn prepare_current_wal_without_shm(fixture: &FixtureWorkspace) {
         "active WAL must not reuse the unrelated historical placeholder"
     );
 
-    // FrankenSQLite may leave either no SHM or a zero-length placeholder after
-    // this import. Preserve the exact artifact when it exists; its size does
-    // not make it part of the active WAL-only topology exercised below.
+    // Preserve any import-generated shared index byte-for-byte, regardless of
+    // length, outside the active WAL-only topology exercised below.
     let current_shm = match fs::read(&shm_path) {
         Ok(bytes) => Some(bytes),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -315,7 +294,7 @@ fn prepare_current_wal_without_shm(fixture: &FixtureWorkspace) {
     let archived_shm = fixture
         .obr_dir
         .join(".fixture_current_import_artifacts")
-        .join("beads.db-shm");
+        .join("obr.db-shm");
     assert!(!shm_path.exists(), "fixture SHM should not remain active");
     if let Some(current_shm) = current_shm {
         assert_eq!(
@@ -331,7 +310,7 @@ fn prepare_current_wal_without_shm(fixture: &FixtureWorkspace) {
     }
 
     // Import compaction retains the database generation it replaced under
-    // `.br_recovery`. Those forensic backups describe fixture construction,
+    // `recovery/`. Those forensic backups describe fixture construction,
     // not the healthy WAL-only topology under test. Preserve the whole tree
     // outside doctor's active recovery path, including an empty directory.
     let import_recovery_entries = match fs::symlink_metadata(&import_recovery) {
@@ -352,7 +331,7 @@ fn prepare_current_wal_without_shm(fixture: &FixtureWorkspace) {
     let archived_recovery = fixture
         .obr_dir
         .join(".fixture_current_import_artifacts")
-        .join(".obr_recovery");
+        .join("recovery");
     match fs::symlink_metadata(&import_recovery) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Ok(_) => panic!("fixture import recovery artifacts should not remain active"),
@@ -757,15 +736,22 @@ fn assert_doctor_reliability_audit(fixture: &FixtureWorkspace, context: &str, js
 
     match fixture.metadata.family.as_str() {
         "sidecar_mismatch" => {
-            let sidecar_message = doctor_check(json, "db.sidecars")["message"]
-                .as_str()
-                .unwrap_or("");
-            assert!(
-                has_code("sidecar_mismatch")
-                    || has_code("database_corrupt")
-                    || sidecar_message.contains("expected for frankensqlite"),
-                "{context} should surface a real sidecar fault or explicitly classify the WAL-only family as expected for FrankenSQLite: {json}"
-            );
+            let sidecars = doctor_check(json, "db.sidecars");
+            if fixture.metadata.expected_classification == "healthy" {
+                assert_eq!(sidecars["status"], "ok", "{context}: {sidecars}");
+                assert!(anomalies.is_empty(), "{context}: {anomalies:?}");
+                assert!(
+                    sidecars["message"]
+                        .as_str()
+                        .is_some_and(|message| message.starts_with("WAL sidecar")),
+                    "{context} must describe valid WAL/shared-index bookkeeping: {sidecars}"
+                );
+            } else {
+                assert!(
+                    has_code("sidecar_mismatch") || has_code("database_corrupt"),
+                    "{context} must expose the sidecar fault: {json}"
+                );
+            }
         }
         "malformed_jsonl" => {
             assert!(
@@ -1180,6 +1166,97 @@ fn assert_core_write_failure(
             fixture.metadata.name, other
         ),
     }
+}
+
+#[test]
+fn workspace_failure_replay_repair_preserves_old_primary_evidence() {
+    let _guard = common::workspace_replay_test_guard();
+    let fixture = fixture_workspace("corrupt_db_text");
+    let db_path = current_database_path(&fixture);
+    let original_bytes = fs::read(&db_path).expect("original malformed primary");
+    fs::File::options()
+        .write(true)
+        .open(&db_path)
+        .expect("owned primary")
+        .set_modified(std::time::UNIX_EPOCH)
+        .expect("age owned primary deterministically");
+    let original_mtime = fs::metadata(&db_path).unwrap().modified().unwrap();
+
+    let run = run_surface(&fixture, "doctor --repair");
+    assert!(
+        run.status.success(),
+        "repair failed\nstdout={}\nstderr={}",
+        run.stdout,
+        run.stderr
+    );
+    let json = parse_stdout_json(&run, "old-primary repair");
+    assert_repair_applied_surface("old-primary repair", &json);
+    assert_eq!(json["verified"], true);
+    let primary_receipt = json["verified_backups"]
+        .as_array()
+        .expect("backup receipts")
+        .iter()
+        .find(|receipt| receipt["original"].as_str() == db_path.to_str())
+        .expect("primary backup receipt");
+    let backup = Path::new(primary_receipt["backup"].as_str().expect("backup path"));
+    assert_eq!(fs::read(backup).expect("preserved backup"), original_bytes);
+    assert_eq!(
+        fs::metadata(backup).unwrap().modified().unwrap(),
+        original_mtime,
+        "repair must preserve forensic mtime rather than hide aging"
+    );
+    let aged = doctor_check(&json["post_repair"], "db.recovery_artifacts.aged");
+    assert_eq!(aged["status"], "warn", "aging must remain visible: {json}");
+    assert!(
+        aged["details"]["artifacts"]
+            .as_array()
+            .expect("aged artifact paths")
+            .iter()
+            .any(|path| path.as_str() == backup.to_str()),
+        "verified backup must remain in aged diagnostics: {json}"
+    );
+}
+
+#[test]
+fn workspace_failure_replay_healthy_wal_repair_is_noop() {
+    let _guard = common::workspace_replay_test_guard();
+    let fixture = fixture_workspace("sidecar_wal_without_shm");
+    let export_path = fixture.obr_dir.join("issues.jsonl");
+    let export_bytes = fs::read(&export_path).expect("fixture export");
+    let before = run_surface(&fixture, "list --no-db");
+    assert!(before.status.success(), "{}", before.stderr);
+    let before_tasks = parse_stdout_json(&before, "healthy WAL source tasks");
+    assert_eq!(before_tasks["issues"].as_array().map(Vec::len), Some(1));
+    assert!(
+        !fixture.obr_dir.join("obr.db-shm").exists(),
+        "no-DB observation must preserve the initial WAL-only topology"
+    );
+
+    let repair = run_surface(&fixture, "doctor --repair");
+    assert!(
+        repair.status.success(),
+        "healthy repair failed\nstdout={}\nstderr={}",
+        repair.stdout,
+        repair.stderr
+    );
+    let json = parse_stdout_json(&repair, "healthy WAL repair");
+    assert_eq!(json["repaired"], false);
+    assert_eq!(json["recovery_audit"]["outcome"], "nothing_to_repair");
+    for report in [&json["report"], &json["post_repair"]] {
+        assert_doctor_clean_surface(&fixture, "healthy WAL no-op", report);
+    }
+    let after = run_surface(&fixture, "startup/open");
+    assert!(after.status.success(), "{}", after.stderr);
+    assert_eq!(
+        parse_stdout_json(&after, "healthy WAL persisted tasks"),
+        before_tasks,
+        "healthy repair must retain the task imported from the fixture"
+    );
+    assert_eq!(fs::read(export_path).unwrap(), export_bytes);
+    assert!(
+        !fixture.obr_dir.join("recovery").exists(),
+        "healthy repair must not quarantine the active database family"
+    );
 }
 
 #[test]
