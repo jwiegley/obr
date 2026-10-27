@@ -5147,7 +5147,7 @@ fn execute_source_repo_path_migration(
         });
     }
 
-    let base_path = path_policy.obr_dir.join("beads.base.jsonl");
+    let base_path = config::merge_base_jsonl_path(&path_policy.obr_dir);
     if let Some(receipt) = storage.pending_sync_merge_receipt()? {
         let base_authority = crate::sync::blocking_jsonl_family_write_lock_with_timeout(
             &base_path,
