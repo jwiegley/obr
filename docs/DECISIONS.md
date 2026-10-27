@@ -39,6 +39,8 @@ Resolution, for read and write alike:
    - neither exists → the computed location.
 3. Both `doc/PLAN.org` and `./PLAN.org` present → `doc/` wins and the root file is reported as shadowed.
 
+An alternate `--db` inside `.obr/` still uses the workspace surface. Outside `.obr/`, an existing sibling export remains authoritative; if none exists, the derived sibling is `issues.jsonl`, not `issues.org`, because U-EXTERNAL deliberately permits only JSONL there. An existing external Org file is not silently bypassed or overwritten: resolution retains it and the unchanged external-path guard refuses it.
+
 `init` creates `.obr/` with `obr.db`, `config.yaml`, `metadata.json`, and the self-ignoring `.gitignore`; seeds the surface at the computed location; and never creates `doc/`, only uses it when it is already there.
 
 `PLAN.org` is deliberately **not** a workspace marker. The name is far too generic, and auto-creating `.obr/` beside an unrelated `PLAN.org` would be exactly the invasiveness D-NOBRANCH rules out. The documented fresh-clone flow is `obr init && obr sync --import-only --rebuild`; the `#+ISSUE_PREFIX:` file keyword written into the surface is authoritative over init's directory-derived prefix, so issue identity survives a clone that carries no `.obr/`.

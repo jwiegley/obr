@@ -6203,7 +6203,8 @@ fn resolve_jsonl_path(
         // and it already canonicalizes through a parent for a path that does
         // not exist yet, which `--db <new-path>.db` always is.
         if !path_is_within_obr_dir(db_override.expect("db_parent implies db_override"), obr_dir) {
-            return db_parent.join(DEFAULT_JSONL_FILENAME);
+            // U-EXTERNAL admits JSONL only; the workspace's Org default is not valid here.
+            return db_parent.join("issues.jsonl");
         }
     } else if db_override.is_some() {
         return obr_dir.join(DEFAULT_JSONL_FILENAME);
@@ -8612,7 +8613,7 @@ labels:
         let db_override = PathBuf::from("/some/path/custom.db");
 
         let resolved = resolve_jsonl_path(&obr_dir, &metadata, Some(&db_override));
-        assert_eq!(resolved, PathBuf::from("/some/path/issues.org"));
+        assert_eq!(resolved, PathBuf::from("/some/path/issues.jsonl"));
     }
 
     #[test]
@@ -8659,7 +8660,29 @@ labels:
         let db_override = elsewhere.join("custom.db");
         let resolved = resolve_jsonl_path(&obr_dir, &Metadata::default(), Some(&db_override));
 
-        assert_eq!(resolved, elsewhere.join(DEFAULT_JSONL_FILENAME));
+        assert_eq!(resolved, elsewhere.join("issues.jsonl"));
+        crate::sync::validate_sync_path_with_external(&resolved, &obr_dir, true)
+            .expect("derived external export must satisfy the unchanged path policy");
+    }
+
+    #[test]
+    fn resolve_jsonl_path_external_db_keeps_existing_org_for_safe_refusal() {
+        let root = TempDir::new().expect("tempdir").keep();
+        let obr_dir = root.join(".obr");
+        let elsewhere = root.join("elsewhere");
+        fs::create_dir_all(&obr_dir).expect("create obr dir");
+        fs::create_dir_all(&elsewhere).expect("create elsewhere");
+        let existing = elsewhere.join("issues.org");
+        let contents = "#+TITLE: Existing external source must not be bypassed\n";
+        fs::write(&existing, contents).expect("seed existing external source");
+        let db_override = elsewhere.join("custom.db");
+
+        let resolved = resolve_jsonl_path(&obr_dir, &Metadata::default(), Some(&db_override));
+
+        assert_eq!(resolved, existing);
+        assert!(crate::sync::validate_sync_path_with_external(&resolved, &obr_dir, true).is_err());
+        assert_eq!(fs::read_to_string(&existing).unwrap(), contents);
+        assert!(!elsewhere.join("issues.jsonl").exists());
     }
 
     #[test]
@@ -9427,7 +9450,7 @@ routing:
 
         let resolved = resolve_jsonl_path(&obr_dir, &metadata, Some(&db_override));
         // Should derive sibling from db_override path
-        assert_eq!(resolved, custom_dir.join("issues.org"));
+        assert_eq!(resolved, custom_dir.join("issues.jsonl"));
     }
 
     #[test]

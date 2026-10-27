@@ -499,7 +499,7 @@ mod tests {
         assert_eq!(
             output.jsonl_path,
             Some(
-                canonicalize_lossy(&temp.path().join("cache").join("issues.org"))
+                canonicalize_lossy(&temp.path().join("cache").join("issues.jsonl"))
                     .display()
                     .to_string()
             )
