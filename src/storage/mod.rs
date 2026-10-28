@@ -16,6 +16,9 @@ pub mod events;
 pub mod schema;
 pub mod sqlite;
 
+#[cfg(unix)]
+pub use sqlite::observer_lifecycle::{ObserverStorage, ObserverStorageError};
+
 pub(crate) use sqlite::{BulkDependencyInsert, ChangelogIssueRow};
 pub use sqlite::{
     CloseMetadataRow, EventAttribution, IssueUpdate, ListFilters, ReadyFilters, ReadySortPolicy,

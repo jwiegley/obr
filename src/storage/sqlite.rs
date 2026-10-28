@@ -56,6 +56,11 @@ const WAL_CHECKPOINT_INTERVAL: u32 = 50;
 const DEFAULT_BUSY_TIMEOUT_MS: u64 = 0;
 const SQLITE_VAR_LIMIT: usize = 900;
 const REDUNDANT_LABEL_COVERAGE_MIN_CANDIDATES: usize = 8_192;
+const FULL_ISSUE_COLUMNS: &str = "id, content_hash, title, description, design, acceptance_criteria, notes,
+    status, priority, issue_type, assignee, owner, estimated_minutes, created_at, created_by, updated_at,
+    closed_at, close_reason, closed_by_session, due_at, defer_until, external_ref, source_system,
+    source_repo, deleted_at, deleted_by, delete_reason, original_type, compaction_level, compacted_at,
+    compacted_at_commit, original_size, sender, ephemeral, pinned, is_template, source_repo_path, agent_context";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ListRelationMetadata {
@@ -13269,6 +13274,13 @@ impl SqliteStorage {
         &self,
         issue_ids: &[String],
     ) -> Result<HashMap<String, Vec<String>>> {
+        Self::labels_for_issues_on(&self.conn, issue_ids)
+    }
+
+    fn labels_for_issues_on(
+        conn: &Connection,
+        issue_ids: &[String],
+    ) -> Result<HashMap<String, Vec<String>>> {
         // Stay below SQLite's common 999-variable ceiling while keeping the
         // default scheduler candidate window to one evidence-loading round trip.
         const SQLITE_VAR_LIMIT: usize = 900;
@@ -13292,7 +13304,7 @@ impl SqliteStorage {
                 .map(|s| SqliteValue::from(s.as_str()))
                 .collect();
 
-            let rows = self.conn.query_with_params(&sql, &params)?;
+            let rows = conn.query_with_params(&sql, &params)?;
             for row in &rows {
                 let issue_id = row
                     .get(0)
@@ -14582,19 +14594,13 @@ impl SqliteStorage {
     ///
     /// Returns an error if the database query fails.
     pub fn get_all_issues_for_export(&self) -> Result<Vec<Issue>> {
-        let sql = r"SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
-                           status, priority, issue_type, assignee, owner, estimated_minutes,
-                           created_at, created_by, updated_at, closed_at, close_reason, closed_by_session,
-                           due_at, defer_until, external_ref, source_system, source_repo,
-                           deleted_at, deleted_by, delete_reason, original_type, compaction_level,
-                           compacted_at, compacted_at_commit, original_size, sender, ephemeral,
-                           pinned, is_template, source_repo_path, agent_context
-                    FROM issues
-                    WHERE (ephemeral = 0 OR ephemeral IS NULL)
-                      AND id NOT LIKE '%-wisp-%'
-                    ORDER BY id ASC";
+        let sql = format!(
+            "SELECT {FULL_ISSUE_COLUMNS} FROM issues
+             WHERE (ephemeral = 0 OR ephemeral IS NULL)
+               AND id NOT LIKE '%-wisp-%' ORDER BY id ASC"
+        );
 
-        let rows = self.conn.query(sql)?;
+        let rows = self.conn.query(&sql)?;
         let mut issues = Vec::with_capacity(rows.len());
         for row in &rows {
             issues.push(Self::issue_from_row(row)?);
@@ -14614,9 +14620,15 @@ impl SqliteStorage {
     pub fn get_all_dependency_records(
         &self,
     ) -> Result<HashMap<String, Vec<crate::model::Dependency>>> {
+        Self::dependency_records_on(&self.conn)
+    }
+
+    fn dependency_records_on(
+        conn: &Connection,
+    ) -> Result<HashMap<String, Vec<crate::model::Dependency>>> {
         use crate::model::{Dependency, DependencyType};
 
-        let rows = self.conn.query(
+        let rows = conn.query(
             "SELECT issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id
              FROM dependencies
              ORDER BY issue_id, depends_on_id",
@@ -20069,12 +20081,11 @@ impl Drop for SqliteStorage {
     }
 }
 
-// Staged until O09 exposes fixed production reads; retain the Unix boundary.
-#[cfg(all(test, unix))]
+#[cfg(unix)]
 pub(crate) mod observer_lifecycle {
     use super::{
-        BeadsError, Connection, Result, SqliteStorage, attest_runtime_schema_cookie,
-        namespace_sidecar_mode_repair_required,
+        BeadsError, Connection, FULL_ISSUE_COLUMNS, Issue, Result, SqliteStorage, SqliteValue,
+        attest_runtime_schema_cookie, namespace_sidecar_mode_repair_required,
     };
     use crate::sync::{DatabaseOpenerLease, ObserverLeaseError, ObserverOpenerLease};
     use fsqlite_vfs::{
@@ -20163,7 +20174,7 @@ pub(crate) mod observer_lifecycle {
     }
 
     impl ObserverOpenInput {
-        // O03 must approve the route before this descriptor-only capture.
+        // The caller explicitly selects this canonical database; no route discovery runs.
         pub(crate) fn capture(path: &Path) -> Result<Self> {
             if path.to_str().is_none() {
                 return Err(BeadsError::Config(
@@ -20286,6 +20297,92 @@ pub(crate) mod observer_lifecycle {
     }
 
     impl ObserverStorage {
+        /// Open an existing database through the read-only observer admission path.
+        ///
+        /// `path` must be absolute and canonical. No workspace discovery or startup runs.
+        ///
+        /// # Errors
+        /// Refuses missing, unsafe, busy, replaced or incompatible sources.
+        pub fn open_existing(path: &Path) -> ObserverResult<Self> {
+            SqliteStorage::open_observer(
+                ObserverOpenInput::capture(path)?,
+                Duration::from_millis(250),
+            )
+        }
+
+        /// Read tasks, labels and outgoing dependencies in one read transaction.
+        ///
+        /// Tombstones are omitted. Comments and event history are not loaded.
+        ///
+        /// # Errors
+        /// Returns identity, schema, database, row-limit or transaction-retirement errors.
+        pub fn snapshot(&mut self) -> ObserverResult<Vec<Issue>> {
+            self.validate_identity()?;
+            self.conn.execute("BEGIN").map_err(BeadsError::Database)?;
+            let issues = match self.read_snapshot_rows() {
+                Ok(issues) => issues,
+                Err(error) => {
+                    return Err(SqliteStorage::rollback_transaction_error(
+                        &self.conn,
+                        error,
+                        "observer snapshot",
+                    )
+                    .into());
+                }
+            };
+            if let Err(error) = self.conn.execute("COMMIT") {
+                return Err(SqliteStorage::rollback_transaction_error(
+                    &self.conn,
+                    BeadsError::Database(error),
+                    "observer snapshot COMMIT",
+                )
+                .into());
+            }
+            self.validate_identity()?;
+            Ok(issues)
+        }
+
+        fn read_snapshot_rows(&self) -> Result<Vec<Issue>> {
+            attest_runtime_schema_cookie(&self.conn)?;
+            for (table, limit) in [
+                ("issues", 5_000),
+                ("dependencies", 25_000),
+                ("labels", 50_000),
+            ] {
+                let rows = self.conn.query(&format!("SELECT count(*) FROM {table}"))?;
+                let count = rows
+                    .first()
+                    .and_then(|row| row.get(0))
+                    .and_then(SqliteValue::as_integer)
+                    .filter(|count| *count >= 0)
+                    .ok_or_else(|| BeadsError::Config("invalid observer row count".to_owned()))?;
+                if count > limit {
+                    return Err(BeadsError::Config(format!(
+                        "observer {table} row limit exceeded ({limit})"
+                    )));
+                }
+            }
+            let rows = self.conn.query(&format!(
+                "SELECT {FULL_ISSUE_COLUMNS} FROM issues
+                 WHERE deleted_at IS NULL AND status <> 'tombstone' ORDER BY id"
+            ))?;
+            let mut issues = rows
+                .iter()
+                .map(SqliteStorage::issue_from_row)
+                .collect::<Result<Vec<_>>>()?;
+            let ids = issues
+                .iter()
+                .map(|issue| issue.id.clone())
+                .collect::<Vec<_>>();
+            let mut labels = SqliteStorage::labels_for_issues_on(&self.conn, &ids)?;
+            let mut dependencies = SqliteStorage::dependency_records_on(&self.conn)?;
+            for issue in &mut issues {
+                issue.labels = labels.remove(&issue.id).unwrap_or_default();
+                issue.dependencies = dependencies.remove(&issue.id).unwrap_or_default();
+            }
+            Ok(issues)
+        }
+
         fn validate_identity(&self) -> ObserverResult<()> {
             self.input.validate_identity()?;
             self.lease.validate_path_identity()?;
@@ -20295,7 +20392,11 @@ pub(crate) mod observer_lifecycle {
             Ok(())
         }
 
-        pub(crate) fn close(&mut self) -> ObserverResult<()> {
+        /// Retire the native read-only handle while its identity guards remain held.
+        ///
+        /// # Errors
+        /// Returns native close errors or an invalidated source identity.
+        pub fn close(&mut self) -> ObserverResult<()> {
             self.conn.close_in_place().map_err(BeadsError::Database)?;
             self.validate_identity()
         }
@@ -20465,6 +20566,12 @@ pub(crate) mod observer_lifecycle {
                     .expect("current schema observer");
                 assert!(!checkpoint_available(&database));
                 assert!(!namespace_available(&database));
+                let projected = observer.snapshot().expect("owned task projection");
+                assert_eq!(projected.len(), 1);
+                assert_eq!(projected[0].id, "obs-one");
+                assert_eq!(projected[0].title, "Observer fixture");
+                assert!(projected[0].labels.is_empty());
+                assert!(projected[0].dependencies.is_empty());
                 observer.conn.execute("BEGIN").expect("read snapshot");
                 assert_eq!(
                     observer

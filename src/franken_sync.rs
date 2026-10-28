@@ -191,8 +191,7 @@ impl Connection {
         Self::from_inner(inner, true)
     }
 
-    // Staged with its storage owner until O09 supplies the production observer facade.
-    #[cfg(all(test, unix))]
+    #[cfg(unix)]
     pub(crate) fn open_observer_existing(
         path: &str,
         identity: fsqlite_vfs::FileIdentity,

@@ -1739,10 +1739,10 @@ impl Drop for DatabaseOpenerLease {
     }
 }
 
-// Observer-only staging; the fixed-read facade will supply production callers.
-#[cfg(test)]
+/// Existing-only observer registration failures.
+#[cfg(any(test, unix))]
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum ObserverLeaseError {
+pub enum ObserverLeaseError {
     #[error("observer opener authority could not be resolved: {0}")]
     Authority(#[source] BeadsError),
     #[error("observer opener lease is missing: {0}")]
@@ -1762,14 +1762,14 @@ pub(crate) enum ObserverLeaseError {
 }
 
 /// A retained shared registration with no checkpoint-upgrade operation.
-#[cfg(test)]
+#[cfg(any(test, unix))]
 #[derive(Debug)]
 pub(crate) struct ObserverOpenerLease {
     path: PathBuf,
     file: File,
 }
 
-#[cfg(test)]
+#[cfg(any(test, unix))]
 fn observer_lease_io_error(path: &Path, source: std::io::Error) -> ObserverLeaseError {
     if source.kind() == std::io::ErrorKind::NotFound {
         ObserverLeaseError::Missing(path.to_path_buf())
@@ -1781,7 +1781,7 @@ fn observer_lease_io_error(path: &Path, source: std::io::Error) -> ObserverLease
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, unix))]
 fn observer_lease_same_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
     if !left.is_file() || !right.is_file() {
         return false;
@@ -1800,7 +1800,7 @@ fn observer_lease_same_identity(left: &fs::Metadata, right: &fs::Metadata) -> bo
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, unix))]
 impl DatabaseOpenerLease {
     pub(crate) fn register_existing_observer(
         database_path: &Path,
@@ -1833,7 +1833,7 @@ impl DatabaseOpenerLease {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, unix))]
 impl ObserverOpenerLease {
     #[allow(clippy::incompatible_msrv)]
     fn acquire_existing_file(
@@ -1878,7 +1878,7 @@ impl ObserverOpenerLease {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, unix))]
 impl Drop for ObserverOpenerLease {
     #[allow(clippy::incompatible_msrv)]
     fn drop(&mut self) {
