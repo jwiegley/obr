@@ -20231,8 +20231,17 @@ pub(crate) mod observer_lifecycle {
             timeout: Duration,
         ) -> ObserverResult<ObserverStorage> {
             input.validate_identity()?;
-            let lease =
-                DatabaseOpenerLease::register_existing_observer(&input.database_path, timeout)?;
+            let lease = match DatabaseOpenerLease::register_existing_observer(
+                &input.database_path,
+                timeout,
+            ) {
+                Ok(lease) => lease,
+                Err(ObserverLeaseError::Missing(_)) => {
+                    let _registration = DatabaseOpenerLease::register(&input.database_path)?;
+                    DatabaseOpenerLease::register_existing_observer(&input.database_path, timeout)?
+                }
+                Err(error) => return Err(error.into()),
+            };
             input.validate_identity()?;
             if namespace_sidecar_mode_repair_required(&input.database_path)? {
                 return Err(BeadsError::Config(
@@ -20245,18 +20254,35 @@ pub(crate) mod observer_lifecycle {
                 NamespaceOpenIntent::ReadOnlyExisting,
             )
             .map_err(BeadsError::Database)?;
-            if pending.expected_identity() != Some(input.database_identity) {
+            let pending = if pending.expected_identity() != Some(input.database_identity) {
+                drop(pending);
+                PendingNamespaceOpen::begin(&input.database_path, NamespaceOpenIntent::Shared)
+                    .map_err(BeadsError::Database)?
+            } else {
+                pending
+            };
+            if let Some(expected) = pending.expected_identity()
+                && expected != input.database_identity
+            {
                 return Err(BeadsError::SyncConflict {
-                    message: "observer namespace generation is absent or replaced".to_owned(),
+                    message: "observer namespace generation is replaced".to_owned(),
                 }
                 .into());
             }
-            let namespace = pending
-                .bind(input.database_identity)
-                .map_err(BeadsError::Database)?;
+            let namespace = if pending
+                .has_quiescent_record_bytes()
+                .map_err(BeadsError::Database)?
+            {
+                pending.bind_replacing_quiescent_record(input.database_identity)
+            } else {
+                pending.bind(input.database_identity)
+            }
+            .map_err(BeadsError::Database)?;
             namespace
                 .validate_path_identity()
                 .map_err(BeadsError::Database)?;
+            // The retained database already exists; publish only its coordination lease.
+            namespace.finish_bootstrap().map_err(BeadsError::Database)?;
             let conn = Connection::open_observer_existing(
                 input.database_path.to_str().ok_or_else(|| {
                     BeadsError::Config("observer database pathname is not representable".to_owned())
@@ -20300,6 +20326,8 @@ pub(crate) mod observer_lifecycle {
         /// Open an existing database through the read-only observer admission path.
         ///
         /// `path` must be absolute and canonical. No workspace discovery or startup runs.
+        /// Ordinary engine bookkeeping may create sidecars or rebind quiescent namespace records.
+        /// The database itself is never created or opened writable.
         ///
         /// # Errors
         /// Refuses missing, unsafe, busy, replaced or incompatible sources.
@@ -20553,6 +20581,100 @@ pub(crate) mod observer_lifecycle {
                 .expect("native worker")
                 .join()
                 .expect("native worker result");
+        }
+
+        #[test]
+        fn observer_open_cold_existing_database_preserves_application_state() {
+            on_worker(|| {
+                let (source, _) = fixture();
+                for copy_namespace in [false, true] {
+                    let root = tempfile::tempdir()
+                        .expect("owned cold observer fixture")
+                        .keep()
+                        .canonicalize()
+                        .expect("canonical cold fixture");
+                    fs::create_dir(root.join(".obr")).expect("owned cold cache directory");
+                    let protected_paths = [
+                        ".obr/observer.db",
+                        ".obr/observer.db-wal",
+                        ".obr/config.yaml",
+                        ".obr/receipt",
+                        "PLAN.org",
+                    ];
+                    for relative in protected_paths {
+                        let original = source.join(relative);
+                        if original.exists() {
+                            fs::copy(original, root.join(relative)).expect("closed fixture copy");
+                        }
+                    }
+                    if copy_namespace {
+                        for relative in [
+                            ".obr/observer.db-fsqlite-ns-gate",
+                            ".obr/observer.db-fsqlite-ns-use",
+                        ] {
+                            fs::copy(source.join(relative), root.join(relative))
+                                .expect("copied machine-local namespace");
+                        }
+                    }
+                    let database = root.join(".obr/observer.db");
+                    let before = snapshot(&root);
+                    eprintln!(
+                        "OBSERVER_COLD_FIXTURE copied_namespace={copy_namespace} {}",
+                        root.display()
+                    );
+                    let mut observer = ObserverStorage::open_existing(&database)
+                        .expect("cold existing database observer");
+                    let issues = observer.snapshot().expect("cold committed task sample");
+                    assert_eq!(issues.len(), 1);
+                    assert_eq!(issues[0].id, "obs-one");
+                    assert_eq!(issues[0].title, "Observer fixture");
+                    assert!(!checkpoint_available(&database));
+                    assert!(!namespace_available(&database));
+                    assert!(
+                        observer
+                            .conn
+                            .execute("UPDATE issues SET title = 'forbidden'")
+                            .is_err()
+                    );
+                    observer.close().expect("explicit cold observer close");
+                    drop(observer);
+                    assert!(checkpoint_available(&database));
+                    assert!(namespace_available(&database));
+                    let after = snapshot(&root);
+                    for relative in protected_paths {
+                        assert_eq!(
+                            before.get(Path::new(relative)),
+                            after.get(Path::new(relative)),
+                            "protected cold application state: {relative}"
+                        );
+                    }
+                }
+            });
+        }
+
+        #[test]
+        fn observer_open_refuses_rebinding_a_live_namespace() {
+            on_worker(|| {
+                let (root, database) = fixture();
+                let input = ObserverOpenInput::capture(&database).expect("original database");
+                let namespace =
+                    PendingNamespaceOpen::begin(&database, NamespaceOpenIntent::ReadOnlyExisting)
+                        .expect("live namespace admission")
+                        .bind(input.database_identity)
+                        .expect("held live generation");
+                let retired = root.join("retained.db");
+                fs::rename(&database, &retired).expect("retain original database");
+                fs::copy(&retired, &database).expect("replacement database identity");
+                let before = snapshot(&root);
+                let error = ObserverStorage::open_existing(&database)
+                    .expect_err("live generation must not be rebound");
+                assert!(matches!(
+                    error,
+                    ObserverStorageError::Storage(BeadsError::SyncConflict { .. })
+                ));
+                verify(&root, before, "live-namespace-rebinding-refused");
+                drop(namespace);
+            });
         }
 
         #[test]
